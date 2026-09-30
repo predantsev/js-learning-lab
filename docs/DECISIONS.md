@@ -1,0 +1,39 @@
+# Decisions and proposed defaults
+
+Approved product intent comes from the bootstrap task input; this file does not imply that the proposed technical defaults were approved. Record future decisions with rationale and verification, preserving the distinction.
+
+## Settled product decisions
+
+Project name js-learning-lab; public repository intent; desktop-only platform; one course in JavaScript → React → React Native → Node.js order; four initial capstones (wishlist, planner, habit tracker, simple expense tracker); Ukrainian default plus English; local core learning without required external services. Meaningful visual step-through, analogies and delayed review are approved course intent; accessibility elaborates usable interaction quality, not an optional removal. Requirements/review corrections are complete; current task is owner-authorized public documentation publication, not implementation or deployment.
+
+Additional owner-approved behavior (2026-09-30):
+
+- Short HTML/CSS context is taught inside JavaScript before dependent DOM/JSX work; no external prerequisite or extra course stage.
+- Small interactive practice remains in-course throughout; runtime and evidence boundaries are explicit. Native/server work uses honest local tooling checks.
+- After export, local learner files are authoritative; reference downloads/diffs/manual backup/merge guide checkpoints without automatic local replacement/sync.
+- Learners without native emulator/device tooling can continue to Node/later topics; native practical evidence stays unperformed/skipped with provenance and can be revisited. Web-client integration can complete learner Node work. Full-product native content/workflow/target verification remains required.
+- Capstone changes create separate projects/workspaces, preserving old files/project progress and general course evidence. New-project transfer work is not automatically complete.
+- Canonical example names/identifiers/comments are English; bilingual instructional text and authored UI follow lesson language using shared logic/localized resources. Preserve learner-authored code/comments.
+- Four capstones share objectives and reusable components/contracts where feasible; one universal generator is not mandated.
+
+The base lesson states are unseen/in-progress/skipped/completed; demonstrated understanding is independent evidence. UI representation remains an engineering/design choice. Accepted, qualified and rejected Fable findings are recorded in [Review resolution](reviews/REVIEW-RESOLUTION.md).
+
+## Open technical decisions (not drafting blockers)
+
+| ID | Decision | Recommended default / rationale | Evidence needed before adoption |
+|---|---|---|---|
+| DEC-01 | Platform stack and build/package tooling | A browser UI served locally, React + TypeScript as a candidate, one package manager and lockfile. Avoid a desktop wrapper until browser constraints justify it. | Small isolation/editor/persistence spike; supported-browser build and clean-clone setup. |
+| DEC-02 | Learner storage and server needs | Browser structured storage for initial profile/files, portable backups; no mandatory DB unless actual requirements exceed this. | Quota/recovery/migration tests; origin-change scenario with saved work, stable-origin or explicit warning/recovery behavior; no silent fresh-profile/deleted-data implication. Document origin-bound limits and clear-data risk without promising untested migration. |
+| DEC-03 | Editor, bundling and runtime libraries | Select maintained tools after checking accessibility, licenses, offline packaging and isolation capabilities; no mandated browser runtime library. | Editable multi-file execution; learner-visible persistent sandbox storage separate from parent/profile storage; responsive stop or controller-enforced timeout during synchronous runaway DOM code; preserved files and clean rerun; denied access/import/network tests. Failed design must be replaced/contained before arbitrary learner execution. |
+| DEC-04 | Desktop OS/browser/viewport support | Candidate baseline: current desktop Chromium, 1280×800 minimum viewport; prioritize one verified OS first, then expand. macOS, Windows and Linux are candidates, not approved support. | Record exact tested versions, clean-clone matrix and keyboard/zoom checks; set native targets separately. |
+| DEC-05 | Native teaching toolchain and target matrix | Choose a documented React Native workflow with explicit emulator/device prerequisites; one tested native target can establish first milestone, limitations visible. | Actual native run and target/OS compatibility; before Node teaching, bundled fixtures and/or supplied minimal mock-service prerequisites/start/stop and device/emulator addressing verified. Toolchain networking is unconfirmed until this spike. Learner no-tooling continuation never waives product verification. |
+| DEC-06 | License for code, course and assets | Choose a permissive code license plus explicit content/asset licensing after rights review. No license file fabricated now. Public visibility alone is not a reuse license. | Owner choice; dependency and asset attribution inventory, including generated/third-party content rights. |
+| DEC-07 | Hosted deployment | None required; prioritize public clone/local run. | Separate authorization and justification if hosting later proposed. |
+| DEC-08 | Local profiles/mastery/review | Optional local profiles; simple transparent evidence badges and deterministic spaced-review schedule. Avoid authentication and opaque scores. | Usability checks, profile separation and review persistence tests. |
+| DEC-09 | Export/recovery and local-project continuity | Required same-project file export; full-profile backup/import remains recommended REQ-025, not mandatory M1. Post-export reference archives/diffs/manual backup/merge are settled; optional user-selected snapshot comparison must be non-destructive, with no automatic sync. | Required export path safety and VS Code open/run; reference/manual-merge checks; full-profile data round-trip/conflict tests only if REQ-025 import/backup is adopted. |
+| DEC-10 | Host ports | Allocate only valid configurable loopback ports after registry review; proposed hostname js-learning-lab.localhost with 127.0.0.1 fallback. No block reserved. | Shared PORTS.md table says next 7xxxx, while prose says 6xxxx; 7xxxx exceeds 65535. Resolve registry conflict and check active listeners at implementation time. |
+| DEC-11 | Lesson timing and detailed syllabus | Proposed 5–15 minute lessons, multiple lessons per unit as needed. No numerical lesson-count shortcut for completeness. | Beginner usability, in-course HTML/CSS bridge and outcome/assessment inventory coverage. |
+| DEC-12 | Stage executor feasibility | Use real browser-compatible JS/React exercises and honestly labeled RN/Node concept previews; evaluate optional isolated actual Node execution. No runtime library mandated or technical impossibility asserted. | M1 representative RN/Node concept exercise with real edited code/output, capability labels, API availability, isolation/stop/offline evidence; actual local native/server API checks before corresponding stage release. |
+| DEC-13 | Capstone reuse and reference packaging | Prefer domain-independent contracts/components with small variants; choose reusable starter/reference packaging without assuming a universal generator. | Equivalent rubrics across all four options; post-export manual-merge test with learner edits; separate-project switch preserves old files/evidence and leaves new transfers unperformed. |
+
+Implementation may resolve reversible engineering choices within its authorized scope, recording proposals adopted and rationale. Owner-dependent licensing/publication decisions remain explicit. Do not stall all drafting or safe spikes on unrelated choices.
