@@ -2,7 +2,7 @@
 
 A planned desktop learning platform: **JavaScript → React → React Native → Node.js**, one continuous course with a chosen capstone.
 
-**Current status: reviewed requirements and documentation only. There is no runnable application or hosted deployment yet.** Repository: [predantsev/js-learning-lab](https://github.com/predantsev/js-learning-lab), public, with canonical documentation on `main`. Accepted review corrections are incorporated in baseline 2, ready for development planning and early technical spikes. License, implementation stack, hosting and supported operating systems remain explicit open choices, not drafting blockers.
+**Current status: reviewed requirements, documentation and approved lesson design references only. There is no runnable application or hosted deployment yet.** Repository: [predantsev/js-learning-lab](https://github.com/predantsev/js-learning-lab), public, with canonical documentation on `main`. Accepted review corrections are incorporated in baseline 3, ready for development planning and early technical spikes. License, implementation stack, hosting and supported operating systems remain explicit open choices, not drafting blockers.
 
 ## Read the package
 
@@ -12,6 +12,7 @@ A planned desktop learning platform: **JavaScript → React → React Native →
 - [Verification and release gates](docs/VERIFICATION.md)
 - [Proposed decisions](docs/DECISIONS.md)
 - [Implementation handoff](docs/IMPLEMENTATION-HANDOFF.md)
+- [Approved lesson design and standalone preview](docs/design/LESSON-DESIGN.md)
 - [Current state](docs/STATUS.md)
 - [Independent review resolution](docs/reviews/REVIEW-RESOLUTION.md)
 

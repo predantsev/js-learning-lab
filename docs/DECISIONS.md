@@ -4,7 +4,7 @@ Approved product intent comes from the bootstrap task input; this file does not 
 
 ## Settled product decisions
 
-Project name js-learning-lab; public repository intent; desktop-only platform; one course in JavaScript → React → React Native → Node.js order; four initial capstones (wishlist, planner, habit tracker, simple expense tracker); Ukrainian default plus English; local core learning without required external services. Meaningful visual step-through, analogies and delayed review are approved course intent; accessibility elaborates usable interaction quality, not an optional removal. Requirements/review corrections are complete; current task is owner-authorized public documentation publication, not implementation or deployment.
+Project name js-learning-lab; public repository intent; desktop-only platform; one course in JavaScript → React → React Native → Node.js order; four initial capstones (wishlist, planner, habit tracker, simple expense tracker); Ukrainian default plus English; local core learning without required external services. Meaningful visual step-through, analogies and delayed review are approved course intent; accessibility elaborates usable interaction quality, not an optional removal. Requirements/review corrections are complete; current task is owner-authorized public documentation and approved lesson design reference publication, not implementation or deployment.
 
 Additional owner-approved behavior (2026-09-30):
 
@@ -17,6 +17,10 @@ Additional owner-approved behavior (2026-09-30):
 - Four capstones share objectives and reusable components/contracts where feasible; one universal generator is not mandated.
 
 The base lesson states are unseen/in-progress/skipped/completed; demonstrated understanding is independent evidence. UI representation remains an engineering/design choice. Accepted, qualified and rejected Fable findings are recorded in [Review resolution](reviews/REVIEW-RESOLUTION.md).
+
+## Approved lesson presentation (2026-09-30)
+
+All three styles are retained: Calm Studio (default), Editorial and Dev workspace; application-wide stable local style IDs, restart persistence and state-preserving switching are mandatory REQ-035. Side-by-side explanation/practice (the “Поруч” direction) is a provisional layout foundation, not evidence that other layouts were rejected. The compact EN/UA control translates the same block in place, including diagram/analogy text, without changing global language. Login-free local data flow is settled; storage engine, supported environments and portable recovery remain engineering choices. These decisions add no light/dark-mode requirement. [Reference and limits](design/LESSON-DESIGN.md).
 
 ## Open technical decisions (not drafting blockers)
 
