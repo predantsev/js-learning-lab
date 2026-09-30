@@ -1,10 +1,10 @@
 # Future implementation handoff
 
-This document prepares a future implementation task; Astra is the owner's intended agent, not a dependency of the public project. No implementation task has been dispatched. Baseline 2 is ready for development planning and early feasibility spikes; no runtime has yet been validated. Recommended execution is milestone-based. Do not promise that the full product can be completed in one agent run.
+This document prepares a future implementation task; Astra is the owner's intended agent, not a dependency of the public project. No implementation task has been dispatched. Baseline 3 with approved lesson design is ready for development planning and early feasibility spikes; no runtime has yet been validated. Recommended execution is milestone-based. Do not promise that the full product can be completed in one agent run.
 
 ## Ready-to-use task prompt
 
-Implement js-learning-lab in its actual repository root after reading AGENTS.md, README.md and all linked canonical docs. Preserve existing work. Treat REQUIREMENTS.md and CURRICULUM.md as the full target scope, CONTENT-DATA.md as the authoring/data contract, VERIFICATION.md as the evidence gate, and DECISIONS.md as settled behavior plus clearly separated engineering proposals to resolve with recorded rationale. Read docs/reviews/REVIEW-RESOLUTION.md for the accepted review outcome.
+Implement js-learning-lab in its actual repository root after reading AGENTS.md, README.md and all linked canonical docs. Preserve existing work. Treat REQUIREMENTS.md and CURRICULUM.md as the full target scope, CONTENT-DATA.md as the authoring/data contract, VERIFICATION.md as the evidence gate, and DECISIONS.md as settled behavior plus clearly separated engineering proposals to resolve with recorded rationale. Read docs/design/LESSON-DESIGN.md and its three styles, then docs/reviews/REVIEW-RESOLUTION.md for the accepted review outcome.
 
 First verify actual files, Git/remote state and applicable instructions. Never inherit another repository's cwd, use ProjectWishList source, expose learner records, or claim the repository is public without checking its remote. The name and public repository are settled: https://github.com/predantsev/js-learning-lab. Reverify actual remote/visibility and follow the existing issue/PR workflow; creating another repository or deploying an app is not authorized by this handoff. Do not silently choose a license or assert unsupported OS coverage.
 
@@ -36,3 +36,7 @@ At each milestone report: files changed, adopted decisions, requirement/curricul
 | M6 Complete release | Full translations and glossary, asset/license inventory, supported OS/browser/native matrix, offline/clean-clone/accessibility/recovery checks, polished setup/troubleshooting. | Every V case and curriculum quality gate; no placeholder exceptions. |
 
 If implementation scope/time prevents all milestones, deliver a useful verified increment and identify precisely what remains. Do not replace the agreed course with a tiny JavaScript demo. A new repository, licensing approval or hosted deployment must not be inferred from this future implementation prompt alone; the existing public repository is for source/documentation.
+
+## Approved design implementation boundary
+
+Implement all three REQ-035 styles with Calm Studio as the fresh-data default, stable persisted IDs, non-destructive fallback/migration and full function/content/i18n/accessibility parity. Adopt side-by-side explanation/practice as the provisional lesson foundation. Translate canonical blocks in place through compact EN/UA controls while preserving global language and learner context. Build login-free local save/resume around the selected, verified storage design; explain its origin/clear-data or file/permission limitations. Other product screens remain undesigned. The published HTML is an illustrative reference with a numeric predicate demonstration, not a JavaScript executor, complete bilingual product or proven learner-storage implementation. Do not promote its convenience storage to architecture. V-17 belongs in M1 presentation/persistence checks and M6 full parity verification.

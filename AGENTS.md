@@ -4,7 +4,7 @@
 
 Read README.md, docs/STATUS.md, docs/REQUIREMENTS.md, docs/CURRICULUM.md, docs/CONTENT-DATA.md, docs/VERIFICATION.md and docs/DECISIONS.md before implementation. Markdown is canonical. Stable requirement and curriculum IDs must survive edits; retire IDs explicitly rather than reuse them.
 
-The owner explicitly authorized public documentation publication after requirements and review corrections. Current scope is documentation/bootstrap publication only; no implementation, design assets or deployment. Future implementation needs its own task authorization. The public repository is predantsev/js-learning-lab; public visibility overrides the usual private Startups default. No license has been selected.
+The owner explicitly authorized public documentation publication after requirements and review corrections. Current scope is documentation and owner-approved lesson design reference publication only; no application implementation or deployment. Future implementation needs its own task authorization. The public repository is predantsev/js-learning-lab; public visibility overrides the usual private Startups default. No license has been selected.
 
 ## Hard product invariants
 
@@ -12,6 +12,7 @@ The owner explicitly authorized public documentation publication after requireme
 - Desktop platform; mobile apps are a curriculum subject, not a platform layout requirement.
 - Exactly four initial capstones: wishlist, planner, habit tracker, simple expense tracker. Shared objectives, one learner project at a time; changing capstone creates a separate workspace preserving prior work and global learning. Do not copy proprietary ProjectWishList source or assets.
 - Ukrainian default and complete Ukrainian/English content, UI and feedback; per-block alternate viewing must preserve editor and progress state.
+- Offer Calm Studio (fresh-data default), Editorial and Dev workspace with stable local style preference, non-destructive fallback and full functional/content/i18n/accessibility parity; style switches preserve all learner state.
 - Real code execution with isolation and interruption; never present browser previews as full native/server runtimes.
 - Core local use needs no cloud account, secret, paid API, remote database or service. Do not introduce an unnecessary database.
 - Preserve learner files across checkpoints, skips, language changes and VS Code export. After export, local files are authoritative; guide reference-download/diff/manual backup/merge, no automatic local replacement/sync. Never overwrite code to give feedback or reveal a solution.
