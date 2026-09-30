@@ -6,7 +6,7 @@ Updated 2026-09-30 by the primary Codex agent. Requirements baseline 2 is ready 
 
 - Public repository: https://github.com/predantsev/js-learning-lab
 - Default branch: main; canonical remote: git@github.com:predantsev/js-learning-lab.git.
-- Documentation publication tracker: [issue #1](https://github.com/predantsev/js-learning-lab/issues/1). The linked PR is the source for review/merge state.
+- Documentation publication tracker: [issue #1](https://github.com/predantsev/js-learning-lab/issues/1). Documentation PR: [#2](https://github.com/predantsev/js-learning-lab/pull/2); GitHub records its review/merge state.
 - GitHub main protection requires a PR, resolves conversations, enforces administrators, and disallows force push/deletion; no approval-count or fictitious CI requirement was added. Delete-branch-on-merge is enabled. Reverify live settings before future work.
 - License remains undecided; no license/reuse permission was invented. There is no runnable application or hosted deployment.
 
