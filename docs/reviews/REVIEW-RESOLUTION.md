@@ -1,0 +1,24 @@
+# Independent review resolution — requirements baseline 2
+
+Date: 2026-09-30. Source: independent Claude Fable high read-only review of baseline 1, followed by Codex source spot-check and explicit owner approval of corrections. Historical Fable passage/line references refer to baseline 1; current canonical documents below contain the resolved normative behavior. The original report and Codex verification were collected as local review artifacts; this disposition is the project-retained outcome, not a competing requirements specification.
+
+| Finding | Disposition | Resolution / current source |
+|---|---|---|
+| F1 runtime boundary | Accepted gap; rejected automatic Node impossibility/demotion | REQUIREMENTS REQ-013/014, CURRICULUM stage practice/runtime policy, CONTENT-DATA runtime metadata, DEC-12 and V-06/07/11 retain real interactive practice and explicit local verification; architecture choices need spikes. |
+| F2 HTML/CSS | Accepted | REQ-002 and JS-01/JS-06 teach a short contextual bridge within JavaScript; no outside prerequisite or separate fifth stage. V-01 checks coverage. |
+| F3 post-export checkpoints | Accepted protocol gap; not proven non-composability | REQ-013, CURRICULUM checkpoint workflow and CONTENT-DATA persistence specify authoritative local files, separate reference downloads/diffs/manual backup/merge and optional explicit snapshot comparison. V-06 checks preserved learner edits. |
+| F4 origin storage | Accepted inferred risk | REQ-024, DEC-02/10, CONTENT-DATA feasibility and V-12 require stable-origin or explicit warning/recovery behavior; no mandatory DB or untested migration guarantee. |
+| F5 native fixture networking | Accepted decision gap; emulator specifics unconfirmed | RN-06, REQ-014, DEC-05 and V-07 use bundled fixtures/provided minimal mock service before Node; toolchain-specific addressing must be verified. |
+| F6 absent native tooling | Accepted and owner-decided | REQ-003/014, CP-NO/NO-06 and V-02/07 permit learner continuation/web Node completion, leaving native practical tasks unperformed/skipped. Product release still includes/validates native workflow. |
+| F7 sandbox storage/stop | Accepted feasibility risk; browser specifics unconfirmed | REQ-022, CONTENT-DATA runtime gates, DEC-03/12 and V-11 require isolated learner persistence, responsive runaway DOM stop/timeout and preserved rerun; replace/contain failed design before use. |
+| F8 capstone duplication | Partially accepted | REQ-010, capstone mapping, CapstoneTemplate and DEC-13 prefer reusable contracts/components with small domain variants; no universal generated template mandated without feasibility evidence. |
+| F9 unapproved scope | Rejected substantive claim; provenance improved | Approved intent already included visuals, analogies, delayed revisiting and usable accessibility. REQUIREMENTS provenance and DECISIONS settled behavior retain REQ-006/007/031; shorter summaries are not exhaustive approval sources. |
+| F10 milestones/states/unit | Accepted clarification | Full V-06 export belongs to M2; M1 checks implemented slice/feasibility and does not require optional full-profile backup. REQ-033/Progress separate base states and evidence; instructional grouping consistently says curriculum unit. |
+| F11 code language/project switch | Accepted; owner decisions recorded | REQ-009/015/033, CONTENT-DATA and DECISIONS specify separate-project switching/global vs project evidence and English canonical code/comments with localized authored UI; learner code preserved. |
+| F12 public hygiene | Partially accepted housekeeping, not data-leak claim | AGENTS labels optional maintainer-local account/canon; README/REQ-027/V-13 require public clone/run without that setup. Agent name is coordination context only. License remains undecided; no publication performed. |
+
+## Readiness and limits
+
+Ready for development planning and milestone implementation in a new authorized session. No blocking documentation contradiction remains in the accepted findings. Runtime feasibility, device networking and origin-recovery behavior are still unverified technical choices with explicit evidence gates, not confirmed application capabilities. Complete-course release gates remain unchanged; a small JS demo or skipped learner native work does not prove full-product completion.
+
+The review-correction task created no application code, scaffolding, dependencies, global harness changes, implementation session, remote or publication. A subsequent owner-authorized publication task creates the public documentation repository, recorded in STATUS.md; that does not change this historical review result. Owner-dependent license and any future publication action remain separate choices. Review reports do not authorize fixes beyond the approved documentation correction scope.
