@@ -57,6 +57,21 @@ The validator runs every example, every exercise fixture and every verifiable pr
 - **Code:** identifiers and comments are English and shared by both languages. Text the example shows to its user (page headings, labels, printed sentences, sample data names) follows the lesson language: write `%%key%%` in the code and define `strings: { key: { uk: …, en: … } }` on the block. Tests read the same values from the global `L` (`L.key`). Synthetic data comes from `content/capstones/domains.yaml` where it fits.
 - No personal data, no real brands' content, nothing copied from other courses.
 
+## Mistakes found by independent review (check your unit against every line)
+
+1. **Lists:** an inline `1) … 2) … 3)` sequence in a Markdown field renders as one item. Put each step on its own line as a real list.
+2. **Hints never contain the exact solution line** (not in `nudge`, not in `explanation`): that bypasses the "solution viewed" record. Explain the idea with a *different* but similar example.
+3. **An exercise or question never repeats an example from the explanation.** Change the situation so the idea has to be applied.
+4. **`selfCheck` items are shown alone** (no neighbouring blocks, no example editor, no hints). Write them self-contained: no "above", "below", "on the right", "the next example".
+5. **Feedback must be true in every case in which its test fails**: the app shows the feedback of every failing test at once.
+6. **Feedback on `SyntaxError` matches errors found before the code runs.** The learner then sees the card "The code could not start" with the original parser message, not the word `SyntaxError` — describe what the learner actually sees.
+7. **Describe the interface only after checking it**: quote button and tab names from `app/src/i18n/uk.ts` / `en.ts` and run the example yourself.
+8. **Add `alt` fixtures for the obvious longhand variants** of a solution (for example `18 + 18 + 18` next to `18 * 3`).
+9. **Check content, not only structure**: when the task specifies data, the tests require non-empty rendered text, not just the right elements.
+10. **Every new word is explained the first time it appears**, including inside `tryIt` and instructions (focus, px, object…).
+11. **Contrast in authored pages:** `gray` on white fails WCAG AA (3.95:1). Use `dimgray` or darker; example pages model good practice.
+12. **Ukrainian terminology:** «рядок» means both *string* and *line* — make the meaning unambiguous («текст у лапках», «рядок коду»). Identifiers are «назви» (назва змінної, назва функції), not «імена». A slash is «скісна риска».
+
 ## lesson.yaml
 
 ```yaml
