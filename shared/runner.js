@@ -183,15 +183,33 @@ export function prepareRun(input) {
 
 let frameCounter = 0;
 let siteGeneration = 0;
+// Some browsers (embedded browser panes among them) cannot load *.localhost subdomains. Then the
+// sandbox moves to the IP host: 127.0.0.1 is never an application host (the server redirects it to
+// localhost), so the sandbox stays a different site from the app at localhost or
+// js-learning-lab.localhost.
+let ipSandbox = false;
+let sandboxSeen = false; // a sandbox frame said "ready" in this page, so its host works here
+/** A frame that finished loading without the sandbox saying "ready" shows an error or blocked page. */
+const LOADED_WITHOUT_READY_MS = 2000;
 
 /**
  * Pick the sandbox origin. Each generation is a different *site* (jsll-run-N.localhost), so a frame
  * whose renderer got stuck never shares a process with the next run (spike: docs/evidence/M1).
  */
 export function sandboxOriginFor(port, { ipFallback = false } = {}) {
-  return ipFallback ? `http://127.0.0.1:${port}` : `http://jsll-run-${siteGeneration}.localhost:${port}`;
+  return ipFallback || ipSandbox ? `http://127.0.0.1:${port}` : `http://jsll-run-${siteGeneration}.localhost:${port}`;
 }
 export const nextSandboxSite = () => { siteGeneration += 1; };
+/**
+ * Call after a run failed with `sandbox-unreachable`. When the failing host was a *.localhost
+ * sandbox host that never worked in this page, switch to the IP host and return true: the caller
+ * prepares the run again (the payload names the origin) and retries once.
+ */
+export function fallBackToIpSandbox(failedOrigin) {
+  if (ipSandbox || sandboxSeen || !/\.localhost:\d+$/.test(failedOrigin)) return false;
+  ipSandbox = true;
+  return true;
+}
 
 /**
  * One execution in a fresh frame.
@@ -224,6 +242,13 @@ export class SandboxRun {
     this.frame = frame;
     this.state = 'booting';
     window.addEventListener('message', this.listener);
+    // The sandbox says "ready" while its page is still parsing; a page that finished loading without
+    // it is an error or blocked page (the host could not be reached): report that quickly.
+    frame.addEventListener('load', () => {
+      if (this.state !== 'booting' || this.frame !== frame) return;
+      clearTimeout(this.loadTimer);
+      this.loadTimer = setTimeout(() => { if (this.state === 'booting') this.#fail('sandbox-unreachable'); }, LOADED_WITHOUT_READY_MS);
+    });
     this.container.replaceChildren(frame);
     this.readyTimer = setTimeout(() => {
       if (this.state === 'booting') this.#fail('sandbox-unreachable');
@@ -242,6 +267,7 @@ export class SandboxRun {
 
   #cleanupTimers() {
     clearTimeout(this.readyTimer);
+    clearTimeout(this.loadTimer);
     clearInterval(this.heartbeat);
   }
 
@@ -252,6 +278,8 @@ export class SandboxRun {
     if (message.type === 'ready') {
       if (this.state === 'booting' && message.frameId === this.frameId) {
         clearTimeout(this.readyTimer);
+        clearTimeout(this.loadTimer);
+        sandboxSeen = true;
         this.state = 'running';
         this.lastPong = performance.now();
         this.frame.contentWindow.postMessage({ jsll: 1, frameId: this.frameId, type: 'run', payload: { ...this.prepared.payload, runId: this.runId, nonce: this.nonce } }, '*');

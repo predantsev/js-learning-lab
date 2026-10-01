@@ -2,7 +2,7 @@
 // language in place, without changing the global language or any learner state (REQ-016, REQ-020).
 import { type ComponentType, type ReactNode, Suspense, lazy, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { consoleLines, localizeText } from '@shared/exercise.js';
-import { prepareRun, runToCompletion, sandboxOriginFor } from '@shared/runner.js';
+import { fallBackToIpSandbox, prepareRun, runToCompletion, sandboxOriginFor } from '@shared/runner.js';
 import { boot } from '../lib/api';
 import { type Key, pick } from '../lib/i18n';
 import { confirmLocalTaskItem, isAnswerCorrect, recordAnswer, recordHint, recordReview, skipLocalTask } from '../lib/progress';
@@ -158,11 +158,17 @@ export function QuestionView({ question, lang, answered, onAnswer, idPrefix }: Q
   };
   const runCode = async () => {
     if (!question.code || !hiddenHost.current) return;
-    const sandboxOrigin = sandboxOriginFor(boot.port);
-    const prepared = prepareRun({ files: { 'index.js': question.code[lang] }, entry: 'index.js', runtime: 'browser-js', sandboxOrigin, lang });
-    if ('errors' in prepared) { setOutput({ lines: [], error: prepared.errors[0].message }); return; }
-    const r = (await runToCompletion({ container: hiddenHost.current, sandboxOrigin, prepared, timeoutMs: 8000 })) as { console: ConsoleEntry[]; errors: { name: string; message: string }[] };
-    setOutput({ lines: consoleLines(r.console), error: r.errors[0] ? `${r.errors[0].name}: ${r.errors[0].message}` : null });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const sandboxOrigin = sandboxOriginFor(boot.port);
+      const prepared = prepareRun({ files: { 'index.js': question.code[lang] }, entry: 'index.js', runtime: 'browser-js', sandboxOrigin, lang });
+      if ('errors' in prepared) { setOutput({ lines: [], error: prepared.errors[0].message }); return; }
+      const r = (await runToCompletion({ container: hiddenHost.current, sandboxOrigin, prepared, timeoutMs: 8000 })) as { status: string; console: ConsoleEntry[]; errors: { name: string; message: string }[] };
+      // A *.localhost sandbox host this browser cannot load: retry once on the IP host.
+      if (r.status === 'failed:sandbox-unreachable' && fallBackToIpSandbox(sandboxOrigin)) continue;
+      if (r.status.startsWith('failed')) { setOutput({ lines: [], error: t('ws.sandboxUnreachable') }); return; }
+      setOutput({ lines: consoleLines(r.console), error: r.errors[0] ? `${r.errors[0].name}: ${r.errors[0].message}` : null });
+      return;
+    }
   };
   const move = (index: number, delta: number) => setOrder((o) => { const next = [...o]; const j = index + delta; if (j < 0 || j >= next.length) return o; [next[index], next[j]] = [next[j], next[index]]; return next; });
   const optionById = (id: string) => (a.type === 'order' ? a.items : a.type === 'text' ? [] : a.options).find((o) => o.id === id);
