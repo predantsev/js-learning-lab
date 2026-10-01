@@ -346,6 +346,7 @@ export const en: Dict = {
   'error.storeCorrupt': 'The data file “{doc}” is damaged and its backup copy could not be read. Other data is not affected.',
   'error.recovered': 'The data file “{doc}” was damaged; the previous saved version was restored.',
   'error.reload': 'Reload the page',
+  'error.retry': 'Try again',
   'error.details': 'Technical details',
   'error.notFound': 'There is no such page.',
   'error.unsupportedBrowser': 'This browser lacks required features. Tested configuration: current Google Chrome on a desktop computer.',

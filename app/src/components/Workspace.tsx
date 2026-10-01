@@ -246,7 +246,8 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
           {s.live && <span className="live-label"><span className="live-dot" /> live</span>}
         </div>
         <div className="result-body" role="tabpanel">
-          <div className={tab === 'preview' ? 'preview' : 'preview preview-hidden'}>
+          {/* Off screen while another tab is shown: inert keeps keyboard focus out of the invisible page. */}
+          <div className={tab === 'preview' ? 'preview' : 'preview preview-hidden'} inert={tab !== 'preview'}>
             <div ref={frameHost} className="frame-host" />
             {!s.live && s.status === 'idle' && tab === 'preview' && <p className="ws-empty preview-empty">{t('ws.previewEmpty')}</p>}
           </div>

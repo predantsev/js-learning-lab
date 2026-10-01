@@ -33,7 +33,8 @@ const theme = EditorView.theme({
   '.cm-gutters': { backgroundColor: 'transparent', color: 'var(--ll-dim)', border: 'none' },
   '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--ll-soft) 55%, transparent)' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--ll-ink)' },
-  '&.cm-focused': { outline: 'none' },
+  // Visible focus (REQ-031): the same ring as other controls, drawn inside the scroll box.
+  '&.cm-focused': { outline: '2px solid var(--ll-focus)', outlineOffset: '-2px' },
   '&.cm-focused .cm-cursor': { borderLeftColor: 'var(--ll-accent)' },
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'color-mix(in srgb, var(--ll-accent) 28%, transparent) !important' },
   '.cm-tooltip': { backgroundColor: 'var(--ll-panel)', color: 'var(--ll-ink)', border: '1px solid var(--ll-line)', borderRadius: '6px' },

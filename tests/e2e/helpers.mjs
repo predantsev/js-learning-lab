@@ -98,7 +98,8 @@ export class Lab {
 
   async dispose() {
     await this.stop();
-    await fs.rm(this.dataDir, { recursive: true, force: true });
+    // Closing a tab flushes pending saves (keepalive), which may still be landing on disk.
+    await fs.rm(this.dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 
   url(hash = '') {

@@ -100,6 +100,8 @@ export function loadDrafts(lessonId: string): Promise<Doc<DraftsDoc>> {
   let doc = draftDocs.get(lessonId);
   if (!doc) {
     doc = Doc.load<DraftsDoc>(`drafts/${lessonId}`, () => ({ blocks: {} }));
+    // A failed load (server unreachable) must not be remembered: the next attempt asks again.
+    doc.catch(() => draftDocs.delete(lessonId));
     draftDocs.set(lessonId, doc);
   }
   return doc;

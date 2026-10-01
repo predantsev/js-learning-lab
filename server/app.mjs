@@ -180,7 +180,8 @@ export async function createApp(overrides = {}) {
     handle(req, res).catch((error) => {
       if (res.headersSent) return res.end();
       if (error instanceof HttpError) return sendJson(res, error.status, { error: error.code, message: error.message, ...error.extra }, req.url.startsWith('/lab/') ? { 'access-control-allow-origin': '*' } : {});
-      if (error instanceof StoreError) return sendJson(res, STORE_ERROR_STATUS[error.code] ?? 500, { error: error.code, message: error.message, currentRev: error.currentRev, updatedAt: error.updatedAt });
+      // `file` (name only) lets the app say which learner file is damaged.
+      if (error instanceof StoreError) return sendJson(res, STORE_ERROR_STATUS[error.code] ?? 500, { error: error.code, message: error.message, currentRev: error.currentRev, updatedAt: error.updatedAt, file: error.file ? path.basename(error.file) : undefined });
       if (!config.quiet) console.error('[server] unexpected error:', error);
       return sendJson(res, 500, { error: 'internal', message: 'Unexpected server error.' });
     });
