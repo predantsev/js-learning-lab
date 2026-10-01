@@ -1,0 +1,324 @@
+# Syllabus spine for JS-08. Schema and rules: content/syllabus/README.md. Validate: node scripts/content/validate-syllabus.mjs
+unit: JS-08
+stage: JS
+title: { uk: "Асинхронність: event loop, promises і fetch", en: "Asynchronous code: the event loop, promises and fetch" }
+summary:
+  uk: "Учень передбачає порядок синхронного коду, microtasks і tasks, пише ланцюжки promises та async/await із правильною обробкою відхилень, завантажує JSON-фікстури через fetch із перевіркою статусу й станами завантаження та помилки, а також керує паралельними запитами, скасуванням, застарілими відповідями й обмеженими повторами."
+  en: "The learner predicts the order of synchronous code, microtasks and tasks, writes promise chains and async/await with proper rejection handling, fetches JSON fixtures with status checks and loading/error states, and controls concurrent requests, cancellation, stale responses and bounded retries."
+competencies: [J-11, W-04]
+capstoneStep:
+  mode: in-platform
+  objective:
+    uk: "Завантажити фікстури проєкту через fetch зі станами завантаження, помилки й повтору, скасовувати застарілі запити й зберігати правильний порядок відповідей."
+    en: "Load capstone fixtures through fetch with loading/error/retry states, cancel stale requests and keep response order correct."
+  variants:
+    wishlist:
+      uk: "Бажання w-01…w-06 надходять через fetch із затриманої локальної фікстури окремим запитом на кожен фільтр «бажане/отримане» зі станами завантаження, помилки й повтору; при швидкій зміні фільтра попередній запит скасовується, тож видно лише бажання з актуальним значенням acquired."
+      en: "Wishes w-01…w-06 arrive through fetch from a delayed local fixture, one request per wanted/acquired filter, with loading, error and retry states; a quick filter change aborts the previous request so only wishes with the current acquired value render."
+    planner:
+      uk: "Справи надходять через fetch окремим запитом для фільтрів «невиконані/виконані» зі станами завантаження, помилки й повтору; повільна відповідь для done ніколи не замінює новіший список невиконаних справ із їхніми dueDate і priority."
+      en: "Tasks arrive through fetch, one request per pending/done filter, with loading, error and retry states; a slow response for done never replaces the newer list of pending tasks with their dueDate and priority."
+    habits:
+      uk: "Звички надходять через fetch зі станами завантаження, помилки й повтору, completions кожної звички завантажуються паралельно через allSettled, а звичка, чиї completions не завантажилися, показується з кнопкою повтору, а не з нульовою серією."
+      en: "Habits arrive through fetch with loading, error and retry states, each habit's completions load concurrently via allSettled, and a habit whose completions failed shows a retry control instead of a zero streak."
+    expenses:
+      uk: "Витрати надходять через fetch окремим запитом для кожної category зі станами завантаження, помилки й повтору; запит попередньої категорії скасовується, а підсумок amountMinor рахується лише з останньої відповіді."
+      en: "Expenses arrive through fetch, one request per category, with loading, error and retry states; the previous category's request is aborted and the amountMinor total is computed only from the latest response."
+# Retrieval plan: js-07-01-call-stack-and-errors (call stack) ; js-03-06-higher-order-callbacks (callbacks) ; js-07-03-try-catch-finally (try/catch with await) ; js-04-10-immutable-updates (state copies)
+lessons:
+  - id: js-08-01-timers-and-the-event-loop
+    title: { uk: "Таймери, callbacks і event loop", en: "Timers, callbacks and the event loop" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Predict the console order of synchronous lines and setTimeout callbacks, including setTimeout(fn, 0)."
+      - "Explain why a long synchronous loop delays every timer and click handler and freezes the page."
+    subskills:
+      - { family: J-11, skill: "call stack/tasks/microtasks", depth: intro }
+    misconceptions:
+      - "setTimeout(fn, 0) runs fn immediately."
+      - "A timer's callback runs in parallel with my other code, so a long loop cannot delay it."
+    prerequisites: [js-07-11-capstone-modules-persistence, js-07-01-call-stack-and-errors, js-03-06-higher-order-callbacks]
+    glossary: [event-loop, task-queue, timer, single-threaded]
+    visual: { kind: event-loop, concept: "Stack, browser timers and task queue for a script with two console.log calls around setTimeout(cb, 0): the timer waits outside JavaScript, cb joins the task queue and runs only once the stack is empty; a second run adds a busy loop and shows the queued callback and a click waiting behind it." }
+    difficultConcept: event-loop-async
+    analogy: "One cook prepares one dish at a time; kitchen helpers (the browser's timers and network) pin a ticket on the order rail when their wait is over, and the cook takes the next ticket only after the current dish is finished (limit: the helpers are the browser working outside JavaScript, not extra JavaScript cooks, so your code never runs in parallel, and a timer's delay is a minimum wait, not a start time)."
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict the console order for log A, setTimeout(log B, 0), log C, and for a 100 ms timer registered before a 0 ms timer." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it on the event-loop timeline, then add a two-second busy loop after the timers and observe the delayed callbacks and the unresponsive button." }
+      - { kind: write, runtime: browser-js, summary: "Write a countdown that logs 3, 2, 1 one second apart with chained setTimeout callbacks, keeping a counter button clickable between ticks." }
+    retrieval:
+      - { concept: "the call stack has to empty before anything else runs", from: js-07-01-call-stack-and-errors }
+      - { concept: "passing a function to be called later", from: js-03-06-higher-order-callbacks }
+  - id: js-08-02-promises
+    title: { uk: "Promises: значення, яке надійде пізніше", en: "Promises: a value that arrives later" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Name a promise's states (pending, fulfilled, rejected) and predict when a .then callback runs relative to the synchronous code around it."
+      - "Wrap a setTimeout-based delay in a promise and consume its value with .then."
+    subskills:
+      - { family: J-11, skill: "promise chaining and rejection", depth: intro }
+    misconceptions:
+      - "The function passed to new Promise runs later, when someone calls .then."
+      - "If a promise is already fulfilled, its .then callback runs straight away, before the next line."
+    prerequisites: [js-08-01-timers-and-the-event-loop, js-03-01-functions-and-return]
+    glossary: [promise, promise-state, fulfilled, rejected]
+    visual: { kind: event-loop, concept: "A delay(ms) promise from creation to fulfilment: the executor runs on the stack at once, the timer waits in the browser, resolve moves the promise from pending to fulfilled, and its .then callback is queued and runs after the remaining synchronous code." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict the order of logs inside a new Promise executor, on the line after it, and inside .then for an already-resolved promise." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it, then resolve after a 500 ms timer instead and watch the promise state change from pending to fulfilled on the timeline." }
+      - { kind: write, runtime: browser-js, summary: "Write delay(ms, value) that fulfills with value after ms and use it to show a synthetic record one second after the page loads." }
+    retrieval:
+      - { concept: "a function returning a value versus printing it", from: js-03-01-functions-and-return }
+  - id: js-08-03-chaining-rejection
+    title: { uk: "Ланцюжки, відхилення та finally", en: "Chaining, rejection and finally" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Predict what each .then in a chain receives when the previous step returns a value, returns a promise or throws."
+      - "Place one .catch so a rejection anywhere in the chain is handled, and use .finally for cleanup that runs either way."
+    subskills:
+      - { family: J-11, skill: "promise chaining and rejection", depth: practice }
+    misconceptions:
+      - "After a .catch handles an error, the rest of the chain is skipped."
+      - "A rejection with no .catch disappears quietly."
+    prerequisites: [js-08-02-promises, js-07-03-try-catch-finally]
+    glossary: [promise-chain, unhandled-rejection]
+    visual: { kind: code-trace, concept: "A four-step chain where step 2 throws: the trace highlights the skipped handlers, the .catch that receives the rejection, the value that flows on after it, and the moment .finally runs." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict the value each handler logs in a chain whose second step throws and whose .catch sits before the last .then." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it, move the .catch to the end, then remove it and read the unhandled-rejection report in the console." }
+      - { kind: write, runtime: browser-js, summary: "Write loadLabel(id) as a chain that finds a fixture record, builds its label, falls back to a 'not found' label on rejection and clears a loading flag in .finally." }
+    retrieval:
+      - { concept: "what finally does when an error is thrown", from: js-07-03-try-catch-finally }
+  - id: js-08-04-microtasks-vs-tasks
+    title: { uk: "Спочатку microtasks, потім tasks", en: "Microtasks before tasks" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Predict the full console order for a mix of synchronous logs, promise callbacks, queueMicrotask and setTimeout."
+      - "Explain why the microtask queue is drained completely before the next task and before the browser renders."
+    subskills:
+      - { family: J-11, skill: "call stack/tasks/microtasks", depth: practice }
+    misconceptions:
+      - "setTimeout(fn, 0) and Promise.resolve().then(fn) run in the order they were written."
+      - "Promise callbacks run on another thread, so they can never delay a click or a repaint."
+    prerequisites: [js-08-03-chaining-rejection]
+    glossary: [microtask, microtask-queue]
+    visual: { kind: event-loop, concept: "Stack, microtask queue and task queue for a script mixing setTimeout, Promise.then and queueMicrotask: after the script ends every microtask runs, including ones queued by other microtasks, before the timer task is picked up and the frame is painted." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict the order of eight logs from synchronous code, two .then callbacks, one queueMicrotask and two setTimeout(…, 0) calls." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it, then make one .then schedule another .then and confirm it still runs before both timers." }
+      - { kind: write, runtime: browser-js, summary: "Write a snippet that logs 'sync', 'micro', 'task' in that order using exactly one synchronous log, one microtask and one task." }
+    retrieval:
+      - { concept: "a render function that rebuilds the list from data", from: js-06-13-render-list-from-data }
+  - id: js-08-05-async-await
+    title: { uk: "async/await без блокування програми", en: "async/await" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Rewrite a promise chain as an async function with await and try/catch/finally that behaves identically on rejection."
+      - "Predict which code runs while an async function is paused at await, and what the function returns to its caller."
+    subskills:
+      - { family: J-11, skill: "async/await", depth: intro }
+    misconceptions:
+      - "await blocks the whole program until the value arrives."
+      - "An async function returns its value directly, not a promise."
+    prerequisites: [js-08-04-microtasks-vs-tasks, js-07-03-try-catch-finally]
+    glossary: [async-function, await]
+    visual: { kind: event-loop, concept: "An async function paused at await: its frame leaves the stack, the caller and a click handler keep running, and when the awaited promise settles the rest of the function resumes as a microtask with its local variables intact." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict the console order when main() logs, calls an async load() that awaits delay(100), and logs again without awaiting load()." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it, then await load() inside an async main and compare; click a counter button during the wait to see the page stay responsive." }
+      - { kind: write, runtime: browser-js, summary: "Rewrite the loadLabel chain from the previous lesson as an async function with try/catch/finally and the same output for the not-found case." }
+    retrieval:
+      - { concept: "try/catch around code that can throw", from: js-07-03-try-catch-finally }
+  - id: js-08-06-fetch-basics
+    title: { uk: "fetch: запит, відповідь, статус, JSON", en: "fetch: request, response, status, JSON" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Fetch a bundled JSON fixture with GET, check response.ok and the status before reading the body, and parse it with response.json()."
+      - "Point out the method, URL, headers, status, Content-Type and body of a request and its response in the network panel."
+      - "Explain why fetch fulfills, not rejects, when the fixture server answers 404 or 500."
+    subskills:
+      - { family: W-04, skill: "HTTP methods/status/headers", depth: intro }
+      - { family: W-04, skill: "JSON content types", depth: intro }
+      - { family: W-04, skill: "fetch response checks", depth: intro }
+    misconceptions:
+      - "fetch rejects whenever the server answers 404 or 500."
+      - "response.json() returns the data itself, not a promise."
+    prerequisites: [js-08-05-async-await, js-07-04-json]
+    glossary: [fetch, http-method, http-header, status-code, content-type]
+    visual: { kind: sequence, concept: "Page, fetch and the local fixture server over time: a GET with its headers goes out, a response with status 200, Content-Type: application/json and a body comes back, and the code checks ok before calling response.json(); a replay with a missing path shows a 404 that still fulfills." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict status, ok and the parsed result when fetching the bundled records fixture, a missing fixture path and a fixture served as text/plain." }
+      - { kind: run-change, runtime: browser-js, summary: "Run the three requests offline against the bundled fixtures, inspect method, status and Content-Type in the network panel, then add an ok check that turns the 404 into a thrown Error." }
+      - { kind: write, runtime: browser-js, summary: "Write getJson(url) that rejects with an Error carrying the status when !response.ok, checks that Content-Type is JSON, and returns the parsed body." }
+    retrieval:
+      - { concept: "what JSON.parse returns and when it throws", from: js-07-04-json }
+  - id: js-08-07-failures-loading-error
+    title: { uk: "Збої мережі, стани завантаження й помилки", en: "Network failures, loading and error states" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Tell an HTTP error (fetch fulfilled, ok is false) from a network failure (fetch rejected) and show a distinct message for each."
+      - "Model a request as idle, loading, success or error and add a timeout that turns a hung request into an error state."
+    subskills:
+      - { family: W-04, skill: "network/offline failures", depth: intro }
+      - { family: J-11, skill: "races/retry/timeouts", depth: intro }
+    misconceptions:
+      - "A spinner without a timeout is fine; a slow request always finishes eventually."
+      - "A network failure and a 500 response are the same problem and deserve the same message."
+    prerequisites: [js-08-06-fetch-basics]
+    glossary: [network-error, loading-state, request-timeout]
+    visual: { kind: sequence, concept: "The same request under four fixture-control modes: success, a 500, offline and a hung response cut off by a timeout, each ending in a different UI state." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict which UI state appears for four fixture-control modes: ok, 500, offline, and a ten-second delay with a three-second timeout." }
+      - { kind: run-change, runtime: browser-js, summary: "Run each mode with the local fixture controls, then lower the provided withTimeout helper to one second and watch a normal slow request start failing." }
+      - { kind: write, runtime: browser-js, summary: "Write load() and renderRequestState(state) so the view moves through loading to success or error with distinct messages for HTTP, network and timeout failures." }
+    retrieval:
+      - { concept: "showing a validation message next to the field it concerns", from: js-06-16-capstone-ui }
+  - id: js-08-08-combinators-sequential-concurrent
+    title: { uk: "all/allSettled/race/any; послідовно чи паралельно", en: "all/allSettled/race/any; sequential vs concurrent" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Choose Promise.all, allSettled, race or any for a stated requirement (all-or-nothing, partial results, first to settle, first success) and predict each result when one input rejects."
+      - "Compare the total time of awaiting three fixture requests one by one with starting them together."
+    subskills:
+      - { family: J-11, skill: "all/allSettled/race/any selection", depth: intro }
+      - { family: J-11, skill: "cleanup and sequential vs concurrent requests", depth: intro }
+    misconceptions:
+      - "An await inside a for loop runs the requests at the same time."
+      - "Promise.all waits for every promise to finish even after one rejects."
+    prerequisites: [js-08-07-failures-loading-error, js-05-01-map]
+    glossary: [promise-combinator, concurrent-requests, partial-failure]
+    visual: { kind: event-loop, concept: "Three delayed fixture promises on one timeline: awaited one after another in a loop versus started together and passed to all, allSettled, race and any, with each combinator's settle moment and result marked when the second request rejects." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict the result and elapsed time of all, allSettled, race and any over three delayed fixtures (300 ms ok, 100 ms reject, 200 ms ok)." }
+      - { kind: run-change, runtime: browser-js, summary: "Run them, then turn a sequential for-of with await into map plus Promise.all and compare the measured times." }
+      - { kind: write, runtime: browser-js, summary: "Write loadDashboard() that requests three fixtures concurrently with allSettled, renders whatever succeeded and lists the ones that failed." }
+    retrieval:
+      - { concept: "map builds a new array from every element", from: js-05-01-map }
+  - id: js-08-09-cancellation-abort
+    title: { uk: "Скасування через AbortController", en: "Cancellation with AbortController" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Cancel an in-flight fetch with an AbortController and tell an AbortError from a real failure in the catch block."
+      - "Abort a request as soon as it is no longer needed (a new search, a closed view) and remove the listener or timer that belonged to it."
+    subskills:
+      - { family: J-11, skill: "cancellation/AbortController", depth: intro }
+    misconceptions:
+      - "If I stop waiting for a promise, the work behind it stops too."
+      - "Aborting a request undoes whatever the server has already done."
+    prerequisites: [js-08-08-combinators-sequential-concurrent, js-06-10-events-default-behavior]
+    glossary: [abort-controller, abort-signal, cancellation]
+    visual: { kind: sequence, concept: "Page, AbortController and the fixture server: a request starts with a signal, the user types again, abort() fires, the pending fetch rejects with an AbortError that the code deliberately ignores, and only the new request continues to render." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict what the catch block receives and what the UI shows when a two-second fixture request is aborted after 500 ms." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it with the abort button, then pass AbortSignal.timeout(1000) instead and compare the error name with the manual abort." }
+      - { kind: write, runtime: browser-js, summary: "Write searchRecords(query) that aborts the previous request before starting a new one and shows no error message for an AbortError." }
+    retrieval:
+      - { concept: "removing a listener once it is no longer needed", from: js-06-10-events-default-behavior }
+  - id: js-08-10-stale-responses-retry
+    title: { uk: "Застарілі відповіді й повторні спроби", en: "Stale responses and retry" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Reproduce a race in which a slow earlier response overwrites a newer result, and fix it with a latest-wins guard (request id or abort)."
+      - "Implement a bounded retry with a growing delay that retries only network errors and 5xx responses and gives up with a clear error."
+    subskills:
+      - { family: J-11, skill: "races/retry/timeouts", depth: practice }
+      - { family: J-11, skill: "cleanup and sequential vs concurrent requests", depth: practice }
+    misconceptions:
+      - "Responses arrive in the order the requests were sent."
+      - "Retrying until it works is always safe, whatever the error."
+    prerequisites: [js-08-09-cancellation-abort, js-04-10-immutable-updates]
+    glossary: [stale-response, race-condition, latest-wins, bounded-retry]
+    visual: { kind: sequence, concept: "Two searches over time: slow request A and fast request B overlap, B renders, then A's late response overwrites it; the fixed run drops A by request id, and a retry lane shows attempts 1–3 with growing delays ending in success or a final error." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict which result stays on screen when the query 'la' takes 800 ms and 'lamp' takes 200 ms, typed in that order." }
+      - { kind: run-change, runtime: browser-js, summary: "Run the sequence with the fixture delay controls, add a request-id check, run it again, then compare with aborting the older request." }
+      - { kind: write, runtime: browser-js, summary: "Write fetchWithRetry(url, { attempts: 3 }) that retries only network errors and 5xx with a growing delay and stops immediately on a 4xx." }
+    retrieval:
+      - { concept: "replacing the results list with a new array instead of mutating it", from: js-04-10-immutable-updates }
+  - id: js-08-11-debug-async
+    title: { uk: "Налагодження: застаріла відповідь, пропущений await, необроблене відхилення", en: "Debug: stale response, missing await, unhandled rejection" }
+    kind: instructional
+    minutes: 15
+    objectives:
+      - "Diagnose a missing await, an unhandled rejection and a stale response from the console and the event-loop timeline, and state the cause of each."
+      - "Repair a fetch helper that treats a 500 response as success."
+    subskills:
+      - { family: J-11, skill: "promise chaining and rejection", depth: assess }
+      - { family: J-11, skill: "async/await", depth: assess }
+      - { family: J-11, skill: "races/retry/timeouts", depth: assess }
+      - { family: W-04, skill: "fetch response checks", depth: assess }
+    misconceptions:
+      - "If the console shows no red error, the async code worked."
+      - "Adding await in more places fixes any timing bug."
+    prerequisites: [js-08-10-stale-responses-retry]
+    glossary: [floating-promise]
+    visual: { kind: event-loop, concept: "The seeded run replayed on the event-loop timeline: the un-awaited save settles after the 'saved' message, a rejection with no handler surfaces as an unhandled rejection, and the slow first search response lands after the fresh one." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Before running, match four seeded defects (missing await, no rejection handler, no ok check, no latest-wins guard) to four wrong outputs." }
+      - { kind: run-change, runtime: browser-js, summary: "Run the seeded program with the fixture controls and match each console line and screen state to your prediction." }
+      - { kind: debug, runtime: browser-js, summary: "Repair all four defects so the save finishes before 'saved' appears, every rejection is handled, a 500 shows an error and only the latest search renders." }
+    retrieval:
+      - { concept: "an empty catch that hides a failure", from: js-07-09-debug-swallowed-errors }
+  - id: js-08-12-independent-fixture-fetch
+    title: { uk: "Самостійно: завантаження фікстур зі скасуванням, повтором і правильним порядком", en: "Independent: fixture fetch with cancel, retry and ordering" }
+    kind: assessment
+    minutes: 25
+    objectives:
+      - "Implement, without hints, a fixture loader with status and Content-Type checks, loading/error states, cancel-on-new-request, a bounded retry, concurrent detail loading and correct response ordering."
+      - "Order the output of a mixed synchronous/microtask/task snippet and choose the right promise combinator for two stated requirements."
+    subskills:
+      - { family: J-11, skill: "call stack/tasks/microtasks", depth: assess }
+      - { family: J-11, skill: "all/allSettled/race/any selection", depth: assess }
+      - { family: J-11, skill: "cancellation/AbortController", depth: assess }
+      - { family: J-11, skill: "cleanup and sequential vs concurrent requests", depth: assess }
+      - { family: W-04, skill: "network/offline failures", depth: assess }
+      - { family: W-04, skill: "HTTP methods/status/headers", depth: assess }
+      - { family: W-04, skill: "JSON content types", depth: assess }
+    misconceptions: []
+    prerequisites: [js-08-11-debug-async]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: independent, runtime: browser-js, summary: "No-hint task: a synthetic library-catalog search over delayed local fixtures that checks method, status and Content-Type, aborts stale searches, retries a 503 at most twice, loads three detail fixtures with allSettled and shows distinct offline, HTTP and timeout states; hidden fixtures reorder responses." }
+      - { kind: write, runtime: browser-js, summary: "Explain-level items: order eight logs from a mixed sync/microtask/task snippet and pick all, allSettled, race or any for two stated requirements, one sentence each." }
+    retrieval:
+      - { concept: "validating parsed data before using it", from: js-07-05-persist-reload }
+  - id: js-08-13-capstone-async-load
+    title: { uk: "Проєкт: асинхронне завантаження зі станами", en: "Capstone: async load with states" }
+    kind: capstone-step
+    minutes: 25
+    objectives:
+      - "Load the capstone fixtures through fetch with loading, error and retry states, abort superseded requests and keep only the latest response on screen."
+    subskills:
+      - { family: J-11, skill: "async/await", depth: practice }
+    misconceptions: []
+    prerequisites: [js-08-12-independent-fixture-fetch, js-07-11-capstone-modules-persistence]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: write, runtime: browser-js, summary: "In the capstone workspace, add a data/ module whose async loadFixtures() fetches the domain's fixture JSON, validates each record and drives loading, error and retry states in the UI." }
+      - { kind: run-change, runtime: browser-js, summary: "Switch the fixture controls to slow, failing and offline modes and confirm each state, the retry button, and that a fast filter change never shows stale records." }
+    retrieval:
+      - { concept: "validate on load and keep invalid data aside", from: js-07-11-capstone-modules-persistence }
