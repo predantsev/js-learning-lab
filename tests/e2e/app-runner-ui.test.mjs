@@ -39,6 +39,7 @@ test('an infinite loop is stopped by the loop budget with localized guidance and
     await runButton(page).click();
     const card = page.locator('.error-card');
     await card.waitFor({ timeout: 10_000 });
+    await page.locator('.ws-status.ws-status-done').waitFor(); // the error arrives before "done"
     assert.equal((await status(page).innerText()).trim(), t('uk', 'ws.finishedErrors'));
     assert.match(await card.innerText(), new RegExp(t('uk', 'ws.runtimeError')));
     assert.match(await card.innerText(), new RegExp(t('uk', 'ws.atLine', { file: 'index.js', line: 3 })));

@@ -249,7 +249,7 @@ test('rendered screens: every visible text element reaches WCAG AA contrast in a
     const screens = [
       ['lesson page 2', () => richLessonScreen(page, lab)],
       ['lesson page 1', async () => { await page.goto(lab.url(`#/lesson/${L1}/1`)); await page.locator('#block-basics-visual .viz').waitFor(); }],
-      ['course map', async () => { await page.goto(lab.url('#/course')); await page.locator('.unit-card').waitFor(); }],
+      ['course map', async () => { await page.goto(lab.url('#/course')); await page.locator('.unit-card').first().waitFor(); }],
       ['settings', async () => { await page.goto(lab.url('#/settings')); await page.locator('.segmented').first().waitFor(); }],
       ['glossary', async () => { await page.goto(lab.url('#/glossary')); await page.locator('.glossary-item').first().waitFor(); }],
     ];

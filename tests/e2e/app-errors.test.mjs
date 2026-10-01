@@ -150,6 +150,8 @@ test('a sandbox that cannot start is explained; the editor keeps the code and a 
     await context.unroute(/\/sandbox\/frame\.html/);
     await page.locator('.ws-actions').getByRole('button', { name: t('uk', 'ws.run') }).click();
     await page.locator('.console').getByText('still mine').waitFor();
+    // Output arrives before the run reports that it finished.
+    await page.locator('.ws-status.ws-status-done').waitFor();
     assert.equal((await status.innerText()).trim(), t('uk', 'ws.finished'));
     await waitSaved(page);
     assert.deepEqual(problems, []);

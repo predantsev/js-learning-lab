@@ -166,7 +166,7 @@ test('a failed self-check is recorded without a pass; skipping a whole unit skip
 
     // Skip the whole unit from the course map (asks for confirmation first).
     await page.goto(lab.url('#/course'));
-    const unit = page.locator('.unit-card');
+    const unit = page.locator('.unit-card[aria-labelledby="unit-JS-01"]');
     await unit.waitFor();
     page.once('dialog', (d) => d.accept());
     await unit.getByRole('button', { name: t('uk', 'course.skipUnit') }).click();
