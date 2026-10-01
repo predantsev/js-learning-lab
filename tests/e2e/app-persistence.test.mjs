@@ -138,6 +138,33 @@ test('a failed write is reported honestly, offers retry and download, and retry 
   }
 });
 
+test('a full disk is reported as not saved with its cause, and saving resumes when space is back', async () => {
+  const lab = await Lab.start({ distDir });
+  try {
+    const { page, problems, context } = await openApp(browser, lab);
+    await onboard(page);
+    await page.goto(lab.url(`#/lesson/${L1}/2`));
+    await page.locator('#block-basics-exercise').waitFor();
+    await waitSaved(page);
+    assert.deepEqual(await lab.fault('disk-full'), { fault: 'disk-full' });
+    const code = "import { label } from './label.js';\nconsole.log(label, 'no space left');\n";
+    await replaceEditor(page, code);
+    const banner = page.getByRole('alert').filter({ hasText: t('uk', 'save.failedTitle') });
+    await banner.waitFor({ timeout: 5000 });
+    assert.match(await banner.innerText(), /disk-full: No space left on device/, 'the cause is shown verbatim');
+    assert.equal((await saveIndicator(page).innerText()).trim(), t('uk', 'save.failed'));
+    assert.equal(await draftFiles(lab), null);
+    await lab.fault(null);
+    await banner.getByRole('button', { name: t('uk', 'save.retry') }).click();
+    await waitSaved(page);
+    assert.equal((await draftFiles(lab))['index.js'], code);
+    assert.deepEqual(problems, []);
+    await context.close();
+  } finally {
+    await lab.dispose();
+  }
+});
+
 test('two tabs editing the same data get a conflict; both resolutions work', async () => {
   const lab = await Lab.start({ distDir });
   try {

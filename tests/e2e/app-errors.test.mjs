@@ -67,6 +67,30 @@ test('a missing lesson and a corrupt lesson file show distinct states; learner d
   }
 });
 
+test('a corrupt course index stops with a bilingual explanation and touches no learner data', async () => {
+  const lab = await Lab.start({ distDir });
+  const indexFile = path.join(distDir, 'content', 'index.json');
+  const original = await fs.readFile(indexFile, 'utf8');
+  try {
+    await lab.seed('profile', PROFILE);
+    await fs.writeFile(indexFile, original.slice(0, Math.floor(original.length / 2)));
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await page.goto(lab.url('#/course'));
+    const fatal = page.locator('.state-card.fatal');
+    await fatal.waitFor();
+    const text = await fatal.innerText();
+    assert.match(text, new RegExp(t('uk', 'error.contentCorrupt').slice(0, 30)));
+    assert.match(text, new RegExp(t('en', 'error.contentCorrupt').slice(0, 30)));
+    assert.ok(await fatal.getByRole('button', { name: new RegExp(t('uk', 'error.reload')) }).isVisible(), 'offers a reload');
+    assert.deepEqual(await lab.doc('profile'), PROFILE, 'learner data untouched');
+    await ctx.close();
+  } finally {
+    await fs.writeFile(indexFile, original);
+    await lab.dispose();
+  }
+});
+
 test('an unreachable server: work stays, nothing claims saved, unloaded lessons explain, restart recovers', async () => {
   const lab = await Lab.start({ distDir });
   try {
