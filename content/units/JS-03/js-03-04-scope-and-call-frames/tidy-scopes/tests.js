@@ -13,8 +13,15 @@ test('builds the label from its arguments', () => {
 
 test('does not change variables outside itself', () => {
   const before = leftovers.map((key) => scope[key]);
-  scope.makeLabel('X', 1);
-  scope.makeLabel('Y', null);
+  // A missing price first and a real one last: the program's own last call used null, so a
+  // leftover top-level variable cannot end up with its old value by coincidence.
+  for (const [name, price] of [['Y', null], ['X', 1]]) {
+    try {
+      scope.makeLabel(name, price);
+    } catch {
+      // A makeLabel that throws is reported by the other checks; here only outside changes count.
+    }
+  }
   leftovers.forEach((key, i) => expect(scope[key], `top-level ${key} after two calls`).toBe(before[i]));
 });
 
