@@ -210,7 +210,7 @@ export const en: Dict = {
 
   'err.guide.syntax': 'This is a syntax error: JavaScript could not read the code. Look at the reported line and the line before it — a bracket, quote or comma is often missing.',
   'err.guide.import': 'There is a problem with an import. Check the file path: in the browser it starts with ./ and ends with the extension, for example ./utils.js.',
-  'err.guide.ReferenceError': 'ReferenceError: the code uses a name JavaScript does not know at this point. Check the spelling, whether it is declared, and whether it is visible in this scope.',
+  'err.guide.ReferenceError': 'ReferenceError: the code uses a name JavaScript does not know at this point. Check that the name has no typo, that text is inside quotes, and that the name already exists before this line.',
   'err.guide.TypeError': 'TypeError: a value was not of the type the code expected. Most often something that is not a function was called, or a property of undefined or null was read.',
   'err.guide.RangeError': 'RangeError: a value went outside the allowed range. “Maximum call stack size exceeded” means recursion without a stop condition.',
   'err.guide.SyntaxError': 'SyntaxError while running: most often JSON.parse received invalid text.',
