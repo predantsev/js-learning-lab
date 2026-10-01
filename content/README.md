@@ -118,7 +118,11 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields and
   prompt: { uk, en }
   code: |                         # optional; shown highlighted; may use %%key%% with block `strings`
     console.log([1, 2, 3].filter((n) => n > 1).length);
-  verify: { logs: ["2"] }         # exact console lines (and `error: TypeError` when it throws)
+  lang: js                        # optional highlighting of `code`: js (default), html, css, json, ts…
+  runnable: false                 # optional: hide "Run and check" after answering (code that is not
+                                  #   JavaScript, e.g. lang: html, or that is not meant to run)
+  verify: { logs: ["2"] }         # exact console lines (and `error: TypeError` when it throws);
+                                  #   code that does not compile: verify: { logs: [], error: SyntaxError }
   answer:
     type: choice                  # choice | multi | text | order
     options:
@@ -139,6 +143,8 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields and
   tryIt: { uk, en }               # what to change and observe
   strings: { key: { uk, en } }    # optional
   expectError: true               # only when the error is the point of the example
+  preview: true                   # optional: show the Page tab (default: true for an .html entry,
+                                  #   browser-react and concept-preview; false for a .js entry)
 
 - id: keep-affordable
   kind: exercise
@@ -150,12 +156,14 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields and
   editable: [index.js]            # default: every starter file; other files are read-only
   title: { uk, en }
   instructions: { uk, en }
-  testTitles: { "test name in tests.js": { uk, en } }    # one per test
+  testTitles: { "test name in tests.js": { uk, en } }    # one per test; inline Markdown (`code`) is fine
   hints: { nudge: { uk, en }, explanation: { uk, en } }  # omit for mode: independent
   solutionNote: { uk, en }        # shown with the solution: why it works
   feedback:
-    - when: { test: "test name" } # or { error: ReferenceError }
-      message: { uk, en }
+    - when: { test: "test name" } # or { error: ReferenceError } — shown next to that error, whether the
+      message: { uk, en }         #   program threw it while loading or a test threw it (shown with that
+                                  #   test); { error: SyntaxError } also matches code that does not compile
+  preview: false                  # optional, as for examples
   capabilities: { network: lab }  # optional: none (default) | lab; also loopBudgetMs, testTimeoutMs
   starterPasses: true             # only for rare exercises where the starter is already correct by design
 
@@ -197,6 +205,11 @@ Commands in `local-task` blocks must be commands you actually ran; record the to
 | `concept-preview` | React Native components through `react-native-web` | Always add `limits`: no native rendering, device APIs or performance. |
 | `isolated-node` | Real Node.js in an isolated child process | For Node-stage practice: real `node:http` on loopback, `node:fs` in a scratch folder, `node:sqlite`, streams. |
 
+### Pages, images and links (`browser-js` with an `.html` entry)
+
+- **Images: project `.svg` files** (they are text, so they live in the block directory like any other file). They show when referenced from `<img src="img/logo.svg">`, from `url(img/dot.svg)` in a linked `.css` file or an inline `<style>` (resolved from that stylesheet's or page's folder), and from JavaScript (`img.src = 'img/logo.svg'`). Binary images (`.png`, `.jpg`) are not supported; use SVG, or a `data:` URL. A `src` that matches no project file stays exactly as written, so the browser shows the `alt` text (use this on purpose to teach `alt`); the console names the missing file. External addresses (`https://…`) are blocked — the sandbox has no network — and the console says so.
+- **Links between pages:** `<a href="about.html">` to another `.html` file of the project opens that page in the result panel (the learner sees its name and a way back to the entry page). Checks always run against the block's `entry`. Links to other addresses are blocked with an explanation.
+
 ## tests.js
 
 Tests run after the learner's program finished loading (top-level `await` included). They are ES modules in the same sandbox: import learner modules by path (`import { total } from './cart.js'`).
@@ -214,6 +227,17 @@ test('keeps only items at or under the limit', () => {
 - DOM: `screen.$(sel)`, `screen.$$(sel)`, `screen.byRole(role, { name })`, `screen.allByRole`, `screen.byText`, `screen.byLabel`, `screen.nameOf(el)`, `screen.text()`; `await user.click(el)`, `user.type(el, text)`, `user.fill`, `user.clear`, `user.select`, `user.check`, `user.press('Enter', el)`, `user.submit(form)` (returns `{ prevented }`).
 - Async: `await sleep(ms)`, `await settle()`, `await waitFor(() => condition)`.
 - `spy(fn?)`, `mockFetch({ '/api/items': { status: 200, body: […] , delay: 50 } })` → `{ calls, restore }`, `storage` (the exercise's `localStorage`), `L` (localized strings), `files`.
+- `await rerun({ globals })` — runs the entry file again as a fresh module (new top-level bindings) with the given values defined as globals, and returns `{ logs, rawLogs, alerts, scope, error }` of that run only (its output does not reach the learner's console or `logs()`; `error` is what it threw, or `null`). Use it to check a top-level script against several inputs, including the boundaries:
+
+  ```js
+  // index.js reads `temperature` (given as a global by a read-only input.js: globalThis.temperature ??= 30)
+  test('25 and below is cool', async () => {
+    expect((await rerun({ globals: { temperature: 25 } })).logs).toEqual([L.cool]);
+    expect((await rerun({ globals: { temperature: -4 } })).logs).toEqual([L.cool]);
+  });
+  ```
+
+  Only the entry module is evaluated again: modules it imports and the page (DOM) are shared, not reset. Await each `rerun` before the next; injected globals are removed after the test. Only globals can be injected: a value declared in the learner's file (`const temperature = 30`) or imported from another module cannot be replaced, so the starter reads its input from a global, as in the example.
 
 Write failure-proof tests: check observable behavior, cover the boundary cases the lesson teaches, and make each test name a sentence a learner can act on (it is translated in `testTitles`).
 

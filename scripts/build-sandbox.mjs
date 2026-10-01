@@ -58,7 +58,10 @@ export async function buildSandbox({ quiet = false } = {}) {
       if (!quiet) console.log(`  sandbox lib ${lib.spec} → libs/${lib.file} (${names.length} exports)`);
     }
   } finally {
-    process.env.NODE_ENV = previousEnv;
+    // Assigning undefined would store the string "undefined", and the application build that
+    // follows in the same process would then ship React's development build.
+    if (previousEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
   }
 }
 
