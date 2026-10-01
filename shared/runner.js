@@ -39,7 +39,7 @@ function defaultHtml(entry, runtime, lang) {
  * Build the sandbox payload from project files.
  * @param {{files:Record<string,string>, entry:string, runtime:string, tests?:{path:string, source:string}|null,
  *          storage?:Record<string,string>, options?:object, sandboxOrigin:string, lang?:string}} input
- * @returns {{payload:object}|{errors:object[]}}
+ * @returns {{payload: Record<string, any>, meta: Record<string, any>} | {errors: any[]}}
  */
 export function prepareRun(input) {
   const { entry, runtime, tests = null, sandboxOrigin, lang = 'uk' } = input;
