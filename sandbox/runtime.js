@@ -184,7 +184,9 @@
   for (const level of ['log', 'info', 'warn', 'error', 'debug', 'table', 'dir']) {
     const original = console[level].bind(console);
     console[level] = (...args) => {
-      original(...args);
+      // Once the console limit is reached, stop feeding the real console too: a flood of native
+      // console calls delays this frame's messages and makes a guarded loop look unresponsive.
+      if (!consoleSuppressed) original(...args);
       record(level, args, level === 'dir' || level === 'debug' ? 'log' : level);
     };
   }

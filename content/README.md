@@ -63,7 +63,7 @@ The validator runs every example, every exercise fixture and every verifiable pr
 2. **Hints never contain the exact solution line** (not in `nudge`, not in `explanation`): that bypasses the "solution viewed" record. Explain the idea with a *different* but similar example.
 3. **An exercise or question never repeats an example from the explanation.** Change the situation so the idea has to be applied.
 4. **`selfCheck` items are shown alone** (no neighbouring blocks, no example editor, no hints). Write them self-contained: no "above", "below", "on the right", "the next example".
-5. **Feedback must be true in every case in which its test fails**: the app shows the feedback of every failing test at once.
+5. **Feedback must be true in every case in which its test fails** — including when the learner's code throws inside that test: the app shows the feedback of every failing test at once. Phrase it as what is required, not as what "happened".
 6. **Feedback on `SyntaxError` matches errors found before the code runs.** The learner then sees the card "The code could not start" with the original parser message, not the word `SyntaxError` — describe what the learner actually sees.
 7. **Describe the interface only after checking it**: quote button and tab names from `app/src/i18n/uk.ts` / `en.ts` and run the example yourself.
 8. **Add `alt` fixtures for the obvious longhand variants** of a solution (for example `18 + 18 + 18` next to `18 * 3`).
