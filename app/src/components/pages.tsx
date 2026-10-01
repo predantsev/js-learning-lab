@@ -1,5 +1,5 @@
 // Screens other than the lesson: onboarding, course map, bookmarks, review, glossary, settings, project.
-import { useMemo, useState } from 'react';
+import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '../lib/api';
 import { loadLesson } from '../lib/content';
 import { type Key, formatDate, pick } from '../lib/i18n';
@@ -220,14 +220,22 @@ export function GlossaryPage({ term }: { term: string | null }) {
   const terms = useMemo(() => [...app().glossary.values()], []);
   const q = query.trim().toLowerCase();
   const shown = terms.filter((x) => !q || x.term.toLowerCase().includes(q) || pick(x.name, lang).toLowerCase().includes(q) || (x.aliases ?? []).some((a) => a.toLowerCase().includes(q)));
+  // A link to one term (from a lesson popover or "see also") lands on that term, not the page top.
+  useEffect(() => {
+    const target = term ? document.getElementById(`term-${term}`) : null;
+    if (!target) return;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: 'center' });
+  }, [term]);
   return (
     <div className="page">
       <header className="page-heading"><div><h1>{t('glossary.title')}</h1><p className="page-lead">{t('glossary.intro')}</p></div></header>
+      {term && !app().glossary.has(term) && <p className="ws-note" role="status">{t('term.missing')}</p>}
       <label className="search"><span className="sr-only">{t('glossary.search')}</span><input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t('glossary.search')} /></label>
       {shown.length === 0 ? <p className="ws-empty">{t('glossary.empty')}</p> : (
         <dl className="glossary">
           {shown.map((x) => (
-            <div key={x.id} id={`term-${x.id}`} className={x.id === term ? 'glossary-item current' : 'glossary-item'}>
+            <div key={x.id} id={`term-${x.id}`} tabIndex={-1} className={x.id === term ? 'glossary-item current' : 'glossary-item'}>
               <dt><span className="term-name" lang="en">{x.term}</span>{x.name && <span className="term-local"> · {pick(x.name, lang)}</span>}</dt>
               <dd>
                 <Html html={x.definition[lang]} lang={lang} className="prose" />
@@ -275,8 +283,17 @@ export function SettingsPage() {
       setTimeout(() => location.reload(), 900);
     } catch (e) { setMessage(e instanceof ApiError ? e.message : String(e)); }
   };
+  // ARIA radio group: one tab stop (the selected option); arrow keys move and select.
+  const onRadioKey = <T extends string>(event: KeyboardEvent<HTMLDivElement>, value: T, options: T[], onChange: (v: T) => void) => {
+    const delta = event.key === 'ArrowRight' || event.key === 'ArrowDown' ? 1 : event.key === 'ArrowLeft' || event.key === 'ArrowUp' ? -1 : 0;
+    if (delta === 0) return;
+    event.preventDefault();
+    const index = (options.indexOf(value) + delta + options.length) % options.length;
+    onChange(options[index]);
+    event.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]')[index]?.focus();
+  };
   const radio = <T extends string>(name: string, value: T, options: T[], labelKey: (v: T) => Key, onChange: (v: T) => void) => (
-    <div className="segmented" role="radiogroup" aria-label={name}>{options.map((o) => <button key={o} type="button" role="radio" aria-checked={value === o} className={value === o ? 'segment active' : 'segment'} onClick={() => onChange(o)}>{t(labelKey(o))}</button>)}</div>
+    <div className="segmented" role="radiogroup" aria-label={name} onKeyDown={(e) => onRadioKey(e, value, options, onChange)}>{options.map((o) => <button key={o} type="button" role="radio" aria-checked={value === o} tabIndex={value === o ? 0 : -1} className={value === o ? 'segment active' : 'segment'} onClick={() => onChange(o)}>{t(labelKey(o))}</button>)}</div>
   );
   return (
     <div className="page settings">
