@@ -145,8 +145,9 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields and
   hints: { nudge: { uk, en }, explanation: { uk, en } }  # omit for mode: independent
   solutionNote: { uk, en }        # shown with the solution: why it works
   feedback:
-    - when: { test: "test name" } # or { error: ReferenceError } — shown next to that error;
-      message: { uk, en }         #   { error: SyntaxError } also matches code that does not compile
+    - when: { test: "test name" } # or { error: ReferenceError } — shown next to that error, whether the
+      message: { uk, en }         #   program threw it while loading or a test threw it (shown with that
+                                  #   test); { error: SyntaxError } also matches code that does not compile
   preview: false                  # optional, as for examples
   capabilities: { network: lab }  # optional: none (default) | lab; also loopBudgetMs, testTimeoutMs
   starterPasses: true             # only for rare exercises where the starter is already correct by design
@@ -211,6 +212,17 @@ test('keeps only items at or under the limit', () => {
 - DOM: `screen.$(sel)`, `screen.$$(sel)`, `screen.byRole(role, { name })`, `screen.allByRole`, `screen.byText`, `screen.byLabel`, `screen.nameOf(el)`, `screen.text()`; `await user.click(el)`, `user.type(el, text)`, `user.fill`, `user.clear`, `user.select`, `user.check`, `user.press('Enter', el)`, `user.submit(form)` (returns `{ prevented }`).
 - Async: `await sleep(ms)`, `await settle()`, `await waitFor(() => condition)`.
 - `spy(fn?)`, `mockFetch({ '/api/items': { status: 200, body: […] , delay: 50 } })` → `{ calls, restore }`, `storage` (the exercise's `localStorage`), `L` (localized strings), `files`.
+- `await rerun({ globals })` — runs the entry file again as a fresh module (new top-level bindings) with the given values defined as globals, and returns `{ logs, rawLogs, alerts, scope, error }` of that run only (its output does not reach the learner's console or `logs()`; `error` is what it threw, or `null`). Use it to check a top-level script against several inputs, including the boundaries:
+
+  ```js
+  // index.js reads `temperature` (given as a global by a read-only input.js: globalThis.temperature ??= 30)
+  test('25 and below is cool', async () => {
+    expect((await rerun({ globals: { temperature: 25 } })).logs).toEqual([L.cool]);
+    expect((await rerun({ globals: { temperature: -4 } })).logs).toEqual([L.cool]);
+  });
+  ```
+
+  Only the entry module is evaluated again: modules it imports and the page (DOM) are shared, not reset. Await each `rerun` before the next; injected globals are removed after the test. Only globals can be injected: a value declared in the learner's file (`const temperature = 30`) or imported from another module cannot be replaced, so the starter reads its input from a global, as in the example.
 
 Write failure-proof tests: check observable behavior, cover the boundary cases the lesson teaches, and make each test name a sentence a learner can act on (it is translated in `testTitles`).
 

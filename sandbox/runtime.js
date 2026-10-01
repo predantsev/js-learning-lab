@@ -173,21 +173,28 @@
     if (flushTimer === null) flushTimer = nativeSetTimeout(flush, 30);
   }
   const captured = [];
+  // While a test re-evaluates the entry module (rerun), its output goes to that rerun only: not to
+  // the learner's console and not to logs().
+  let rerunSink = null;
+  const record = (level, args, shownLevel = level) => {
+    if (rerunSink) { rerunSink.push({ level, args }); return; }
+    captured.push({ level, args });
+    emitConsole(shownLevel, args);
+  };
   for (const level of ['log', 'info', 'warn', 'error', 'debug', 'table', 'dir']) {
     const original = console[level].bind(console);
     console[level] = (...args) => {
       original(...args);
-      captured.push({ level, args });
-      emitConsole(level === 'dir' || level === 'debug' ? 'log' : level, args);
+      record(level, args, level === 'dir' || level === 'debug' ? 'log' : level);
     };
   }
   const originalAssert = console.assert.bind(console);
   console.assert = (condition, ...args) => {
     originalAssert(condition, ...args);
-    if (!condition) { captured.push({ level: 'error', args: ['Assertion failed:', ...args] }); emitConsole('error', ['Assertion failed:', ...args]); }
+    if (!condition) record('error', ['Assertion failed:', ...args]);
   };
   console.clear = () => { emitSystem('console-cleared'); };
-  window.alert = (message) => { captured.push({ level: 'alert', args: [message] }); emitConsole('alert', [String(message)]); };
+  window.alert = (message) => { if (rerunSink) rerunSink.push({ level: 'alert', args: [message] }); else { captured.push({ level: 'alert', args: [message] }); emitConsole('alert', [String(message)]); } };
   window.confirm = () => { emitSystem('no-confirm'); return false; };
   window.prompt = () => { emitSystem('no-prompt'); return null; };
 
@@ -266,7 +273,7 @@
         throw error;
       },
     },
-    __jsllScope: { value: (file, getters) => { scopes.set(file, getters); } },
+    __jsllScope: { value: (file, getters) => { if (rerunScope) rerunScope(file, getters); else scopes.set(file, getters); } },
     __jsllResolve: {
       value: (spec, from) => {
         if (typeof spec !== 'string' || !(spec.startsWith('./') || spec.startsWith('../') || spec.startsWith('/'))) return spec;
@@ -598,6 +605,52 @@
     return { calls, restore: () => { window.fetch = original; } };
   }
 
+  // ---------- rerun: check a top-level script against several inputs ----------
+  // Re-evaluates the entry module as a fresh module instance (its own top-level bindings) with the
+  // given globals defined on window; imported modules and the page (DOM) are shared, not reset.
+  let rerunScope = null;
+  let rerunGlobals = []; // [name, previous property descriptor | undefined], restored afterwards
+  function restoreRerunGlobals() {
+    for (const [name, previous] of rerunGlobals.reverse()) {
+      if (previous) Object.defineProperty(window, name, previous);
+      else delete window[name];
+    }
+    rerunGlobals = [];
+  }
+  async function rerun({ globals = {} } = {}) {
+    if (rerunSink) throw new Error('rerun(): await one rerun before starting the next');
+    const file = run.scopeFile;
+    const code = file ? run.modules[file] : undefined;
+    if (typeof code !== 'string') throw new Error('rerun(): the entry is not a JavaScript module of the project');
+    restoreRerunGlobals();
+    for (const [name, value] of Object.entries(globals)) {
+      rerunGlobals.push([name, Object.getOwnPropertyDescriptor(window, name)]);
+      Object.defineProperty(window, name, { value, writable: true, configurable: true, enumerable: true });
+    }
+    const url = createObjectURL(new NativeBlob([code], { type: 'text/javascript' }));
+    blobToFile.set(url, file);
+    const sink = [];
+    let fresh = {};
+    let error = null;
+    rerunSink = sink;
+    rerunScope = (f, getters) => { if (f === file) fresh = getters; else scopes.set(f, getters); };
+    try {
+      await import(url);
+    } catch (e) {
+      error = e;
+    } finally {
+      rerunSink = null;
+      rerunScope = null;
+    }
+    return {
+      logs: sink.filter((c) => c.level !== 'alert').map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
+      rawLogs: sink.map((c) => ({ level: c.level, args: c.args })),
+      alerts: sink.filter((c) => c.level === 'alert').map((c) => String(c.args[0])),
+      scope: fresh,
+      error,
+    };
+  }
+
   async function runTests() {
     const scope = new Proxy({}, {
       get: (_, name) => { for (const file of [run.scopeFile, ...scopes.keys()]) { const g = scopes.get(file); if (g && name in g) { try { return g[name]; } catch (e) { return undefined; } } } return undefined; },
@@ -605,7 +658,7 @@
     });
     const api = {
       test: (name, fn) => { tests.push({ name, fn }); },
-      expect, spy, sleep, settle, waitFor, user, screen, mockFetch, scope,
+      expect, spy, sleep, settle, waitFor, user, screen, mockFetch, scope, rerun,
       scopeOf: (file) => scopes.get(file) || {},
       logs: () => captured.filter((c) => c.level !== 'alert').map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
       rawLogs: () => captured.map((c) => ({ level: c.level, args: c.args })),
@@ -638,6 +691,7 @@
       }
       outcome.ms = Math.round(performance.now() - started);
       results.push(outcome);
+      restoreRerunGlobals(); // injected values never leak into the next test
     }
     flush();
     post('tests', { results });

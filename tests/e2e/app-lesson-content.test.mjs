@@ -178,6 +178,31 @@ test('authored feedback for an error thrown inside a test is shown with that tes
   }
 });
 
+test('checks can rerun a top-level script with other inputs; reruns stay out of the learner console', async () => {
+  const lab = await Lab.start({ distDir });
+  try {
+    const { page, problems, context } = await openLesson(lab, 3);
+    await page.locator('#block-pages-weather').waitFor();
+    await replaceEditor(page, "import './input.js';\nconsole.log(temperature > 25 ? 'Спекотно' : 'Прохолодно');\n");
+    await checkButton(page).click();
+    await page.locator('.tests-summary.tests-ok').waitFor({ timeout: 15_000 });
+    assert.equal(await page.locator('.test.test-pass').count(), 2);
+    await page.getByRole('tab', { name: t('uk', 'ws.console') }).click();
+    assert.deepEqual(await consoleLines(page), ['Спекотно'], 'only the real run (temperature 30) is in the console');
+    // The boundary mistake is caught by the rerun with 25.
+    await replaceEditor(page, "import './input.js';\nconsole.log(temperature >= 25 ? 'Спекотно' : 'Прохолодно');\n");
+    await checkButton(page).click();
+    const failed = page.locator('.test.test-fail');
+    await failed.waitFor({ timeout: 15_000 });
+    assert.equal(await failed.count(), 1);
+    assert.match(await failed.locator('.test-message').innerText(), /printed lines for 25: expected \["Спекотно"\] to equal \["Прохолодно"\]/);
+    assert.deepEqual(problems, []);
+    await context.close();
+  } finally {
+    await lab.dispose();
+  }
+});
+
 test('the content validator accepts a prediction whose code does not compile when it expects SyntaxError', async () => {
   const child = spawn(process.execPath, ['scripts/content/validate.mjs', '--lesson', L3], { cwd: ROOT, env: { ...process.env, JSLL_CONTENT_ROOT: FIXTURE_CONTENT } });
   let output = '';
