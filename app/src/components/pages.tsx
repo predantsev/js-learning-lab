@@ -74,7 +74,7 @@ function UnitCard({ unit }: { unit: IndexUnit }) {
       </header>
       <ol className="lesson-list">{unit.lessons.map((l) => <LessonRow key={l.id} lesson={l} />)}</ol>
       {unit.capstoneStep && (
-        <p className="unit-capstone"><Icon name="folder" size={14} /> <strong>{t('course.capstoneStep')}:</strong> {capstone ? unit.capstoneStep.variants[capstone][lang] : pick(unit.capstoneStep.objective, lang)}</p>
+        <p className="unit-capstone"><Icon name="folder" size={14} /> <strong>{t('course.capstoneStep')}:</strong> <Html inline html={capstone ? unit.capstoneStep.variants[capstone][lang] : pick(unit.capstoneStep.objective, lang)} lang={lang} /></p>
       )}
       {hasOpen && <button type="button" className="btn btn-quiet" onClick={skipUnit}>{t('course.skipUnit')}</button>}
     </section>

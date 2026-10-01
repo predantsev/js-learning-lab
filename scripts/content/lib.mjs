@@ -355,7 +355,14 @@ export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content')
         title: plan?.title ?? { uk: unit, en: unit },
         summary: plan?.summary ?? null,
         competencies: plan?.competencies ?? [],
-        capstoneStep: plan?.capstoneStep ?? null,
+        // Step texts may contain inline Markdown (code spans, glossary links): compile them once here.
+        capstoneStep: plan?.capstoneStep
+          ? {
+              ...plan.capstoneStep,
+              objective: Object.fromEntries(LANGS.map((l) => [l, md.inline(plan.capstoneStep.objective[l])])),
+              variants: Object.fromEntries(Object.entries(plan.capstoneStep.variants).map(([cap, text]) => [cap, Object.fromEntries(LANGS.map((l) => [l, md.inline(text[l])]))])),
+            }
+          : null,
         lessons: all.order.filter((o) => o.unit === unit).map((o) => {
           const c = compiledMeta.get(o.id);
           const planned = plan?.lessons?.find((l) => l.id === o.id);

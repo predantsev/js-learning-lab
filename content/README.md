@@ -44,7 +44,8 @@ The validator runs every example, every exercise fixture and every verifiable pr
 5. **Real code, real results.** Examples and exercises run for real. Exercises are checked by behavior (what the program prints, returns, renders or stores), never by matching source text. Accept every reasonable solution; add an `alt` fixture to prove it.
 6. **Exercise ladder inside a unit:** `guided` (hints available) → `debug` (a seeded, realistic defect in working-looking code) → `independent` (no hints, combines the unit's ideas). Each unit needs all three, plus at least one prediction.
 7. **Hints never give the answer away at level one.** `nudge` points where to look; `explanation` explains the idea needed; the full solution is separate and is recorded when viewed. Authored `feedback` for the failures a beginner will actually hit (a named test, or an error name such as `ReferenceError`) is worth more than a long hint.
-8. **Retrieval.** From the second unit on, a unit contains `review` blocks with at least two questions about earlier lessons (one recent, one distant), asked without restating the answer. Use the syllabus `retrieval` entries.
+8. **Review blocks never sit alone at the top of a lesson**: retrieval comes after the lesson's own first explanation.
+9. **Retrieval.** From the second unit on, a unit contains `review` blocks with at least two questions about earlier lessons (one recent, one distant), asked without restating the answer. Use the syllabus `retrieval` entries.
 9. **Difficult concepts get a `visual` block and an `analogy` block with its `limits`** (where the analogy breaks). Mandatory for scope/closure, reference identity/mutation, event loop/async, render/state snapshot, effect/cleanup, client/server and native/web boundaries.
 10. **Honest runtimes.** `browser-js` and `browser-react` are real. `concept-preview` (React Native through react-native-web, or any simulation) must carry `limits`. Native-device and real-server evidence comes from `local-task` blocks, confirmed by the learner.
 11. **Capstone thread.** Every instructional lesson ends with a `transfer` block pointing at the unit's capstone step (`capstoneStep: <UNIT>`). The step itself is the unit's `capstone-step` lesson.
@@ -77,7 +78,7 @@ blocks: [ … ]                     # read top to bottom; every example/exercise
 
 ### Block kinds
 
-Every block has a unique `id` (kebab-case) inside the lesson. All text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts).
+Every block has a unique `id` (kebab-case) inside the lesson. `title` fields and exercise `testTitles` are plain text (no backticks or other Markdown). All other text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts).
 
 ```yaml
 - id: keep-what-matters
