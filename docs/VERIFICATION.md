@@ -23,6 +23,8 @@ This is a planned test suite, not a passed-test report. Current documentation ch
 | V-15 | REQ-031, REQ-032 | Keyboard-only full lesson; focus/labels/status announcements/contrast/zoom/reduced-motion and text equivalents. Simulate missing content/assets, build failure, runner crash, storage corruption, import/export failure and absent local tools; clear distinct recovery, preserved work, no false success. |
 | V-16 | REQ-008, REQ-034 | Trace every REQ ID and curriculum unit to passing evidence; verify no stubs or unavailable downstream sections. Record exclusions, failed/unexecuted checks and supported environment; label release partial until all required gates pass. |
 | V-17 | REQ-016, REQ-024, REQ-035 | Start with fresh data in Calm Studio; switch through all three stable IDs and restart. Preserve code/drafts, active lesson/context, global language, progress, hint disclosures and bookmarks. Test missing/unknown/retired style IDs and version migration without unrelated data loss. Check full content/functionality, both global languages, same-block translation, keyboard/focus, contrast/zoom/reduced motion and text equivalents in each style. Keep any light/dark preference separate. Reference-only interactions do not pass product persistence or runtime gates. |
+| V-18 | REQ-008, REQ-034, REQ-036, REQ-037 | Validate competency inventory, stable IDs, subskills/depth/rationale, sources and all unit/prerequisite mappings. Inspect each required family/subskill against actual bilingual lessons, executable/local practice, independent tests/debugging/transfer/retrieval and environment-specific evidence. Run specification validator and release gate; planned/empty evidence must fail release. Verify TypeScript/SQL/auth/professional labs exist without introducing platform accounts/DB/stack requirements. No count-only completion. |
+| V-19 | REQ-003, REQ-010, REQ-033, REQ-038 | Preserve JS-10 foundational export, then verify full JS-18, RE-12, RN-12 and NO-14 cumulative gates against all assigned competency evidence. Test supplied/skipped/assisted states cannot pass competence; native absence allows Node/web pacing but leaves native/full-course competency incomplete. Exercise real target release and local production-mode recovery without mandatory store/cloud publication. |
 
 REQ-025 export/import round-trip checks are conditional on adopting that recommendation. Otherwise document and verify the selected portable recovery alternative. Automated scheduling and separate profiles are not mandatory gates.
 
@@ -45,10 +47,16 @@ Automated integration/content tests can cover repeatable invariants; instruction
 
 - M0: documentation package consistency and exact scope; no application readiness claim.
 - M1: verified architecture slice with real isolated multi-file execution, local persistence, two-language/block switching, hint/bookmark/skip behaviors and one vertical lesson path, plus DEC-02/03/12 feasibility evidence appropriate to that slice. Include representative RN/Node browser-compatible concepts/preview capability labeling without calling native/server stages complete. Only implemented parts of V-02/03/08–15 apply. Full export V-06 belongs to M2; optional full-profile backup is not mandatory M1. Report remaining curriculum absent.
-- M2: complete JavaScript curriculum and all four JS capstone starters/checkpoints; same-project VS Code export.
-- M3: complete React curriculum and checkpoints; retained domain/data/work.
-- M4: complete React Native curriculum and verified native target workflow; browser limitations explicit.
-- M5: complete Node.js curriculum, real local API/persistence and integrated selected-domain web/native clients on the product-supported matrix; learner completion can use web only, retaining unperformed native evidence.
+- M2: complete expanded JavaScript/web/TypeScript/workflow curriculum through JS-18 and all four JS capstone starters/checkpoints; same-project VS Code export.
+- M3: complete expanded React curriculum through RE-12 and checkpoints; retained domain/data/work.
+- M4: complete expanded React Native curriculum through RN-12 and verified native target workflow; browser limitations explicit.
+- M5: complete expanded Node.js curriculum through NO-14, real local API/persistence and integrated selected-domain web/native clients on the product-supported matrix; learner completion can use web only, retaining unperformed native evidence.
 - M6: full content/localization/accessibility/offline/recovery/clean-clone matrix and all requirement evidence. Only this gate supports a full-product completion claim.
 
 Ordering increments this way is proposed, not an approved time estimate. Architecture decisions may require an early native/server spike without changing the course teaching order.
+
+## Specification validation versus release evidence
+
+Run `python3 scripts/validate_competencies.py` for structural specification checks; it does not pass product/content/learner gates. Run `python3 scripts/validate_competencies.py --release` to check evidence closure. At this documentation baseline the latter must fail because course content and verified evidence do not exist. Future implementation must validate real lesson/assessment manifests, artifact contents, prerequisite integrity and observed outputs rather than merely insert paths or set status flags. V-18/V-19 and M6 require semantic independent review of every subskill, not just JSON success.
+
+Full product release and learner completion are different: the product needs supported native workflow evidence even when an individual learner skips native tools; that learner retains incomplete native competency. An honest web-only Node result is not proof of complete four-stage native ability. All supported-platform and current-version claims need fresh validation.

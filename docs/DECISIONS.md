@@ -41,3 +41,7 @@ All three styles are retained: Calm Studio (default), Editorial and Dev workspac
 | DEC-13 | Capstone reuse and reference packaging | Prefer domain-independent contracts/components with small variants; choose reusable starter/reference packaging without assuming a universal generator. | Equivalent rubrics across all four options; post-export manual-merge test with learner edits; separate-project switch preserves old files/evidence and leaves new transfers unperformed. |
 
 Implementation may resolve reversible engineering choices within its authorized scope, recording proposals adopted and rationale. Owner-dependent licensing/publication decisions remain explicit. Do not stall all drafting or safe spikes on unrelated choices.
+
+## Approved professional scope clarification (2026-10-01)
+
+Completeness takes precedence over short duration/fixed counts; the full program may take a year or longer. [Competency matrix](COMPETENCY-MATRIX.md) defines independent build/debug/test/security/delivery/maintenance outcomes, required foundations/core and justified specialized awareness. No encyclopedic API, job or seniority guarantee is made. Existing checkpoints remain continuity points, supplemented by cumulative gates. TypeScript/SQL/auth/security/CI/operation are required course skills; platform stack/storage/login-free choices and optional backups/profiles are unchanged. No paid store/cloud publication prerequisite or production ProjectWishList integration is added. All course content remains unimplemented/unverified.
