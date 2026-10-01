@@ -91,11 +91,17 @@ test('the per-block EN/UA control translates only its block, in both directions,
     const editorBefore = await editorText(page);
     const draftsBefore = await lab.doc(`drafts/${L1}`);
 
-    // Close the visual's text-equivalent disclosure: a disclosure state that must survive.
+    // Flip the visual's text-equivalent disclosure and move the step-through to step 2: both are
+    // learner context that a block translation must keep.
     const details = visual.locator('details.text-equivalent');
-    assert.equal(await details.evaluate((d) => d.open), true);
+    const disclosure = !(await details.evaluate((d) => d.open));
     await details.locator('summary').click();
-    assert.equal(await details.evaluate((d) => d.open), false);
+    assert.equal(await details.evaluate((d) => d.open), disclosure);
+    const player = visual.locator('.viz');
+    await player.waitFor();
+    await player.locator('[data-action="next"]').click();
+    assert.equal(await player.getAttribute('data-step'), '1');
+    assert.match(await player.locator('svg').textContent(), /Рушій JavaScript/);
 
     // UA → EN for the explanation, by keyboard.
     await blockToggle(page, 'basics-intro').focus();
@@ -127,7 +133,12 @@ test('the per-block EN/UA control translates only its block, in both directions,
     await blockToggle(page, 'basics-visual').click();
     await visual.getByText('From code to the console').waitFor();
     assert.match(await visual.locator('.text-equivalent').textContent(), /The code goes to the JavaScript engine/);
-    assert.equal(await details.evaluate((d) => d.open), false, 'the disclosure keeps its state');
+    assert.equal(await details.evaluate((d) => d.open), disclosure, 'the disclosure keeps its state');
+    // Diagram labels and the step caption are translated in place; the current step is kept.
+    assert.match(await player.locator('svg').textContent(), /JavaScript engine/);
+    assert.doesNotMatch(await player.locator('svg').textContent(), /Рушій JavaScript/);
+    assert.match(await player.locator('[data-role="caption"]').textContent(), /The engine reads the statements in order/);
+    assert.equal(await player.getAttribute('data-step'), '1', 'the step-through keeps its step');
     assert.match(await intro.innerText(), /Statements run in order/, 'the first block is still English');
 
     // EN → UA back, one block at a time.
