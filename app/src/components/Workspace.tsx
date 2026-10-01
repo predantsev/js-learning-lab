@@ -124,22 +124,24 @@ interface Props {
   /** Self-check mode keeps evidence separate: nothing is written to lesson progress. */
   onChecked?: (passed: boolean) => void;
   recordProgress?: boolean;
+  /** Key of this workspace's entry in the drafts document (self-check attempts use their own). */
+  draftKey?: string;
 }
 
-export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgress = true }: Props) {
+export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgress = true, draftKey = block.id }: Props) {
   const t = useT();
   const helpId = useId();
-  const draft = useStore(drafts.store, (d) => d.blocks[block.id]);
-  // Example text in code follows the language the learner started the exercise in; once the
-  // learner has a draft, it is theirs and is never rewritten by a language switch (REQ-015).
-  const codeLang: Lang = draft?.lang ?? lang;
+  const draft = useStore(drafts.store, (d) => d.blocks[draftKey]);
+  // Example text in code follows the lesson language until the learner edits the files; from then
+  // on they are the learner's and are never rewritten by a language switch (REQ-015).
+  const codeLang: Lang = draft?.files ? (draft.lang ?? lang) : lang;
   const starter = useMemo(() => localizeFiles(block.files, block, codeLang) as Record<string, string>, [block, codeLang]);
   const files = draft?.files ?? starter;
   const storage = draft?.storage ?? {};
   const fileNames = useMemo(() => Object.keys(files).sort((a, b) => (a === block.entry ? -1 : b === block.entry ? 1 : a.localeCompare(b))), [files, block.entry]);
   const [activeFile, setActiveFile] = useState(draft?.activeFile && draft.activeFile in files ? draft.activeFile : (block.kind === 'exercise' ? block.editable[0] : undefined) ?? block.entry);
   const [tab, setTab] = useState<Tab>(hasPreview(block) ? 'preview' : 'console');
-  const [undo, setUndo] = useState<Record<string, string> | null>(null);
+  const [undo, setUndo] = useState<{ files: Record<string, string>; lang?: Lang } | null>(null);
   const runner = useRunner();
   const frameHost = useRef<HTMLDivElement>(null);
   const hiddenHost = useRef<HTMLDivElement>(null);
@@ -147,10 +149,16 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   const exerciseProgress = useStore(app().progress.store, (p) => (block.kind === 'exercise' ? p.lessons[lesson.id]?.exercises[block.id] : undefined));
 
   const saveDraft = useCallback((patch: Partial<{ files: Record<string, string>; lang: Lang; activeFile: string; storage: Record<string, string> }>) => {
-    drafts.update((d) => ({ blocks: { ...d.blocks, [block.id]: { ...(d.blocks[block.id] ?? { files: starter, lang: codeLang }), ...patch, updatedAt: new Date().toISOString() } } }));
-  }, [drafts, block.id, starter, codeLang]);
+    drafts.update((d) => {
+      const current = d.blocks[draftKey];
+      // Only edited files are snapshotted (with their language). Choosing a file tab or keeping
+      // sandbox storage does not turn an untouched starter into a frozen copy.
+      const fileLang = patch.lang ?? (current?.files ? current.lang : patch.files ? codeLang : undefined);
+      return { blocks: { ...d.blocks, [draftKey]: { ...current, ...patch, lang: fileLang, updatedAt: new Date().toISOString() } } };
+    });
+  }, [drafts, draftKey, codeLang]);
 
-  const onEdit = useCallback((value: string) => { saveDraft({ files: { ...(drafts.value.blocks[block.id]?.files ?? starter), [activeFile]: value } }); }, [saveDraft, drafts, block.id, starter, activeFile]);
+  const onEdit = useCallback((value: string) => { saveDraft({ files: { ...(drafts.value.blocks[draftKey]?.files ?? starter), [activeFile]: value } }); }, [saveDraft, drafts, draftKey, starter, activeFile]);
 
   const run = (mode: 'run' | 'test') => {
     const container = mode === 'run' ? frameHost.current : hiddenHost.current;
@@ -158,9 +166,9 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
     setTab(mode === 'test' ? 'tests' : hasPreview(block) ? 'preview' : 'console');
     runner.start({
       block,
-      files: drafts.value.blocks[block.id]?.files ?? starter,
+      files: drafts.value.blocks[draftKey]?.files ?? starter,
       mode,
-      storage: drafts.value.blocks[block.id]?.storage ?? {},
+      storage: drafts.value.blocks[draftKey]?.storage ?? {},
       lang: codeLang,
       container,
       title: t('ws.result'),
@@ -225,8 +233,8 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
           {block.kind === 'exercise' && <button type="button" className="btn btn-check" onClick={() => run('test')} disabled={s.status === 'checking'}><Icon name="check" /> {t('ws.check')}</button>}
           {(s.live || runner.isActive) && <button type="button" className="btn" onClick={runner.stop}><Icon name="stop" /> {t('ws.stop')}</button>}
           <span className="ws-actions-gap" />
-          {undo && <button type="button" className="btn btn-quiet" onClick={() => { saveDraft({ files: undo }); setUndo(null); }}>{t('ws.undoReset')}</button>}
-          {draft?.files && <button type="button" className="btn btn-quiet" onClick={() => { if (window.confirm(t('ws.resetConfirm'))) { setUndo(draft.files); saveDraft({ files: localizeFiles(block.files, block, lang) as Record<string, string>, lang }); runner.reset(); } }}><Icon name="reset" size={14} /> {t('ws.reset')}</button>}
+          {undo && <button type="button" className="btn btn-quiet" onClick={() => { saveDraft({ files: undo.files, lang: undo.lang ?? codeLang }); setUndo(null); }}>{t('ws.undoReset')}</button>}
+          {draft?.files && <button type="button" className="btn btn-quiet" onClick={() => { if (draft.files && window.confirm(t('ws.resetConfirm'))) { setUndo({ files: draft.files, lang: draft.lang }); saveDraft({ files: localizeFiles(block.files, block, lang) as Record<string, string>, lang }); runner.reset(); } }}><Icon name="reset" size={14} /> {t('ws.reset')}</button>}
         </div>
         <p className={`ws-status ws-status-${s.unresponsive ? 'warn' : s.status}`} role="status" aria-live="polite">{statusText}{passedNow && <strong className="ws-passed"> · {exerciseProgress?.assistedPass ? t('ws.exercisePassedAssisted') : t('ws.exercisePassed')}</strong>}</p>
         <p className="runtime-note"><Icon name="info" size={13} /> {t(`ws.runtime.${block.runtime}` as Key)}</p>

@@ -120,7 +120,10 @@ export interface LessonProgress {
   seenBlocks: string[];
 }
 export interface ProgressDoc { lessons: Record<string, LessonProgress> }
-export interface DraftsDoc { blocks: Record<string, { files: Record<string, string>; lang?: Lang; activeFile?: string; storage?: Record<string, string>; updatedAt: string }> }
+// `files` is present once the learner edited code (it then keeps `lang`); an entry may hold only the
+// selected file or sandbox storage, which leaves the starter fresh. Keys are block ids; self-check
+// attempts use `selfcheck:<block id>` so they never touch the lesson draft.
+export interface DraftsDoc { blocks: Record<string, { files?: Record<string, string>; lang?: Lang; activeFile?: string; storage?: Record<string, string>; updatedAt: string }> }
 export interface Bookmark { id: string; lessonId: string; blockId: string; createdAt: string; label?: string }
 export interface BookmarksDoc { items: Bookmark[] }
 export interface ReviewItemState { lessonId: string; blockId: string; itemId: string; box: number; lastAt: string; nextAt: string; lastCorrect: boolean; attempts: number }

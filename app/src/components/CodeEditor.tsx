@@ -79,6 +79,9 @@ export function CodeEditor({ path, value, readOnly = false, ariaLabel, described
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // True while the editor is being updated from `value` (a language switch, a reload from disk):
+  // such changes are not learner edits and must not be saved back as if they were.
+  const syncing = useRef(false);
   const readOnlyCompartment = useRef(new Compartment());
 
   useEffect(() => {
@@ -96,7 +99,7 @@ export function CodeEditor({ path, value, readOnly = false, ariaLabel, described
           EditorState.tabSize.of(2),
           readOnlyCompartment.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
           EditorView.contentAttributes.of({ 'aria-label': ariaLabel, ...(describedBy ? { 'aria-describedby': describedBy } : {}), spellcheck: 'false', autocapitalize: 'off' }),
-          EditorView.updateListener.of((update) => { if (update.docChanged) onChangeRef.current?.(update.state.doc.toString()); }),
+          EditorView.updateListener.of((update) => { if (update.docChanged && !syncing.current) onChangeRef.current?.(update.state.doc.toString()); }),
         ],
       }),
     });
@@ -108,7 +111,13 @@ export function CodeEditor({ path, value, readOnly = false, ariaLabel, described
 
   useEffect(() => {
     const v = view.current;
-    if (v && v.state.doc.toString() !== value) v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } });
+    if (!v || v.state.doc.toString() === value) return;
+    syncing.current = true;
+    try {
+      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } });
+    } finally {
+      syncing.current = false;
+    }
   }, [value]);
 
   useEffect(() => {

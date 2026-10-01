@@ -38,6 +38,7 @@ export function useBlockLang(lessonId: string, blockId: string): Lang {
 
 function BlockToolbar({ lessonId, blockId, label, lang }: { lessonId: string; blockId: string; label: string; lang: Lang }) {
   const t = useT();
+  const global = useLang();
   const bookmarked = useStore(app().bookmarks.store, (b) => b.items.some((i) => i.lessonId === lessonId && i.blockId === blockId));
   const toggleBookmark = () => {
     app().bookmarks.update((b) => (bookmarked ? { items: b.items.filter((i) => !(i.lessonId === lessonId && i.blockId === blockId)) } : { items: [...b.items, { id: `${Date.now().toString(36)}-${blockId}`, lessonId, blockId, createdAt: new Date().toISOString() }] }));
@@ -47,7 +48,7 @@ function BlockToolbar({ lessonId, blockId, label, lang }: { lessonId: string; bl
     <div className="block-toolbar">
       <span className="block-label">{label}</span>
       <div className="block-actions">
-        <button type="button" className="block-action" aria-pressed={lang === 'en'} onClick={() => toggleBlockLang(blockKey(lessonId, blockId), lang)} aria-label={t(lang === 'uk' ? 'lang.blockToEn' : 'lang.blockToUk')} title={t('lang.blockHint')}>
+        <button type="button" className="block-action" aria-pressed={lang === 'en'} onClick={() => toggleBlockLang(blockKey(lessonId, blockId), lang, global)} aria-label={t(lang === 'uk' ? 'lang.blockToEn' : 'lang.blockToUk')} title={t('lang.blockHint')}>
           <Icon name="lang" size={14} /><span aria-hidden="true">{lang === 'uk' ? 'EN' : 'UA'}</span>
         </button>
         <button type="button" className="block-action" aria-pressed={bookmarked} onClick={toggleBookmark} aria-label={t(bookmarked ? 'block.unbookmark' : 'block.bookmark')}>
@@ -58,9 +59,9 @@ function BlockToolbar({ lessonId, blockId, label, lang }: { lessonId: string; bl
   );
 }
 
-function BlockFrame({ lessonId, block, label, className, children, lang }: { lessonId: string; block: { id: string }; label: string; className: string; children: ReactNode; lang: Lang }) {
+function BlockFrame({ lessonId, block, label, className, children, lang, domId }: { lessonId: string; block: { id: string }; label: string; className: string; children: ReactNode; lang: Lang; domId?: string }) {
   return (
-    <section className={`block ${className}`} id={`block-${block.id}`} data-block={block.id} lang={lang} tabIndex={-1} aria-label={label}>
+    <section className={`block ${className}`} id={domId ?? `block-${block.id}`} data-block={block.id} lang={lang} tabIndex={-1} aria-label={label}>
       <BlockToolbar lessonId={lessonId} blockId={block.id} label={label} lang={lang} />
       {children}
     </section>
@@ -324,12 +325,12 @@ function Hints({ lesson, block, lang }: { lesson: Lesson; block: ExerciseBlock; 
   );
 }
 
-function ExerciseCard({ lesson, block, showHints = true }: { lesson: Lesson; block: ExerciseBlock; showHints?: boolean }) {
+function ExerciseCard({ lesson, block, showHints = true, domId }: { lesson: Lesson; block: ExerciseBlock; showHints?: boolean; domId?: string }) {
   const t = useT();
   const lang = useBlockLang(lesson.id, block.id);
   const label = block.assessment ? t('block.exercise.assessment') : block.mode === 'debug' ? t('block.exercise.debug') : block.mode === 'independent' ? t('block.exercise.independent') : t('block.exercise');
   return (
-    <BlockFrame lessonId={lesson.id} block={block} label={label} className="block-task" lang={lang}>
+    <BlockFrame lessonId={lesson.id} block={block} label={label} className="block-task" lang={lang} domId={domId}>
       <h3 className="block-subtitle"><Icon name="pencil" /> {block.title[lang]}</h3>
       <Html html={block.instructions[lang]} lang={lang} className="prose" />
       {showHints && <Hints lesson={lesson} block={block} lang={lang} />}

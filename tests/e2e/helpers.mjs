@@ -147,7 +147,12 @@ export async function openApp(browser, lab, { hash = '#/course', viewport = { wi
   page.on('requestfailed', (request) => { if (fromApp(request.url()) && !request.url().includes('/sandbox/')) problems.push(`requestfailed: ${request.url()}`); });
   page.on('response', (response) => { if (fromApp(response.url()) && response.status() >= 400 && !response.url().includes('/api/')) problems.push(`HTTP ${response.status()}: ${response.url()}`); });
   await page.goto(lab.url(hash));
-  await page.locator('.app').waitFor();
+  try {
+    await page.locator('.app').waitFor({ timeout: 15_000 });
+  } catch (error) {
+    const shown = await page.locator('body').innerText().catch(() => '(no body)');
+    throw new Error(`the application shell did not render at ${page.url()}: ${shown.slice(0, 400)} | problems: ${problems.join('; ')}`, { cause: error });
+  }
   return { context: ctx, page, problems };
 }
 

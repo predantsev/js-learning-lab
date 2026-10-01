@@ -40,8 +40,9 @@ function SelfCheck({ lesson, drafts, onClose }: { lesson: Lesson; drafts: Doc<Dr
           <p className="ws-note">{t('skip.selfCheckIntro')}</p>
           {items.map((block) => block.kind === 'exercise' ? (
             <div key={block.id} className="selfcheck-exercise">
-              <ExerciseCard lesson={lesson} block={block} showHints={false} />
-              <Workspace lesson={lesson} block={block} drafts={drafts} lang={lang} recordProgress={false} onChecked={(ok) => setResults((r) => ({ ...r, [block.id]: ok }))} />
+              {/* A separate DOM id and draft entry: the self-check never overwrites the lesson draft. */}
+              <ExerciseCard lesson={lesson} block={block} showHints={false} domId={`selfcheck-${block.id}`} />
+              <Workspace lesson={lesson} block={block} drafts={drafts} lang={lang} recordProgress={false} draftKey={`selfcheck:${block.id}`} onChecked={(ok) => setResults((r) => ({ ...r, [block.id]: ok }))} />
             </div>
           ) : block.kind === 'prediction' ? (
             <div key={block.id} className="block block-prediction"><QuestionView question={block as Question} lang={lang} answered={false} idPrefix={`sc-${block.id}`} onAnswer={(ok) => setResults((r) => ({ ...r, [block.id]: r[block.id] ?? ok }))} /></div>
