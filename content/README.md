@@ -102,7 +102,11 @@ Every block has a unique `id` (kebab-case) inside the lesson. All text fields ar
   prompt: { uk, en }
   code: |                         # optional; shown highlighted; may use %%key%% with block `strings`
     console.log([1, 2, 3].filter((n) => n > 1).length);
-  verify: { logs: ["2"] }         # exact console lines (and `error: TypeError` when it throws)
+  lang: js                        # optional highlighting of `code`: js (default), html, css, json, ts…
+  runnable: false                 # optional: hide "Run and check" after answering (code that is not
+                                  #   JavaScript, e.g. lang: html, or that is not meant to run)
+  verify: { logs: ["2"] }         # exact console lines (and `error: TypeError` when it throws);
+                                  #   code that does not compile: verify: { logs: [], error: SyntaxError }
   answer:
     type: choice                  # choice | multi | text | order
     options:
@@ -123,6 +127,8 @@ Every block has a unique `id` (kebab-case) inside the lesson. All text fields ar
   tryIt: { uk, en }               # what to change and observe
   strings: { key: { uk, en } }    # optional
   expectError: true               # only when the error is the point of the example
+  preview: true                   # optional: show the Page tab (default: true for an .html entry,
+                                  #   browser-react and concept-preview; false for a .js entry)
 
 - id: keep-affordable
   kind: exercise
@@ -134,12 +140,13 @@ Every block has a unique `id` (kebab-case) inside the lesson. All text fields ar
   editable: [index.js]            # default: every starter file; other files are read-only
   title: { uk, en }
   instructions: { uk, en }
-  testTitles: { "test name in tests.js": { uk, en } }    # one per test
+  testTitles: { "test name in tests.js": { uk, en } }    # one per test; inline Markdown (`code`) is fine
   hints: { nudge: { uk, en }, explanation: { uk, en } }  # omit for mode: independent
   solutionNote: { uk, en }        # shown with the solution: why it works
   feedback:
-    - when: { test: "test name" } # or { error: ReferenceError }
-      message: { uk, en }
+    - when: { test: "test name" } # or { error: ReferenceError } — shown next to that error;
+      message: { uk, en }         #   { error: SyntaxError } also matches code that does not compile
+  preview: false                  # optional, as for examples
   capabilities: { network: lab }  # optional: none (default) | lab; also loopBudgetMs, testTimeoutMs
   starterPasses: true             # only for rare exercises where the starter is already correct by design
 
@@ -180,6 +187,11 @@ Commands in `local-task` blocks must be commands you actually ran; record the to
 | `browser-react` | Real React 19 (`react`, `react-dom/client`) | JSX only in `.jsx`/`.tsx`. Imports resolve like Vite (`./App`). Default page has `<div id="root">`. |
 | `concept-preview` | React Native components through `react-native-web` | Always add `limits`: no native rendering, device APIs or performance. |
 | `isolated-node` | Real Node.js in an isolated child process | For Node-stage practice: real `node:http` on loopback, `node:fs` in a scratch folder, `node:sqlite`, streams. |
+
+### Pages, images and links (`browser-js` with an `.html` entry)
+
+- **Images: project `.svg` files** (they are text, so they live in the block directory like any other file). They show when referenced from `<img src="img/logo.svg">`, from `url(img/dot.svg)` in a linked `.css` file or an inline `<style>` (resolved from that stylesheet's or page's folder), and from JavaScript (`img.src = 'img/logo.svg'`). Binary images (`.png`, `.jpg`) are not supported; use SVG, or a `data:` URL. A `src` that matches no project file stays exactly as written, so the browser shows the `alt` text (use this on purpose to teach `alt`); the console names the missing file. External addresses (`https://…`) are blocked — the sandbox has no network — and the console says so.
+- **Links between pages:** `<a href="about.html">` to another `.html` file of the project opens that page in the result panel (the learner sees its name and a way back to the entry page). Checks always run against the block's `entry`. Links to other addresses are blocked with an explanation.
 
 ## tests.js
 
