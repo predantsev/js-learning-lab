@@ -29,6 +29,7 @@ const LazyPlayer = visualLoader
   : null;
 
 const blockKey = (lessonId: string, blockId: string): string => `${lessonId}#${blockId}`;
+const NO_QUESTIONS: Record<string, { answeredAt: string }> = {};
 
 export function useBlockLang(lessonId: string, blockId: string): Lang {
   const global = useLang();
@@ -231,7 +232,8 @@ function PredictionView({ lesson, block }: { lesson: Lesson; block: Extract<Bloc
 function ReviewView({ lesson, block }: { lesson: Lesson; block: ReviewBlock }) {
   const t = useT();
   const lang = useBlockLang(lesson.id, block.id);
-  const progress = useStore(app().progress.store, (p) => p.lessons[lesson.id]?.questions ?? {});
+  // The fallback must be a stable reference: a fresh object per read makes the store subscription loop.
+  const progress = useStore(app().progress.store, (p) => p.lessons[lesson.id]?.questions ?? NO_QUESTIONS);
   return (
     <BlockFrame lessonId={lesson.id} block={block} label={t('block.review')} className="block-review" lang={lang}>
       <h3 className="block-subtitle">{block.title[lang]}</h3>
@@ -332,9 +334,9 @@ function TransferView({ lesson, block }: { lesson: Lesson; block: TransferBlock 
     <BlockFrame lessonId={lesson.id} block={block} label={t('block.transfer')} className="block-transfer" lang={lang}>
       <Html html={block.body[lang]} lang={lang} className="prose" />
       {unit?.capstoneStep && (capstone ? (
-        <div className="transfer-variant"><span className="label">{t('transfer.yourVariant')} · {pick(app().index.capstones.find((c) => c.id === capstone)?.title, lang)}</span><p>{unit.capstoneStep.variants[capstone][lang]}</p></div>
+        <div className="transfer-variant"><span className="label">{t('transfer.yourVariant')} · {pick(app().index.capstones.find((c) => c.id === capstone)?.title, lang)}</span><p><Html inline html={unit.capstoneStep.variants[capstone][lang]} lang={lang} /></p></div>
       ) : <p className="ws-note">{t('transfer.noProject')}</p>)}
-      <a className="btn" href="#/project"><Icon name="folder" /> {capstone ? t('transfer.open') : t('transfer.choose')}</a>
+      <a className="btn" href={block.capstoneStep ? `#/project/${encodeURIComponent(block.capstoneStep)}` : '#/project'}><Icon name="folder" /> {capstone ? t('transfer.open') : t('transfer.choose')}</a>
     </BlockFrame>
   );
 }

@@ -10,15 +10,43 @@ import type { BookmarksDoc, CapstoneId, ContentIndex, DraftsDoc, GlossaryTerm, L
 export const STYLE_IDS: StyleId[] = ['calm-studio', 'editorial', 'dev-workspace'];
 export const DEFAULT_STYLE: StyleId = 'calm-studio';
 
+/**
+ * Step state with provenance (REQ-003, REQ-033, REQ-038): 'done' only with source 'platform-check'
+ * after a real check of the learner's files; 'skipped' with source 'starter' when the reference
+ * state was supplied instead. See shared/capstone.js.
+ */
+export interface WorkspaceStep {
+  state: 'done' | 'pending' | 'skipped';
+  source?: 'platform-check' | 'learner-confirmed' | 'starter';
+  checkedAt?: string;
+  skippedAt?: string;
+  attempts?: number;
+  lastCheck?: { at: string; passed: number; total: number; counted: boolean };
+  assisted?: boolean;
+  nudgeAt?: string;
+  referenceViewedAt?: string;
+  starterDeclinedAt?: string;
+  contentVersion?: string;
+}
+/** What the platform last put into the files: CP-START at creation, or the reference after `unit`. */
+export interface WorkspaceBase { kind: 'start' | 'starter'; unit: string | null; at: string }
+export interface WorkspaceSnapshotMeta { id: string; n: number; createdAt: string; reason: 'manual' | 'before-starter' | 'before-restore'; detail?: string; label?: string; fileCount: number }
 export interface WorkspaceDoc {
   id: string;
   capstoneId: CapstoneId;
   createdAt: string;
+  /** Language of the authored UI text in the files; fixed at creation (files are never rewritten). */
+  lang?: Lang;
+  contentVersion?: string;
+  base?: WorkspaceBase;
   files: Record<string, string>;
   storage: Record<string, string>;
-  steps: Record<string, { state: 'done' | 'pending'; checkedAt?: string; source?: 'platform-check' | 'learner-confirmed' | 'starter'; assisted?: boolean }>;
+  activeFile?: string;
+  steps: Record<string, WorkspaceStep>;
+  snapshots?: WorkspaceSnapshotMeta[];
+  nextSnapshot?: number;
   exportedAt?: string;
-  snapshots?: { id: string; createdAt: string; reason: string }[];
+  exports?: { at: string; kind: 'zip' | 'folder'; path?: string; fileCount: number }[];
 }
 export interface WorkspacesIndex { items: { id: string; capstoneId: CapstoneId; createdAt: string }[] }
 
@@ -116,11 +144,14 @@ export function loadWorkspace(id: string): Promise<Doc<WorkspaceDoc>> {
   return doc;
 }
 
-/** Choosing or changing a capstone always creates a separate workspace; older ones stay (REQ-009). */
-export async function createWorkspace(capstoneId: CapstoneId, starterFiles: Record<string, string> = {}): Promise<string> {
+/**
+ * Choosing or changing a capstone always creates a separate workspace; older ones stay (REQ-009).
+ * `init` carries the CP-START files (see components/project/workspace.ts startProject).
+ */
+export async function createWorkspace(capstoneId: CapstoneId, init: Partial<Omit<WorkspaceDoc, 'id' | 'capstoneId' | 'createdAt'>> = {}): Promise<string> {
   const id = `${capstoneId}-${Date.now().toString(36)}`;
   const createdAt = new Date().toISOString();
-  const doc = Doc.load<WorkspaceDoc>(`workspaces/${id}`, () => ({ id, capstoneId, createdAt, files: starterFiles, storage: {}, steps: {} }));
+  const doc = Doc.load<WorkspaceDoc>(`workspaces/${id}`, () => ({ files: {}, storage: {}, steps: {}, ...init, id, capstoneId, createdAt }));
   workspaceDocs.set(id, doc);
   const ws = await doc;
   ws.update((w) => ({ ...w }));

@@ -7,6 +7,8 @@
 //   node scripts/content/validate.mjs --static        skip execution
 //   node scripts/content/validate.mjs --release       also require complete coverage (no missing lessons)
 //   node scripts/content/validate.mjs --json out.json machine-readable report
+//   node scripts/content/validate.mjs --capstone wishlist   capstone steps of one capstone only
+// Capstone steps (content/capstones) are selected with their unit (--unit) or step lesson (--lesson).
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,9 +39,14 @@ for (const issue of issues) {
 }
 
 const lessons = [...all.lessons.entries()].filter(([id]) => selected(id));
-let executed = { examples: 0, fixtures: 0, predictions: 0, nodeSkipped: 0 };
+let executed = { examples: 0, fixtures: 0, predictions: 0, nodeSkipped: 0, capstoneRuns: 0 };
+const onlyCapstones = new Set(values('--capstone'));
+const capstoneSteps = Object.entries(all.capstoneBuild?.capstones ?? {})
+  .filter(([id]) => onlyCapstones.size === 0 || onlyCapstones.has(id))
+  .flatMap(([id, c]) => c.steps.map((step) => ({ id, step })))
+  .filter(({ step }) => (onlyUnits.size === 0 && onlyLessons.size === 0) || onlyUnits.has(step.unit) || (step.lesson !== null && onlyLessons.has(step.lesson)));
 
-if (!flag('--static') && lessons.length > 0) {
+if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
   const needBuild = !(await fs.access(path.join(ROOT, 'dist', 'app', 'harness.html')).then(() => true, () => false)) || !(await fs.access(path.join(ROOT, 'dist', 'sandbox', 'frame.html')).then(() => true, () => false));
   if (needBuild) {
     console.error('Platform assets are not built: run "npm run build" first (the validator executes fixtures in the real sandbox).');
@@ -144,6 +151,37 @@ if (!flag('--static') && lessons.length > 0) {
       }
     }
   }
+
+  // ---- capstone steps: in both languages the reference passes every check and runs without
+  // errors, and the state before the step (CP-START or the previous reference) fails at least one ----
+  for (const { id, step } of capstoneSteps) {
+    const where = `capstone ${id} › step ${step.unit}`;
+    if (step.mode !== 'in-platform') {
+      notes.push({ where, message: 'local step: checked statically only' });
+      continue;
+    }
+    if (!step.reference || !step.tests) continue; // reported by the static checks
+    const block = { entry: step.entry, runtime: step.runtime, tests: step.tests, strings: step.strings, capabilities: step.capabilities };
+    for (const lang of ['uk', 'en']) {
+      for (const [name, raw, shouldPass] of [['reference', step.reference, true], ['state before the step', step.previous, false]]) {
+        executed.capstoneRuns += 1;
+        const r = await run(runInputForBlock(block, localizeFiles(raw, block, lang), { mode: 'test', lang }));
+        const failure = describeFailure(r);
+        if (failure) {
+          error(where, `${name} (${lang}): ${failure}`);
+          continue;
+        }
+        const tests = r.tests ?? [];
+        const failed = tests.filter((t) => t.status !== 'pass');
+        if (shouldPass) {
+          if (tests.length === 0) error(where, 'tests.js defines no tests');
+          for (const t of tests) if (!step.testTitles[t.name]) error(where, `test "${t.name}" has no bilingual title in testTitles`);
+          if (failed.length > 0) error(where, `reference (${lang}) must pass every check, but fails: ${failed.map((t) => `"${t.name}" (${t.message})`).join('; ')}`);
+          if (r.errors.length > 0) error(where, `reference (${lang}) throws ${r.errors[0].name}: ${r.errors[0].message}`);
+        } else if (failed.length === 0) error(where, `the ${name} (${lang}) already passes every check — the step asks for nothing`);
+      }
+    }
+  }
   await browser.close();
   await server.close();
   await fs.rm(dataDir, { recursive: true, force: true });
@@ -186,9 +224,9 @@ if (release) {
 }
 
 await fs.rm(tmpOut, { recursive: true, force: true });
-const report = { ok: errors.length === 0, lessons: lessons.length, executed, errors, notes, contentVersion: index.contentVersion };
+const report = { ok: errors.length === 0, lessons: lessons.length, capstoneSteps: capstoneSteps.length, executed, errors, notes, contentVersion: index.contentVersion };
 if (jsonOut) await fs.writeFile(jsonOut, JSON.stringify(report, null, 2));
 for (const e of errors) console.error(`✖ ${e.where} — ${e.message}`);
 for (const n of notes) console.error(`· ${n.where} — ${n.message}`);
-console.log(`${errors.length === 0 ? 'CONTENT VALID' : 'CONTENT INVALID'}: ${lessons.length} lesson(s), ${executed.examples} example run(s), ${executed.fixtures} exercise fixture run(s), ${executed.predictions} verified prediction(s), ${errors.length} error(s)`);
+console.log(`${errors.length === 0 ? 'CONTENT VALID' : 'CONTENT INVALID'}: ${lessons.length} lesson(s), ${executed.examples} example run(s), ${executed.fixtures} exercise fixture run(s), ${executed.predictions} verified prediction(s), ${capstoneSteps.length} capstone step variant(s) with ${executed.capstoneRuns} capstone run(s), ${errors.length} error(s)`);
 process.exit(errors.length === 0 ? 0 : 1);

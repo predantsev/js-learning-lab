@@ -118,6 +118,8 @@ export interface LessonProgress {
   examples: Record<string, { ranAt?: string }>;
   localTasks: Record<string, LocalTaskProgress>;
   seenBlocks: string[];
+  /** Capstone-step lessons only: the step state of the active project, mirrored by components/project. */
+  project?: { workspaceId: string | null; state: 'done' | 'skipped' | 'pending'; at: string };
 }
 export interface ProgressDoc { lessons: Record<string, LessonProgress> }
 export interface DraftsDoc { blocks: Record<string, { files: Record<string, string>; lang?: Lang; activeFile?: string; storage?: Record<string, string>; updatedAt: string }> }

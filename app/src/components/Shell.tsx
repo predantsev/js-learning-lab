@@ -118,7 +118,7 @@ export function App() {
   if (onboarding) content = <Onboarding />;
   else switch (r.name) {
     case 'lesson': content = <LessonView id={r.id} page={r.page} block={r.block} />; break;
-    case 'project': content = <ProjectPage />; break;
+    case 'project': content = <ProjectPage unit={r.unit} />; break;
     case 'bookmarks': content = <BookmarksPage />; break;
     case 'review': content = <ReviewPage />; break;
     case 'glossary': content = <GlossaryPage term={r.term} />; break;
