@@ -17,6 +17,7 @@ export default defineConfig({
       input: {
         index: path.resolve(import.meta.dirname, 'app/index.html'),
         harness: path.resolve(import.meta.dirname, 'app/harness.html'),
+        'visuals-demo': path.resolve(import.meta.dirname, 'app/visuals-demo.html'),
       },
     },
   },
