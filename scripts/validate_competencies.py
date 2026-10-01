@@ -80,7 +80,7 @@ def validate(root,release=False):
         if r.get('stage')=='NO':require(not any(dep.startswith('N-') for dep in r.get('prerequisites',[])),f"{r['id']}: native pass must not block Node assessment")
     require('JS-10' in order and 'JS-18' in order and pos.get('JS-10',999)<pos.get('JS-18',-1),'foundational export/cumulative gate order')
     for path in root.rglob('*.md'):
-        if '.git' in path.parts:continue
+        if {'.git','node_modules','dist','.runtime','.claude','.learner-data','exports'} & set(path.relative_to(root).parts):continue
         for link in re.findall(r'\[[^\]]+\]\(([^)]+)\)',path.read_text()):
             if ':' not in link and not link.startswith('#'):
                 require((path.parent/link.split('#')[0]).is_file(),f'{path.relative_to(root)}: broken link {link}')
