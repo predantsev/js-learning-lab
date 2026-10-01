@@ -136,7 +136,9 @@ export async function openApp(browser, lab, { hash = '#/course', viewport = { wi
   const page = await ctx.newPage();
   const problems = [];
   const fromApp = (url) => { try { return new URL(url).hostname === 'js-learning-lab.localhost'; } catch { return false; } };
-  page.on('pageerror', (error) => problems.push(`pageerror: ${error.message}`));
+  // Playwright also reports uncaught errors of child frames: learner code failing inside a sandbox
+  // frame (jsll-run-N.localhost) is the scenario of some tests, not an application error.
+  page.on('pageerror', (error) => { if (!/jsll-run-\d+\.localhost|\/sandbox\//.test(error.stack ?? '')) problems.push(`pageerror: ${error.message}`); });
   page.on('console', (msg) => {
     if (msg.type() !== 'error' || !fromApp(msg.location().url)) return;
     // Chrome logs every non-2xx fetch; failing API calls are the scenarios some tests provoke and

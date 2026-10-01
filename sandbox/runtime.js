@@ -119,9 +119,11 @@
   function cleanStack(stack) {
     let s = String(stack);
     for (const [url, file] of blobToFile) s = s.split(url).join(file);
+    // Runtime frames carry the frame document's URL (the runtime is inlined into frame.html by
+    // the sandbox build) or /sandbox/runtime.js; learner code has its own file names.
     return s
       .split('\n')
-      .filter((line) => !/\/sandbox\/runtime\.js/.test(line))
+      .filter((line) => !/\/sandbox\/(?:runtime\.js|frame\.html)/.test(line))
       .join('\n');
   }
 
