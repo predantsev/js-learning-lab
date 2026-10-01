@@ -105,7 +105,9 @@ if (!flag('--static') && lessons.length > 0) {
           executed.examples += 1;
           const r = await run(runInputForBlock({ ...block, tests: '' }, localizeFiles(assets.files, block, lang), { mode: 'run', lang }));
           const failure = describeFailure(r);
-          if (failure) error(where, `example (${lang}) ${failure}`);
+          // An example may demonstrate an error on purpose, including one that prevents running.
+          if (failure && !(block.expectError === true && r.status === 'compile-error')) error(where, `example (${lang}) ${failure}`);
+          else if (failure) continue;
           else if (r.errors.length > 0 && block.expectError !== true) error(where, `example throws ${r.errors[0].name}: ${r.errors[0].message} (set expectError: true if the error is the point)`);
           else if (r.errors.length === 0 && block.expectError === true) error(where, 'example declares expectError but runs without an error');
         }
@@ -122,9 +124,10 @@ if (!flag('--static') && lessons.length > 0) {
         const r = await run(runInputForBlock(compiledBlock, files, { mode: 'test', lang }));
         const failure = describeFailure(r);
         const shouldPass = name === 'solution' || name.startsWith('alt');
-        if (failure && (shouldPass || r.status !== 'compile-error')) {
-          // A deliberately wrong or unfinished fixture may fail to compile; a passing one may not.
-          if (shouldPass || name === 'starter') error(where, `${name}: ${failure}`);
+        if (failure) {
+          // A starter or a deliberately wrong fixture may fail to compile (that counts as failing);
+          // a passing fixture may not, and no fixture may crash the harness in another way.
+          if (shouldPass || r.status !== 'compile-error') error(where, `${name} (${lang}): ${failure}`);
           continue;
         }
         const tests = r.tests ?? [];
