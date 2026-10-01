@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import type { PlayerProps } from '../VisualPlayer';
 import type { CodeTraceSpec, TraceScope, TraceStep, Heap } from '../types';
 import type { VisualLabels } from '../labels';
@@ -35,6 +36,21 @@ function scopeNameById(step: TraceStep, id: number | string | null): string | nu
   const scope = step.scopes[String(id)];
   if (!scope) return `#${id}`;
   return scope.kind === 'module' ? scope.name : scope.name || scope.kind;
+}
+
+/**
+ * Which state panels have anything to show in at least one step. A panel that stays empty for the
+ * whole visual is not drawn (one line names it instead). The call stack counts as empty while only
+ * the program (module) frame is on it: it says nothing the highlighted line does not.
+ */
+export function panelPresence(steps: { trace: TraceStep }[]): { variables: boolean; callStack: boolean; heap: boolean } {
+  const out = { variables: false, callStack: false, heap: false };
+  for (const { trace } of steps) {
+    if (!out.variables) out.variables = scopeChain(trace).some(({ scope }) => scope.vars.length > 0);
+    if (!out.callStack) out.callStack = trace.frames.some((f, i) => (f.kind ? f.kind !== 'module' : i > 0));
+    if (!out.heap) out.heap = Object.keys(trace.heap).length > 0;
+  }
+  return out;
 }
 
 export function changedVars(current: TraceStep, previous: TraceStep | null): Set<string> {
@@ -84,13 +100,18 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
   const context = step.frames.slice(0, -1).map((f) => f.line).filter((l) => l > 0);
   const consoleEntries = spec.console.slice(0, current.logged);
   const heapIds = Object.keys(step.heap);
+  const shown = useMemo(() => panelPresence(spec.steps), [spec]);
+  const hiddenPanels = [!shown.variables && labels.noVariables, !shown.callStack && labels.noCalls, !shown.heap && labels.noObjects].filter((x): x is string => typeof x === 'string');
+  const stackColumn = shown.callStack || shown.heap;
   return (
     <div className="viz-grid viz-code-trace">
       <CodeView code={spec.code} currentLine={step.line} context={context} label={labels.code} currentLabel={labels.lineN} file={spec.file} flashKey={tick} />
       <EventLine step={step} labels={labels} heap={step.heap} />
       {spec.truncated && index === spec.steps.length - 1 ? <p className="viz-note">{labels.truncated}</p> : null}
-      <div className="viz-columns">
-        <section className="viz-panel" aria-label={labels.variables}>
+      {shown.variables || stackColumn ? (
+      <div className={`viz-columns${shown.variables && stackColumn ? '' : ' viz-columns-single'}`}>
+        {shown.variables ? (
+        <section className="viz-panel" aria-label={labels.variables} data-panel="variables">
           <header className="viz-panel-head"><span>{labels.variables}</span></header>
           {chain.map(({ scope, captured }) => (
             <div key={scope.id} className={`viz-scope${captured ? ' viz-scope-captured' : ''} viz-scope-${scope.kind}`} data-scope={scope.id}>
@@ -117,8 +138,11 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
             </div>
           ))}
         </section>
+        ) : null}
+        {stackColumn ? (
         <div className="viz-stack-col">
-          <section className="viz-panel" aria-label={labels.callStack}>
+          {shown.callStack ? (
+          <section className="viz-panel" aria-label={labels.callStack} data-panel="call-stack">
             <header className="viz-panel-head"><span>{labels.callStack}</span></header>
             <ol className="viz-frames" reversed>
               {frames.map((f, i) => (
@@ -127,7 +151,9 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
               {frames.length === 0 ? <li className="viz-dim viz-small">{labels.empty}</li> : null}
             </ol>
           </section>
-          <section className="viz-panel" aria-label={labels.heap}>
+          ) : null}
+          {shown.heap ? (
+          <section className="viz-panel" aria-label={labels.heap} data-panel="heap">
             <header className="viz-panel-head"><span>{labels.heap}</span></header>
             {heapIds.length === 0 ? <p className="viz-dim viz-small">{labels.empty}</p> : (
               <div className="viz-heap">
@@ -140,8 +166,12 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
               </div>
             )}
           </section>
+          ) : null}
         </div>
+        ) : null}
       </div>
+      ) : null}
+      {hiddenPanels.length > 0 ? <p className="viz-dim viz-small" data-role="hidden-panels">{labels.hiddenPanels(hiddenPanels)}</p> : null}
       <section className="viz-panel viz-console" aria-label={labels.console}>
         <header className="viz-panel-head"><span>{labels.console}</span></header>
         <ol className="viz-console-list" data-role="console">

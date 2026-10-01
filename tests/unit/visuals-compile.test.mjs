@@ -3,7 +3,7 @@
 // Run: node --test tests/unit/visuals-compile.test.mjs
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { compileVisual, traceToSpec } from '../../shared/visuals/index.js';
+import { compileVisual, specForLang, traceToSpec } from '../../shared/visuals/index.js';
 import { compileSamples } from '../../scripts/content/compile-visual-samples.mjs';
 
 const text = (s) => ({ uk: `${s} (uk)`, en: `${s} (en)` });
@@ -13,12 +13,84 @@ const messages = (issues) => issues.map((i) => `${i.path}: ${i.message}`).join('
 test('all sample blocks compile without issues', async () => {
   const { samples, failures } = await compileSamples();
   assert.deepEqual(failures, []);
-  assert.deepEqual(samples.map((s) => s.visual).sort(), ['code-trace', 'diagram', 'event-loop', 'git-graph', 'memory-graph', 'pipeline', 'render-timeline', 'sequence']);
+  const kinds = ['code-trace', 'diagram', 'event-loop', 'git-graph', 'memory-graph', 'pipeline', 'render-timeline', 'sequence'];
+  assert.deepEqual(samples.slice(0, kinds.length).map((s) => s.file), kinds.map((k) => `${k}.yaml`), 'the canonical sample of every kind comes first');
+  assert.deepEqual([...new Set(samples.map((s) => s.visual))].sort(), kinds);
   for (const s of samples) {
-    assert.ok(s.spec.steps.length >= 2, s.file);
-    for (const step of s.spec.steps) { assert.ok(step.caption.uk && step.caption.en, `${s.file}: every step has a bilingual caption`); }
+    for (const lang of ['uk', 'en']) {
+      const spec = specForLang(s.spec, lang);
+      assert.ok(spec.steps.length >= 2, s.file);
+      for (const step of spec.steps) { assert.ok(step.caption.uk && step.caption.en, `${s.file}: every step has a bilingual caption`); }
+    }
     JSON.stringify(s.spec); // serializable
   }
+});
+
+test('strings: %%key%% in the code file, captions and labels is resolved per language; one compiled variant per language', async () => {
+  const strings = { item: { uk: 'Лампа', en: 'Lamp' } };
+  const files = { 'a.js': 'const name = "%%item%%";\nconsole.log(name);\n' };
+  const captions = [{ at: { line: 2 }, text: { uk: 'бачимо %%item%%', en: 'we see %%item%%' } }];
+  const r = await compileVisual('code-trace', { file: 'a.js', captions }, { ...ctx(files), strings });
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  assert.deepEqual(Object.keys(r.spec), ['kind', 'byLang']);
+  assert.equal(r.spec.kind, 'code-trace');
+  assert.equal(r.spec.byLang.uk.code, 'const name = "Лампа";\nconsole.log(name);\n');
+  assert.equal(r.spec.byLang.en.code, 'const name = "Lamp";\nconsole.log(name);\n');
+  assert.deepEqual(r.spec.byLang.uk.console, [{ level: 'log', text: 'Лампа' }]);
+  assert.deepEqual(r.spec.byLang.en.console, [{ level: 'log', text: 'Lamp' }]);
+  assert.equal(r.spec.byLang.uk.steps[0].trace.scopes[r.spec.byLang.uk.steps[0].trace.scope].vars[0].value.v, 'Лампа', 'the trace really ran the Ukrainian text');
+  assert.equal(r.spec.byLang.uk.steps[0].caption.uk, '<p>бачимо Лампа</p>');
+  assert.equal(r.spec.byLang.en.steps[0].caption.en, '<p>we see Lamp</p>');
+  assert.equal(specForLang(r.spec, 'en'), r.spec.byLang.en);
+  // Plain-text labels drawn in pictures (diagram), pipeline data and their labels.
+  const d = await compileVisual('diagram', { nodes: [{ id: 'a', label: '%%item%%' }, { id: 'b', label: 'fixed' }], steps: [{ caption: text('x') }] }, { ...ctx(), strings });
+  assert.deepEqual(d.issues, []);
+  assert.deepEqual(d.spec.byLang.uk.nodes[0].label, { uk: 'Лампа', en: 'Лампа' });
+  assert.deepEqual(d.spec.byLang.en.nodes[0].label, { uk: 'Lamp', en: 'Lamp' });
+  const p = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items: [{ name: '%%item%%', price: 5 }] }, stages: [{ op: 'map', fn: 'x => x.name.toUpperCase()', caption: text('m') }] }, { ...ctx(), strings });
+  assert.deepEqual(p.issues, [], messages(p.issues));
+  assert.deepEqual(p.spec.byLang.uk.steps.at(-1).output.items.map((i) => i.label), ['ЛАМПА']);
+  assert.deepEqual(p.spec.byLang.en.steps.at(-1).output.items.map((i) => i.label), ['LAMP']);
+  // Strings that reach nothing visible collapse to the plain shape.
+  const unused = await compileVisual('code-trace', { code: 'let a = 1;\n', captions: [{ at: { line: 1 }, text: text('a') }] }, { ...ctx(), strings });
+  assert.equal(unused.spec.kind, 'code-trace');
+  assert.equal(unused.spec.byLang, undefined);
+});
+
+test('strings: unknown keys, a missing table and language-dependent steps are refused', async () => {
+  const strings = { item: { uk: 'Лампа', en: 'Lamp' } };
+  const cap = [{ at: { line: 1 }, text: text('a') }];
+  const unknown = await compileVisual('code-trace', { code: 'const a = "%%nope%%";\n', captions: cap }, { ...ctx(), strings });
+  assert.equal(unknown.spec, null);
+  assert.match(messages(unknown.issues), /strings: placeholder %%nope%% has no entry in strings/);
+  const noTable = await compileVisual('code-trace', { file: 'a.js', captions: cap }, ctx({ 'a.js': 'const a = "%%item%%";\n' }));
+  assert.equal(noTable.spec, null);
+  assert.match(messages(noTable.issues), /placeholder %%item%% has no entry in strings \(add a strings table to the block\)/);
+  // "Лампа" has 5 letters, "Lamp" 4: the loop runs a different number of times in each language.
+  const loop = { code: 'const word = "%%item%%";\nfor (const ch of word) {\n  ch;\n}\n', steps: 'all', captions: [{ at: { line: 1 }, text: text('a') }, { at: { line: 2, hit: 'every' }, text: text('b') }, { at: { line: 3, hit: 'every' }, text: text('c') }, { at: { line: 4, kind: 'end' }, text: text('d') }] };
+  const diverge = await compileVisual('code-trace', loop, { ...ctx(), strings });
+  assert.equal(diverge.spec, null);
+  assert.match(messages(diverge.issues), /the uk and en versions have different numbers of steps \(\d+ and \d+\)/);
+  // A caption that only matches in one language names that language.
+  const oneLang = await compileVisual('code-trace', { code: 'const word = "%%item%%";\nif (word.length > 4) {\n  console.log(word);\n}\n', captions: [{ at: { line: 3 }, text: text('long') }] }, { ...ctx(), strings });
+  assert.match(messages(oneLang.issues), /no step runs line 3.*\(with the en strings\)/);
+});
+
+test('lesson build: a visual block with strings gets localized title, text equivalent and spec', async () => {
+  const { compileLesson, createMarkdown } = await import('../../scripts/content/lib.mjs');
+  const visuals = await import('../../shared/visuals/index.js');
+  const block = {
+    id: 'v', kind: 'visual', visual: 'code-trace', strings: { item: { uk: 'Лампа', en: 'Lamp' } },
+    title: { uk: 'Про %%item%%', en: 'About %%item%%' }, textEquivalent: { uk: 'Рядок «%%item%%».', en: 'The string "%%item%%".' },
+    spec: { code: 'const a = "%%item%%";\nconsole.log(a);\n', captions: [{ at: { line: 2 }, text: { uk: 'виводить %%item%%', en: 'prints %%item%%' } }] },
+  };
+  const { lesson, issues } = await compileLesson({ dir: '/nonexistent', assets: {}, source: { id: 'js-99-01-strings', blocks: [block] } }, { md: createMarkdown(new Map()), visuals });
+  assert.deepEqual(issues, []);
+  const out = lesson.blocks[0];
+  assert.deepEqual(out.title, { uk: 'Про Лампа', en: 'About Lamp' });
+  assert.equal(out.textEquivalent.en, '<p>The string &quot;Lamp&quot;.</p>');
+  assert.equal(out.spec.byLang.uk.console[0].text, 'Лампа');
+  assert.equal(out.spec.byLang.en.steps[0].caption.en, 'prints Lamp');
 });
 
 test('code-trace: captions bind to generated steps; unmatched or ambiguous captions fail', async () => {

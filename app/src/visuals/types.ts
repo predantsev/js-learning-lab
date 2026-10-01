@@ -23,7 +23,7 @@ export type Heap = Record<string, HeapEntry>;
 
 export type TraceVar = { name: string; kind: string; value?: TraceValue; uninit?: boolean };
 export type TraceScope = { id: number; kind: string; name: string; parent: number | null; vars: TraceVar[] };
-export type TraceFrame = { id: number; name: string; line: number; scope: number | null };
+export type TraceFrame = { id: number; name: string; line: number; scope: number | null; kind?: 'module' | 'function' };
 export type TraceEvent =
   | { type: 'call'; name: string; args: { name: string; value: TraceValue }[]; from: number | null }
   | { type: 'return'; name: string; value: TraceValue; implicit?: boolean }
@@ -98,3 +98,7 @@ export type RenderTimelineSpec = {
 };
 
 export type VisualSpec = CodeTraceSpec | MemoryGraphSpec | PipelineSpec | EventLoopSpec | DiagramSpec | SequenceSpec | GitGraphSpec | RenderTimelineSpec;
+
+/** A visual whose block has a strings table: one compiled spec per language (same steps in both). */
+export type LocalizedVisualSpec = { kind: VisualKind; byLang: Record<Lang, VisualSpec> };
+export type CompiledVisualSpec = VisualSpec | LocalizedVisualSpec;

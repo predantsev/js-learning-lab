@@ -11,7 +11,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { marked } from 'marked';
 import YAML from 'yaml';
-import { compileVisual, validateVisualSpec } from '../../shared/visuals/index.js';
+import { localizePair } from '../../shared/exercise.js';
+import { VISUAL_KINDS, compileVisual, specForLang, validateVisualSpec } from '../../shared/visuals/index.js';
 import { traceSource } from '../../shared/visuals/tracer.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -34,7 +35,9 @@ export function contextFor(dir) {
 
 /** Compile every sample block. Returns { samples: [...], failures: [...] }. */
 export async function compileSamples(dir = SAMPLES_DIR) {
-  const files = (await fs.readdir(dir)).filter((f) => f.endsWith('.yaml')).sort();
+  // The canonical sample of each kind (<kind>.yaml) comes first, then the extra ones (<kind>-….yaml).
+  const canonical = (f) => VISUAL_KINDS.includes(f.replace(/\.yaml$/, ''));
+  const files = (await fs.readdir(dir)).filter((f) => f.endsWith('.yaml')).sort((a, b) => Number(canonical(b)) - Number(canonical(a)) || a.localeCompare(b));
   const samples = [];
   const failures = [];
   const ctx = contextFor(dir);
@@ -42,11 +45,20 @@ export async function compileSamples(dir = SAMPLES_DIR) {
     const block = YAML.parse(await fs.readFile(path.join(dir, file), 'utf8'));
     const staticIssues = validateVisualSpec(block.visual, block.spec);
     if (staticIssues.length > 0) { failures.push({ file, issues: staticIssues }); continue; }
-    const { spec, issues } = await compileVisual(block.visual, block.spec, ctx);
+    const { spec, issues } = await compileVisual(block.visual, block.spec, { ...ctx, strings: block.strings });
     if (issues.length > 0) { failures.push({ file, issues }); continue; }
-    samples.push({ file, id: block.id, visual: block.visual, title: block.title, textEquivalent: block.textEquivalent, spec });
+    samples.push({ file, id: block.id, visual: block.visual, title: localizePair(block.title, block), textEquivalent: localizePair(block.textEquivalent, block), spec });
   }
   return { samples, failures };
+}
+
+/** Steps and natural width of a compiled sample, for the summary line. */
+function describe(sample) {
+  const spec = specForLang(sample.spec, 'uk');
+  const parts = [sample.visual, `${spec.steps.length} steps`];
+  if (sample.spec.byLang) parts.push(`one version per language: ${Object.keys(sample.spec.byLang).join(', ')}`);
+  if (spec.kind === 'diagram') parts.push(`${spec.layout.width} px wide${spec.layout.width > 450 ? ' — wider than the 450 px lesson-column guidance' : ''}`);
+  return parts.join(', ');
 }
 
 const printIssues = (file, issues) => {
@@ -112,7 +124,7 @@ async function main() {
   const out = outIndex !== -1 ? path.resolve(args[outIndex + 1]) : DEFAULT_OUT;
   const { samples, failures } = await compileSamples();
   for (const f of failures) printIssues(f.file, f.issues);
-  for (const s of samples) console.log(`✓ ${s.file} (${s.visual}, ${s.spec.steps.length} steps)`);
+  for (const s of samples) console.log(`✓ ${s.file} (${describe(s)})`);
   if (failures.length > 0) { process.exitCode = 1; return; }
   if (args.includes('--check')) return undefined;
   await fs.mkdir(path.dirname(out), { recursive: true });

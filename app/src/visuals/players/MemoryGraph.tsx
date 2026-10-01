@@ -1,15 +1,18 @@
+import { useMemo } from 'react';
 import { svgStyle, type PlayerProps } from '../VisualPlayer';
 import type { Heap, HeapEntry, MemoryGraphSpec, TraceValue } from '../types';
-import type { VisualLabels } from '../labels';
+import { VISUAL_LABELS, type VisualLabels } from '../labels';
 import { CodeView } from '../CodeView';
 import { heapSummary, valueText } from '../ValueView';
 
 // Geometry (SVG user units ≈ px at 1:1; the svg scales down to the container width).
-const BIND_W = 150;
 const ROW_H = 24;
-const HEAP_W = 196;
-const GAP = 110;
+const GAP = 84;
 const PAD = 10;
+const LOOP_BACK = 44; // room on the right for arrows from one heap box to another
+const CHAR_W = 7.3; // 12 px monospace
+const BIND_RANGE = { min: 104, max: 200 };
+const HEAP_RANGE = { min: 132, max: 240 };
 
 type HeapBox = { id: string; entry: HeapEntry; rows: { key: string; value: TraceValue }[]; x: number; y: number; w: number; h: number };
 
@@ -21,12 +24,43 @@ function rowsOf(entry: HeapEntry, heap: Heap, labels: VisualLabels): { key: stri
   return [];
 }
 
+const textWidth = (text: string) => Math.ceil(text.length * CHAR_W) + 16;
+const clamp = (value: number, { min, max }: { min: number; max: number }) => Math.min(max, Math.max(min, value));
+
+/**
+ * Column widths follow the longest text of the whole visual (every step, both languages), so the
+ * picture never changes size while stepping or switching language. Short names and values give a
+ * picture of about 350–450 px; see content/VISUALS.md (width guidance).
+ */
+export function memoryGraphGeometry(spec: MemoryGraphSpec) {
+  let bindText = 0;
+  let heapText = 0;
+  let loopBack = false;
+  for (const labels of Object.values(VISUAL_LABELS)) {
+    for (const step of spec.steps) {
+      for (const b of step.bindings) bindText = Math.max(bindText, textWidth(b.value.t === 'ref' ? `${b.name} → #${String(b.value.id)}` : `${b.name} = ${valueText(b.value, step.heap, labels)}`));
+      for (const [id, entry] of Object.entries(step.heap)) {
+        heapText = Math.max(heapText, textWidth(`#${id} ${heapSummary(entry, id)}`));
+        if ((entry.t === 'function' || entry.t === 'class') && entry.scope) heapText = Math.max(heapText, textWidth(labels.closureOf(entry.scopeName ?? String(entry.scope))));
+        for (const row of rowsOf(entry, step.heap, labels)) {
+          heapText = Math.max(heapText, textWidth(`${row.key}: ${row.value.t === 'ref' ? `→ #${String(row.value.id)}` : valueText(row.value, step.heap, labels)}`));
+          if (row.value.t === 'ref') loopBack = true;
+        }
+      }
+    }
+  }
+  const bindW = clamp(bindText, BIND_RANGE);
+  const heapW = clamp(heapText, HEAP_RANGE);
+  return { bindW, heapW, width: PAD + bindW + GAP + heapW + (loopBack ? LOOP_BACK : PAD) };
+}
+
 export function MemoryGraph({ spec, index, tick, labels }: PlayerProps<MemoryGraphSpec>) {
   const step = spec.steps[index];
   const heap = step.heap;
   const changed = new Set(step.changed);
   const bindings = step.bindings;
   const heapIds = Object.keys(heap);
+  const { bindW, heapW, width } = useMemo(() => memoryGraphGeometry(spec), [spec]);
 
   // Layout: bindings in one column on the left; heap entries stacked in a column on the right.
   const bindH = Math.max(1, bindings.length) * ROW_H + ROW_H;
@@ -36,10 +70,9 @@ export function MemoryGraph({ spec, index, tick, labels }: PlayerProps<MemoryGra
     const entry = heap[id];
     const rows = rowsOf(entry, heap, labels);
     const h = ROW_H + Math.max(rows.length, entry.t === 'function' || entry.t === 'class' ? 1 : rows.length === 0 ? 1 : 0) * ROW_H + 6;
-    boxes.push({ id, entry, rows, x: PAD + BIND_W + GAP, y, w: HEAP_W, h });
+    boxes.push({ id, entry, rows, x: PAD + bindW + GAP, y, w: heapW, h });
     y += h + 14;
   }
-  const width = PAD + BIND_W + GAP + HEAP_W + PAD + 44; // room for arrows that loop back on the right
   const height = Math.max(bindH + 2 * PAD, y) + PAD;
   const boxById = new Map(boxes.map((b) => [b.id, b]));
 
@@ -49,7 +82,7 @@ export function MemoryGraph({ spec, index, tick, labels }: PlayerProps<MemoryGra
     if (b.value.t !== 'ref') return;
     const target = boxById.get(String(b.value.id));
     if (!target) return;
-    arrows.push({ key: `b-${b.name}`, x1: PAD + BIND_W, y1: PAD + ROW_H + i * ROW_H + ROW_H / 2, x2: target.x, y2: target.y + ROW_H / 2, flash: changed.has(b.name), curve: false });
+    arrows.push({ key: `b-${b.name}`, x1: PAD + bindW, y1: PAD + ROW_H + i * ROW_H + ROW_H / 2, x2: target.x, y2: target.y + ROW_H / 2, flash: changed.has(b.name), curve: false });
   });
   for (const box of boxes) {
     box.rows.forEach((row, i) => {
@@ -77,7 +110,7 @@ export function MemoryGraph({ spec, index, tick, labels }: PlayerProps<MemoryGra
               const yy = PAD + ROW_H + i * ROW_H;
               return (
                 <g key={flash ? `${b.name}-${tick}` : b.name} className={`viz-binding${flash ? ' viz-changed' : ''}`} transform={`translate(${PAD} ${yy})`}>
-                  <rect width={BIND_W} height={ROW_H - 2} rx="4" className="viz-svg-box" />
+                  <rect width={bindW} height={ROW_H - 2} rx="4" className="viz-svg-box" />
                   <text x="8" y="16" className="viz-svg-mono"><tspan className="viz-svg-name">{b.name}</tspan>{b.value.t === 'ref' ? <tspan className="viz-svg-dim"> → #{String(b.value.id)}</tspan> : <tspan> = {valueText(b.value, heap, labels)}</tspan>}</text>
                 </g>
               );

@@ -8,6 +8,7 @@ export type VisualLabels = {
   code: string; variables: string; callStack: string; heap: string; console: string; microtasks: string; tasks: string; webApis: string;
   uninitialized: string; captured: string; module: string; function: string; block: string; loop: string; catch: string; this: string;
   call: string; returns: string; throws: string; awaits: string; resumes: string; iteration: (n: number) => string;
+  hiddenPanels: (parts: string[]) => string; noVariables: string; noCalls: string; noObjects: string;
   reference: (id: string) => string; closureOf: (name: string) => string; moreItems: (n: number) => string;
   input: string; output: string; stage: string; kept: string; dropped: string; waiting: string; mapped: string; consumed: string; moved: string; skipped: string; accumulator: string; initial: string; result: string;
   nodes: string; edges: string; highlighted: string; dimmed: string; from: string; to: string; message: (n: number, total: number) => string; note: string; actors: string;
@@ -24,6 +25,7 @@ export const VISUAL_LABELS: Record<'uk' | 'en', VisualLabels> = {
     code: 'Код', variables: 'Змінні', callStack: 'Call stack', heap: 'Heap (об’єкти)', console: 'Console', microtasks: 'Microtasks', tasks: 'Tasks (macrotasks)', webApis: 'Web APIs',
     uninitialized: 'uninitialized (TDZ)', captured: 'захоплений scope', module: 'модуль', function: 'функція', block: 'блок', loop: 'цикл', catch: 'catch', this: 'this',
     call: 'виклик', returns: 'повертає', throws: 'кидає помилку', awaits: 'чекає (await)', resumes: 'продовжує після await', iteration: (n) => `ітерація ${n}`,
+    hiddenPanels: (parts) => `Не показано, бо порожні в усіх кроках: ${parts.join(', ')}.`, noVariables: 'змінні (у коді їх немає)', noCalls: 'call stack (жодна функція не викликається)', noObjects: 'heap (жодного об’єкта)',
     reference: (id) => `посилання на об’єкт #${id}`, closureOf: (name) => `замикання: scope «${name}»`, moreItems: (n) => `… ще ${n}`,
     input: 'Вхід', output: 'Результат', stage: 'етап', kept: 'залишено', dropped: 'відкинуто', waiting: 'очікує', mapped: 'перетворено', consumed: 'враховано', moved: 'переставлено', skipped: 'пропущено', accumulator: 'накопичувач', initial: 'початкове', result: 'результат',
     nodes: 'Вузли', edges: 'Зв’язки', highlighted: 'виділено', dimmed: 'приглушено', from: 'від', to: 'до', message: (n, total) => `повідомлення ${n} з ${total}`, note: 'примітка', actors: 'Учасники',
@@ -38,6 +40,7 @@ export const VISUAL_LABELS: Record<'uk' | 'en', VisualLabels> = {
     code: 'Code', variables: 'Variables', callStack: 'Call stack', heap: 'Heap (objects)', console: 'Console', microtasks: 'Microtasks', tasks: 'Tasks (macrotasks)', webApis: 'Web APIs',
     uninitialized: 'uninitialized (TDZ)', captured: 'captured scope', module: 'module', function: 'function', block: 'block', loop: 'loop', catch: 'catch', this: 'this',
     call: 'call', returns: 'returns', throws: 'throws', awaits: 'awaits', resumes: 'resumes after await', iteration: (n) => `iteration ${n}`,
+    hiddenPanels: (parts) => `Not shown, empty in every step: ${parts.join(', ')}.`, noVariables: 'variables (the code has none)', noCalls: 'call stack (no function is called)', noObjects: 'heap (no objects)',
     reference: (id) => `reference to object #${id}`, closureOf: (name) => `closure: scope “${name}”`, moreItems: (n) => `… ${n} more`,
     input: 'Input', output: 'Output', stage: 'stage', kept: 'kept', dropped: 'dropped', waiting: 'waiting', mapped: 'mapped', consumed: 'consumed', moved: 'reordered', skipped: 'skipped', accumulator: 'accumulator', initial: 'initial', result: 'result',
     nodes: 'Nodes', edges: 'Edges', highlighted: 'highlighted', dimmed: 'dimmed', from: 'from', to: 'to', message: (n, total) => `message ${n} of ${total}`, note: 'note', actors: 'Participants',
