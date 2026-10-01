@@ -1,7 +1,7 @@
 // Lesson content features reported by the first lesson author: project SVG images (in HTML, CSS
 // and from JavaScript) and honest notes for failed resources; links between project pages;
 // authored feedback for syntax errors; inline check titles; the validator accepting syntax-error
-// predictions; code-trace panels hidden when empty in every step.
+// predictions.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
@@ -147,27 +147,6 @@ test('authored feedback for SyntaxError appears next to a syntax error found bef
     const title = page.locator('.test-title').first();
     assert.equal(await title.locator('code').innerText(), 'console.log');
     assert.equal((await title.textContent()).trim(), 'Виводить привітання через console.log');
-    assert.deepEqual(problems, []);
-    await context.close();
-  } finally {
-    await lab.dispose();
-  }
-});
-
-test('code-trace hides the Variables, Call stack and Heap panels that are empty in every step', async () => {
-  const lab = await Lab.start({ distDir });
-  try {
-    const { page, problems, context } = await openLesson(lab, 1);
-    const panels = (blockId) => page.locator(`#block-${blockId} .viz .viz-panel`).evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')));
-    await page.locator('#block-pages-trace-none .viz').waitFor();
-    assert.deepEqual(await panels('pages-trace-none'), ['Код', 'Console'], 'only the code and its output: no variables, calls or objects');
-    await page.locator('#block-pages-trace-vars .viz').waitFor();
-    assert.deepEqual(await panels('pages-trace-vars'), ['Код', 'Змінні', 'Console'], 'variables, but no call stack or heap');
-    assert.equal(await page.locator('#block-pages-trace-vars .viz-columns').getAttribute('class'), 'viz-columns viz-columns-single', 'the remaining panel takes the full width');
-    // Stepping keeps working and shows the variable's value.
-    await page.locator('#block-pages-trace-vars [data-action="next"]').click();
-    await page.locator('#block-pages-trace-vars [data-role="caption"]').getByText('ФІКСТУРА-ЗМІННА-2').waitFor();
-    assert.match(await page.locator('#block-pages-trace-vars .viz-vars').innerText(), /total[\s\S]*3/);
     assert.deepEqual(problems, []);
     await context.close();
   } finally {

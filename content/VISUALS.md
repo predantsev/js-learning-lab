@@ -354,13 +354,6 @@ Layout is computed at build time: ungrouped nodes are layered by their edges, gr
 their group's column, nodes in one column stack in order. Give long labels a `w` or shorten them;
 labels are single-line plain text.
 
-**Width budget: keep the natural width at most about 420 px.** The compiled `spec.layout.width` is
-the diagram's natural width. The player scales a diagram down to fit, but never below 85% of that
-width (labels would become unreadable), and the explanation column is narrow: at the minimum
-supported window of 1280×800 it measures about 470 px in Calm Studio and Editorial and about 405 px
-in Dev workspace, minus the block padding. A wider diagram is cut off or scrolls sideways there. Stay within the budget with fewer columns (`layout: tb`), shorter labels or
-a smaller `w`, and check it at `/visuals-demo.html?only=diagram&width=420`.
-
 Common mistakes: `show` for an id that is not in `hidden`; a hidden id that no step ever shows;
 Markdown in node labels (it is printed literally); two edges between the same nodes without
 explicit `id`s.

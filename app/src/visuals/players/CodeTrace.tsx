@@ -1,6 +1,5 @@
-import { useMemo } from 'react';
 import type { PlayerProps } from '../VisualPlayer';
-import type { CodeTraceSpec, TraceFrame, TraceScope, TraceStep, Heap } from '../types';
+import type { CodeTraceSpec, TraceScope, TraceStep, Heap } from '../types';
 import type { VisualLabels } from '../labels';
 import { CodeView } from '../CodeView';
 import { HeapEntryView, Value, valueText } from '../ValueView';
@@ -51,29 +50,6 @@ export function changedVars(current: TraceStep, previous: TraceStep | null): Set
   return changed;
 }
 
-/** True for a frame of a called function; false for the frame of the module (top-level code). */
-function isCallFrame(step: TraceStep, frame: TraceFrame): boolean {
-  let id = frame.scope;
-  const seen = new Set<number>();
-  while (id !== null && step.scopes[String(id)] && !seen.has(id)) {
-    seen.add(id);
-    const scope = step.scopes[String(id)];
-    if (scope.kind === 'module') return false;
-    if (scope.kind === 'function') return true;
-    id = scope.parent;
-  }
-  return true; // unknown: keep the call stack visible
-}
-
-/** Which panels have something to show in at least one step; a panel empty in every step is hidden. */
-export function usedPanels(steps: CodeTraceSpec['steps']): { variables: boolean; callStack: boolean; heap: boolean } {
-  return {
-    variables: steps.some(({ trace }) => scopeChain(trace).some(({ scope }) => scope.vars.length > 0)),
-    callStack: steps.some(({ trace }) => trace.frames.some((f) => isCallFrame(trace, f))),
-    heap: steps.some(({ trace }) => Object.keys(trace.heap).length > 0),
-  };
-}
-
 export function changedHeap(current: Heap, previous: Heap | null): Set<string> {
   const changed = new Set<string>();
   for (const [id, entry] of Object.entries(current)) if (!previous || !previous[id] || JSON.stringify(previous[id]) !== JSON.stringify(entry)) changed.add(id);
@@ -108,14 +84,13 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
   const context = step.frames.slice(0, -1).map((f) => f.line).filter((l) => l > 0);
   const consoleEntries = spec.console.slice(0, current.logged);
   const heapIds = Object.keys(step.heap);
-  const used = useMemo(() => usedPanels(spec.steps), [spec.steps]);
   return (
     <div className="viz-grid viz-code-trace">
       <CodeView code={spec.code} currentLine={step.line} context={context} label={labels.code} currentLabel={labels.lineN} file={spec.file} flashKey={tick} />
       <EventLine step={step} labels={labels} heap={step.heap} />
       {spec.truncated && index === spec.steps.length - 1 ? <p className="viz-note">{labels.truncated}</p> : null}
-      {(used.variables || used.callStack || used.heap) && <div className={used.variables && (used.callStack || used.heap) ? 'viz-columns' : 'viz-columns viz-columns-single'}>
-        {used.variables && <section className="viz-panel" aria-label={labels.variables}>
+      <div className="viz-columns">
+        <section className="viz-panel" aria-label={labels.variables}>
           <header className="viz-panel-head"><span>{labels.variables}</span></header>
           {chain.map(({ scope, captured }) => (
             <div key={scope.id} className={`viz-scope${captured ? ' viz-scope-captured' : ''} viz-scope-${scope.kind}`} data-scope={scope.id}>
@@ -141,9 +116,9 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
               )}
             </div>
           ))}
-        </section>}
-        {(used.callStack || used.heap) && <div className="viz-stack-col">
-          {used.callStack && <section className="viz-panel" aria-label={labels.callStack}>
+        </section>
+        <div className="viz-stack-col">
+          <section className="viz-panel" aria-label={labels.callStack}>
             <header className="viz-panel-head"><span>{labels.callStack}</span></header>
             <ol className="viz-frames" reversed>
               {frames.map((f, i) => (
@@ -151,8 +126,8 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
               ))}
               {frames.length === 0 ? <li className="viz-dim viz-small">{labels.empty}</li> : null}
             </ol>
-          </section>}
-          {used.heap && <section className="viz-panel" aria-label={labels.heap}>
+          </section>
+          <section className="viz-panel" aria-label={labels.heap}>
             <header className="viz-panel-head"><span>{labels.heap}</span></header>
             {heapIds.length === 0 ? <p className="viz-dim viz-small">{labels.empty}</p> : (
               <div className="viz-heap">
@@ -164,9 +139,9 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
                 {step.heapTruncated ? <p className="viz-dim viz-small">…</p> : null}
               </div>
             )}
-          </section>}
-        </div>}
-      </div>}
+          </section>
+        </div>
+      </div>
       <section className="viz-panel viz-console" aria-label={labels.console}>
         <header className="viz-panel-head"><span>{labels.console}</span></header>
         <ol className="viz-console-list" data-role="console">
