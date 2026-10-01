@@ -50,6 +50,80 @@ test('loops produce one step per iteration and per-iteration let bindings are di
   assert.ok(fnEntries.length >= 1);
 });
 
+test('for (let …): a closure keeps the binding of the iteration that created it, even when called after the loop', async () => {
+  // Regression: the closure used to read the per-iteration instance at *call* time, i.e. the last one (j = 4).
+  const { trace } = await run('let f;\nfor (let j = 1; j <= 3; j++) {\n  if (j === 1) f = () => j;\n}\nf();\n');
+  const call = trace.steps.find((s) => s.kind === 'call');
+  const ret = trace.steps.find((s) => s.kind === 'return');
+  assert.equal(varsOf(call).j, 1, 'the call step shows the iteration-1 binding');
+  assert.equal(ret.event.value.v, 1, 'the function really returns 1');
+  assert.equal(varsOf(ret).j, 1);
+  const loopScope = (step) => { let id = step.scope; while (id && step.scopes[id].kind !== 'loop') id = step.scopes[id].parent; return step.scopes[id]; };
+  assert.equal(loopScope(call).iteration, 1, 'the captured scope is iteration 1');
+  // The heap link of the function value is the same scope instance the call sees.
+  const fnEntry = Object.values(call.heap).find((h) => h.t === 'function');
+  assert.equal(fnEntry.scope, loopScope(call).id);
+
+  // Several closures, one per iteration, called after the loop; plus an inner block scope and a labeled loop.
+  const many = await run('const fns = [];\nouter: for (let i = 0; i < 3; i++) {\n  const twice = i * 2;\n  fns.push(() => i + twice);\n  if (i > 5) break outer;\n}\nfor (const g of fns) {\n  g();\n}\nconsole.log(fns.map((g) => g()).join(","));\n');
+  const calls = many.trace.steps.filter((s) => s.kind === 'call' && s.line === 4);
+  assert.deepEqual(calls.map((s) => [varsOf(s).i, varsOf(s).twice]), [[0, 0], [1, 2], [2, 4], [0, 0], [1, 2], [2, 4]]);
+  assert.equal(many.trace.console[0].text, '0,3,6');
+  // A const head has a single environment (no per-iteration copies) and still traces.
+  const constHead = await run('let n = 0;\nfor (const max = 2; n < max; ) {\n  n += 1;\n}\nconsole.log(n);\n');
+  assert.equal(constHead.trace.console[0].text, '2');
+});
+
+test('a frame waiting inside a return expression (or a for…of collection) points at that line', async () => {
+  const src = 'function a(x) {\n  return x + 1;\n}\nfunction b(x) {\n  return x * 2;\n}\nfunction c(x) {\n  const y = x;\n  return a(b(y));\n}\nc(3);\n';
+  const { trace } = await run(src);
+  const frameLines = (s) => s.frames.map((f) => [f.name, f.line]);
+  const callB = trace.steps.find((s) => s.kind === 'call' && s.event.name === 'b');
+  assert.deepEqual(frameLines(callB), [['test.js', 11], ['c', 9], ['b', 4]], 'while b runs, c waits on its return line');
+  const callA = trace.steps.find((s) => s.kind === 'call' && s.event.name === 'a');
+  assert.deepEqual(frameLines(callA), [['test.js', 11], ['c', 9], ['a', 1]]);
+  // The collection of a for…of runs before the first iteration step.
+  const loop = await run('function items() {\n  return [1, 2];\n}\nlet n = 0;\nfor (const x of items()) {\n  n += x;\n}\n');
+  const callItems = loop.trace.steps.find((s) => s.kind === 'call');
+  assert.deepEqual(frameLines(callItems), [['test.js', 5], ['items', 1]]);
+  // The return step sees the scope the return statement is in, not a block that already ended.
+  const block = await run('function f(a) {\n  {\n    let b = 1;\n    b += a;\n  }\n  return a;\n}\nf(2);\n');
+  const ret = block.trace.steps.find((s) => s.kind === 'return');
+  assert.equal(ret.line, 6);
+  assert.deepEqual(Object.keys(varsOf(ret)).sort(), ['a', 'f'], 'the ended block (b) is not in the scope chain');
+});
+
+test('function values keep the name the engine infers; display names like "map callback" stay display-only', async () => {
+  const src = 'const double = (n) => n * 2;\nlet later;\nlater = function () {};\nconst obj = { greet: () => "hi", "two words": () => 2 };\nconst list = [() => 1];\nconsole.log(double, later, obj.greet);\n[1].map((x) => x);\n';
+  const { trace } = await run(src);
+  const end = trace.steps.at(-1);
+  const fnName = (binding) => end.heap[String(varsOf(end)[binding]).slice(4)].name;
+  assert.equal(fnName('double'), 'double', 'heap shows the inferred name, not (anonymous)');
+  assert.equal(fnName('later'), 'later');
+  const objEntry = end.heap[String(varsOf(end).obj).slice(4)];
+  assert.deepEqual(objEntry.props.map(([k, v]) => [k, end.heap[v.id].name]), [['greet', 'greet'], ['two words', 'two words']]);
+  const listEntry = end.heap[String(varsOf(end).list).slice(4)];
+  assert.equal(end.heap[listEntry.items[0].id].name, '', 'an array element gets no inferred name (as in the engine)');
+  assert.equal(trace.console[0].text, 'ƒ double ƒ later ƒ greet');
+  const { runScript } = await import('../../shared/visuals/exec-node.js');
+  const plain = await runScript(src, { file: 'test.js' });
+  assert.equal(plain.output[0].text, trace.console[0].text, 'tracing does not change what the program prints');
+  const callback = trace.steps.find((s) => s.kind === 'call' && s.event.name === 'map callback');
+  assert.ok(callback, 'the call stack still names the callback for the learner');
+  assert.equal(trace.steps.find((s) => s.kind === 'call' && s.event.name === 'double'), undefined, 'double is never called');
+});
+
+test('the --trace table prints null as null, undefined as undefined and return values the same way', async () => {
+  const { traceTableLines, formatTraceValue } = await import('../../scripts/content/compile-visual-samples.mjs');
+  const src = 'let a = null;\nlet b;\nfunction none() {\n  return null;\n}\nnone();\nconsole.log(a, b);\n';
+  const { trace } = await run(src);
+  const lines = traceTableLines(trace, src);
+  const logRow = lines.find((l) => /^\s+\d+\s+7\s+stmt/.test(l));
+  assert.match(logRow, /a=null b=undefined/);
+  assert.match(lines.find((l) => /\breturn\b/.test(l) && /none/.test(l)), /return null\s/);
+  assert.deepEqual([{ t: 'null' }, { t: 'undefined' }, { t: 'string', v: 'x' }, { t: 'number', v: 0 }, { t: 'boolean', v: false }, { t: 'ref', id: 3 }, { t: 'uninit' }].map(formatTraceValue), ['null', 'undefined', '"x"', '0', 'false', '#3', '⟨uninitialized⟩']);
+});
+
 test('closures: a captured scope stays visible with live values after the outer function returned', async () => {
   const src = 'function make(start) {\n  let count = start;\n  return function inc() {\n    count += 1;\n    return count;\n  };\n}\nconst inc = make(10);\ninc();\ninc();\n';
   const { trace } = await run(src);
