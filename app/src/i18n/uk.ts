@@ -193,6 +193,8 @@ export const uk = {
   'ws.runtime.local-native': 'Локальне завдання: емулятор або пристрій',
   'ws.runtime.local-node': 'Локальне завдання: справжній процес Node.js у твоєму терміналі',
   'ws.limits': 'Межі цього перегляду',
+  'ws.pageShown': 'Сторінка {file}',
+  'ws.pageBack': 'Назад до {file}',
   'ws.nodeUnavailable': 'Ізольований запуск Node.js недоступний у цій установці: {reason}',
 
   'sys.console-limit': 'Виведення зупинено: консоль отримала забагато повідомлень. Програма продовжила працювати.',
@@ -201,7 +203,7 @@ export const uk = {
   'sys.form-submit-navigation': 'Форма надіслалась би, і браузер перезавантажив би сторінку. Щоб обробити форму в JavaScript, виклич event.preventDefault() в обробнику submit.',
   'sys.no-confirm': 'confirm() у пісочниці недоступний і завжди повертає false. Зроби підтвердження на самій сторінці, наприклад через <dialog>.',
   'sys.no-prompt': 'prompt() у пісочниці недоступний і завжди повертає null. Використай поле введення на сторінці.',
-  'sys.resource-blocked': 'Зовнішній ресурс не завантажено: пісочниця працює без мережі.',
+  'sys.resource-blocked': 'Зовнішню адресу {detail} заблоковано: пісочниця працює без мережі.',
   'sys.console-cleared': 'Консоль очищено.',
   'sys.alert': 'alert',
 

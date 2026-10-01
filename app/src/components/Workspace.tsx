@@ -6,7 +6,7 @@ import type { Doc } from '../lib/persist';
 import { type Key } from '../lib/i18n';
 import { recordExampleRun, recordExerciseCheck } from '../lib/progress';
 import { useStore } from '../lib/store';
-import type { ConsoleEntry, ConsoleValue, DraftsDoc, ExampleBlock, ExerciseBlock, Lang, Lesson, RunError, TestResult } from '../lib/types';
+import type { ConsoleEntry, ConsoleValue, DraftsDoc, ExampleBlock, ExerciseBlock, L10n, Lang, Lesson, RunError, TestResult } from '../lib/types';
 import { app, useT } from '../state/app';
 import { CodeEditor, type EditorIssue } from './CodeEditor';
 import { Html, Icon, announce } from './ui';
@@ -66,14 +66,23 @@ export function guidanceKey(error: RunError): Key {
   return (known.includes(error.name) ? `err.guide.${error.name}` : 'err.guide.generic') as Key;
 }
 
-/** Localized guidance next to the verbatim diagnostic (REQ-019). */
-export function ErrorCard({ error, title }: { error: RunError; title: string }) {
+/** Authored feedback for an error (`when: { error: Name }`). A syntax error found before running
+ *  has no error name of its own; it counts as SyntaxError, the most common beginner error. */
+export function feedbackForError(block: WsBlock, error: RunError): L10n | null {
+  if (block.kind !== 'exercise') return null;
+  const name = error.kind === 'syntax' ? 'SyntaxError' : error.name;
+  return block.feedback?.find((f) => f.when.error === name)?.message ?? null;
+}
+
+/** Localized guidance next to the verbatim diagnostic (REQ-019), plus the lesson's own feedback. */
+export function ErrorCard({ error, title, feedback = null, lang = 'uk' }: { error: RunError; title: string; feedback?: L10n | null; lang?: Lang }) {
   const t = useT();
   const where = error.file && error.line ? t('ws.atLine', { file: error.file, line: error.line }) : error.file ?? null;
   return (
     <div className="error-card" role="alert">
       <div className="error-card-title"><Icon name="warn" /> {title}{where && <span className="error-where">{where}</span>}</div>
       <p className="error-guide">{t(guidanceKey(error), { ms: error.loopBudgetMs ?? 2000 })}</p>
+      {feedback && <Html html={feedback[lang]} lang={lang} className="prose test-feedback" />}
       <div className="error-original">
         <span className="label">{t('err.original')}</span>
         <pre lang="en">{error.kind ? error.message : `${error.name}: ${error.message}`}{error.frame ? `\n\n${error.frame}` : ''}</pre>
@@ -84,17 +93,15 @@ export function ErrorCard({ error, title }: { error: RunError; title: string }) 
 
 function TestsView({ block, state, lang }: { block: ExerciseBlock; state: RunState; lang: Lang }) {
   const t = useT();
-  if (state.status === 'compile-error') return <p className="ws-empty">{t('ws.notRunByError')}</p>;
+  if (state.status === 'compile-error') return <>{state.compileErrors.slice(0, 1).map((e, i) => <ErrorCard key={i} error={e} title={t('ws.compileError')} feedback={feedbackForError(block, e)} lang={lang} />)}<p className="ws-empty">{t('ws.notRunByError')}</p></>;
   if (state.harnessError) return <><p className="ws-note">{t('ws.harnessError')}</p><ErrorCard error={state.harnessError} title={t('ws.runtimeError')} /></>;
   if (!state.tests) return <p className="ws-empty">{state.status === 'checking' ? t('ws.checking') : t('ws.previewEmpty')}</p>;
   const passed = state.tests.filter((x) => x.status === 'pass').length;
   const all = passed === state.tests.length && state.tests.length > 0;
   const feedbackFor = (test: TestResult) => block.feedback?.find((f) => f.when.test === test.name)?.message ?? null;
-  const errorFeedback = state.errors.map((e) => block.feedback?.find((f) => f.when.error === e.name)?.message).find(Boolean) ?? null;
   return (
     <div className="tests">
       <p className={all ? 'tests-summary tests-ok' : 'tests-summary'}>{all ? <><Icon name="check" /> {t('ws.passedAll')}</> : t('ws.passedSome', { passed, total: state.tests.length })}</p>
-      {errorFeedback && <Html html={errorFeedback[lang]} lang={lang} className="prose test-feedback" />}
       <ul className="test-list">
         {state.tests.map((test) => {
           const fb = test.status === 'fail' ? feedbackFor(test) : null;
@@ -152,6 +159,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   const fileNames = useMemo(() => Object.keys(files).sort((a, b) => (a === block.entry ? -1 : b === block.entry ? 1 : a.localeCompare(b))), [files, block.entry]);
   const [activeFile, setActiveFile] = useState(draft?.activeFile && draft.activeFile in files ? draft.activeFile : (block.kind === 'exercise' ? block.editable[0] : undefined) ?? block.entry);
   const [tab, setTab] = useState<Tab>(hasPreview(block) ? 'preview' : 'console');
+  const [shownPage, setShownPage] = useState<string | null>(null);
   const [undo, setUndo] = useState<{ files: Record<string, string>; lang?: Lang } | null>(null);
   const runner = useRunner();
   const runButton = useRef<HTMLButtonElement>(null);
@@ -173,12 +181,17 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   const onEdit = useCallback((value: string) => { saveDraft({ files: { ...(drafts.value.blocks[draftKey]?.files ?? starter), [activeFile]: value } }); }, [saveDraft, drafts, draftKey, starter, activeFile]);
   const selectFile = (name: string) => { setActiveFile(name); saveDraft({ activeFile: name }); };
 
-  const run = (mode: 'run' | 'test') => {
+  // A link in the running page to another page of the project opens that page (a new run with it
+  // as the entry); checks always use the block's own entry.
+  const run = (mode: 'run' | 'test', page: string | null = mode === 'run' ? shownPage : null) => {
     const container = mode === 'run' ? frameHost.current : hiddenHost.current;
     if (!container) return;
+    if (mode === 'run') setShownPage(page);
     setTab(mode === 'test' ? 'tests' : hasPreview(block) ? 'preview' : 'console');
     runner.start({
       block,
+      entryOverride: mode === 'run' && page ? page : undefined,
+      onNavigate: mode === 'run' ? (path) => run('run', path === block.entry ? null : path) : undefined,
       files: drafts.value.blocks[draftKey]?.files ?? starter,
       mode,
       storage: drafts.value.blocks[draftKey]?.storage ?? {},
@@ -267,6 +280,12 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
               </button>
             ))}
           </div>
+          {shownPage && (
+            <span className="page-shown">
+              <span>{t('ws.pageShown', { file: shownPage })}</span>
+              <button type="button" className="btn btn-quiet" onClick={() => run('run', null)}>{t('ws.pageBack', { file: block.entry })}</button>
+            </span>
+          )}
           {s.live && <span className="live-label"><span className="live-dot" /> live</span>}
         </div>
         <div className="result-body" role="tabpanel" id={`${helpId}-panel`} aria-labelledby={tabs.includes(tab) ? `${helpId}-tab-${tab}` : undefined}>
@@ -277,14 +296,14 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
           </div>
           {tab === 'console' && (
             <div className="console-wrap">
-              {s.compileErrors.map((e, i) => <ErrorCard key={`c${i}`} error={e} title={t('ws.compileError')} />)}
+              {s.compileErrors.map((e, i) => <ErrorCard key={`c${i}`} error={e} title={t('ws.compileError')} feedback={feedbackForError(block, e)} lang={lang} />)}
               <ConsoleView entries={s.console} errors={s.errors} />
-              {s.errors.map((e, i) => <ErrorCard key={`r${i}`} error={e} title={t('ws.runtimeError')} />)}
+              {s.errors.map((e, i) => <ErrorCard key={`r${i}`} error={e} title={t('ws.runtimeError')} feedback={feedbackForError(block, e)} lang={lang} />)}
             </div>
           )}
           {tab === 'tests' && block.kind === 'exercise' && (
             <>
-              {s.errors.length > 0 && s.mode === 'test' && s.errors.slice(0, 1).map((e, i) => <ErrorCard key={i} error={e} title={t('ws.runtimeError')} />)}
+              {s.errors.length > 0 && s.mode === 'test' && s.errors.slice(0, 1).map((e, i) => <ErrorCard key={i} error={e} title={t('ws.runtimeError')} feedback={feedbackForError(block, e)} lang={lang} />)}
               <TestsView block={block} state={s} lang={lang} />
             </>
           )}

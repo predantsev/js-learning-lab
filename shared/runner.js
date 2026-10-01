@@ -29,7 +29,9 @@ const LIB_FILES = {
 };
 
 const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-/** src given to an <img> whose project file does not exist (the sandbox reports it as a blocked resource). */
+/** Former marker for an <img> whose project file does not exist. prepareRun now leaves such a src
+ *  untouched and the sandbox runtime reports `missing-file` itself; the runtime still understands
+ *  the marker, and components/project imports it. */
 export const MISSING_IMAGE_PREFIX = 'about:invalid#jsll-missing-file:';
 
 function defaultHtml(entry, runtime, lang) {
@@ -77,14 +79,27 @@ export function prepareRun(input) {
   }
 
   // Project images (SVG files are text) are inlined as data: URLs, because the sandbox loads no
-  // resources from the network. A missing file stays a broken image, as in a real browser; its
-  // src names the file so the console can explain what is missing (MISSING_IMAGE_PREFIX).
+  // resources from the network: in <img src> and in url(...) of styles (an inline <style> resolves
+  // against the page, an inlined stylesheet file against its own folder). A reference that matches
+  // no project file stays exactly as written — a broken image shows its alt text, as in a real
+  // browser — and the sandbox runtime explains in the console which file is missing.
+  const svgData = (path) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(files[path])}`;
+  const projectSvg = (ref, base) => {
+    if (/^[a-z]+:|^\/\/|^#/i.test(ref)) return null;
+    const target = normalizePath(`${base}/${ref.split(/[?#]/)[0]}`);
+    return target !== null && Object.prototype.hasOwnProperty.call(files, target) && /\.svg$/i.test(target) ? target : null;
+  };
   for (const img of [...doc.querySelectorAll('img[src]')]) {
-    const src = img.getAttribute('src');
-    if (/^[a-z]+:|^\/\//i.test(src)) continue;
-    const target = fromHtml(src.split(/[?#]/)[0]);
-    if (target !== null && Object.prototype.hasOwnProperty.call(files, target) && /\.svg$/i.test(target)) img.setAttribute('src', `data:image/svg+xml;charset=utf-8,${encodeURIComponent(files[target])}`);
-    else img.setAttribute('src', `${MISSING_IMAGE_PREFIX}${target ?? src}`);
+    const target = projectSvg(img.getAttribute('src').trim(), baseDir);
+    if (target) img.setAttribute('src', svgData(target));
+  }
+  for (const style of [...doc.querySelectorAll('style')]) {
+    const file = style.getAttribute('data-file');
+    const base = file === null ? baseDir : file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
+    style.textContent = style.textContent.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (match, _quote, ref) => {
+      const target = projectSvg(ref.trim(), base);
+      return target ? `url("${svgData(target)}")` : match;
+    });
   }
 
   for (const script of [...doc.querySelectorAll('script')]) {

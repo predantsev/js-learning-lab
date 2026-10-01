@@ -194,6 +194,8 @@ export const en: Dict = {
   'ws.runtime.local-native': 'Local task: emulator or device',
   'ws.runtime.local-node': 'Local task: a real Node.js process in your terminal',
   'ws.limits': 'Limits of this preview',
+  'ws.pageShown': 'Page {file}',
+  'ws.pageBack': 'Back to {file}',
   'ws.nodeUnavailable': 'Isolated Node.js execution is not available in this installation: {reason}',
 
   'sys.console-limit': 'Output stopped: the console received too many messages. The program kept running.',
@@ -202,7 +204,7 @@ export const en: Dict = {
   'sys.form-submit-navigation': 'The form would be submitted and the browser would reload the page. To handle the form in JavaScript, call event.preventDefault() in the submit handler.',
   'sys.no-confirm': 'confirm() is not available in the sandbox and always returns false. Build the confirmation into the page, for example with <dialog>.',
   'sys.no-prompt': 'prompt() is not available in the sandbox and always returns null. Use an input field on the page.',
-  'sys.resource-blocked': 'An external resource was not loaded: the sandbox has no network access.',
+  'sys.resource-blocked': 'The external address {detail} was blocked: the sandbox has no network access.',
   'sys.console-cleared': 'Console cleared.',
   'sys.alert': 'alert',
 

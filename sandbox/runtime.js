@@ -201,7 +201,7 @@
     window.addEventListener('error', (event) => {
       if (event.error !== undefined && event.error !== null) reportError(event.error, 'runtime');
       else if (event.message) reportError({ name: 'Error', message: event.message, stack: `${event.filename}:${event.lineno}:${event.colno}` }, 'runtime');
-      else if (event.target && event.target !== window && event.target.tagName) emitSystem('resource-blocked', event.target.src || event.target.href || event.target.tagName);
+      else if (event.target && event.target !== window && event.target.tagName) explainResource(event);
     }, true);
     window.addEventListener('unhandledrejection', (event) => { reportError(event.reason, 'unhandled-rejection'); });
     // These run last (bubble phase on window), after learner handlers had their chance to call
@@ -228,6 +228,32 @@
     });
   }
   let lastSubmitPrevented = null;
+
+  // A resource that failed to load: a project path (not in the project, or not loadable this way)
+  // is explained differently from an external address the sandbox blocks (no network).
+  const MISSING_FILE_MARK = 'about:invalid#jsll-missing-file:';
+  const inlinedImages = new WeakSet();
+  function explainResource(event) {
+    const el = event.target;
+    const url = el.currentSrc || el.src || el.href || '';
+    if (url.startsWith(MISSING_FILE_MARK)) { emitSystem('missing-file', url.slice(MISSING_FILE_MARK.length)); return; }
+    let parsed = null;
+    try { parsed = new URL(url, document.baseURI); } catch (e) { parsed = null; }
+    if (parsed && parsed.origin === location.origin && parsed.pathname.startsWith('/sandbox/')) {
+      const path = decodeURIComponent(parsed.pathname.slice('/sandbox/'.length));
+      // A project SVG assigned from JavaScript (img.src = 'images/a.svg') is shown like one written
+      // in the HTML: as a data: URL. The failed first attempt stays invisible to learner code.
+      if (el.tagName === 'IMG' && run && /\.svg$/i.test(path) && Object.prototype.hasOwnProperty.call(run.files, path) && !inlinedImages.has(el)) {
+        inlinedImages.add(el);
+        event.stopImmediatePropagation();
+        el.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(run.files[path])}`;
+        return;
+      }
+      emitSystem('missing-file', path);
+      return;
+    }
+    emitSystem('resource-blocked', url || el.tagName);
+  }
 
   // ---------- hooks used by transformed learner code ----------
   Object.defineProperties(window, {
