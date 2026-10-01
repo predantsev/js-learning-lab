@@ -143,6 +143,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   const [tab, setTab] = useState<Tab>(hasPreview(block) ? 'preview' : 'console');
   const [undo, setUndo] = useState<{ files: Record<string, string>; lang?: Lang } | null>(null);
   const runner = useRunner();
+  const runButton = useRef<HTMLButtonElement>(null);
   const frameHost = useRef<HTMLDivElement>(null);
   const hiddenHost = useRef<HTMLDivElement>(null);
   const editable = block.kind === 'exercise' ? block.editable : fileNames;
@@ -194,6 +195,8 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   useEffect(() => { if (runner.state.status === 'compile-error') setTab('console'); }, [runner.state.status]);
 
   const s = runner.state;
+  const runBusy = runner.isActive && s.mode === 'run' && !s.unresponsive;
+  const checkBusy = s.status === 'checking';
   const statusText = (() => {
     if (s.unresponsive) return t('ws.unresponsive', { s: Math.round(2.5) });
     switch (s.status) {
@@ -229,9 +232,10 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
         <CodeEditor key={`${block.id}:${activeFile}`} path={activeFile} value={files[activeFile] ?? ''} readOnly={!editable.includes(activeFile)} ariaLabel={t('ws.editor', { file: activeFile })} describedBy={helpId} issues={issues} onChange={onEdit} />
         <p id={helpId} className="sr-only">{t('ws.editorHelp')}</p>
         <div className="ws-actions">
-          <button type="button" className="btn btn-primary" onClick={() => run('run')} disabled={runner.isActive && s.mode === 'run' && !s.unresponsive}><Icon name="play" /> {t('ws.run')}</button>
-          {block.kind === 'exercise' && <button type="button" className="btn btn-check" onClick={() => run('test')} disabled={s.status === 'checking'}><Icon name="check" /> {t('ws.check')}</button>}
-          {(s.live || runner.isActive) && <button type="button" className="btn" onClick={runner.stop}><Icon name="stop" /> {t('ws.stop')}</button>}
+          {/* aria-disabled, not disabled: a focused button that becomes disabled drops keyboard focus to the page body. */}
+          <button ref={runButton} type="button" className="btn btn-primary" onClick={() => { if (!runBusy) run('run'); }} aria-disabled={runBusy || undefined}><Icon name="play" /> {t('ws.run')}</button>
+          {block.kind === 'exercise' && <button type="button" className="btn btn-check" onClick={() => { if (!checkBusy) run('test'); }} aria-disabled={checkBusy || undefined}><Icon name="check" /> {t('ws.check')}</button>}
+          {(s.live || runner.isActive) && <button type="button" className="btn" onClick={() => { runner.stop(); runButton.current?.focus(); }}><Icon name="stop" /> {t('ws.stop')}</button>}
           <span className="ws-actions-gap" />
           {undo && <button type="button" className="btn btn-quiet" onClick={() => { saveDraft({ files: undo.files, lang: undo.lang ?? codeLang }); setUndo(null); }}>{t('ws.undoReset')}</button>}
           {draft?.files && <button type="button" className="btn btn-quiet" onClick={() => { if (draft.files && window.confirm(t('ws.resetConfirm'))) { setUndo({ files: draft.files, lang: draft.lang }); saveDraft({ files: localizeFiles(block.files, block, lang) as Record<string, string>, lang }); runner.reset(); } }}><Icon name="reset" size={14} /> {t('ws.reset')}</button>}

@@ -86,6 +86,7 @@ test('a whole lesson is completed with the keyboard only, with visible focus at 
     await tabTo(page, (i) => i.tag === 'BUTTON' && new RegExp(`^${t('uk', 'ws.run')}$`).test(i.name), { label: 'Run' });
     await page.keyboard.press('Enter');
     await page.locator('.console').getByText('Привіт із фікстури').waitFor();
+    assert.equal((await focusInfo(page)).name, t('uk', 'ws.run'), 'focus stays on Run while and after it runs');
     assert.equal(await page.locator('.ws-status').getAttribute('role'), 'status');
     await waitFor(async () => (await page.locator('.ws-status').innerText()).includes(t('uk', 'ws.finished')), { message: 'run status announced' });
     await tabTo(page, named(new RegExp(`^${t('uk', 'lesson.next')}$`)), { label: 'Next' });
@@ -112,6 +113,7 @@ test('a whole lesson is completed with the keyboard only, with visible focus at 
     await tabTo(page, (i) => i.tag === 'BUTTON' && new RegExp(`^${t('uk', 'ws.check')}$`).test(i.name), { label: 'Check' });
     await page.keyboard.press('Enter');
     await page.locator('.tests-summary.tests-ok').waitFor({ timeout: 15_000 });
+    assert.equal((await focusInfo(page)).name, t('uk', 'ws.check'), 'focus stays on Check while and after it checks');
     await waitFor(async () => (await liveRegion(page).textContent()) === t('uk', 'ws.passedAll'), { message: 'check result announced' });
     assert.match(await page.locator('.ws-status').innerText(), new RegExp(t('uk', 'ws.exercisePassed')));
     await tabTo(page, named(new RegExp(`^${t('uk', 'lesson.next')}$`)), { label: 'Next' });
