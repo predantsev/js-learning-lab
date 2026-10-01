@@ -102,7 +102,7 @@ function TestsView({ block, state, lang }: { block: ExerciseBlock; state: RunSta
             <li key={test.name} className={`test test-${test.status}`}>
               <span className="test-mark" aria-hidden="true">{test.status === 'pass' ? '✓' : '✕'}</span>
               <div>
-                <span className="test-title">{block.testTitles[test.name]?.[lang] ?? test.name}</span>
+                {block.testTitles[test.name] ? <span className="test-title" dangerouslySetInnerHTML={{ __html: block.testTitles[test.name][lang] }} /> : <span className="test-title">{test.name}</span>}
                 <span className="sr-only"> — {t(test.status === 'pass' ? 'ws.testPass' : 'ws.testFail')}</span>
                 {test.status === 'fail' && test.message && <pre className="test-message" lang="en">{test.message}</pre>}
                 {fb && <Html html={fb[lang]} lang={lang} className="prose test-feedback" />}

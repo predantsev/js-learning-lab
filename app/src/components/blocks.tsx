@@ -228,10 +228,13 @@ function PredictionView({ lesson, block }: { lesson: Lesson; block: Extract<Bloc
   );
 }
 
+const NO_ANSWERS: Record<string, unknown> = {};
+
 function ReviewView({ lesson, block }: { lesson: Lesson; block: ReviewBlock }) {
   const t = useT();
   const lang = useBlockLang(lesson.id, block.id);
-  const progress = useStore(app().progress.store, (p) => p.lessons[lesson.id]?.questions ?? {});
+  // The selector must return a stable value (useSyncExternalStore); default outside of it.
+  const progress = useStore(app().progress.store, (p) => p.lessons[lesson.id]?.questions) ?? NO_ANSWERS;
   return (
     <BlockFrame lessonId={lesson.id} block={block} label={t('block.review')} className="block-review" lang={lang}>
       <h3 className="block-subtitle">{block.title[lang]}</h3>

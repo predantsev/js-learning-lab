@@ -10,9 +10,13 @@ import { ROOT } from '../../server/config.mjs';
 import { CAPSTONES, GLOSSARY_LINK, Issues, LANGS, STAGES, paginate, unitOfLesson, validateGlossaryTerm, validateLessonSource } from '../../shared/content-schema.js';
 import { STRING_PLACEHOLDER, localizeText } from '../../shared/exercise.js';
 
-export const CONTENT_DIR = path.join(ROOT, 'content');
-const INLINE_KEYS = new Set(['title', 'text', 'why', 'label', 'name', 'problem']);
-const PLAIN_KEYS = new Set(['title', 'name']);
+// JSLL_CONTENT_ROOT points the compiler/validator at another content tree with the same layout
+// (the end-to-end suite uses tests/fixtures/content). Read once, when this module is imported.
+export const CONTENT_DIR = process.env.JSLL_CONTENT_ROOT ? path.resolve(process.env.JSLL_CONTENT_ROOT) : path.join(ROOT, 'content');
+// Fields shown inside a line (no paragraph wrapper) and fields used as plain text (attributes,
+// headings). Everything else is block Markdown. `testTitles` values are compiled as inline text.
+const INLINE_KEYS = new Set(['title', 'text', 'why', 'label', 'name', 'problem', 'note', 'objectives']);
+const PLAIN_KEYS = new Set(['title', 'name', 'placeholder']);
 const RAW_KEYS = new Set(['strings', 'spec']);
 const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.env', '.gitignore', '']);
 
@@ -107,7 +111,7 @@ function renderLocalized(value, md, key = '') {
     return Object.fromEntries(LANGS.map((l) => [l, render(value[l])]));
   }
   if (Array.isArray(value)) return value.map((v) => renderLocalized(v, md, key));
-  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, RAW_KEYS.has(k) ? v : renderLocalized(v, md, k)]));
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, RAW_KEYS.has(k) ? v : renderLocalized(v, md, key === 'testTitles' ? 'text' : k)]));
   return value;
 }
 
