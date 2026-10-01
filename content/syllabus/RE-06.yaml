@@ -1,0 +1,264 @@
+# Syllabus spine for RE-06. Schema and rules: content/syllabus/README.md. Validate: node scripts/content/validate-syllabus.mjs
+unit: RE-06
+stage: RE
+title: { uk: "Асинхронні дані: кеш, гонки й оптимістичні оновлення", en: "Async data: cache, races and optimistic updates" }
+summary:
+  uk: "Учень завантажує та змінює дані через API-фікстуру із затримкою, скасовує застарілі запити, розділяє queries і mutations, точково інвалідовує кеш, застосовує оптимістичні оновлення з відкатом у разі помилки й перевіряє все це тестами, що діють як користувач."
+  en: "The learner loads and changes data through a delayed fixture API, cancels stale requests, separates queries from mutations, invalidates a cache precisely, applies optimistic updates that roll back on failure and tests all of it as user actions."
+competencies: [R-06]
+capstoneStep:
+  mode: local
+  objective:
+    uk: "Завантажувати й змінювати дані проєкту через API-фікстуру із затримкою — зі скасуванням, повторною спробою, інвалідацією кешу та оптимістичним оновленням, що відкочується в разі помилки; перевірити це тестами як дії користувача."
+    en: "Load and mutate capstone data through a delayed fixture API with cancellation, retry, cache invalidation and an optimistic update that rolls back on failure; test as user actions."
+  variants:
+    wishlist:
+      uk: "Завантажувати бажання зі скасуванням запиту при зміні фільтра «хочу/отримано», інвалідовувати список після створення, редагування й видалення та оптимістично перемикати `acquired` з відкатом і озвученим повідомленням, якщо фікстура повертає помилку."
+      en: "Load items with cancellation when the wanted/acquired filter changes, invalidate the list after create/edit/remove, and toggle `acquired` optimistically, rolling back with an announced message when the fixture fails."
+    planner:
+      uk: "Завантажувати справи зі скасуванням при зміні фільтра «у роботі/виконано», інвалідовувати список і лічильник справ на сьогодні після кожного запису та оптимістично перемикати `done` з відкатом і озвученим повідомленням у разі помилки фікстури."
+      en: "Load tasks with cancellation when the pending/done filter changes, invalidate the list and the due-today count after each write, and toggle `done` optimistically, rolling back with an announced message when the fixture fails."
+    habits:
+      uk: "Завантажувати звички зі скасуванням при зміні фільтра «активні/на паузі», інвалідовувати дані після кожного запису та оптимістично додавати сьогоднішню дату в `completions`, а в разі помилки фікстури відкочувати зміну, не втрачаючи інших дат."
+      en: "Load habits with cancellation when the active/paused filter changes, invalidate after each write, and add today's date to `completions` optimistically, rolling back without losing other dates when the fixture fails."
+    expenses:
+      uk: "Завантажувати витрати зі скасуванням при зміні фільтра за категорією, інвалідовувати список і підсумки за категоріями після кожного запису та оптимістично видаляти витрату, а в разі помилки фікстури повертати її разом із підсумками в `amountMinor`."
+      en: "Load expenses with cancellation when the category filter changes, invalidate the list and category totals after each write, and remove an expense optimistically, restoring it and the `amountMinor` totals when the fixture fails."
+# Retrieval plan for this unit (attach to lessons as retrieval entries; at least two, from two different earlier units):
+#   js-08-10-stale-responses-retry (stale responses) ; re-03-03-dependencies-cleanup (cleanup) ; js-08-08-combinators-sequential-concurrent (concurrency) ; re-02-03-updater-queue-batching (updaters)
+lessons:
+  - id: re-06-01-fetch-lifecycle
+    title: { uk: "Завантаження даних у React: життєвий цикл запиту", en: "Fetching in React: lifecycle" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Trace one request through render, commit, effect start, response, state update and re-render, naming the status (loading, success, error) shown at each step."
+      - "Implement a component that loads records from the delayed fixture API in an effect and renders loading, data and error states."
+    subskills:
+      - { family: R-06, skill: "fetch lifecycle/cancellation/races", depth: intro }
+    misconceptions:
+      - "If I start the fetch early enough, the data is already there on the first render."
+      - "Calling fetch directly in the component body is fine because the component only runs once."
+    prerequisites: [re-03-02-effects-synchronize-external, js-08-06-fetch-basics, re-05-06-loading-empty-error-states]
+    glossary: [server-state, request-lifecycle]
+    visual: { kind: render-timeline, concept: "A list component's timeline: the first render commits status 'loading', the effect starts the fixture request, the delayed response calls setState, and the next render's snapshot holds the records or the error." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-react, summary: "Predict how many renders occur and which status each shows when the fixture API answers after 800 ms, and when it rejects." }
+      - { kind: run-change, runtime: browser-react, summary: "Run the loader with the render log open, change the fixture delay and failure switch, and compare the status sequence with your prediction." }
+      - { kind: write, runtime: browser-react, summary: "Write useRecords() returning { status, records, error } from the delayed fixture API and render all three states in the list view." }
+    retrieval:
+      - { concept: "an effect runs after commit, not during render", from: re-03-02-effects-synchronize-external }
+  - id: re-06-02-races-cancellation
+    title: { uk: "Гонки запитів і скасування", en: "Races and cancellation" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Reproduce an out-of-order response when the filter changes quickly and explain why the older, slower response overwrites the newer one."
+      - "Prevent it with an effect cleanup that aborts the request or ignores its late result, and treat an abort as not an error."
+    subskills:
+      - { family: R-06, skill: "fetch lifecycle/cancellation/races", depth: practice }
+    misconceptions:
+      - "Responses arrive in the order the requests were sent."
+      - "Cancelling a request only matters when the component unmounts."
+    prerequisites: [re-06-01-fetch-lifecycle, js-08-09-cancellation-abort]
+    glossary: [ignore-flag]
+    visual: { kind: sequence, concept: "Component, effect and fixture API over time: request A for the full list is slow, request B for one status filter is fast; without cleanup A's late response replaces B's list, with cleanup A is aborted or ignored." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-react, summary: "Predict which list is on screen when the 'all' request takes 1200 ms and the filtered request takes 200 ms, with and without an effect cleanup." }
+      - { kind: run-change, runtime: browser-react, summary: "Switch the filter rapidly with the delay controls, then add the cleanup and re-run to watch the stale response being dropped in the request log." }
+      - { kind: write, runtime: browser-react, summary: "Add an AbortController cleanup to the search effect so only the latest query's result renders, and keep AbortError out of the error state." }
+    retrieval:
+      - { concept: "latest-wins handling of stale responses", from: js-08-10-stale-responses-retry }
+      - { concept: "cleanup runs before the next effect run", from: re-03-03-dependencies-cleanup }
+  - id: re-06-03-loading-retry
+    title: { uk: "Завантаження та повторна спроба", en: "Loading and retry" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Distinguish first load, background refresh and failure, and show each accessibly without hiding data the user already has."
+      - "Implement a user-triggered, bounded retry that never sends duplicate requests while one is in flight."
+    subskills:
+      - { family: R-06, skill: "loading/retry", depth: intro }
+    misconceptions:
+      - "A spinner that replaces the whole list is always the right loading state."
+      - "Retry should loop automatically until the request finally succeeds."
+    prerequisites: [re-06-02-races-cancellation, re-05-06-loading-empty-error-states]
+    glossary: [refetch, background-refresh]
+    visual: null
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-react, summary: "Predict what the user sees and what the status region announces when a background refresh fails while the earlier list is still on screen." }
+      - { kind: run-change, runtime: browser-react, summary: "Set the fixture to fail twice and then succeed, press Retry and follow the request log and the live status message." }
+      - { kind: write, runtime: browser-react, summary: "Write a Retry action with a bounded attempt counter that is disabled while a request is pending and keeps the old list visible." }
+    retrieval:
+      - { concept: "loading, empty and error states on a route", from: re-05-06-loading-empty-error-states }
+  - id: re-06-04-queries-vs-mutations
+    title: { uk: "Queries і mutations: читання проти змін", en: "Queries vs mutations" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Classify each capstone data operation as a query (read, repeatable, cacheable) or a mutation (write, side effect, never repeated silently)."
+      - "Explain why a mutation starts from an event handler while a query is driven by an effect or a data layer."
+    subskills:
+      - { family: R-06, skill: "mutations vs queries", depth: intro }
+    misconceptions:
+      - "A mutation is just a query with POST; it can be cached and retried the same way."
+      - "Saving belongs in an effect that watches the form state."
+    prerequisites: [re-06-03-loading-retry, re-03-06-not-an-effect]
+    glossary: [data-query, data-mutation]
+    visual: { kind: diagram, concept: "Two lanes: queries flow from the API through the cache to components and may be re-run freely; mutations flow from a user event to the API and then mark the affected queries stale." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-react, summary: "Predict how many save requests fire when a save call sits in an effect that depends on the form draft and the user types three characters." }
+      - { kind: run-change, runtime: browser-react, summary: "Move the save call from the effect into the submit handler and compare the two request logs." }
+      - { kind: write, runtime: browser-react, summary: "Write createRecord(input) and updateRecord(id, patch) against the fixture API, each returning a typed success-or-error result, called only from handlers." }
+    retrieval:
+      - { concept: "logic caused by a user event belongs in the handler, not an effect", from: re-03-06-not-an-effect }
+  - id: re-06-05-cache-invalidation
+    title: { uk: "Кеш і принципи інвалідації", en: "Cache and invalidation principles" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Key cached results by query and parameters, and predict when an entry is served, refetched or discarded."
+      - "Invalidate exactly the queries a mutation affects instead of clearing the whole cache."
+    subskills:
+      - { family: R-06, skill: "cache/invalidation principles", depth: intro }
+    misconceptions:
+      - "A cache is only a speed trick; correctness does not depend on it."
+      - "After any change, clearing the entire cache is the safe choice."
+    prerequisites: [re-06-04-queries-vs-mutations, js-12-11-map-set]
+    glossary: [cache-key, cache-invalidation]
+    visual: { kind: diagram, concept: "A cache table keyed by ['records', filter] whose entries move fresh → stale → refetching; a create mutation highlights which keys it invalidates and which stay untouched." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-react, summary: "Predict which cache entries are re-requested after creating a record while the 'all' list and one status-filtered list are both cached." }
+      - { kind: run-change, runtime: browser-react, summary: "Open the cache inspector, switch filters back and forth to see cache hits, then add one record and watch the invalidated keys refetch." }
+      - { kind: write, runtime: browser-react, summary: "Write a minimal Map-based query cache with invalidate(keyPrefix) and call it after create, update and remove." }
+    retrieval:
+      - { concept: "loading independent resources concurrently with Promise.all", from: js-08-08-combinators-sequential-concurrent }
+      - { concept: "Map keyed lookups", from: js-12-11-map-set }
+  - id: re-06-06-optimistic-rollback
+    title: { uk: "Оптимістичні оновлення та відкат", en: "Optimistic updates and rollback" }
+    kind: instructional
+    minutes: 15
+    objectives:
+      - "Trace an optimistic change: keep the previous value, show the new value at once, send the mutation, then confirm it or roll it back."
+      - "Implement a rollback that restores only the affected record and announces the failure to the user."
+    subskills:
+      - { family: R-06, skill: "optimistic update and rollback", depth: intro }
+    misconceptions:
+      - "If the screen already shows the change, the server must have accepted it."
+      - "Rollback means putting back the whole list I saved at the start, even if other changes happened meanwhile."
+    prerequisites: [re-06-05-cache-invalidation, re-02-03-updater-queue-batching]
+    glossary: [optimistic-update, optimistic-rollback]
+    visual: { kind: render-timeline, concept: "Toggling one record's status: an optimistic render with the new value, a pending mutation, the fixture failure, then a rollback render restoring that record's previous value with an error message, with the state snapshot shown per render." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-react, summary: "Predict the list after an optimistic toggle fails while a second record was edited during the pending request." }
+      - { kind: run-change, runtime: browser-react, summary: "Run with the fixture failure switch on and off and watch the timeline; then change the rollback from whole-list restore to per-record restore." }
+      - { kind: write, runtime: browser-react, summary: "Write toggleStatusOptimistic(id) that applies and rolls back through updater functions and reports failure in an aria-live region." }
+    retrieval:
+      - { concept: "updater functions receive the latest queued state", from: re-02-03-updater-queue-batching }
+  - id: re-06-07-stale-data-consistency
+    title: { uk: "Застарілі дані й узгодженість", en: "Stale data and consistency" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Find where two views can show different versions of one record (list and detail) and make both read from one cached source."
+      - "Choose when to revalidate (after a mutation, on returning to a route, on a timer) and state the cost of each choice."
+    subskills:
+      - { family: R-06, skill: "stale data and consistency", depth: intro }
+    misconceptions:
+      - "Copying fetched data into each component's own state keeps everything in sync."
+      - "Whatever is on screen is the current data."
+    prerequisites: [re-06-06-optimistic-rollback, re-02-05-derived-values-not-state]
+    glossary: [stale-data, revalidation]
+    visual: { kind: diagram, concept: "List and detail components reading the same record: with duplicated copies an edit on the detail route updates only that view; with one shared cache entry both views change together." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-react, summary: "Predict what the list shows after a record is edited on the detail route when the detail keeps its own copy of the fetched data." }
+      - { kind: run-change, runtime: browser-react, summary: "Run the list/detail pair with the copy, then switch both to the shared cache entry and repeat the edit." }
+      - { kind: write, runtime: browser-react, summary: "Write a revalidate-on-return rule for the list route and a visible 'updated at' label driven by the cache entry." }
+    retrieval:
+      - { concept: "derive values instead of duplicating state", from: re-02-05-derived-values-not-state }
+  - id: re-06-08-testing-user-actions
+    title: { uk: "Тестуємо асинхронний UI як дії користувача", en: "Testing async UI as user actions" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Write a test that renders the list, waits for loaded content by role or text, acts as a user and asserts what is visible rather than internal state."
+      - "Control fixture delay and failure deterministically so async tests never depend on real time."
+    subskills:
+      - { family: R-06, skill: "loading/retry", depth: practice }
+    misconceptions:
+      - "To test async UI I should read the hook's internal state or call setState from the test."
+      - "A fixed sleep of a few hundred milliseconds makes an async test reliable."
+    prerequisites: [re-06-07-stale-data-consistency, js-09-04-deterministic-fixtures]
+    glossary: [user-action-test, role-query]
+    visual: null
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-react, summary: "Predict whether a test that checks the list immediately after clicking Save passes when the fixture answers after 300 ms." }
+      - { kind: run-change, runtime: browser-react, summary: "Run the suite in the course test runner, replace a fixed sleep with waiting for the confirmation text, then switch the fixture to fail and update the assertion." }
+      - { kind: write, runtime: browser-react, summary: "Write two user-action tests: add a record through the form and see it in the list; a failed save shows the error and leaves the list unchanged." }
+    retrieval:
+      - { concept: "deterministic fixtures and a fixed clock", from: js-09-04-deterministic-fixtures }
+  - id: re-06-09-debug-race-optimistic
+    title: { uk: "Налагодження: запізнілі відповіді й невдале оптимістичне оновлення", en: "Debug: delayed responses and a failed optimistic update" }
+    kind: instructional
+    minutes: 15
+    objectives:
+      - "Diagnose from a request log which late response overwrote newer data and which optimistic change was never rolled back."
+      - "Repair both defects and prove each fix with a user-action test that fails before it."
+    subskills:
+      - { family: R-06, skill: "fetch lifecycle/cancellation/races", depth: assess }
+      - { family: R-06, skill: "loading/retry", depth: assess }
+    misconceptions:
+      - "If a quick manual click-through ends on the right screen, there is no race."
+    prerequisites: [re-06-08-testing-user-actions]
+    glossary: []
+    visual: { kind: sequence, concept: "The seeded failing session replayed: interleaved requests and responses on one timeline, the stale search response landing after the newer one, and a failed mutation that leaves its optimistic value on screen." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-react, summary: "Before running, mark which seeded delays produce a wrong list and which failure leaves an unconfirmed change on screen." }
+      - { kind: run-change, runtime: browser-react, summary: "Run the seeded scenario with the delay controls and match each request-log line to your prediction." }
+      - { kind: debug, runtime: browser-react, summary: "Repair a missing cleanup in the search effect and a rollback that restores a stale whole-list snapshot and retries without a limit; keep the given tests green and add one that reproduces the race." }
+    retrieval:
+      - { concept: "stale response, missing await and unhandled rejection", from: js-08-11-debug-async }
+  - id: re-06-10-independent-async-crud-tests
+    title: { uk: "Самостійно: асинхронний CRUD із тестами", en: "Independent: async CRUD with tests" }
+    kind: assessment
+    minutes: 30
+    objectives:
+      - "Implement, without hints, async create/update/remove over the fixture API with queries and mutations kept separate, targeted invalidation and accessible pending/error states, verified by user-action tests."
+    subskills:
+      - { family: R-06, skill: "mutations vs queries", depth: assess }
+    misconceptions: []
+    prerequisites: [re-06-09-debug-race-optimistic]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: independent, runtime: browser-react, summary: "No-hint task: async CRUD for a synthetic bookmarks resource — reads through a query layer, writes from handlers, invalidation after each write — with user-action tests for load, create, failed update and remove; hidden fixtures add delays and one failure." }
+    retrieval:
+      - { concept: "boundary cases: empty, one, many", from: js-09-03-boundary-cases }
+  - id: re-06-11-capstone-async-data
+    title: { uk: "Проєкт: асинхронний шар даних", en: "Capstone: async data layer" }
+    kind: capstone-step
+    minutes: 30
+    objectives:
+      - "Route the capstone's data hook through the delayed fixture API with cancellation, bounded retry, targeted invalidation and one optimistic change that rolls back, covered by user-action tests."
+    subskills:
+      - { family: R-06, skill: "cache/invalidation principles", depth: practice }
+    misconceptions: []
+    prerequisites: [re-06-10-independent-async-crud-tests]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: write, runtime: local-web, summary: "In VS Code, connect the data hook to a delayed fixture API module: a cancellable list query, create/update/remove mutations with targeted invalidation and the domain's optimistic change with rollback, plus user-action tests run with the local test command." }
+      - { kind: run-change, runtime: local-web, summary: "Switch the local fixture to failure mode, confirm the rollback and the announced error by hand and in the test run, then commit." }
+    retrieval:
+      - { concept: "the capstone's persistence/data hook contract", from: re-04-09-capstone-data-hook }

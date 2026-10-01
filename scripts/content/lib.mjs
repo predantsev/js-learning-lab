@@ -223,7 +223,10 @@ export function exerciseFileSets(assets) {
 
 export function staticIssuesForLesson(lesson, ctx) {
   const { source, assets } = lesson;
-  const result = validateLessonSource(source, { glossary: new Set(ctx.glossary.keys()), lessonOrder: ctx.lessonOrder, competencies: ctx.competencies.families });
+  // Terms that the syllabus plans for lessons not authored yet are accepted until release.
+  const known = new Set(ctx.glossary.keys());
+  if (!ctx.release) for (const unit of ctx.syllabus.values()) for (const l of unit.lessons ?? []) for (const term of l.glossary ?? []) known.add(term);
+  const result = validateLessonSource(source, { glossary: known, lessonOrder: ctx.lessonOrder, competencies: ctx.competencies.families });
   const issues = [...result.list];
   const add = (p, message) => issues.push({ path: `lesson ${source?.id} › ${p}`, message });
   for (const block of source?.blocks ?? []) {
@@ -311,13 +314,13 @@ export async function compileLesson(lesson, ctx) {
 export const sha = (text) => createHash('sha256').update(text).digest('hex');
 
 /** Build everything into dist/content. Returns { index, issues }. */
-export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content'), quiet = false } = {}) {
+export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content'), quiet = false, release = false } = {}) {
   const all = await loadAll();
   const issues = [...all.issues];
   const md = createMarkdown(all.glossary);
   let visuals = null;
   if (await exists(path.join(ROOT, 'shared', 'visuals', 'index.js'))) visuals = await import(path.join(ROOT, 'shared', 'visuals', 'index.js'));
-  const ctx = { ...all, md, visuals };
+  const ctx = { ...all, md, visuals, release };
   await fs.rm(outDir, { recursive: true, force: true });
   await fs.mkdir(path.join(outDir, 'lessons'), { recursive: true });
   await fs.mkdir(path.join(outDir, 'capstones'), { recursive: true });

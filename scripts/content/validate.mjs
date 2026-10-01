@@ -29,7 +29,7 @@ const notes = [];
 const error = (where, message) => errors.push({ where, message });
 
 const tmpOut = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-content-'));
-const { issues, all, index } = await buildContent({ outDir: tmpOut, quiet: true });
+const { issues, all, index } = await buildContent({ outDir: tmpOut, quiet: true, release });
 for (const issue of issues) {
   const lessonId = /lesson ([a-z0-9-]+)/.exec(issue.path)?.[1];
   if (lessonId && !selected(lessonId)) continue;

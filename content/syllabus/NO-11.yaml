@@ -1,0 +1,225 @@
+# Syllabus spine for NO-11. Schema and rules: content/syllabus/README.md. Validate: node scripts/content/validate-syllabus.mjs
+unit: NO-11
+stage: NO
+title: { uk: "Потоки, backpressure й обмежені задачі", en: "Streams, backpressure and bounded jobs" }
+summary:
+  uk: "Учень пропускає великі обсяги даних крізь потоки Node без неконтрольованого зростання пам’яті, будує pipeline, що прибирає за собою при помилці й скасуванні, не блокує event loop важкими обчисленнями та запускає обмежені задачі, які можна скасувати й безпечно повторити."
+  en: "The learner moves large data through Node streams without unbounded memory growth, builds pipelines that clean up on error and abort, keeps CPU-heavy work from blocking the event loop, and runs bounded, cancellable jobs whose retries are idempotent."
+competencies: [B-08]
+capstoneStep:
+  mode: local
+  objective:
+    uk: "Потоково експортувати й імпортувати великий обсяг записів проєкту (JSON lines) через pipeline з backpressure, запускаючи імпорт як обмежену задачу, яку можна скасувати й ідемпотентно повторити."
+    en: "Stream a large capstone export/import (JSON lines) through a pipeline with backpressure, run it as a bounded, cancellable job with idempotent retries."
+  variants:
+    wishlist:
+      uk: "Експортувати кожне бажання окремим рядком JSON {id, name, price, acquired, category} та імпортувати синтетичний файл на 10 000 рядків із перевіркою кожного рядка й upsert за id, тож повторений імпорт не дублює бажань."
+      en: "Export every item as one JSON line {id, name, price, acquired, category} and import a 10,000-line synthetic file that validates each line and upserts by id, so a retried import never duplicates an item."
+    planner:
+      uk: "Експортувати справи як JSON lines та імпортувати великий синтетичний файл, що перевіряє title, dueDate і priority в кожному рядку й робить upsert за id, тож повторений імпорт не скидає done і не дублює справ."
+      en: "Export tasks as JSON lines and import a large synthetic file that validates title, dueDate and priority per line and upserts by id, so a retried import never resets a done flag or duplicates a task."
+    habits:
+      uk: "Експортувати звички як JSON lines та імпортувати великий синтетичний файл, у якому completions зливаються у відсортовану множину унікальних дат, тож повторений імпорт не зараховує виконання двічі."
+      en: "Export habits as JSON lines and import a large synthetic file whose completions are merged as a sorted set of unique dates, so a retried import never double-counts a completion."
+    expenses:
+      uk: "Експортувати витрати як JSON lines та імпортувати великий синтетичний файл, що перевіряє, чи amountMinor — додатне ціле, а category є в списку, з ключем за id, тож повторена задача не подвоює суму категорії."
+      en: "Export expenses as JSON lines and import a large synthetic file that checks amountMinor is a positive integer and category is in the list, keyed by id so a retried job never doubles a category total."
+# Retrieval plan: js-13-01-iterable-protocol (iterables) ; no-02-04-bounded-reads-writes (bounded) ; js-08-08-combinators-sequential-concurrent (concurrency) ; js-13-05-allocation-retained-references (memory)
+lessons:
+  - id: no-11-01-streams-backpressure
+    title: { uk: "Потоки й backpressure", en: "Streams and backpressure" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Read a large file chunk by chunk with a readable stream and predict its peak memory compared with readFile on the same 200 MB synthetic file."
+      - "Explain what write() returning false means and pause the producer until the writable emits 'drain'."
+    subskills:
+      - { family: B-08, skill: "read/write streams and backpressure", depth: intro }
+    misconceptions:
+      - "write() returning false means the chunk was lost, so I should write it again."
+      - "A stream is just a faster readFile; the memory use is the same."
+    prerequisites: [no-02-04-bounded-reads-writes, no-01-05-eventemitter-errors]
+    glossary: [backpressure, high-water-mark, drain-event]
+    visual: { kind: pipeline, concept: "Chunks flow from a file reader to a deliberately slow writer; the writer's buffer fills to highWaterMark, write() turns false, the reader pauses and 'drain' resumes the flow while a memory gauge stays flat; a second run that ignores false shows the buffer and memory growing." }
+    analogy: "A conveyor belt into a packing station: when the station's tray is full it signals the belt to stop, and restarts it once there is room (limit: in Node nothing stops automatically unless the code respects write()'s false return or uses pipe/pipeline; ignoring the signal keeps piling chunks up in memory)."
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict peak memory for readFile versus createReadStream on a generated 200 MB JSON-lines file, and whether a slow writer's write() ever returns false." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the synthetic slow-consumer script, print process.memoryUsage() every second, then remove the 'drain' wait and watch memory climb." }
+      - { kind: write, runtime: isolated-node, summary: "Write copyWithBackpressure(readable, writable) that pauses on write() === false and resumes on 'drain', and confirm flat memory on the generated file." }
+    retrieval:
+      - { concept: "bounded reads with a fixed-size buffer", from: no-02-04-bounded-reads-writes }
+  - id: no-11-02-pipeline-error-abort
+    title: { uk: "pipeline: помилки, скасування й прибирання", en: "pipeline: error, abort and cleanup" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Connect source, transform and destination with stream.pipeline and predict which streams are destroyed when one stage fails."
+      - "Cancel a running pipeline with an AbortSignal and confirm the file handle is closed and the partial output removed."
+    subskills:
+      - { family: B-08, skill: "pipeline/error/abort/cleanup", depth: intro }
+    misconceptions:
+      - "With .pipe(), an error in one stream also closes all the others."
+      - "Aborting a job only stops my callback; the file and the socket close on their own."
+    prerequisites: [no-11-01-streams-backpressure, no-02-06-errors-handle-cleanup]
+    glossary: [stream-pipeline, transform-stream]
+    visual: { kind: pipeline, concept: "Source, a JSON-lines parsing transform and a file writer in a row; an invalid line makes the transform fail, and the step-through shows pipeline destroying every stage, closing the file descriptor and rejecting once, next to .pipe() leaving the source open." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict which of the three stages stay open after the parsing transform throws on line 501, first with .pipe() and then with pipeline()." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run both versions, list open resources with process.getActiveResourcesInfo(), then pass an AbortSignal, abort after 100 ms and list them again." }
+      - { kind: write, runtime: isolated-node, summary: "Write exportRecords(source, destPath, { signal }) with pipeline that writes to a temp file, renames it on success and deletes it on error or abort." }
+    retrieval:
+      - { concept: "readable streams are async iterables", from: js-13-01-iterable-protocol }
+      - { concept: "closing handles in finally", from: no-02-06-errors-handle-cleanup }
+  - id: no-11-03-event-loop-blocking
+    title: { uk: "Блокування event loop", en: "Blocking the event loop" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Measure event-loop delay while a synchronous JSON.parse or checksum loop runs and predict its effect on concurrent requests."
+      - "Split a CPU-heavy loop into batches that yield with setImmediate and compare request latency before and after."
+    subskills:
+      - { family: B-08, skill: "event loop blocking", depth: intro }
+    misconceptions:
+      - "Marking a function async moves its heavy work off the event loop."
+      - "Node handles requests in parallel, so one slow handler only delays its own client."
+    prerequisites: [no-11-02-pipeline-error-abort, no-01-04-event-loop-phases]
+    glossary: [cpu-bound-work, event-loop-delay]
+    visual: { kind: event-loop, concept: "The call stack holds a 300 ms synchronous checksum inside a request handler while a timer, an I/O callback and two other requests wait in their queues; batching the loop with setImmediate lets the queued callbacks run between batches." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict the response time of GET /health while another request runs a synchronous 300 ms checksum, and again after the checksum is wrapped in an async function." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the loopback lab server with perf_hooks.monitorEventLoopDelay, fire both requests, then batch the loop with setImmediate and compare the p99 delay." }
+      - { kind: write, runtime: isolated-node, summary: "Write sumInBatches(records, batchSize) that yields to the event loop between batches and resolves with the total." }
+    retrieval:
+      - { concept: "event loop phases and where callbacks wait", from: no-01-04-event-loop-phases }
+  - id: no-11-04-bounded-queues-jobs
+    title: { uk: "Обмежені черги й задачі", en: "Bounded queues and jobs" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Implement a job queue with a maximum length and a concurrency limit, and decide what happens to the first job over the limit (reject, wait or drop)."
+      - "Predict total time and peak memory for 100 jobs started all at once versus with a concurrency limit of 4."
+    subskills:
+      - { family: B-08, skill: "bounded queues/jobs", depth: intro }
+    misconceptions:
+      - "Promise.all over every job is the fastest and safest way to run them."
+      - "An in-memory queue can grow as long as needed; jobs just wait a little longer."
+    prerequisites: [no-11-03-event-loop-blocking, js-17-01-stacks-queues-trees]
+    glossary: [bounded-queue, concurrency-limit, load-shedding]
+    visual: { kind: diagram, concept: "A queue box with a fixed number of slots feeding two running slots; arriving jobs take free slots, the queue length is shown at each step, and the first job over the limit is highlighted being rejected with 503 instead of growing the queue." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict how many export jobs are running, waiting and rejected after 20 POST /jobs requests hit a queue of 8 with concurrency 2." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the synthetic job server, send the burst, then change concurrency and maximum length and compare the running/waiting/rejected counts." }
+      - { kind: write, runtime: isolated-node, summary: "Write createJobQueue({ concurrency, maxQueued }) whose add(job) returns a promise or rejects with QueueFull, and test the boundary job." }
+    retrieval:
+      - { concept: "sequential versus concurrent promises", from: js-08-08-combinators-sequential-concurrent }
+  - id: no-11-05-retries-idempotency
+    title: { uk: "Повтори та ідемпотентність", en: "Retries and idempotency" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Retry a failing job step with a bounded number of attempts, exponential backoff and jitter, and stop at once on non-retryable errors."
+      - "Make a job step idempotent with a job id so a retry after a crash does not apply the same import twice."
+    subskills:
+      - { family: B-08, skill: "retries/idempotency", depth: intro }
+    misconceptions:
+      - "Retrying until it works is always safe."
+      - "If the first attempt threw, it did nothing, so repeating it cannot create duplicates."
+    prerequisites: [no-11-04-bounded-queues-jobs, no-04-05-idempotency]
+    glossary: [retry-jitter, at-least-once-delivery]
+    visual: { kind: sequence, concept: "Job runner, a flaky step and the store over time: attempt 1 writes and then times out, attempt 2 repeats the write; without a job id the store shows a duplicate, with a processed-ids check the second write is recognised and skipped, and the backoff gaps grow between attempts." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict how many records exist after an import step that writes and then fails once is retried twice, with and without a processed-job-ids check." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the flaky-step simulation, then add maxAttempts, exponential backoff with jitter and a non-retryable ValidationError, and compare the attempt logs." }
+      - { kind: write, runtime: isolated-node, summary: "Write retry(fn, { maxAttempts, baseMs, isRetryable, signal }) and wrap the import step so it records the job id in the same atomic write as the records." }
+    retrieval:
+      - { concept: "idempotent requests and idempotency keys", from: no-04-05-idempotency }
+  - id: no-11-06-workers-processes-graceful
+    title: { uk: "Worker threads, процеси й дбайливе використання ресурсів", en: "Workers, processes and graceful resource use" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Decide whether a task belongs on the main thread, in a worker thread or in a child process, and justify it by CPU cost, isolation and data-transfer cost."
+      - "Cap the records, file handles and timers a job may hold and release them on completion, failure and cancellation."
+    subskills:
+      - { family: B-08, skill: "workers/processes awareness", depth: intro }
+      - { family: B-08, skill: "graceful resource use", depth: intro }
+    misconceptions:
+      - "Moving any slow code into a worker makes it faster."
+      - "Node closes a job's file handles and timers by itself when the job finishes."
+    prerequisites: [no-11-05-retries-idempotency, js-13-09-proxy-workers-awareness]
+    glossary: [worker-thread, child-process, resource-budget]
+    visual: { kind: diagram, concept: "Main thread, a worker thread and a child process as boxes joined by message arrows; the step-through shows the cost of copying a large array through postMessage, a crash contained in the child process, and each box's open-handle count returning to zero on clean shutdown." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict the latency of a concurrent GET /health while a checksum runs on the main thread, in a worker thread and in a child process, and the extra cost of sending 50,000 records to each." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the three variants with timing output, then transfer an ArrayBuffer instead of copying the array and compare." }
+      - { kind: write, runtime: isolated-node, summary: "Write runJob(job, { signal, maxRecords }) that closes every file handle and timer it opened in finally and reports zero remaining active resources afterwards." }
+    retrieval:
+      - { concept: "worker concurrency in the browser", from: js-13-09-proxy-workers-awareness }
+  - id: no-11-07-debug-memory-growth
+    title: { uk: "Налагодження: зростання пам’яті й незакритий handle", en: "Debug: memory growth and a leaked handle" }
+    kind: instructional
+    minutes: 15
+    objectives:
+      - "Locate the cause of memory growth during a streamed import with memory sampling and two heap snapshots."
+      - "Find the handle that keeps the process alive after a cancelled job and close it on every path."
+    subskills:
+      - { family: B-08, skill: "read/write streams and backpressure", depth: assess }
+      - { family: B-08, skill: "pipeline/error/abort/cleanup", depth: assess }
+      - { family: B-08, skill: "graceful resource use", depth: assess }
+    misconceptions:
+      - "Memory that keeps growing is the garbage collector's fault, not my code's."
+    prerequisites: [no-11-06-workers-processes-graceful]
+    glossary: []
+    visual: { kind: memory-graph, concept: "Two heap snapshots of the import: a module-level progress object retains an array of every parsed line that grows with each chunk, and an interval never cleared on abort keeps its closure and the file handle reachable after cancellation." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Before running, mark which seeded path (a progress array of every line, an ignored write() result, an interval not cleared on abort) causes memory growth and which keeps the process alive." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the seeded import on a large synthetic file, record memoryUsage and getActiveResourcesInfo, and match each symptom to your prediction." }
+      - { kind: debug, runtime: isolated-node, summary: "Repair all three defects so memory stays flat, pipeline cleans up on error and abort, and the process exits by itself after cancellation." }
+    retrieval:
+      - { concept: "retained references keep memory alive", from: js-13-05-allocation-retained-references }
+  - id: no-11-08-independent-bounded-job
+    title: { uk: "Самостійно: обмежена задача з повторами й скасуванням", en: "Independent: bounded retry job with cancellation" }
+    kind: assessment
+    minutes: 35
+    objectives:
+      - "Build, without hints, a bounded job runner with a concurrency limit, idempotent retries and cancellation, and prove it with tests for cancellation and shutdown."
+      - "Justify in two sentences whether the CPU-heavy step runs on the main thread, in a worker thread or in a child process, using a measured event-loop delay."
+    subskills:
+      - { family: B-08, skill: "bounded queues/jobs", depth: assess }
+      - { family: B-08, skill: "retries/idempotency", depth: assess }
+      - { family: B-08, skill: "event loop blocking", depth: assess }
+      - { family: B-08, skill: "workers/processes awareness", depth: assess }
+    misconceptions: []
+    prerequisites: [no-11-07-debug-memory-growth]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: independent, runtime: local-node, summary: "No-hint task on your machine: a synthetic report-job queue with maxQueued and concurrency, retries with backoff that never duplicate output, AbortSignal cancellation, an event-loop delay measurement under load and node:test tests for cancellation and shutdown." }
+    retrieval:
+      - { concept: "cancellation with AbortController", from: js-08-09-cancellation-abort }
+    # design note: no-hint
+  - id: no-11-09-capstone-stream-export
+    title: { uk: "Проєкт: потоковий експорт та імпорт", en: "Capstone: streamed export/import" }
+    kind: capstone-step
+    minutes: 35
+    objectives:
+      - "Stream the capstone records out and back in as JSON lines with backpressure, per-line validation and an idempotent, cancellable import job."
+    subskills:
+      - { family: B-08, skill: "read/write streams and backpressure", depth: practice }
+    misconceptions: []
+    prerequisites: [no-11-08-independent-bounded-job, no-05-09-capstone-server-persistence]
+    glossary: [json-lines]
+    visual: null
+    analogy: null
+    practice:
+      - { kind: write, runtime: local-node, summary: "In server/, add GET /export that streams JSON lines from the repository, and an import job that reads a generated large file through pipeline, validates each line with the domain validator and upserts by id." }
+      - { kind: run-change, runtime: local-node, summary: "On your machine, run the import twice and cancel it once midway, then confirm the record count and the derived summary are unchanged by the retry." }
+    retrieval:
+      - { concept: "durable server storage for the capstone", from: no-05-09-capstone-server-persistence }

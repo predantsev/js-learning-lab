@@ -1,0 +1,223 @@
+# Syllabus spine for NO-02. Schema and rules: content/syllabus/README.md. Validate: node scripts/content/validate-syllabus.mjs
+unit: NO-02
+stage: NO
+title: { uk: "Файли, шляхи та байти", en: "Files, paths and bytes" }
+summary:
+  uk: "Учень читає й записує файли через node:fs/promises, не випускає шляхи за межі теки даних, перетворює Buffer на текст із явним кодуванням, обмежує читання й запис, атомарно замінює файли й закриває кожен дескриптор на будь-якому шляху виконання — і виправляє дефекти path traversal, кодування та часткового запису."
+  en: "The learner reads and writes files with node:fs/promises, keeps paths inside a data directory, converts Buffers to text with an explicit encoding, bounds reads and writes, replaces files atomically and closes every handle on every path — and repairs path traversal, encoding and partial-write defects."
+competencies: [B-02]
+capstoneStep:
+  mode: local
+  objective:
+    uk: "Зберігати записи проєкту у файловий репозиторій з безпечними шляхами, обмеженим читанням, атомарним записом і коректним закриттям дескрипторів; пережити штучно спричинений збій і перезапуск."
+    en: "Persist capstone records to a file repository with safe paths, bounded reads, atomic writes and clean handle cleanup; survive an injected failure and restart."
+  variants:
+    wishlist:
+      uk: "Репозиторій бажань зберігає { schemaVersion: 1, records } у server/data/wishlist.json; позначка acquired для w-02 переживає збій між записом тимчасового файлу й rename, а після перезапуску читається останній повний файл."
+      en: "The wish repository stores { schemaVersion: 1, records } in server/data/wishlist.json; marking w-02 as acquired survives a crash injected between the temp-file write and the rename, and a restart reads the last complete file."
+    planner:
+      uk: "Репозиторій справ зберігає { schemaVersion: 1, records } у server/data/planner.json; позначка done для t-01 переживає збій посеред збереження, а після перезапуску кожна справа або повністю стара, або повністю нова, з цілими dueDate і priority."
+      en: "The task repository stores { schemaVersion: 1, records } in server/data/planner.json; marking t-01 done survives a crash injected mid-save, and after restart every task is either fully old or fully new, with dueDate and priority intact."
+    habits:
+      uk: "Репозиторій звичок зберігає { schemaVersion: 1, records } у server/data/habits.json; додавання дати до completions звички h-03 (без повторів, за зростанням) переживає збій, а після перезапуску completions ніколи не бувають записані наполовину."
+      en: "The habit repository stores { schemaVersion: 1, records } in server/data/habits.json; adding a date to h-03 completions (kept unique and sorted) survives an injected crash, and after restart completions are never half-written."
+    expenses:
+      uk: "Репозиторій витрат зберігає { schemaVersion: 1, records } у server/data/expenses.json; додавання витрати з цілим amountMinor переживає збій, а після перезапуску суми за категоріями збігаються або зі старим, або з новим файлом, але ніколи не з їхньою сумішшю."
+      en: "The expense repository stores { schemaVersion: 1, records } in server/data/expenses.json; adding an expense with an integer amountMinor survives an injected crash, and after restart the per-category totals match either the old or the new file, never a mix."
+# Retrieval plan: js-13-03-bytes-typed-arrays (bytes) ; no-01-05-eventemitter-errors (errors) ; js-07-03-try-catch-finally (finally) ; js-08-05-async-await (await)
+lessons:
+  - id: no-02-01-fs-paths-safe
+    title: { uk: "fs, path і безпечні шляхи", en: "fs, path and safe paths" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Build file paths with path.join and path.resolve from a fixed data directory instead of string concatenation, and predict the result for '..' segments and absolute names."
+      - "Implement resolveInside(baseDir, name) that rejects every name whose resolved path escapes baseDir."
+    subskills:
+      - { family: B-02, skill: "fs/path and safe paths", depth: intro }
+    misconceptions:
+      - "Relative paths are resolved from the script’s own folder."
+      - "Removing the text '../' from a name is enough to stop path traversal."
+    prerequisites: [no-01-02-scripts-process-env, js-15-01-terminal-files-paths]
+    glossary: [path-traversal, containment-check]
+    visual: { kind: diagram, concept: "A folder tree with data/ marked as the allowed root: each candidate name (records.json, ../config/.env, sub/../records.json, an absolute path) is resolved step by step and lands either inside data/ and is allowed, or outside it and is rejected." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict path.join('data', '../config/.env'), path.resolve('data', '/tmp/other.json') and which of them stays inside data/." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the probes in the Node child’s scratch directory, change process.cwd() and watch relative paths move, then anchor them on import.meta.dirname and rerun." }
+      - { kind: write, runtime: isolated-node, summary: "Write resolveInside(baseDir, name) with path.resolve and path.relative and check it against five synthetic names, two of which try to escape." }
+    retrieval:
+      - { concept: "a file name from a request is untrusted input", from: js-16-06-untrusted-input-safe-output }
+  - id: no-02-02-async-io
+    title: { uk: "Асинхронний ввід-вивід", en: "Asynchronous I/O" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Predict the output order when fs/promises reads, a zero-delay timer and synchronous logs are mixed, and explain why the read does not block other callbacks."
+      - "Choose between readFileSync and fs/promises for a one-off script versus a server, and justify the choice."
+      - "Run independent reads concurrently with Promise.all and dependent ones in sequence with await."
+    subskills:
+      - { family: B-02, skill: "asynchronous I/O", depth: intro }
+    misconceptions:
+      - "await readFile() freezes the whole process until the file has been read."
+      - "readFileSync is fine in a server because files are fast."
+    prerequisites: [no-02-01-fs-paths-safe, no-01-04-event-loop-phases]
+    glossary: [non-blocking-io, thread-pool]
+    visual: { kind: code-trace, concept: "A script that awaits two reads: the highlighted line hands the read to the thread pool, the call stack empties, a timer callback runs meanwhile and the await resumes when the read completes — compared with readFileSync, where the timer waits." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict the order of 'start', a setTimeout(0) log, a readFile result and 'end' for the fs/promises version and the readFileSync version." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run both versions in the Node child against a synthetic 5 MB file, then switch two independent reads from sequential awaits to Promise.all and compare the elapsed time." }
+      - { kind: write, runtime: isolated-node, summary: "Write loadAll(paths) that reads independent files concurrently, parses each as JSON and reports which file failed and why." }
+    retrieval:
+      - { concept: "await pauses the async function, not the program", from: js-08-05-async-await }
+  - id: no-02-03-buffers-encoding
+    title: { uk: "Buffer і кодування", en: "Buffer and encoding" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Predict Buffer.byteLength versus string length for Latin text, Ukrainian text and an emoji, and explain the difference between bytes and characters."
+      - "Decode bytes with an explicit encoding and show how splitting a multi-byte UTF-8 character across chunks corrupts text unless a StringDecoder joins the chunks."
+    subskills:
+      - { family: B-02, skill: "Buffer/encoding", depth: intro }
+    misconceptions:
+      - "One character is always one byte."
+      - "readFile always returns a string."
+    prerequisites: [no-02-02-async-io, js-13-04-encoding-boundaries]
+    glossary: [node-buffer, string-decoder]
+    visual: { kind: memory-graph, concept: "A Buffer drawn as a row of byte cells backed by an ArrayBuffer: the string 'Ціна ₴' maps to more bytes than characters, a subarray shares the same cells, and decoding a chunk cut mid-character shows a replacement character until the decoder joins both chunks." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict Buffer.byteLength and .length for 'cat', 'кіт' and '🐈', and what readFile returns with and without 'utf8'." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the probes in the Node child, then split a UTF-8 file into 3-byte chunks, decode them one by one, see the broken letters and fix it with a StringDecoder." }
+      - { kind: write, runtime: isolated-node, summary: "Write readTextFile(path) that always decodes with an explicit encoding and rejects bytes that are not valid UTF-8 (TextDecoder with fatal: true)." }
+    retrieval:
+      - { concept: "an ArrayBuffer viewed through a typed array", from: js-13-03-bytes-typed-arrays }
+  - id: no-02-04-bounded-reads-writes
+    title: { uk: "Обмежене читання й запис", en: "Bounded reads and writes" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Check a file’s size with stat before reading it and refuse anything above a configured limit."
+      - "Read a large file in fixed-size chunks through a FileHandle so memory stays bounded, and predict peak memory for whole-file and chunked reads."
+    subskills:
+      - { family: B-02, skill: "bounded reads/writes", depth: intro }
+    misconceptions:
+      - "readFile is safe for any file size because Node streams it internally."
+      - "A size limit is unnecessary when the file was written by my own program."
+    prerequisites: [no-02-03-buffers-encoding]
+    glossary: [file-handle, bounded-read]
+    visual: { kind: diagram, concept: "Memory drawn as a gauge: readFile of a 50 MB synthetic file fills it in one jump, a 64 KB chunk loop keeps it flat, and a stat-based size gate rejects an oversized file before a single byte is read." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict rough peak memory for readFile versus a 64 KB chunk loop over a generated 50 MB file, and what happens when MAX_BYTES is 1 MB." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run both reads in the Node child printing process.memoryUsage().rss, then change the chunk size and the limit and compare." }
+      - { kind: write, runtime: isolated-node, summary: "Write readBounded(path, maxBytes) that stats first, rejects oversized files with a typed error and otherwise reads through a FileHandle that it closes in finally." }
+    retrieval:
+      - { concept: "measuring the cost of work instead of guessing it", from: js-17-02-big-o-measured }
+  - id: no-02-05-atomic-recoverable-updates
+    title: { uk: "Атомарні й відновлювані оновлення", en: "Atomic and recoverable updates" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Explain why rewriting a JSON file in place can leave a half-written file after a crash, and predict what a reader sees at each moment."
+      - "Implement writeAtomic(path, data): write a temp file in the same directory, flush it with sync(), then rename it over the target."
+      - "Recover on start by removing stale temp files and keeping the last complete version."
+    subskills:
+      - { family: B-02, skill: "atomic/recoverable updates", depth: intro }
+    misconceptions:
+      - "writeFile either writes everything or nothing."
+      - "If my code catches the error, the file on disk is still consistent."
+    prerequisites: [no-02-04-bounded-reads-writes, js-07-05-persist-reload]
+    glossary: [atomic-write, atomic-rename, fsync]
+    visual: { kind: sequence, concept: "Writer, temp file, target file and a crash injector over time: the in-place write is cut half-way and the reader parses broken JSON, while the temp-then-rename path leaves the reader on the old file until a single rename makes the new one visible." }
+    analogy: "Like preparing a replacement page on a separate sheet and swapping it into the binder in one move, so the binder never holds a half-written page (limit: the swap is one move only within the same filesystem, and without fsync a power cut can still lose the newest sheet even though it never leaves a torn one)."
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict what JSON.parse sees after a crash injected half-way through an in-place write and half-way through a temp-file write." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run both strategies in the Node child with the crash injector and inspect the scratch directory and the reader’s output after each crash." }
+      - { kind: write, runtime: isolated-node, summary: "Write writeAtomic(path, value) with a unique temp name, FileHandle.sync() and rename, plus a startup step that removes stale temp files." }
+    retrieval:
+      - { concept: "a swallowed error that hides a failed save", from: js-07-09-debug-swallowed-errors }
+  - id: no-02-06-errors-handle-cleanup
+    title: { uk: "Помилки й закриття дескрипторів", en: "Errors and handle cleanup" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Classify fs errors by code (ENOENT, EACCES, EISDIR, EEXIST) and decide which to recover from and which to report with cause."
+      - "Guarantee that every FileHandle is closed on success, on error and on early return with try/finally, and spot the path that leaks one."
+    subskills:
+      - { family: B-02, skill: "errors and handle cleanup", depth: intro }
+    misconceptions:
+      - "The way to branch on an error is to check the text of error.message."
+      - "The garbage collector closes file handles for me, so closing them is optional."
+    prerequisites: [no-02-05-atomic-recoverable-updates, js-07-03-try-catch-finally]
+    glossary: [error-code, file-descriptor]
+    visual: { kind: code-trace, concept: "Three runs of the same readJsonFile function — success, ENOENT and a parse error — with an open-handles counter beside the call stack; only the try/finally version returns the counter to zero on every path." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict the open-handle count after 100 calls of a seeded readConfig that returns early on an empty file without closing its handle." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run it in the Node child, watch the harness’s open-handle count climb, then move close() into finally and confirm the count returns to zero." }
+      - { kind: write, runtime: isolated-node, summary: "Write readJsonFile(path) that maps ENOENT to a 'missing' result, rethrows other codes with cause and always closes its handle." }
+    retrieval:
+      - { concept: "an 'error' event with no listener ends the process", from: no-01-05-eventemitter-errors }
+  - id: no-02-07-debug-traversal-partial-write
+    title: { uk: "Налагодження: path traversal, кодування і частковий запис", en: "Debug: path traversal, encoding and a partial write" }
+    kind: instructional
+    minutes: 15
+    objectives:
+      - "Reproduce and repair a path traversal in a file-reading helper, garbled text caused by a wrong encoding, and a corrupted file caused by an in-place write."
+      - "Prove each repair with a check that fails before the fix and passes after it, not by reading the code."
+    subskills:
+      - { family: B-02, skill: "fs/path and safe paths", depth: assess }
+      - { family: B-02, skill: "Buffer/encoding", depth: assess }
+      - { family: B-02, skill: "atomic/recoverable updates", depth: assess }
+    misconceptions:
+      - "If the file opened without an error, the path must have been safe."
+    prerequisites: [no-02-06-errors-handle-cleanup]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Before running, mark which of three seeded inputs (a ../ name, a Ukrainian label decoded as latin1, a crash during save) produces wrong output and what each output will be." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the seeded repository in the Node child with the three inputs and match each symptom to your prediction." }
+      - { kind: debug, runtime: isolated-node, summary: "Repair resolveInside, the decoding step and saveRecords (temp file plus rename) so all three checks pass and no file outside data/ is ever read." }
+    retrieval:
+      - { concept: "a byte/text mismatch traced in the browser", from: js-13-11-debug-leaks-cycles }
+  - id: no-02-08-independent-file-repository
+    title: { uk: "Самостійно: файловий репозиторій, що переживає збій", en: "Independent: a file repository that survives failure" }
+    kind: assessment
+    minutes: 30
+    objectives:
+      - "Implement, without hints, a file repository (list, get, save, remove) for a synthetic dataset with concurrent independent reads, bounded reads, atomic writes, error-code mapping and guaranteed handle cleanup."
+      - "Show, by killing the process mid-save and restarting it, that no record is lost or half-written and no handle stays open."
+    subskills:
+      - { family: B-02, skill: "asynchronous I/O", depth: assess }
+      - { family: B-02, skill: "bounded reads/writes", depth: assess }
+      - { family: B-02, skill: "errors and handle cleanup", depth: assess }
+    misconceptions: []
+    prerequisites: [no-02-07-debug-traversal-partial-write]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: independent, runtime: local-node, summary: "No-hint task in your own terminal: createFileRepository(dataDir, { maxBytes }) for a synthetic notes dataset; the supplied check script kills the process during save, restarts it, compares the records with the expected invariants and reports open handles, and you record its output." }
+    retrieval:
+      - { concept: "deterministic fixtures make a check repeatable", from: js-09-04-deterministic-fixtures }
+  - id: no-02-09-capstone-file-persistence
+    title: { uk: "Проєкт: збереження у файл на сервері", en: "Capstone: file persistence on the server" }
+    kind: capstone-step
+    minutes: 30
+    objectives:
+      - "Persist the chosen capstone’s records in server/data through a file repository with safe paths, bounded reads and atomic writes, and show that an injected crash plus a restart loses nothing that was confirmed."
+    subskills:
+      - { family: B-02, skill: "atomic/recoverable updates", depth: practice }
+    misconceptions: []
+    prerequisites: [no-02-08-independent-file-repository, no-01-09-capstone-server-folder]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: write, runtime: local-node, summary: "In server/, implement fileRepository for your domain storing { schemaVersion: 1, records } in data/<capstone>.json, using resolveInside for the path and writeAtomic for every change; run it in your terminal and record the file after one change." }
+      - { kind: run-change, runtime: local-node, summary: "Inject a crash between the temp write and the rename with the supplied flag, restart, and confirm the repository loads the last complete version." }
+    retrieval:
+      - { concept: "{ schemaVersion, records } persisted in isolated storage", from: js-07-11-capstone-modules-persistence }

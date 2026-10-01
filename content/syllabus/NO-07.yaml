@@ -1,0 +1,252 @@
+# Syllabus spine for NO-07. Schema and rules: content/syllabus/README.md. Validate: node scripts/content/validate-syllabus.mjs
+unit: NO-07
+stage: NO
+title: { uk: "Зміцнюємо API: обмеження, безпечні помилки, тести й логи", en: "Hardening the API: limits, safe errors, tests and logs" }
+summary:
+  uk: "Учень відхиляє невалідні, завеликі запити й path traversal на межі сервера, повертає безпечні помилки без витоку секретів, оцінює ризики залежностей і мережевої доступності (loopback за замовчуванням) та доводить захист тестами через справжній HTTP і структурованими логами з request id без секретів."
+  en: "The learner rejects invalid, oversized and path-traversing requests at the server edge, returns safe errors without leaking secrets, judges dependency and network-exposure risks with loopback as the default, and proves the hardening with real-HTTP tests and structured, redacted logs that carry request ids."
+competencies: [B-07, B-09]
+capstoneStep:
+  mode: local
+  objective:
+    uk: "Зміцнити API проєкту: відхиляти невалідні й завеликі дані та path traversal, слухати лише loopback, прибирати секрети з логів і додавати request id, покрити все тестами через справжній HTTP."
+    en: "Harden the capstone API: reject invalid/oversized input and path traversal, bind to loopback, redact logs with request ids, and cover it with real-HTTP tests."
+  variants:
+    wishlist:
+      uk: "Відхиляти бажання з порожньою чи довшою за 80 символів назвою (name), з від’ємною або дробовою ціною (price) чи з категорією (category) понад 30 символів; логувати кожен запит з його id, але без тіла бажання."
+      en: "Reject an item whose trimmed name is empty or over 80 characters, whose price is negative or not a whole number, or whose category exceeds 30 characters; log each request with its id but never the item body."
+    planner:
+      uk: "Відхиляти справу з порожньою чи довшою за 80 символів назвою (title), з dueDate, що не є справжньою датою «YYYY-MM-DD», або з priority поза low/normal/high, а також ?sort поза дозволеним списком title, dueDate і priority."
+      en: "Reject a task whose title is empty or over 80 characters, whose dueDate is not a real 'YYYY-MM-DD' date or whose priority is not low/normal/high, and reject ?sort values outside an allowlist of title, dueDate and priority."
+    habits:
+      uk: "Відхиляти звичку з невідомою frequency, з completions, що не є унікальними коректними датами «YYYY-MM-DD», або з масивом completions понад встановлений ліміт; не писати назви звичок (name) у логи."
+      en: "Reject a habit with an unknown frequency, completions that are not unique valid 'YYYY-MM-DD' dates or a completions array above a fixed size limit, and keep habit names out of the logs."
+    expenses:
+      uk: "Відхиляти витрату, у якої amountMinor не є додатним цілим, category немає у списку категорій проєкту або label довший за 80 символів; ніде не логувати суми й назви витрат."
+      en: "Reject an expense whose amountMinor is not a positive integer, whose category is not in the project's category list or whose label exceeds 80 characters, and never log amounts or labels."
+# Retrieval plan: no-10-08-threat-model-cors-not-auth (threat model) ; js-16-06-untrusted-input-safe-output (untrusted input) ; no-02-01-fs-paths-safe (paths) ; js-09-05-mocks-vs-real (mocks)
+lessons:
+  - id: no-07-01-input-query-path-safety
+    title: { uk: "Недовірені дані: запит, query-параметри й шляхи", en: "Untrusted input, query and path safety" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Classify every part of an incoming request (method, path, query, headers, body) as untrusted and name where each one is validated."
+      - "Reject an out-of-range query parameter and a path parameter that resolves outside the data directory with 400, before any repository or file-system call."
+    subskills:
+      - { family: B-07, skill: "input validation/query/path safety", depth: intro }
+    misconceptions:
+      - "Only the JSON body needs validation; the URL and query string come from my own client, so they are safe."
+      - "Stripping '../' from a file name is enough to keep the path inside the folder."
+    prerequisites: [no-04-02-schema-validation, no-02-01-fs-paths-safe]
+    glossary: [allowlist-validation, path-containment-check]
+    visual: { kind: diagram, concept: "A request split into method, path, query, headers and body, each passing its own validation box at the server edge; a crafted ?limit=-1 and an encoded ..%2F path are highlighted at the exact box that rejects them before the repository and the file system are reached." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict the status code and whether the repository is called for GET /records?limit=-1, ?limit=abc, ?sort=__proto__ and GET /exports/..%2F..%2Fsecret.txt against the loopback lab server." }
+      - { kind: run-change, runtime: isolated-node, summary: "Send the four crafted requests with fetch from the isolated runner, then add a sort-field allowlist and a resolved-path containment check and resend them." }
+      - { kind: write, runtime: isolated-node, summary: "Write parseListQuery(searchParams) that returns { ok: true, value } or { ok: false, errors } for limit, offset and sort using an allowlist, never a denylist." }
+    retrieval:
+      - { concept: "untrusted input versus safe output on the client", from: js-16-06-untrusted-input-safe-output }
+  - id: no-07-02-size-time-limits
+    title: { uk: "Обмеження розміру, часу й частоти запитів", en: "Size, time and rate limits" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Enforce a request-body size limit while the body streams in and answer 413 without buffering the rest."
+      - "Configure the server's headers and request timeouts and predict which slow client each one stops."
+      - "Explain why a per-client rate limit protects the service from bursts but not from one expensive request."
+    subskills:
+      - { family: B-07, skill: "rate/size/time limits", depth: practice }
+    misconceptions:
+      - "Checking the Content-Length header is enough to limit the body size."
+      - "A timeout inside my handler also stops a client that sends its headers very slowly."
+    prerequisites: [no-07-01-input-query-path-safety, no-03-04-cancellation-timeouts-server]
+    glossary: [payload-size-limit, headers-timeout]
+    visual: { kind: sequence, concept: "A normal client, an oversized upload and a trickling slow client talk to the server over time; bytes are counted per chunk until the size limit answers 413 and destroys the request, while headersTimeout and requestTimeout close the slow socket." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict what happens to a 2 MB POST that claims Content-Length: 100 against a 64 KB limit, and to a synthetic client that sends one header byte per second." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run both synthetic attacks against the loopback lab server, then lower the size limit and the timeouts and observe the 413 and the closed socket in the server log." }
+      - { kind: write, runtime: isolated-node, summary: "Write readJsonBody(req, { maxBytes }) that counts bytes per chunk, stops reading past the limit and rejects with a typed PayloadTooLarge error the router maps to 413." }
+    retrieval:
+      - { concept: "rate limits on the login route", from: no-10-07-login-abuse-csrf-limits }
+  - id: no-07-03-safe-errors-redaction
+    title: { uk: "Безпечні помилки й приховування секретів", en: "Safe errors and secret redaction" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Map internal failures to the stable error model so a client never sees a stack trace, a file path or a raw parser message."
+      - "Redact secrets and personal fields from error details and log context before they leave the handler, including nested causes."
+    subskills:
+      - { family: B-07, skill: "safe errors", depth: intro }
+      - { family: B-07, skill: "secret redaction", depth: intro }
+    misconceptions:
+      - "Sending err.message to the client is fine because it helps debugging."
+      - "A secret can only leak if I log it on purpose."
+    prerequisites: [no-07-02-size-time-limits, no-04-03-error-model]
+    glossary: [safe-error-response, secret-redaction]
+    visual: null
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict the response body a client receives when the repository throws ENOENT with a full file path, and when config parsing fails with a token inside the message." }
+      - { kind: run-change, runtime: isolated-node, summary: "Trigger both failures on the loopback lab server, read the leaked details, then route errors through a toPublicError mapper and resend." }
+      - { kind: write, runtime: isolated-node, summary: "Write redact(value, { keys }) that replaces token, password and authorization values deeply (nested objects and error causes) and test it on a synthetic config object." }
+    retrieval:
+      - { concept: "shape of the stable error model", from: no-04-03-error-model }
+  - id: no-07-04-dependency-risks
+    title: { uk: "Ризики залежностей", en: "Dependency risks" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Read a lockfile and an audit advisory and decide whether the flagged package lies on a code path the running server actually uses."
+      - "Name three supply-chain risks (typosquatting, malicious install scripts, abandoned transitive packages) and one mitigation for each."
+    subskills:
+      - { family: B-07, skill: "dependency risks", depth: intro }
+    misconceptions:
+      - "An audit warning means my server is exploitable, and zero warnings means it is safe."
+      - "A popular package with many downloads is always safe to install."
+    prerequisites: [no-07-03-safe-errors-redaction, js-15-04-install-lockfile-semver]
+    glossary: [supply-chain-risk, typosquatting, install-script]
+    visual: null
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict which of three synthetic advisories (a dev-only tool, an unused export, the request-parsing helper) can be reached by a request to the running server." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run a supplied script that walks package-lock.json and prints the dependency path to the flagged package, then replace the flagged helper with a node: built-in and rerun the tests." }
+      - { kind: write, runtime: isolated-node, summary: "Write a dependency decision note for the flagged package: keep, upgrade, replace with a built-in or remove, with the evidence that justifies the choice." }
+    retrieval:
+      - { concept: "lockfiles and semver ranges", from: js-15-04-install-lockfile-semver }
+  - id: no-07-05-tls-proxy-exposure
+    title: { uk: "TLS, довіра до проксі та мережева доступність", en: "TLS, proxy trust and network exposure" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Explain why the capstone server binds to 127.0.0.1 by default and what changes when it binds to 0.0.0.0."
+      - "Describe where TLS terminates behind a reverse proxy and why X-Forwarded-For is trusted only when the socket peer is a known proxy."
+    subskills:
+      - { family: B-07, skill: "TLS/proxy trust/context", depth: intro }
+    misconceptions:
+      - "localhost and 0.0.0.0 mean the same thing: my own machine."
+      - "If the proxy uses HTTPS, every header my server receives is trustworthy."
+    prerequisites: [no-07-04-dependency-risks, no-03-01-http-server-lifecycle]
+    glossary: [reverse-proxy, tls-termination, trusted-proxy]
+    visual: { kind: diagram, concept: "Boxes for the learner's machine, the local network and a hypothetical deployment: a 127.0.0.1 bind is reachable only from the machine, a 0.0.0.0 bind lights up the network path, and a reverse-proxy box shows TLS ending there and the X-Forwarded-For header the server trusts only from that proxy." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict which callers can reach a server listening on 127.0.0.1, on ::1 and on 0.0.0.0, and what req.socket.remoteAddress shows for a loopback request." }
+      - { kind: run-change, runtime: isolated-node, summary: "Start the lab server on 127.0.0.1 and read server.address(), then make HOST configurable with loopback as the default and a warning log for any non-loopback bind." }
+      - { kind: write, runtime: isolated-node, summary: "Write clientIp(req, { trustedProxies }) that honours X-Forwarded-For only when the socket address is a configured proxy, and test it with spoofed headers." }
+    retrieval:
+      - { concept: "TLS context and platform network configuration", from: rn-06-05-transport-tls-config }
+    # design note: loopback default
+  - id: no-07-06-api-tests-real-http
+    title: { uk: "Тести API через справжній HTTP", en: "API tests over real HTTP" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Start the server on an ephemeral port inside a test, send real requests and close the server and its temp data directory in teardown."
+      - "Choose for a given check between a unit test, a real-HTTP test and a repository test on a temp directory, and name what a mocked repository would hide."
+    subskills:
+      - { family: B-09, skill: "unit/integration/realHTTP/DB tests", depth: intro }
+      - { family: B-09, skill: "fixture/mocks limits", depth: intro }
+    misconceptions:
+      - "Calling the handler function directly tests the API just as well as sending a request."
+      - "A test that passes with a mocked repository proves the data reaches the disk."
+    prerequisites: [no-07-05-tls-proxy-exposure, js-09-05-mocks-vs-real]
+    glossary: [ephemeral-port]
+    visual: { kind: sequence, concept: "Test runner, server and temp data directory over time: listen(0) returns a free port, the test sends a request, the server writes to the temp directory, the assertion checks status, headers and stored file, and teardown closes the server; a mocked-repository run is shown skipping the disk step entirely." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict which of three tests catches a missing Content-Type header and a broken 413 limit: a handler unit test, a mocked-repository test or a real-HTTP test with node:test." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the supplied node:test suite against the server on port 0, then remove server.close() from teardown and observe the runner hang on an open handle." }
+      - { kind: write, runtime: isolated-node, summary: "Write real-HTTP tests for POST /records: a valid body (201 and the record on disk), an oversized body (413) and a traversal path (400), each with its own temp data directory." }
+    retrieval:
+      - { concept: "what mocks prove and what they hide", from: js-09-05-mocks-vs-real }
+  - id: no-07-07-structured-logs-request-ids
+    title: { uk: "Структуровані логи й request id", en: "Structured logs and request ids" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Emit one JSON log line per request with time, level, request id, method, route, status and duration, and without bodies or secrets."
+      - "Follow one failing request across interleaved log lines by its request id and return the same id in a response header."
+    subskills:
+      - { family: B-09, skill: "structured logs/redaction/request IDs", depth: intro }
+    misconceptions:
+      - "More console.log output always makes a server easier to debug."
+      - "Logging the whole request object is the safest way not to miss anything."
+    prerequisites: [no-07-06-api-tests-real-http, no-07-03-safe-errors-redaction]
+    glossary: [structured-log, request-id]
+    visual: { kind: diagram, concept: "One request flows through edge, router and handler boxes; a request id created at the edge is stamped on every log line and on the X-Request-Id response header, and a redaction box strips the Authorization header before the JSON line is written." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict which fields of a supplied log line would leak a token or personal data and which ones help find the failing request." }
+      - { kind: run-change, runtime: isolated-node, summary: "Send three concurrent requests to the loopback lab server and read the interleaved plain-text logs, then switch to JSON lines with request ids and filter one request's lines." }
+      - { kind: write, runtime: isolated-node, summary: "Write a logRequest wrapper that accepts a well-formed X-Request-Id or creates one with crypto.randomUUID(), measures duration and logs through the redactor." }
+    retrieval:
+      - { concept: "error events and the error lifecycle in Node", from: no-01-05-eventemitter-errors }
+  - id: no-07-08-debug-security-defects
+    title: { uk: "Налагодження: path traversal, витік у логах, вразлива залежність", en: "Debug: traversal, leak in logs, vulnerable dependency" }
+    kind: instructional
+    minutes: 15
+    objectives:
+      - "Reproduce a path-traversal read, a token leaking into the logs, a stack trace in an error response and a reachable vulnerable helper with real requests."
+      - "Fix each defect without breaking valid requests and prove it with a failing-then-passing real-HTTP test or log assertion."
+    subskills:
+      - { family: B-07, skill: "input validation/query/path safety", depth: assess }
+      - { family: B-07, skill: "dependency risks", depth: assess }
+      - { family: B-07, skill: "secret redaction", depth: assess }
+      - { family: B-07, skill: "safe errors", depth: assess }
+    misconceptions:
+      - "If the happy-path tests are green, the security defect must already be fixed."
+    prerequisites: [no-07-07-structured-logs-request-ids]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Before running, mark which seeded request reads a file outside the data directory, which writes a bearer token into the log, which returns a stack trace and which reaches the vulnerable parser." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the seeded server and the supplied attack script in the isolated runner and match every finding to your prediction." }
+      - { kind: debug, runtime: isolated-node, summary: "Repair all four defects (naive '../' stripping, raw headers in logs, err.stack in the response, a vulnerable query-parsing helper) and add one regression test per defect." }
+    retrieval:
+      - { concept: "resolving a path safely under a base directory", from: no-02-01-fs-paths-safe }
+  - id: no-07-09-independent-harden-test
+    title: { uk: "Самостійно: зміцни й протестуй", en: "Independent: harden and test" }
+    kind: assessment
+    minutes: 35
+    objectives:
+      - "Harden an unseen synthetic API without hints: size, time and rate limits, a loopback default bind, trusted-proxy handling and CORS configured without treating it as authorisation."
+      - "Write a one-page threat model and prove the hardening with real-HTTP tests and redacted JSON logs that trace one rejected request by its id."
+    subskills:
+      - { family: B-07, skill: "rate/size/time limits", depth: assess }
+      - { family: B-07, skill: "CORS not auth", depth: assess }
+      - { family: B-07, skill: "TLS/proxy trust/context", depth: assess }
+      - { family: B-07, skill: "threat model", depth: assess }
+      - { family: B-09, skill: "unit/integration/realHTTP/DB tests", depth: assess }
+      - { family: B-09, skill: "structured logs/redaction/request IDs", depth: assess }
+    misconceptions: []
+    prerequisites: [no-07-08-debug-security-defects, no-10-08-threat-model-cors-not-auth]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: independent, runtime: local-node, summary: "No-hint task on your machine: harden a supplied synthetic notes API against an oversized body, a slow client, a request burst, a spoofed X-Forwarded-For and an unauthenticated cross-origin call; submit the threat model, a node:test suite over real HTTP and the log lines of one rejected request." }
+    retrieval:
+      - { concept: "threat model and why CORS is not authorisation", from: no-10-08-threat-model-cors-not-auth }
+    # design note: no-hint
+  - id: no-07-10-capstone-harden-api
+    title: { uk: "Проєкт: зміцнений API", en: "Capstone: hardened API" }
+    kind: capstone-step
+    minutes: 35
+    objectives:
+      - "Apply validation, size limits, safe errors, a loopback default bind and request-id logging to the capstone API, and prove them with real-HTTP tests."
+    subskills:
+      - { family: B-07, skill: "input validation/query/path safety", depth: practice }
+    misconceptions: []
+    prerequisites: [no-07-09-independent-harden-test, no-04-09-capstone-crud-api]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: write, runtime: local-node, summary: "In server/, add body-size limits and query allowlists to the capstone routes, a containment check for export and backup file names, a loopback HOST default, redacted request-id logs and one real-HTTP rejection test per rule." }
+      - { kind: run-change, runtime: local-node, summary: "Start the hardened capstone server locally, send one valid and one rejected request of each kind and keep the matching log lines as evidence." }
+    retrieval:
+      - { concept: "the capstone CRUD routes and their error model", from: no-04-09-capstone-crud-api }
