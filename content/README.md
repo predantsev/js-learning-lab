@@ -1,0 +1,213 @@
+# Content authoring guide
+
+The contract for everyone who writes course content. Normative background: [requirements](../docs/REQUIREMENTS.md), [content contracts](../docs/CONTENT-DATA.md), [competency matrix](../docs/COMPETENCY-MATRIX.md). The lesson plan is the syllabus in `content/syllabus/<UNIT>.yaml` (lesson ids, order, objectives, subskills, misconceptions, retrieval targets). Visual step-throughs are specified in [VISUALS.md](VISUALS.md).
+
+Reference lesson to imitate: `content/units/JS-01/js-01-01-code-runs/`.
+
+## Layout
+
+```
+content/
+  course.yaml                     stage titles
+  syllabus/<UNIT>.yaml            the plan for a unit (keep it true: update it when a lesson changes scope)
+  glossary/<UNIT>.yaml            terms first introduced in that unit
+  capstones/domains.yaml          the four capstone domains and synthetic fixtures
+  units/<UNIT>/<lesson-id>/
+    lesson.yaml                   structure + all bilingual text
+    <example-dir>/…               files of an example block
+    <exercise-dir>/starter/…      what the learner starts from
+    <exercise-dir>/solution/…     only the files that differ from the starter
+    <exercise-dir>/alt[-name]/…   another valid solution (required whenever a different approach is natural)
+    <exercise-dir>/wrong[-name]/… deliberately failing attempt(s) — at least one, modelling a real misconception
+    <exercise-dir>/tests.js       behavior tests
+```
+
+The directory name equals the lesson id. Ids are stable: never rename a published lesson or block id (add a redirect in `content/redirects.yaml` instead).
+
+## Commands
+
+```
+npm run build                                        # once, and after platform changes
+node scripts/content/validate.mjs --unit JS-03       # static checks + real execution of every fixture
+node scripts/content/validate.mjs --lesson <id>
+npm start                                            # read your lesson as a learner (http://localhost:7300)
+```
+
+The validator runs every example, every exercise fixture and every verifiable prediction in headless Chrome through the same sandbox the learner uses, in both languages. A lesson is not done until it passes.
+
+## Teaching rules
+
+1. **One new idea per lesson, 5–15 minutes.** If the syllabus lesson turns out to need more, split it and update the syllabus file.
+2. **Explanation → prediction → run/change → exercise → transfer.** Every instructional lesson has all five. Explanations are short (60–160 words per block), concrete and start from something the learner can see. Never assume a concept that was not taught in an earlier lesson — check the syllabus order.
+3. **Name the misconception and dislodge it.** The syllabus lists the wrong mental models for each lesson. Build the prediction so that the wrong model gives a wrong answer, and give that wrong option a `why`.
+4. **Predictions are committed before running.** The answer stays hidden until submission. Whenever the question is "what does this print", add `verify.logs` so the validator proves the claimed output by executing the code.
+5. **Real code, real results.** Examples and exercises run for real. Exercises are checked by behavior (what the program prints, returns, renders or stores), never by matching source text. Accept every reasonable solution; add an `alt` fixture to prove it.
+6. **Exercise ladder inside a unit:** `guided` (hints available) → `debug` (a seeded, realistic defect in working-looking code) → `independent` (no hints, combines the unit's ideas). Each unit needs all three, plus at least one prediction.
+7. **Hints never give the answer away at level one.** `nudge` points where to look; `explanation` explains the idea needed; the full solution is separate and is recorded when viewed. Authored `feedback` for the failures a beginner will actually hit (a named test, or an error name such as `ReferenceError`) is worth more than a long hint.
+8. **Retrieval.** From the second unit on, a unit contains `review` blocks with at least two questions about earlier lessons (one recent, one distant), asked without restating the answer. Use the syllabus `retrieval` entries.
+9. **Difficult concepts get a `visual` block and an `analogy` block with its `limits`** (where the analogy breaks). Mandatory for scope/closure, reference identity/mutation, event loop/async, render/state snapshot, effect/cleanup, client/server and native/web boundaries.
+10. **Honest runtimes.** `browser-js` and `browser-react` are real. `concept-preview` (React Native through react-native-web, or any simulation) must carry `limits`. Native-device and real-server evidence comes from `local-task` blocks, confirmed by the learner.
+11. **Capstone thread.** Every instructional lesson ends with a `transfer` block pointing at the unit's capstone step (`capstoneStep: <UNIT>`). The step itself is the unit's `capstone-step` lesson.
+
+## Language rules
+
+- Every learner-facing string is bilingual: `{ uk: …, en: … }`. Ukrainian is the default and must read naturally, not like a translation. Address the learner informally (ти). Keep professional terms in English where developers do (props, state, hook, closure, callback, commit, merge, runtime) and explain them on first use; link them with `[[term-id]]` or `[[term-id|shown text]]`.
+- New terms go to `content/glossary/<UNIT>.yaml` (`id`, `term` = canonical English name, `name` {uk,en}, `definition` {uk,en}, optional `aliases`, `see`, `example.code`). A term is defined once for the whole course; check existing glossary files before adding.
+- **Code:** identifiers and comments are English and shared by both languages. Text the example shows to its user (page headings, labels, printed sentences, sample data names) follows the lesson language: write `%%key%%` in the code and define `strings: { key: { uk: …, en: … } }` on the block. Tests read the same values from the global `L` (`L.key`). Synthetic data comes from `content/capstones/domains.yaml` where it fits.
+- No personal data, no real brands' content, nothing copied from other courses.
+
+## lesson.yaml
+
+```yaml
+id: js-05-02-filter-find          # = directory name
+unit: JS-05
+title: { uk: …, en: … }
+kind: instructional               # instructional | review | assessment | local-task | capstone-step
+minutes: 10                       # 5–15 for instructional lessons
+contentVersion: 1
+objectives: [ { uk: …, en: … } ]  # observable abilities
+purpose: { uk: …, en: … }         # required for non-instructional lessons: why this lesson exists
+prerequisites: [js-05-01-map]     # direct prerequisites, earlier in teaching order
+subskills:                        # exact strings from docs/competencies.json
+  - { family: J-05, skill: "map/filter/find/some/every/reduce", depth: practice }   # intro | practice | assess
+glossary: [predicate]             # term ids introduced here
+selfCheck: [predict-keep, keep-affordable]   # 1–3 prediction/exercise block ids for the "I know this" self-check
+blocks: [ … ]                     # read top to bottom; every example/exercise block ends a page
+```
+
+### Block kinds
+
+Every block has a unique `id` (kebab-case) inside the lesson. All text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts).
+
+```yaml
+- id: keep-what-matters
+  kind: explanation
+  title: { uk, en }
+  body: { uk, en }
+
+- id: sieve
+  kind: analogy
+  body: { uk, en }
+  limits: { uk, en }              # where the analogy stops being true
+
+- id: filter-flow
+  kind: visual
+  visual: pipeline                # see VISUALS.md for kinds and spec formats
+  title: { uk, en }
+  textEquivalent: { uk, en }      # full prose alternative of the whole visual
+  spec: { … }
+
+- id: predict-keep
+  kind: prediction
+  prompt: { uk, en }
+  code: |                         # optional; shown highlighted; may use %%key%% with block `strings`
+    console.log([1, 2, 3].filter((n) => n > 1).length);
+  verify: { logs: ["2"] }         # exact console lines (and `error: TypeError` when it throws)
+  answer:
+    type: choice                  # choice | multi | text | order
+    options:
+      - { id: two, text: { uk, en } }                    # or `code: "…"` instead of text
+      - { id: three, text: { uk, en }, why: { uk, en } } # `why` is shown when this wrong option was picked
+    correct: [two]
+    # type: text  → accept: ["2", "two"] (case/space-insensitive), optional placeholder {uk,en}
+    # type: order → items: [{ id, text | code }] listed in the correct order
+  explanation: { uk, en }
+
+- id: try-filter
+  kind: example                   # working code to run and change
+  runtime: browser-js             # browser-js | browser-react | concept-preview | isolated-node
+  dir: try-filter
+  entry: index.js                 # or index.html for pages
+  title: { uk, en }
+  body: { uk, en }
+  tryIt: { uk, en }               # what to change and observe
+  strings: { key: { uk, en } }    # optional
+  expectError: true               # only when the error is the point of the example
+
+- id: keep-affordable
+  kind: exercise
+  mode: guided                    # guided | debug | independent
+  assessment: true                # optional: gate/assessment tasks
+  runtime: browser-js
+  dir: keep-affordable
+  entry: index.js
+  editable: [index.js]            # default: every starter file; other files are read-only
+  title: { uk, en }
+  instructions: { uk, en }
+  testTitles: { "test name in tests.js": { uk, en } }    # one per test
+  hints: { nudge: { uk, en }, explanation: { uk, en } }  # omit for mode: independent
+  solutionNote: { uk, en }        # shown with the solution: why it works
+  feedback:
+    - when: { test: "test name" } # or { error: ReferenceError }
+      message: { uk, en }
+  capabilities: { network: lab }  # optional: none (default) | lab; also loopBudgetMs, testTimeoutMs
+  starterPasses: true             # only for rare exercises where the starter is already correct by design
+
+- id: recall
+  kind: review
+  title: { uk, en }
+  items:
+    - id: scope-of-let
+      from: js-02-03-block-scope  # the earlier lesson being retrieved
+      prompt: { uk, en }
+      answer: { … }               # same shapes as prediction; `code`/`verify` allowed
+      explanation: { uk, en }
+
+- id: to-project
+  kind: transfer
+  capstoneStep: JS-05             # or checkpoint: CP-JS
+  body: { uk, en }
+
+- id: run-locally
+  kind: local-task                # guided work outside the platform, confirmed by the learner
+  runtime: local-web              # local-web | local-node | local-native
+  title: { uk, en }
+  intro: { uk, en }
+  tools: [ { name: "Node.js", version: "22 or newer", note: { uk, en } } ]
+  steps: [ { text: { uk, en }, command: "npm test", expect: { uk, en } } ]
+  verify: [ { id: tests-green, text: { uk, en } } ]      # what the learner confirms having seen
+  troubleshooting: [ { problem: { uk, en }, fix: { uk, en } } ]
+  recovery: { uk, en }            # how to get back to a working state without losing work
+```
+
+Commands in `local-task` blocks must be commands you actually ran; record the tool versions you used. Never write "works everywhere".
+
+## Runtimes
+
+| Runtime | What runs | Notes |
+|---|---|---|
+| `browser-js` | Real browser JavaScript as native ES modules, with a real DOM | Imports need the file extension (`./util.js`), as in the browser. `.ts` files run after type removal. `localStorage` is an isolated per-exercise store. `fetch("./data/items.json")` reads project files; `fetch("/lab/…")` reaches the lab HTTP fixtures when `capabilities.network: lab`. `alert` shows in the console; `confirm`/`prompt` are unavailable (build the UI in the page). A loop running longer than 2 s is stopped. |
+| `browser-react` | Real React 19 (`react`, `react-dom/client`) | JSX only in `.jsx`/`.tsx`. Imports resolve like Vite (`./App`). Default page has `<div id="root">`. |
+| `concept-preview` | React Native components through `react-native-web` | Always add `limits`: no native rendering, device APIs or performance. |
+| `isolated-node` | Real Node.js in an isolated child process | For Node-stage practice: real `node:http` on loopback, `node:fs` in a scratch folder, `node:sqlite`, streams. |
+
+## tests.js
+
+Tests run after the learner's program finished loading (top-level `await` included). They are ES modules in the same sandbox: import learner modules by path (`import { total } from './cart.js'`).
+
+```js
+test('keeps only items at or under the limit', () => {
+  expect(scope.affordable.map((item) => item.name)).toEqual([L.lamp]);
+});
+```
+
+- `test(name, fn)` — `fn` may be async; each test has 4 s.
+- `scope` — top-level bindings of the entry file, even without `export` (`scope.price`, `scope.greet`). `scopeOf('src/app.js')` for other files.
+- `logs()` — printed lines as text; `rawLogs()` — `[{ level, args }]`; `alerts()`; `loadError()`.
+- `expect(value, hint?)` — `toBe`, `toEqual`, `toBeTruthy/Falsy`, `toBeNull/Undefined/Defined/NaN`, `toBeGreaterThan(OrEqual)`, `toBeLessThan(OrEqual)`, `toBeCloseTo`, `toBeInstanceOf`, `toBeTypeOf`, `toContain`, `toContainEqual`, `toHaveLength`, `toHaveProperty`, `toMatch`, `toMatchObject`, `toThrow`, `toHaveBeenCalled(Times|With)`, DOM: `toHaveTextContent`, `toBeVisible`, `toBeInTheDocument`, `toHaveFocus`, `toHaveValue`, `toHaveAttribute`, `toHaveClass`, `toBeDisabled`, `toBeChecked`; plus `.not`, `.resolves`, `.rejects`. The optional `hint` names the checked thing in the failure message.
+- DOM: `screen.$(sel)`, `screen.$$(sel)`, `screen.byRole(role, { name })`, `screen.allByRole`, `screen.byText`, `screen.byLabel`, `screen.nameOf(el)`, `screen.text()`; `await user.click(el)`, `user.type(el, text)`, `user.fill`, `user.clear`, `user.select`, `user.check`, `user.press('Enter', el)`, `user.submit(form)` (returns `{ prevented }`).
+- Async: `await sleep(ms)`, `await settle()`, `await waitFor(() => condition)`.
+- `spy(fn?)`, `mockFetch({ '/api/items': { status: 200, body: […] , delay: 50 } })` → `{ calls, restore }`, `storage` (the exercise's `localStorage`), `L` (localized strings), `files`.
+
+Write failure-proof tests: check observable behavior, cover the boundary cases the lesson teaches, and make each test name a sentence a learner can act on (it is translated in `testTitles`).
+
+## Lab HTTP fixtures (`capabilities.network: lab`)
+
+Real loopback HTTP served by the platform, synthetic in-memory data: `GET /lab/ping`, `/lab/echo`, `/lab/status/<code>`, `/lab/delay/<ms>`, `/lab/flaky?key=K&fail=2`, `/lab/search?q=…` (shorter queries answer slower — stale-response race), collections `/lab/<wishlist|planner|habits|expenses>/items[/<id>]` (GET/POST/PUT/PATCH/DELETE, `?lang=uk|en`, `?delay=ms`, `?status=503`, `?flaky=N&key=K`), CORS cases `/lab/cors/open|closed|preflight|credentials`, `POST /lab/reset`.
+
+## Before you report a unit as done
+
+- `node scripts/content/validate.mjs --unit <UNIT>` prints `CONTENT VALID`.
+- Every syllabus subskill of the unit's lessons appears in `subskills` with the right depth; the unit has prediction, guided, debug and independent practice, retrieval questions, and its capstone step.
+- You read every lesson once as a learner in the running app, in both languages, and ran each example yourself.
+- The report lists what you could not verify.
