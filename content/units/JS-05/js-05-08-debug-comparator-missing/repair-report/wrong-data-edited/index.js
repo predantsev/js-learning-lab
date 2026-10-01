@@ -1,0 +1,30 @@
+const expenses = [
+  { id: "e-05", label: "%%cinema%%", amountMinor: 30000 },
+  { id: "e-04", label: "%%bulbs%%", amountMinor: 9990 },
+  { id: "e-01", label: "%%groceries%%", amountMinor: 84550 },
+];
+
+// The duplicate was deleted from the data instead of repairing uniqueTotal,
+// so the function still counts any repeated expense twice.
+function sortByAmount(list) {
+  return list.toSorted((a, b) => a.amountMinor - b.amountMinor);
+}
+
+function totalAmount(list) {
+  return list
+    .map((expense) => expense.amountMinor)
+    .reduce((sum, amount) => sum + amount, 0);
+}
+
+function labelOf(list, id) {
+  return list.find((expense) => expense.id === id)?.label ?? "%%unknown%%";
+}
+
+function uniqueTotal(list) {
+  return list.reduce((sum, expense) => sum + expense.amountMinor, 0);
+}
+
+console.log(sortByAmount(expenses).map((expense) => expense.id));
+console.log(totalAmount(expenses), uniqueTotal(expenses));
+console.log(labelOf(expenses, "e-01"), labelOf(expenses, "e-99"));
+console.log(totalAmount([]), uniqueTotal([]));
