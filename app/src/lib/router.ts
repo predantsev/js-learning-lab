@@ -1,11 +1,11 @@
-// Hash router: #/course, #/lesson/<id>/<page>?block=<id>, #/project, #/bookmarks, #/review, #/glossary/<term>, #/settings
+// Hash router: #/course, #/lesson/<id>/<page>?block=<id>, #/project[/<UNIT>], #/bookmarks, #/review, #/glossary/<term>, #/settings
 import { Store } from './store';
 
 export type Route =
   | { name: 'home' }
   | { name: 'course' }
   | { name: 'lesson'; id: string; page: number; block: string | null }
-  | { name: 'project' }
+  | { name: 'project'; unit: string | null }
   | { name: 'bookmarks' }
   | { name: 'review' }
   | { name: 'glossary'; term: string | null }
@@ -20,7 +20,7 @@ export function parseRoute(hash: string): Route {
   switch (parts[0]) {
     case 'course': return { name: 'course' };
     case 'lesson': return parts[1] ? { name: 'lesson', id: parts[1], page: Math.max(0, Number(parts[2] ?? 1) - 1 || 0), block: query.get('block') } : { name: 'course' };
-    case 'project': return { name: 'project' };
+    case 'project': return { name: 'project', unit: parts[1] ? parts[1].toUpperCase() : null };
     case 'bookmarks': return { name: 'bookmarks' };
     case 'review': return { name: 'review' };
     case 'glossary': return { name: 'glossary', term: parts[1] ?? null };

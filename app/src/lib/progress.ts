@@ -28,6 +28,9 @@ export function requiredItems(lesson: Lesson): { questions: string[]; exercises:
 }
 
 export function isLessonComplete(lesson: Lesson, p: LessonProgress): boolean {
+  // A capstone-step lesson completes only through a real platform check of the step in the active
+  // project (mirrored into p.project); reading the lesson or a supplied starter never completes it.
+  if (lesson.kind === 'capstone-step') return p.project?.state === 'done';
   const req = requiredItems(lesson);
   const seenAll = lesson.blocks.every((b) => p.seenBlocks.includes(b.id));
   return (
