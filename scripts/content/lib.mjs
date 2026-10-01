@@ -8,10 +8,12 @@ import { Marked } from 'marked';
 import YAML from 'yaml';
 import { ROOT } from '../../server/config.mjs';
 import { CAPSTONES, GLOSSARY_LINK, Issues, LANGS, STAGES, paginate, unitOfLesson, validateGlossaryTerm, validateLessonSource } from '../../shared/content-schema.js';
+import { STRING_PLACEHOLDER, localizeText } from '../../shared/exercise.js';
 
 export const CONTENT_DIR = path.join(ROOT, 'content');
 const INLINE_KEYS = new Set(['title', 'text', 'why', 'label', 'name', 'problem']);
 const PLAIN_KEYS = new Set(['title', 'name']);
+const RAW_KEYS = new Set(['strings', 'spec']);
 const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.env', '.gitignore', '']);
 
 const exists = (p) => fs.access(p).then(() => true, () => false);
@@ -105,7 +107,7 @@ function renderLocalized(value, md, key = '') {
     return Object.fromEntries(LANGS.map((l) => [l, render(value[l])]));
   }
   if (Array.isArray(value)) return value.map((v) => renderLocalized(v, md, key));
-  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, renderLocalized(v, md, k)]));
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, RAW_KEYS.has(k) ? v : renderLocalized(v, md, k)]));
   return value;
 }
 
@@ -239,6 +241,9 @@ export function staticIssuesForLesson(lesson, ctx) {
       for (const f of Object.keys(a.solution)) if (!(f in a.starter) && !(block.allowNewFiles === true)) add(`block "${block.id}"`, `solution adds "${f}" which is not in the starter (set allowNewFiles: true if the learner must create files)`);
       if (!Object.keys(a.variants).some((v) => v.startsWith('wrong'))) add(`block "${block.id}"`, `needs at least one deliberately failing fixture directory ${block.dir}/wrong/ (or wrong-<name>/)`);
     }
+    // Every %%key%% used in code must exist in the block's strings table.
+    const texts = block.kind === 'example' ? Object.values(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.values(a.starter), ...Object.values(a.solution), a.tests ?? '', ...Object.values(a.variants).flatMap((v) => Object.values(v))] : [block.code ?? '', ...(block.items ?? []).map((i) => i.code ?? '')];
+    for (const text of texts) for (const m of String(text).matchAll(STRING_PLACEHOLDER)) if (!(block.strings && m[1] in block.strings)) add(`block "${block.id}"`, `placeholder %%${m[1]}%% has no entry in strings`);
   }
   return issues;
 }
@@ -267,11 +272,21 @@ export async function compileLesson(lesson, ctx) {
       } else compiled.spec = spec;
     } else compiled = renderLocalized(rest, md);
     if (block.kind === 'prediction' || block.kind === 'review') {
+      // Code shown in questions is resolved per language (authored UI text follows the lesson language).
+      const perLang = (text) => Object.fromEntries(LANGS.map((l) => [l, localizeText(String(text), block, l)]));
       const decorate = (item, target) => {
-        if (typeof item.code === 'string') target.codeHtml = md.highlight(item.code, item.lang ?? 'js');
-        for (const [i, option] of (item.answer?.options ?? item.answer?.items ?? []).entries()) {
-          if (option.code !== undefined) (target.answer.options ?? target.answer.items)[i].codeHtml = md.highlight(String(option.code), item.lang ?? 'js');
+        if (typeof item.code === 'string') {
+          target.code = perLang(item.code);
+          target.codeHtml = Object.fromEntries(LANGS.map((l) => [l, md.highlight(target.code[l], item.lang ?? 'js')]));
         }
+        for (const [i, option] of (item.answer?.options ?? item.answer?.items ?? []).entries()) {
+          if (option.code !== undefined) {
+            const t = (target.answer.options ?? target.answer.items)[i];
+            t.code = perLang(option.code);
+            t.codeHtml = Object.fromEntries(LANGS.map((l) => [l, md.highlight(t.code[l], item.lang ?? 'js')]));
+          }
+        }
+        if (target.answer?.type === 'text') target.answer.accept = Object.fromEntries(LANGS.map((l) => [l, item.answer.accept.map((a) => localizeText(String(a), block, l))]));
       };
       if (block.kind === 'prediction') decorate(block, compiled);
       else block.items.forEach((item, i) => decorate(item, compiled.items[i]));

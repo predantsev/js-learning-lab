@@ -1,7 +1,7 @@
 // Progress and evidence rules (REQ-003, REQ-018, REQ-033). Pure functions over the progress document:
 // base lesson states (unseen → in-progress → completed, or skipped) are kept apart from evidence
 // (self-check passed, exercise passed, hint-assisted, solution viewed, local task confirmed).
-import type { Answer, ExerciseProgress, IndexLesson, Lesson, LessonProgress, ProgressDoc, ReviewDoc, ReviewItemState } from './types';
+import type { Answer, ExerciseProgress, IndexLesson, Lang, Lesson, LessonProgress, ProgressDoc, ReviewDoc, ReviewItemState } from './types';
 
 const now = (): string => new Date().toISOString();
 
@@ -153,7 +153,7 @@ export function lessonEvidence(lesson: IndexLesson, p: LessonProgress | undefine
 }
 
 // ---------- answers ----------
-export function isAnswerCorrect(block: { answer: Answer }, given: string[] | string): boolean {
+export function isAnswerCorrect(block: { answer: Answer }, given: string[] | string, lang: Lang): boolean {
   const answer = block.answer;
   if (answer.type === 'choice' || answer.type === 'multi') {
     const picked = [...(given as string[])].sort();
@@ -161,7 +161,7 @@ export function isAnswerCorrect(block: { answer: Answer }, given: string[] | str
   }
   if (answer.type === 'text') {
     const norm = (s: string): string => { const t = s.trim().replace(/\s+/g, ' ').replace(/^["'`]|["'`]$/g, ''); return answer.caseSensitive ? t : t.toLowerCase(); };
-    return answer.accept.some((a) => norm(a) === norm(String(given)));
+    return [...answer.accept[lang], ...answer.accept.uk, ...answer.accept.en].some((a) => norm(a) === norm(String(given)));
   }
   if (answer.type === 'order') return JSON.stringify(given) === JSON.stringify(answer.items.map((i) => i.id));
   return false;

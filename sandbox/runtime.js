@@ -585,6 +585,8 @@
       loadError: () => loadErrors[0] || null,
       storage: window.localStorage,
       files: run.files,
+      // Localized example text of this exercise in the learner's language (see %%key%% placeholders).
+      L: run.options.strings || {},
     };
     Object.assign(window, api);
     const results = [];

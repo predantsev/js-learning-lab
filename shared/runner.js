@@ -145,6 +145,7 @@ export function prepareRun(input) {
         network: options.network,
         offscreen: options.offscreen === true,
         trace: options.trace === true,
+        strings: options.strings ?? {},
         labOrigins: [sandboxOrigin],
       },
     },

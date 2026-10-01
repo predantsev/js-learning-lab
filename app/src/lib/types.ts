@@ -21,12 +21,12 @@ export interface ContentIndex {
 
 export type BlockKind = 'explanation' | 'analogy' | 'visual' | 'prediction' | 'example' | 'exercise' | 'transfer' | 'local-task' | 'review';
 
-export interface AnswerOption { id: string; text?: L10n; code?: string; codeHtml?: string; why?: L10n }
+export interface AnswerOption { id: string; text?: L10n; code?: L10n; codeHtml?: L10n; why?: L10n }
 export type Answer =
   | { type: 'choice' | 'multi'; options: AnswerOption[]; correct: string[] }
-  | { type: 'text'; accept: string[]; caseSensitive?: boolean; placeholder?: L10n }
+  | { type: 'text'; accept: Record<Lang, string[]>; caseSensitive?: boolean; placeholder?: L10n }
   | { type: 'order'; items: AnswerOption[] };
-export interface Question { id?: string; prompt: L10n; code?: string; codeHtml?: string; answer: Answer; explanation: L10n; from?: string; runnable?: boolean }
+export interface Question { id?: string; prompt: L10n; code?: L10n; codeHtml?: L10n; answer: Answer; explanation: L10n; from?: string; runnable?: boolean }
 
 interface BlockBase { id: string; kind: BlockKind; title?: L10n }
 export interface ExplanationBlock extends BlockBase { kind: 'explanation'; title: L10n; body: L10n }
@@ -35,7 +35,7 @@ export interface VisualBlock extends BlockBase { kind: 'visual'; visual: string;
 export interface PredictionBlock extends BlockBase, Omit<Question, 'id'> { kind: 'prediction' }
 export interface ReviewBlock extends BlockBase { kind: 'review'; title: L10n; items: (Question & { id: string; from: string })[] }
 export interface Capabilities { network?: 'none' | 'lab'; loopBudgetMs?: number; testTimeoutMs?: number; settleTimeoutMs?: number }
-export interface ExampleBlock extends BlockBase { kind: 'example'; title: L10n; body: L10n; tryIt?: L10n; runtime: RuntimeKind; entry: string; files: Record<string, string>; limits?: L10n; capabilities?: Capabilities; expectError?: boolean; preview?: boolean }
+export interface ExampleBlock extends BlockBase { kind: 'example'; title: L10n; body: L10n; tryIt?: L10n; runtime: RuntimeKind; entry: string; files: Record<string, string>; strings?: Record<string, L10n>; limits?: L10n; capabilities?: Capabilities; expectError?: boolean; preview?: boolean }
 export interface FeedbackRule { when: { test?: string; error?: string }; message: L10n }
 export interface ExerciseBlock extends BlockBase {
   kind: 'exercise';
@@ -50,6 +50,7 @@ export interface ExerciseBlock extends BlockBase {
   tests: string;
   editable: string[];
   testTitles: Record<string, L10n>;
+  strings?: Record<string, L10n>;
   hints?: { nudge: L10n; explanation: L10n };
   solutionNote: L10n;
   feedback?: FeedbackRule[];
@@ -119,7 +120,7 @@ export interface LessonProgress {
   seenBlocks: string[];
 }
 export interface ProgressDoc { lessons: Record<string, LessonProgress> }
-export interface DraftsDoc { blocks: Record<string, { files: Record<string, string>; activeFile?: string; storage?: Record<string, string>; updatedAt: string }> }
+export interface DraftsDoc { blocks: Record<string, { files: Record<string, string>; lang?: Lang; activeFile?: string; storage?: Record<string, string>; updatedAt: string }> }
 export interface Bookmark { id: string; lessonId: string; blockId: string; createdAt: string; label?: string }
 export interface BookmarksDoc { items: Bookmark[] }
 export interface ReviewItemState { lessonId: string; blockId: string; itemId: string; box: number; lastAt: string; nextAt: string; lastCorrect: boolean; attempts: number }

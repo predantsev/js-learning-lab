@@ -1,6 +1,7 @@
 // Practice pane: editor + real result (page, console, checks, storage) for an example or exercise.
 // Learner files are never overwritten by feedback, hints or the solution (REQ-018, REQ-019).
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { localizeFiles } from '@shared/exercise.js';
 import type { Doc } from '../lib/persist';
 import { type Key } from '../lib/i18n';
 import { recordExampleRun, recordExerciseCheck } from '../lib/progress';
@@ -129,7 +130,11 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   const t = useT();
   const helpId = useId();
   const draft = useStore(drafts.store, (d) => d.blocks[block.id]);
-  const files = draft?.files ?? block.files;
+  // Example text in code follows the language the learner started the exercise in; once the
+  // learner has a draft, it is theirs and is never rewritten by a language switch (REQ-015).
+  const codeLang: Lang = draft?.lang ?? lang;
+  const starter = useMemo(() => localizeFiles(block.files, block, codeLang) as Record<string, string>, [block, codeLang]);
+  const files = draft?.files ?? starter;
   const storage = draft?.storage ?? {};
   const fileNames = useMemo(() => Object.keys(files).sort((a, b) => (a === block.entry ? -1 : b === block.entry ? 1 : a.localeCompare(b))), [files, block.entry]);
   const [activeFile, setActiveFile] = useState(draft?.activeFile && draft.activeFile in files ? draft.activeFile : (block.kind === 'exercise' ? block.editable[0] : undefined) ?? block.entry);
@@ -141,11 +146,11 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   const editable = block.kind === 'exercise' ? block.editable : fileNames;
   const exerciseProgress = useStore(app().progress.store, (p) => (block.kind === 'exercise' ? p.lessons[lesson.id]?.exercises[block.id] : undefined));
 
-  const saveDraft = useCallback((patch: Partial<{ files: Record<string, string>; activeFile: string; storage: Record<string, string> }>) => {
-    drafts.update((d) => ({ blocks: { ...d.blocks, [block.id]: { ...(d.blocks[block.id] ?? { files: block.files }), ...patch, updatedAt: new Date().toISOString() } } }));
-  }, [drafts, block.id, block.files]);
+  const saveDraft = useCallback((patch: Partial<{ files: Record<string, string>; lang: Lang; activeFile: string; storage: Record<string, string> }>) => {
+    drafts.update((d) => ({ blocks: { ...d.blocks, [block.id]: { ...(d.blocks[block.id] ?? { files: starter, lang: codeLang }), ...patch, updatedAt: new Date().toISOString() } } }));
+  }, [drafts, block.id, starter, codeLang]);
 
-  const onEdit = useCallback((value: string) => { saveDraft({ files: { ...(drafts.value.blocks[block.id]?.files ?? block.files), [activeFile]: value } }); }, [saveDraft, drafts, block.id, block.files, activeFile]);
+  const onEdit = useCallback((value: string) => { saveDraft({ files: { ...(drafts.value.blocks[block.id]?.files ?? starter), [activeFile]: value } }); }, [saveDraft, drafts, block.id, starter, activeFile]);
 
   const run = (mode: 'run' | 'test') => {
     const container = mode === 'run' ? frameHost.current : hiddenHost.current;
@@ -153,10 +158,10 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
     setTab(mode === 'test' ? 'tests' : hasPreview(block) ? 'preview' : 'console');
     runner.start({
       block,
-      files: drafts.value.blocks[block.id]?.files ?? block.files,
+      files: drafts.value.blocks[block.id]?.files ?? starter,
       mode,
       storage: drafts.value.blocks[block.id]?.storage ?? {},
-      lang,
+      lang: codeLang,
       container,
       title: t('ws.result'),
       onStorage: (local) => saveDraft({ storage: local }),
@@ -221,7 +226,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
           {(s.live || runner.isActive) && <button type="button" className="btn" onClick={runner.stop}><Icon name="stop" /> {t('ws.stop')}</button>}
           <span className="ws-actions-gap" />
           {undo && <button type="button" className="btn btn-quiet" onClick={() => { saveDraft({ files: undo }); setUndo(null); }}>{t('ws.undoReset')}</button>}
-          {draft?.files && <button type="button" className="btn btn-quiet" onClick={() => { if (window.confirm(t('ws.resetConfirm'))) { setUndo(draft.files); saveDraft({ files: block.files }); runner.reset(); } }}><Icon name="reset" size={14} /> {t('ws.reset')}</button>}
+          {draft?.files && <button type="button" className="btn btn-quiet" onClick={() => { if (window.confirm(t('ws.resetConfirm'))) { setUndo(draft.files); saveDraft({ files: localizeFiles(block.files, block, lang) as Record<string, string>, lang }); runner.reset(); } }}><Icon name="reset" size={14} /> {t('ws.reset')}</button>}
         </div>
         <p className={`ws-status ws-status-${s.unresponsive ? 'warn' : s.status}`} role="status" aria-live="polite">{statusText}{passedNow && <strong className="ws-passed"> · {exerciseProgress?.assistedPass ? t('ws.exercisePassedAssisted') : t('ws.exercisePassed')}</strong>}</p>
         <p className="runtime-note"><Icon name="info" size={13} /> {t(`ws.runtime.${block.runtime}` as Key)}</p>

@@ -11,7 +11,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ROOT } from '../../server/config.mjs';
-import { consoleLines, runInputForBlock } from '../../shared/exercise.js';
+import { consoleLines, localizeFiles, localizeText, runInputForBlock } from '../../shared/exercise.js';
 import { unitOfLesson } from '../../shared/content-schema.js';
 import { buildContent, exerciseFileSets } from './lib.mjs';
 
@@ -75,16 +75,19 @@ if (!flag('--static') && lessons.length > 0) {
         const items = block.kind === 'prediction' ? [block] : block.items ?? [];
         for (const item of items) {
           if (!item.verify || typeof item.code !== 'string') continue;
-          executed.predictions += 1;
-          const r = await run({ files: { 'index.js': item.code }, entry: 'index.js', runtime: 'browser-js', options: {} });
-          const failure = describeFailure(r);
-          const expectErrors = item.verify.error ?? null;
-          if (failure) error(where, `prediction code ${failure}`);
-          else {
-            const lines = consoleLines(r.console);
-            if (JSON.stringify(lines) !== JSON.stringify(item.verify.logs.map(String))) error(where, `prediction "${item.id ?? block.id}": real output ${JSON.stringify(lines)} differs from verify.logs ${JSON.stringify(item.verify.logs)}`);
-            const thrown = r.errors[0]?.name ?? null;
-            if (expectErrors !== thrown) error(where, `prediction "${item.id ?? block.id}": ${thrown ? `code throws ${thrown}` : 'code does not throw'} but verify.error is ${JSON.stringify(expectErrors)}`);
+          for (const lang of block.strings ? ['uk', 'en'] : ['uk']) {
+            executed.predictions += 1;
+            const expected = item.verify.logs.map((l) => localizeText(String(l), block, lang));
+            const r = await run({ files: { 'index.js': localizeText(item.code, block, lang) }, entry: 'index.js', runtime: 'browser-js', options: {} });
+            const failure = describeFailure(r);
+            const expectErrors = item.verify.error ?? null;
+            if (failure) error(where, `prediction code ${failure}`);
+            else {
+              const lines = consoleLines(r.console);
+              if (JSON.stringify(lines) !== JSON.stringify(expected)) error(where, `prediction "${item.id ?? block.id}" (${lang}): real output ${JSON.stringify(lines)} differs from verify.logs ${JSON.stringify(expected)}`);
+              const thrown = r.errors[0]?.name ?? null;
+              if (expectErrors !== thrown) error(where, `prediction "${item.id ?? block.id}": ${thrown ? `code throws ${thrown}` : 'code does not throw'} but verify.error is ${JSON.stringify(expectErrors)}`);
+            }
           }
         }
         continue;
@@ -96,22 +99,27 @@ if (!flag('--static') && lessons.length > 0) {
         notes.push({ where, message: 'isolated-node fixtures are validated by scripts/content/validate-node.mjs' });
         continue;
       }
+      const langs = block.strings ? ['uk', 'en'] : ['uk'];
       if (block.kind === 'example') {
-        executed.examples += 1;
-        const r = await run(runInputForBlock({ ...block, tests: '' }, assets.files, { mode: 'run' }));
-        const failure = describeFailure(r);
-        if (failure) error(where, `example ${failure}`);
-        else if (r.errors.length > 0 && block.expectError !== true) error(where, `example throws ${r.errors[0].name}: ${r.errors[0].message} (set expectError: true if the error is the point)`);
-        else if (r.errors.length === 0 && block.expectError === true) error(where, 'example declares expectError but runs without an error');
+        for (const lang of langs) {
+          executed.examples += 1;
+          const r = await run(runInputForBlock({ ...block, tests: '' }, localizeFiles(assets.files, block, lang), { mode: 'run', lang }));
+          const failure = describeFailure(r);
+          if (failure) error(where, `example (${lang}) ${failure}`);
+          else if (r.errors.length > 0 && block.expectError !== true) error(where, `example throws ${r.errors[0].name}: ${r.errors[0].message} (set expectError: true if the error is the point)`);
+          else if (r.errors.length === 0 && block.expectError === true) error(where, 'example declares expectError but runs without an error');
+        }
         continue;
       }
       if (assets.tests === null) continue;
       const sets = exerciseFileSets(assets);
       const compiledBlock = { ...block, tests: assets.tests };
       const titled = new Set(Object.keys(block.testTitles ?? {}));
-      for (const [name, files] of Object.entries(sets)) {
+      for (const lang of langs) for (const [rawName, rawFiles] of Object.entries(sets)) {
+        const name = rawName;
+        const files = localizeFiles(rawFiles, block, lang);
         executed.fixtures += 1;
-        const r = await run(runInputForBlock(compiledBlock, files, { mode: 'test' }));
+        const r = await run(runInputForBlock(compiledBlock, files, { mode: 'test', lang }));
         const failure = describeFailure(r);
         const shouldPass = name === 'solution' || name.startsWith('alt');
         if (failure && (shouldPass || r.status !== 'compile-error')) {

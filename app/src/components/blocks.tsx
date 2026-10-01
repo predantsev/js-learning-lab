@@ -1,7 +1,7 @@
 // Lesson blocks (explanation column). Every block can be bookmarked and shown in the other
 // language in place, without changing the global language or any learner state (REQ-016, REQ-020).
 import { type ComponentType, type ReactNode, Suspense, lazy, useId, useMemo, useRef, useState } from 'react';
-import { consoleLines } from '@shared/exercise.js';
+import { consoleLines, localizeText } from '@shared/exercise.js';
 import { prepareRun, runToCompletion, sandboxOriginFor } from '@shared/runner.js';
 import { boot } from '../lib/api';
 import { type Key, pick } from '../lib/i18n';
@@ -138,7 +138,7 @@ export function QuestionView({ question, lang, answered, onAnswer, idPrefix }: Q
 
   const submit = () => {
     const given = a.type === 'text' ? text : a.type === 'order' ? order : picked;
-    const correct = isAnswerCorrect(question, given);
+    const correct = isAnswerCorrect(question, given, lang);
     setResult(correct);
     onAnswer(correct);
     announce(t(correct ? 'q.correct' : 'q.incorrect'));
@@ -146,19 +146,19 @@ export function QuestionView({ question, lang, answered, onAnswer, idPrefix }: Q
   const runCode = async () => {
     if (!question.code || !hiddenHost.current) return;
     const sandboxOrigin = sandboxOriginFor(boot.port);
-    const prepared = prepareRun({ files: { 'index.js': question.code }, entry: 'index.js', runtime: 'browser-js', sandboxOrigin, lang });
+    const prepared = prepareRun({ files: { 'index.js': question.code[lang] }, entry: 'index.js', runtime: 'browser-js', sandboxOrigin, lang });
     if ('errors' in prepared) { setOutput({ lines: [], error: prepared.errors[0].message }); return; }
     const r = (await runToCompletion({ container: hiddenHost.current, sandboxOrigin, prepared, timeoutMs: 8000 })) as { console: ConsoleEntry[]; errors: { name: string; message: string }[] };
     setOutput({ lines: consoleLines(r.console), error: r.errors[0] ? `${r.errors[0].name}: ${r.errors[0].message}` : null });
   };
   const move = (index: number, delta: number) => setOrder((o) => { const next = [...o]; const j = index + delta; if (j < 0 || j >= next.length) return o; [next[index], next[j]] = [next[j], next[index]]; return next; });
   const optionById = (id: string) => (a.type === 'order' ? a.items : a.type === 'text' ? [] : a.options).find((o) => o.id === id);
-  const optionLabel = (id: string) => { const o = optionById(id); return o?.codeHtml ? <code className="option-code" dangerouslySetInnerHTML={{ __html: o.codeHtml }} /> : <Html inline html={o?.text?.[lang] ?? ''} lang={lang} />; };
+  const optionLabel = (id: string) => { const o = optionById(id); return o?.codeHtml ? <code className="option-code" dangerouslySetInnerHTML={{ __html: o.codeHtml[lang] }} /> : <Html inline html={o?.text?.[lang] ?? ''} lang={lang} />; };
 
   return (
     <div className="question">
       <Html html={question.prompt[lang]} lang={lang} className="prose question-prompt" />
-      {question.codeHtml && <pre className="code" lang="en"><code dangerouslySetInnerHTML={{ __html: question.codeHtml }} /></pre>}
+      {question.codeHtml && <pre className="code"><code dangerouslySetInnerHTML={{ __html: question.codeHtml[lang] }} /></pre>}
       <fieldset className="question-answer" disabled={done}>
         <legend className="sr-only">{t('q.yourAnswer')}</legend>
         {(a.type === 'choice' || a.type === 'multi') && (
@@ -198,7 +198,7 @@ export function QuestionView({ question, lang, answered, onAnswer, idPrefix }: Q
       ) : (
         <div className={`question-result ${result ? 'result-ok' : 'result-no'}`} role="status">
           <p className="result-title"><Icon name={result ? 'check' : 'info'} /> {t(result ? 'q.correct' : 'q.incorrect')}</p>
-          {a.type === 'text' && !result && <p>{t('q.correctAnswer')}: <code>{a.accept[0]}</code></p>}
+          {a.type === 'text' && !result && <p>{t('q.correctAnswer')}: <code>{a.accept[lang][0]}</code></p>}
           {a.type === 'order' && !result && <div><span className="label">{t('q.correctAnswer')}</span><ol className="order-correct">{a.items.map((i) => <li key={i.id}>{optionLabel(i.id)}</li>)}</ol></div>}
           <Html html={question.explanation[lang]} lang={lang} className="prose" />
           <div className="question-actions">
@@ -294,7 +294,7 @@ function Hints({ lesson, block, lang }: { lesson: Lesson; block: ExerciseBlock; 
           <span className="label">{t('hint.solutionTitle')}</span>
           <p className="ws-note">{t('hint.solutionNote')}</p>
           {solutionFiles.length > 1 && <div className="file-tabs">{solutionFiles.map((f) => <button key={f} type="button" className={f === solutionFile ? 'file-tab active' : 'file-tab'} onClick={() => setSolutionFile(f)}>{f}</button>)}</div>}
-          <CodeEditor path={solutionFile} value={block.solution[solutionFile] ?? ''} readOnly ariaLabel={`${t('hint.solutionTitle')}: ${solutionFile}`} minHeight="4rem" />
+          <CodeEditor path={solutionFile} value={localizeText(block.solution[solutionFile] ?? '', block, lang)} readOnly ariaLabel={`${t('hint.solutionTitle')}: ${solutionFile}`} minHeight="4rem" />
           <Html html={block.solutionNote[lang]} lang={lang} className="prose" />
         </div>
       )}

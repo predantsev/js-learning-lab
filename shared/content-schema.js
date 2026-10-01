@@ -117,8 +117,18 @@ function checkPredictionItem(issues, item, path) {
   }
 }
 
+function checkStrings(issues, block, p) {
+  if (block.strings === undefined) return;
+  if (!isPlainObject(block.strings)) { issues.add(`${p}.strings`, 'must map keys to bilingual text'); return; }
+  for (const [key, value] of Object.entries(block.strings)) {
+    if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(key)) issues.add(`${p}.strings.${key}`, 'keys use letters, digits and underscores');
+    checkLocalized(issues, value, `${p}.strings.${key}`);
+  }
+}
+
 function checkBlock(issues, block, lesson, ctx) {
   const p = `block "${block.id}"`;
+  checkStrings(issues, block, p);
   if (!BLOCK_KINDS.includes(block.kind)) {
     issues.add(p, `unknown block kind "${block.kind}"`);
     return;
@@ -240,7 +250,7 @@ export function validateLessonSource(lesson, ctx = {}) {
       else if (ctx.lessonOrder.has(lesson.id) && ctx.lessonOrder.get(pre) >= ctx.lessonOrder.get(lesson.id)) issues.add('prerequisites', `"${pre}" is not earlier in teaching order`);
     }
   }
-  if (!Array.isArray(lesson.subskills) || lesson.subskills.length === 0) issues.add('subskills', 'list the competency subskills this lesson teaches or assesses');
+  if (!Array.isArray(lesson.subskills)) issues.add('subskills', 'list the competency subskills this lesson teaches or assesses (an empty list is allowed for orientation lessons)');
   for (const [i, s] of (lesson.subskills ?? []).entries()) {
     if (!isPlainObject(s) || !nonEmpty(s.family) || !nonEmpty(s.skill) || !SUBSKILL_DEPTHS.includes(s.depth)) {
       issues.add(`subskills[${i}]`, 'needs { family, skill, depth: intro|practice|assess }');
