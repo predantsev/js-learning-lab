@@ -2,9 +2,9 @@
 
 ## Scope and sources
 
-Read README.md, docs/STATUS.md, docs/REQUIREMENTS.md, docs/CURRICULUM.md, docs/CONTENT-DATA.md, docs/VERIFICATION.md and docs/DECISIONS.md before implementation. Markdown is canonical. Stable requirement and curriculum IDs must survive edits; retire IDs explicitly rather than reuse them.
+Read README.md, docs/STATUS.md, docs/REQUIREMENTS.md, docs/CURRICULUM.md, docs/CONTENT-DATA.md, docs/VERIFICATION.md, docs/DECISIONS.md and docs/COMPETENCY-MATRIX.md before implementation. Markdown is canonical. Stable requirement and curriculum IDs must survive edits; retire IDs explicitly rather than reuse them.
 
-The owner explicitly authorized public documentation publication after requirements and review corrections. Current scope is documentation and owner-approved lesson design reference publication only; no application implementation or deployment. Future implementation needs its own task authorization. The public repository is predantsev/js-learning-lab; public visibility overrides the usual private Startups default. No license has been selected.
+The owner explicitly authorized public documentation publication after requirements and review corrections. Current scope is documentation, completeness audit and owner-approved lesson design reference publication only; no application implementation or deployment. Future implementation needs its own task authorization. The public repository is predantsev/js-learning-lab; public visibility overrides the usual private Startups default. No license has been selected.
 
 ## Hard product invariants
 
@@ -20,6 +20,7 @@ The owner explicitly authorized public documentation publication after requireme
 - Teach contextual HTML/CSS inside JavaScript. Canonical example identifiers/comments are English; authored example UI is localized; preserve arbitrary learner code/comments.
 - Validate sandbox persistent storage and responsive runaway DOM stop/recovery in early spikes; origin-change recovery and stage runtimes remain explicit engineering checks, not already proven facts.
 - Public tracked files must contain no personal learner details or runtime learner data.
+- Required professional competencies/subskills and cumulative gates are normative; no fixed count/deadline reduces foundations. TypeScript/SQL/auth/delivery labs are course skills, not mandatory platform stack/DB/login/cloud/store choices. JS-10 export is foundational, not full JS completion.
 - Partial milestones must be reported as partial. Empty downstream course sections do not meet release criteria.
 
 ## Workflow

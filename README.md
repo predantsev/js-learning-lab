@@ -2,12 +2,14 @@
 
 A planned desktop learning platform: **JavaScript → React → React Native → Node.js**, one continuous course with a chosen capstone.
 
-**Current status: reviewed requirements, documentation and approved lesson design references only. There is no runnable application or hosted deployment yet.** Repository: [predantsev/js-learning-lab](https://github.com/predantsev/js-learning-lab), public, with canonical documentation on `main`. Accepted review corrections are incorporated in baseline 3, ready for development planning and early technical spikes. License, implementation stack, hosting and supported operating systems remain explicit open choices, not drafting blockers.
+**Current status: reviewed requirements, documentation and approved lesson design references only. There is no runnable application or hosted deployment yet.** Repository: [predantsev/js-learning-lab](https://github.com/predantsev/js-learning-lab), public, with canonical documentation on `main`. Accepted review corrections are incorporated in baseline 4, ready for development planning and early technical spikes. License, implementation stack, hosting and supported operating systems remain explicit open choices, not drafting blockers.
 
 ## Read the package
 
 - [Requirements and acceptance criteria](docs/REQUIREMENTS.md)
 - [Curriculum and capstone checkpoints](docs/CURRICULUM.md)
+- [Professional competency matrix](docs/COMPETENCY-MATRIX.md)
+- [Source-grounded completeness audit](docs/audits/2026-10-01-COMPLETENESS.md)
 - [Lesson and learner-data contracts](docs/CONTENT-DATA.md)
 - [Verification and release gates](docs/VERIFICATION.md)
 - [Proposed decisions](docs/DECISIONS.md)
@@ -27,3 +29,7 @@ Actual installation commands and supported versions will be documented when impl
 ## Contribution workflow
 
 Read [AGENTS.md](AGENTS.md). Work uses GitHub Issues and branch → PR → applicable checks → review → squash merge. The initial documentation publication is tracked by [issue #1](https://github.com/predantsev/js-learning-lab/issues/1). Development remains a separate future task. The package contains no learner records or production project source.
+
+## Full-course scope
+
+The program targets independent professional ability to build, debug, test, secure, deliver and maintain web React apps, native apps and Node services. Required TypeScript/web foundations/Git/tooling/SQL/auth/security/testing/delivery and recovery are explicit course skills, not new platform account/database requirements. Completion depends on assessed competency/subskill evidence, not a short calendar or fixed lesson count; a year or longer is acceptable. The matrix is a specification: no course lessons or competency assessments have been authored or passed yet. JS-10 export remains foundational; full stages need their expanded cumulative gates. Native skips allow continuation but cannot certify native competence.
