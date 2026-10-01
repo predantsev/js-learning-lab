@@ -65,10 +65,19 @@ export function renderText(ctx, value) {
   return out;
 }
 
-/** Simple placeholder substitution: "{item}" → values.item (used by per-item pipeline captions). */
+/**
+ * Simple placeholder substitution: "{item}" → values.item (pipeline captions). A value may be
+ * bilingual ({ uk, en }, e.g. an item label from a bilingual `show`): each language takes its own.
+ */
 export function fillPlaceholders(text, values) {
   const out = {};
-  for (const [lang, s] of Object.entries(toText(text))) out[lang] = String(s).replace(/\{(\w+)\}/g, (m, key) => (key in values ? String(values[key]) : m));
+  for (const [lang, s] of Object.entries(toText(text))) {
+    out[lang] = String(s).replace(/\{(\w+)\}/g, (m, key) => {
+      if (!(key in values)) return m;
+      const value = values[key];
+      return String(isPlainObject(value) ? value[lang] ?? Object.values(value)[0] : value);
+    });
+  }
   return out;
 }
 

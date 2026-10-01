@@ -186,6 +186,95 @@ test('pipeline executes the stage functions: per-item filter steps, map labels, 
   assert.match(messages(broken.issues), /threw while running/);
 });
 
+test('pipeline: some / every / find stop at the deciding item; later items are shown as not checked', async () => {
+  const input = { label: text('in'), caption: text('c'), items: [1, 4, 6, 3], show: 'n => `n${n}`' };
+  const stage = (op, fn) => ({ op, fn, perItem: true, caption: text('{item} → {result}'), summary: text('{tested} of {count}, {skipped} skipped → {result}') });
+  const some = await compileVisual('pipeline', { input, stages: [stage('some', 'n => n > 3')] }, ctx());
+  assert.deepEqual(some.issues, [], messages(some.issues));
+  const s = some.spec.steps;
+  assert.equal(s.length, 1 + 2 + 1, 'input, two tested items, the result: no step for the items after the first true');
+  assert.deepEqual(s[1].items.map((i) => i.status), ['nomatch', 'waiting', 'waiting', 'waiting']);
+  assert.deepEqual(s[1].output, { kind: 'pending' });
+  assert.deepEqual(s[2].items.map((i) => i.status), ['nomatch', 'match', 'skipped', 'skipped'], 'the short-circuit is visible on the deciding step');
+  assert.deepEqual(s[2].output, { kind: 'value', label: 'true' });
+  assert.equal(s[3].caption.en, '<p>2 of 4, 2 skipped → true (en)</p>');
+  const every = await compileVisual('pipeline', { input, stages: [stage('every', 'n => n < 5')] }, ctx());
+  assert.deepEqual(every.spec.steps.at(-1).items.map((i) => i.status), ['match', 'match', 'nomatch', 'skipped']);
+  assert.deepEqual(every.spec.steps.at(-1).output, { kind: 'value', label: 'false' });
+  const all = await compileVisual('pipeline', { input, stages: [stage('every', 'n => n > 0')] }, ctx());
+  assert.deepEqual(all.spec.steps.at(-1).output, { kind: 'value', label: 'true' }, 'every with no false checks everything');
+  assert.equal(all.spec.steps.length, 1 + 4 + 1);
+  const find = await compileVisual('pipeline', { input, stages: [stage('find', 'n => n % 2 === 0')] }, ctx());
+  assert.deepEqual(find.spec.steps.at(-1).output, { kind: 'value', label: 'n4' });
+  assert.deepEqual(find.spec.steps.at(-1).items.map((i) => i.status), ['nomatch', 'match', 'skipped', 'skipped']);
+  const none = await compileVisual('pipeline', { input, stages: [stage('find', 'n => n > 100')] }, ctx());
+  assert.deepEqual(none.spec.steps.at(-1).output, { kind: 'value', label: 'undefined' });
+  // These results are what the real methods return.
+  assert.deepEqual([[1, 4, 6, 3].some((n) => n > 3), [1, 4, 6, 3].every((n) => n < 5), [1, 4, 6, 3].find((n) => n % 2 === 0)], [true, false, 4]);
+});
+
+test('pipeline: sort / toSorted can show every real comparator call; toSorted keeps its own name', async () => {
+  const items = [45, 240, 80, 12];
+  const r = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items }, stages: [{ op: 'toSorted', fn: '(a, b) => a - b', perComparison: true, caption: text('{index}/{count}: a={a} b={b} → {result}'), summary: text('{comparisons} comparisons') }] }, ctx());
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  assert.equal(r.spec.stages[0].op, 'toSorted');
+  // The comparisons the engine really makes (same V8 sort as the compiler).
+  const calls = [];
+  const expected = items.toSorted((a, b) => { calls.push([a, b]); return a - b; });
+  const comparisonSteps = r.spec.steps.filter((s) => s.compare);
+  assert.equal(comparisonSteps.length, calls.length);
+  const label = (id) => r.spec.steps[0].items.find((i) => i.id === id).label;
+  assert.deepEqual(comparisonSteps.map((s) => [Number(label(s.compare.a)), Number(label(s.compare.b))]), calls);
+  assert.deepEqual(comparisonSteps.map((s) => s.compare.order), calls.map(([a, b]) => (a - b < 0 ? 'a-first' : a - b > 0 ? 'b-first' : 'keep')));
+  assert.equal(comparisonSteps[0].caption.en, `<p>1/${calls.length}: a=${calls[0][0]} b=${calls[0][1]} → ${calls[0][0] - calls[0][1]} (en)</p>`);
+  assert.deepEqual(comparisonSteps[0].output, { kind: 'pending' });
+  const last = r.spec.steps.at(-1);
+  assert.deepEqual(last.output.items.map((i) => Number(i.label)), expected);
+  assert.equal(last.caption.en, `<p>${calls.length} comparisons (en)</p>`);
+  assert.deepEqual(last.items.map((i) => i.status), ['moved', 'moved', 'moved', 'moved']);
+  const tooMany = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items: Array.from({ length: 30 }, (_, i) => (i * 7919) % 101) }, stages: [{ op: 'sort', fn: '(a, b) => a - b', perComparison: true, caption: text('x'), summary: text('y') }] }, ctx());
+  assert.match(messages(tooMany.issues), /per-comparison steps are limited to 40/);
+});
+
+test('pipeline: item labels can be bilingual; captions take the label of their language', async () => {
+  const r = await compileVisual('pipeline', {
+    input: { label: text('in'), caption: text('c'), items: [{ n: 'Lamp', p: 45 }, { n: 'Desk', p: 240 }], show: { uk: 'x => `${x.n}: ${x.p} грн`', en: 'x => `${x.n}: €${x.p}`' } },
+    stages: [{ op: 'filter', fn: 'x => x.p < 100', perItem: true, caption: { uk: 'перевіряємо {item}', en: 'checking {item}' }, summary: text('s') }, { op: 'map', fn: 'x => x.n', show: { uk: 'n => `назва ${n}`', en: 'n => `name ${n}`' }, caption: text('m') }],
+  }, ctx());
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  assert.deepEqual(r.spec.steps[0].items[0].label, { uk: 'Lamp: 45 грн', en: 'Lamp: €45' });
+  assert.equal(r.spec.steps[1].caption.uk, '<p>перевіряємо Lamp: 45 грн</p>');
+  assert.equal(r.spec.steps[1].caption.en, '<p>checking Lamp: €45</p>');
+  assert.deepEqual(r.spec.steps.at(-1).output.items[0].label, { uk: 'назва Lamp', en: 'name Lamp' });
+  // A plain `show` keeps plain string labels (unchanged shape).
+  const plain = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items: [1], show: 'x => `#${x}`' }, stages: [{ op: 'map', fn: 'x => x', caption: text('m') }] }, ctx());
+  assert.equal(plain.spec.steps[0].items[0].label, '#1');
+});
+
+test('pipeline: a stage marked throws shows the real error; an unexpected or missing throw is refused', async () => {
+  let real;
+  try { undefined.trim(); } catch (error) { real = error; }
+  const input = { label: text('in'), caption: text('c'), items: [{ note: ' a ' }, {}, { note: 'c' }] };
+  const mapStage = { op: 'map', fn: 'x => x.note.trim()', throws: true, perItem: true, caption: text('{item} → {result}'), summary: text('stopped: {error}') };
+  const r = await compileVisual('pipeline', { input, stages: [mapStage] }, ctx());
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  const last = r.spec.steps.at(-1);
+  assert.deepEqual(last.output, { kind: 'error', name: real.name, message: real.message });
+  assert.deepEqual(last.items.map((i) => i.status), ['mapped', 'error', 'skipped']);
+  assert.equal(last.caption.en, `<p>stopped: ${real.name}: ${real.message} (en)</p>`);
+  assert.equal(r.spec.steps.length, 1 + 2 + 1, 'the third item is never reached');
+  const unexpected = await compileVisual('pipeline', { input, stages: [{ ...mapStage, throws: undefined }] }, ctx());
+  assert.match(messages(unexpected.issues), /threw while running: TypeError: .*set throws: true/);
+  const notThrown = await compileVisual('pipeline', { input, stages: [{ ...mapStage, fn: 'x => x.note' }] }, ctx());
+  assert.match(messages(notThrown.issues), /expected to throw but completed/);
+  const after = await compileVisual('pipeline', { input, stages: [mapStage, { op: 'filter', fn: 'x => x', caption: text('f') }] }, ctx());
+  assert.match(messages(after.issues), /stage 2 \(filter\) never runs: stage 1 throws/);
+  const comparator = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items: [2, 1] }, stages: [{ op: 'sort', fn: '(a, b) => a.x.y - b', throws: true, caption: text('{error}') }] }, ctx());
+  assert.deepEqual(comparator.issues, [], messages(comparator.issues));
+  assert.equal(comparator.spec.steps.at(-1).output.kind, 'error');
+  assert.deepEqual(comparator.spec.steps.at(-1).items.map((i) => i.status), ['error', 'error'], 'the two items of the failing comparison');
+});
+
 test('event-loop: the claimed console order is verified against the real output', async () => {
   const code = 'console.log("A");\nsetTimeout(() => console.log("C"), 0);\nPromise.resolve().then(() => console.log("B"));\n';
   const step = (log, stack = []) => ({ caption: text('s'), stack, log });

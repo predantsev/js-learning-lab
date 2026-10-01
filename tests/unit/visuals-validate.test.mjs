@@ -55,6 +55,15 @@ test('pipeline: ops, function sources, perItem needs summary, reduce needs initi
   assert.ok(paths(issues).includes('spec.stages[1].summary'));
   assert.ok(paths(issues).includes('spec.stages[1].initial'));
   assert.ok(paths(issues).includes('spec.stages[2].perItem'));
+  // New stages and fields: some/every/toSorted, perComparison, throws, bilingual show.
+  const fine = validateVisualSpec('pipeline', { input: { label: text, caption: text, items: [1], show: { uk: 'x => `${x} грн`', en: 'x => `€${x}`' } }, stages: [{ op: 'toSorted', fn: '(a, b) => a - b', perComparison: true, caption: text, summary: text }, { op: 'some', fn: 'x => x > 1', caption: text, throws: false }, { op: 'every', fn: 'x => x', caption: text }] });
+  assert.deepEqual(fine, []);
+  const wrong = validateVisualSpec('pipeline', { input: { label: text, caption: text, items: [1], show: { uk: 'x => x' } }, stages: [{ op: 'filter', fn: 'x => x', caption: text, perComparison: true }, { op: 'toSorted', fn: '(a, b) => a - b', caption: text, perItem: true, summary: text }, { op: 'sort', fn: '(a, b) => a - b', caption: text, perComparison: true }, { op: 'map', fn: 'x => x', caption: text, throws: 'yes' }] });
+  assert.ok(paths(wrong).includes('spec.input.show'), 'a bilingual show needs both languages');
+  assert.ok(paths(wrong).includes('spec.stages[0].perComparison'), 'only sorts have comparisons');
+  assert.ok(paths(wrong).includes('spec.stages[1].perItem'), 'toSorted is not per item either');
+  assert.ok(paths(wrong).includes('spec.stages[2].summary'), 'perComparison needs a summary');
+  assert.ok(paths(wrong).includes('spec.stages[3].throws'));
 });
 
 test('event-loop: steps list the stack, queues are string lists', () => {

@@ -52,11 +52,20 @@ export type MemoryGraphSpec = {
   steps: (StepBase & { line: number | null; bindings: MemoryBinding[]; heap: Heap; changed: string[] })[];
 };
 
-export type PipelineItem = { id: string; label: string; status: 'in' | 'waiting' | 'kept' | 'dropped' | 'mapped' | 'consumed' | 'moved' | 'skipped' };
-export type PipelineOutput = { kind: 'list'; items: { id: string; label: string; from: string }[] } | { kind: 'value'; label: string; initial?: string };
+export type PipelineStatus = 'in' | 'waiting' | 'kept' | 'dropped' | 'mapped' | 'consumed' | 'moved' | 'skipped' | 'match' | 'nomatch' | 'error';
+/** An item label: one text, or one per language (a bilingual `show`). */
+export type PipelineLabel = string | Localized;
+export type PipelineItem = { id: string; label: PipelineLabel; status: PipelineStatus };
+export type PipelineOutput =
+  | { kind: 'list'; items: { id: string; label: PipelineLabel; from: string }[] }
+  | { kind: 'value'; label: PipelineLabel; initial?: PipelineLabel }
+  | { kind: 'pending' }
+  | { kind: 'error'; name: string; message: string };
+/** One comparator call of a sort/toSorted stage (perComparison). */
+export type PipelineCompare = { a: string; b: string; result: string; order: 'a-first' | 'b-first' | 'keep' | 'error'; index: number; count: number };
 export type PipelineSpec = {
   kind: 'pipeline'; code: string | null; language: string; input: { label: Localized }; stages: { op: string; fn: string; source: string }[]; resultLabel: Localized | null;
-  steps: (StepBase & { stage: number; focus?: string; items: PipelineItem[]; output: PipelineOutput | null })[];
+  steps: (StepBase & { stage: number; focus?: string; compare?: PipelineCompare; items: PipelineItem[]; output: PipelineOutput | null })[];
 };
 
 export type EventLoopSpec = {
