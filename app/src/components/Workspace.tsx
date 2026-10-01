@@ -1,6 +1,6 @@
 // Practice pane: editor + real result (page, console, checks, storage) for an example or exercise.
 // Learner files are never overwritten by feedback, hints or the solution (REQ-018, REQ-019).
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { localizeFiles } from '@shared/exercise.js';
 import type { Doc } from '../lib/persist';
 import { type Key } from '../lib/i18n';
@@ -116,6 +116,17 @@ function TestsView({ block, state, lang }: { block: ExerciseBlock; state: RunSta
   );
 }
 
+/** ARIA tabs: one tab stop (the selected tab); arrow keys, Home and End select and focus. */
+function onTabsKey<T extends string>(event: KeyboardEvent<HTMLDivElement>, items: T[], current: T, select: (item: T) => void): void {
+  const index = items.indexOf(current);
+  const next = event.key === 'ArrowRight' ? index + 1 : event.key === 'ArrowLeft' ? index - 1 : event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : null;
+  if (next === null || items.length === 0) return;
+  event.preventDefault();
+  const target = (next + items.length) % items.length;
+  select(items[target]);
+  event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[target]?.focus();
+}
+
 interface Props {
   lesson: Lesson;
   block: WsBlock;
@@ -160,6 +171,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   }, [drafts, draftKey, codeLang]);
 
   const onEdit = useCallback((value: string) => { saveDraft({ files: { ...(drafts.value.blocks[draftKey]?.files ?? starter), [activeFile]: value } }); }, [saveDraft, drafts, draftKey, starter, activeFile]);
+  const selectFile = (name: string) => { setActiveFile(name); saveDraft({ activeFile: name }); };
 
   const run = (mode: 'run' | 'test') => {
     const container = mode === 'run' ? frameHost.current : hiddenHost.current;
@@ -220,9 +232,9 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
     <div className="ws">
       <section className="ws-editor panel" aria-label={t('ws.editor', { file: activeFile })}>
         <div className="panel-top">
-          <div className="file-tabs" role="tablist" aria-label={t('ws.files')}>
+          <div className="file-tabs" role="tablist" aria-label={t('ws.files')} onKeyDown={(e) => onTabsKey(e, fileNames, activeFile, selectFile)}>
             {fileNames.map((name) => (
-              <button key={name} type="button" role="tab" aria-selected={name === activeFile} className={name === activeFile ? 'file-tab active' : 'file-tab'} onClick={() => { setActiveFile(name); saveDraft({ activeFile: name }); }}>
+              <button key={name} type="button" role="tab" aria-selected={name === activeFile} tabIndex={name === activeFile ? 0 : -1} className={name === activeFile ? 'file-tab active' : 'file-tab'} onClick={() => selectFile(name)}>
                 <Icon name="file" size={13} /> {name}{!editable.includes(name) && <span className="file-ro"> · {t('ws.readonly')}</span>}
               </button>
             ))}
@@ -247,9 +259,9 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
 
       <section className="ws-result panel" aria-label={t('ws.result')}>
         <div className="panel-top">
-          <div className="result-tabs" role="tablist" aria-label={t('ws.result')}>
+          <div className="result-tabs" role="tablist" aria-label={t('ws.result')} onKeyDown={(e) => onTabsKey(e, tabs, tab, setTab)}>
             {tabs.map((name) => (
-              <button key={name} type="button" role="tab" aria-selected={tab === name} className={tab === name ? 'result-tab active' : 'result-tab'} onClick={() => setTab(name)}>
+              <button key={name} id={`${helpId}-tab-${name}`} type="button" role="tab" aria-selected={tab === name} aria-controls={`${helpId}-panel`} tabIndex={tab === name ? 0 : -1} className={tab === name ? 'result-tab active' : 'result-tab'} onClick={() => setTab(name)}>
                 {t(`ws.${name}` as Key)}{name === 'console' && consoleCount > 0 && <span className="tab-count">{consoleCount}</span>}
                 {name === 'tests' && s.tests && <span className={`tab-count ${passedNow ? 'tab-count-ok' : ''}`}>{s.tests.filter((x) => x.status === 'pass').length}/{s.tests.length}</span>}
               </button>
@@ -257,7 +269,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
           </div>
           {s.live && <span className="live-label"><span className="live-dot" /> live</span>}
         </div>
-        <div className="result-body" role="tabpanel">
+        <div className="result-body" role="tabpanel" id={`${helpId}-panel`} aria-labelledby={tabs.includes(tab) ? `${helpId}-tab-${tab}` : undefined}>
           {/* Off screen while another tab is shown: inert keeps keyboard focus out of the invisible page. */}
           <div className={tab === 'preview' ? 'preview' : 'preview preview-hidden'} inert={tab !== 'preview'}>
             <div ref={frameHost} className="frame-host" />

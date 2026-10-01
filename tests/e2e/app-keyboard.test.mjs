@@ -156,6 +156,41 @@ test('focusable learner content in a hidden result frame cannot capture keyboard
   }
 });
 
+test('file and result tabs follow the ARIA tabs pattern: one tab stop, arrow keys, Home and End', async () => {
+  const lab = await Lab.start({ distDir });
+  try {
+    await lab.seed('profile', { language: 'uk', styleId: 'calm-studio', appearance: 'system', textSize: 'default', activeWorkspaceId: null, lastLesson: null, onboardingDone: true, createdAt: new Date().toISOString() });
+    const { page, problems, context } = await openApp(browser, lab, { hash: `#/lesson/${L1}/2` });
+    await page.locator('#block-basics-exercise').waitFor();
+    const fileTabs = page.getByRole('tablist', { name: t('uk', 'ws.files') }).getByRole('tab');
+    assert.deepEqual(await fileTabs.evaluateAll((els) => els.map((e) => [e.textContent.trim().split(' ')[0], e.tabIndex, e.getAttribute('aria-selected')])), [['index.js', 0, 'true'], ['label.js', -1, 'false']]);
+    await fileTabs.first().focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await fileTabs.nth(1).getAttribute('aria-selected'), 'true');
+    assert.ok(await fileTabs.nth(1).evaluate((el) => el === document.activeElement), 'focus follows the selected tab');
+    assert.match(await page.locator('.ws-editor .cm-content').innerText(), /export const label/);
+    await page.keyboard.press('Home');
+    assert.equal(await fileTabs.first().getAttribute('aria-selected'), 'true');
+    await page.keyboard.press('End');
+    assert.equal(await fileTabs.nth(1).getAttribute('aria-selected'), 'true');
+
+    const resultTabs = page.getByRole('tablist', { name: t('uk', 'ws.result') }).getByRole('tab');
+    await resultTabs.first().focus();
+    await page.keyboard.press('ArrowRight');
+    const selected = resultTabs.nth(1);
+    assert.equal(await selected.getAttribute('aria-selected'), 'true');
+    assert.equal(await selected.innerText(), t('uk', 'ws.tests'));
+    const panelId = await selected.getAttribute('aria-controls');
+    assert.equal(await page.locator(`[id="${panelId}"]`).getAttribute('aria-labelledby'), await selected.getAttribute('id'), 'the panel is labelled by the selected tab');
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await resultTabs.first().getAttribute('aria-selected'), 'true', 'arrows wrap around');
+    assert.deepEqual(problems, []);
+    await context.close();
+  } finally {
+    await lab.dispose();
+  }
+});
+
 test('the glossary popover opens by keyboard, closes with Escape and returns focus', async () => {
   const lab = await Lab.start({ distDir });
   try {
