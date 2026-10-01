@@ -139,6 +139,13 @@ const renderedContrast = (page) => page.evaluate(`(() => {
   return { checked, failures };
 })()`);
 
+/** The look really in effect (a profile update re-applies the stored style, so verify). */
+const assertLook = async (page, style, appearance) => assert.deepEqual(
+  await page.evaluate(() => [document.documentElement.dataset.style, document.documentElement.dataset.appearance]),
+  [style, appearance],
+  'the measured style/appearance was in effect',
+);
+
 async function setLook(page, lab, style, appearance) {
   await page.evaluate(([s, a]) => { document.documentElement.dataset.style = s; document.documentElement.dataset.appearance = a; }, [style, appearance]);
   // Measure the steady state: let one-shot transitions/animations (e.g. a step highlight fading
@@ -221,6 +228,7 @@ test('design tokens: every text color pair reaches 4.5:1 in all three styles, li
           pairs += 1;
           if (p.ratio < 4.5) failures.push(`${style}/${appearance}: ${p.fg} on ${p.bg} = ${p.ratio}`);
         }
+        await assertLook(page, style, appearance);
       }
     }
     assert.deepEqual(failures, []);
@@ -251,6 +259,7 @@ test('rendered screens: every visible text element reaches WCAG AA contrast in a
         for (const appearance of APPEARANCES) {
           await setLook(page, lab, style, appearance);
           const result = await renderedContrast(page);
+          await assertLook(page, style, appearance);
           checked += result.checked;
           for (const f of result.failures) failures.push(`${name} ${style}/${appearance}: "${f.text}" (${f.cls}) ${f.ratio}:1 ${f.color} opacity ${f.opacity} on ${f.bg}`);
         }
