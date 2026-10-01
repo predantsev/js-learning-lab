@@ -644,6 +644,10 @@
         await quiescent(limit);
         flush();
         post('loaded', {});
+        // Optional execution trace (step-through visual of the learner's own code).
+        if (run.options.trace && window.__jsllTrace && typeof window.__jsllTrace.collect === 'function') {
+          try { post('trace', { trace: window.__jsllTrace.collect() }); } catch (error) { reportError(error, 'trace'); }
+        }
         if (run.tests) await runTests();
         await quiescent(Math.min(limit, 1000));
         flush();

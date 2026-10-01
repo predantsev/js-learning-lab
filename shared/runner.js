@@ -118,7 +118,7 @@ export function prepareRun(input) {
   const scriptEntries = Object.keys(moduleFiles).filter((p) => isScriptFile(p) && !(tests && p === tests.path) && !Object.prototype.hasOwnProperty.call(classicScripts, p));
   const transformed = transformProject(
     Object.fromEntries(Object.entries(moduleFiles).filter(([p]) => !Object.prototype.hasOwnProperty.call(classicScripts, p))),
-    { resolution, loopBudgetMs: options.loopBudgetMs, exportScopeFor: scriptEntries, allowedExternals: allowed },
+    { resolution, loopBudgetMs: options.loopBudgetMs, exportScopeFor: scriptEntries, allowedExternals: allowed, extraPlugins: options.extraPlugins ?? [] },
   );
   errors.push(...transformed.errors);
   if (errors.length > 0) return { errors };
@@ -144,6 +144,7 @@ export function prepareRun(input) {
         storageLimitBytes: options.storageLimitBytes,
         network: options.network,
         offscreen: options.offscreen === true,
+        trace: options.trace === true,
         labOrigins: [sandboxOrigin],
       },
     },
@@ -261,6 +262,7 @@ export class SandboxRun {
     else if (message.type === 'storage') this.#emit('storage', { local: message.local });
     else if (message.type === 'tests') this.#emit('tests', { results: message.results, harnessError: message.harnessError ?? null });
     else if (message.type === 'loaded') this.#emit('loaded');
+    else if (message.type === 'trace') this.#emit('trace', { trace: message.trace });
     else if (message.type === 'navigate') this.#emit('navigate', { path: message.path });
     else if (message.type === 'done') {
       this.state = 'done';

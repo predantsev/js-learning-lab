@@ -30,7 +30,10 @@ export async function buildSandbox({ quiet = false } = {}) {
   // The runtime is inlined: an inline script belongs to the frame's own (opaque) origin, so errors
   // thrown through runtime helpers are reported in full instead of a muted "Script error.".
   const shell = await fs.readFile(path.join(ROOT, 'sandbox', 'frame.html'), 'utf8');
-  const runtime = await fs.readFile(path.join(ROOT, 'sandbox', 'runtime.js'), 'utf8');
+  let runtime = await fs.readFile(path.join(ROOT, 'sandbox', 'runtime.js'), 'utf8');
+  // Optional trace collector (defines window.__jsllTrace); see shared/visuals/tracer.js.
+  const traceRuntime = await fs.readFile(path.join(ROOT, 'sandbox', 'trace-runtime.js'), 'utf8').catch(() => '');
+  if (traceRuntime) runtime = `${traceRuntime}\n${runtime}`;
   const marker = '<script src="/sandbox/runtime.js"></script>';
   if (!shell.includes(marker)) throw new Error('sandbox/frame.html: runtime marker not found');
   await fs.writeFile(path.join(outDir, 'frame.html'), shell.replace(marker, () => `<script>\n${runtime.replace(/<\/script/gi, '<\\/script')}\n</script>`));
