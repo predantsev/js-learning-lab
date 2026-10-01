@@ -94,8 +94,10 @@ test('a runaway that defeats the loop guard: the page stays responsive, Stop wor
 
     await replaceEditor(page, 'console.log("fresh context", typeof window.__leftover);\nwindow.__leftover = 1;\n');
     await runButton(page).click();
-    await page.locator('.console').getByText('fresh context undefined').waitFor({ timeout: 10_000 });
-    assert.equal((await status(page).innerText()).trim(), t('uk', 'ws.finished'));
+    const line = page.locator('.console-line').filter({ hasText: 'fresh context' });
+    await line.waitFor({ timeout: 10_000 });
+    assert.deepEqual(await line.locator('.console-arg').allInnerTexts(), ['fresh context', 'undefined'], 'a fresh sandbox: nothing left over from the stopped run');
+    await waitFor(async () => (await status(page).innerText()).trim() === t('uk', 'ws.finished'), { message: 'finished status' });
     await page.evaluate(() => clearInterval(window.__timer));
     assert.deepEqual(problems, []);
     await context.close();
