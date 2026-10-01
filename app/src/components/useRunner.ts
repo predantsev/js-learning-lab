@@ -25,8 +25,10 @@ export const AUTO_STOP_AFTER_MS = 8000;
 const initial: RunState = { status: 'idle', mode: null, console: [], errors: [], compileErrors: [], tests: null, harnessError: null, unresponsive: false, failure: null, runCount: 0, live: false };
 const MAX_CONSOLE = 600;
 
+/** What a run needs from a block; lesson blocks and capstone steps both provide it. */
+export type RunnableBlock = ExampleBlock | ExerciseBlock | (Pick<ExerciseBlock, 'entry' | 'runtime'> & Partial<Pick<ExerciseBlock, 'tests' | 'strings' | 'capabilities'>>);
 export interface StartOptions {
-  block: ExampleBlock | ExerciseBlock;
+  block: RunnableBlock;
   files: Record<string, string>;
   mode: 'run' | 'test';
   storage: Record<string, string>;

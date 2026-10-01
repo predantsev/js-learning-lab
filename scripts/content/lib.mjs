@@ -9,6 +9,7 @@ import YAML from 'yaml';
 import { ROOT } from '../../server/config.mjs';
 import { CAPSTONES, GLOSSARY_LINK, Issues, LANGS, STAGES, paginate, unitOfLesson, validateGlossaryTerm, validateLessonSource } from '../../shared/content-schema.js';
 import { STRING_PLACEHOLDER, localizeText } from '../../shared/exercise.js';
+import { CAPSTONES_DIR, compileCapstones, loadCapstoneSources, synthesizeStepLessons, writeCapstones } from './capstones.mjs';
 
 // JSLL_CONTENT_ROOT points the compiler/validator at another content tree with the same layout
 // (the end-to-end suite uses tests/fixtures/content). Read once, when this module is imported.
@@ -178,7 +179,7 @@ export async function loadLesson(dir) {
   return { source, assets, dir };
 }
 
-export async function loadAll() {
+export async function loadAll({ capstonesDir = CAPSTONES_DIR } = {}) {
   const issues = [];
   const competencies = await loadCompetencies();
   const glossary = await loadGlossary(issues);
@@ -203,6 +204,9 @@ export async function loadAll() {
       }
     }
   }
+  // Capstone steps (content/capstones) and the capstone-step lessons the compiler writes for them.
+  const capstones = await loadCapstoneSources({ dir: capstonesDir, unitOrder: competencies.unitOrder, issues });
+  for (const lesson of synthesizeStepLessons(capstones, { syllabus, lessons })) lessons.set(lesson.source.id, lesson);
   // Teaching order: syllabus order inside each unit; authored lessons missing from the syllabus go last.
   const order = [];
   for (const { stage, unit } of competencies.unitOrder) {
@@ -215,7 +219,7 @@ export async function loadAll() {
     }
   }
   const lessonOrder = new Map(order.map((o, i) => [o.id, i]));
-  return { issues, competencies, glossary, syllabus, course, domains, lessons, order, lessonOrder };
+  return { issues, competencies, glossary, syllabus, course, domains, lessons, order, lessonOrder, capstones };
 }
 
 /** Effective file sets of an exercise: solution/variants overlay the starter. */
@@ -318,8 +322,8 @@ export async function compileLesson(lesson, ctx) {
 export const sha = (text) => createHash('sha256').update(text).digest('hex');
 
 /** Build everything into dist/content. Returns { index, issues }. */
-export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content'), quiet = false, release = false } = {}) {
-  const all = await loadAll();
+export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content'), quiet = false, release = false, capstonesDir } = {}) {
+  const all = await loadAll({ capstonesDir });
   const issues = [...all.issues];
   const md = createMarkdown(all.glossary);
   let visuals = null;
@@ -371,6 +375,11 @@ export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content')
   hash.update(glossaryText);
   await fs.writeFile(path.join(outDir, 'glossary.json'), glossaryText);
   await fs.writeFile(path.join(outDir, 'capstones', 'domains.json'), JSON.stringify(all.domains));
+  // Capstone projects (CP-START + steps): content/capstones/README.md, scripts/content/capstones.mjs.
+  const capstoneBuild = compileCapstones(all.capstones, { md, domains: all.domains, syllabus: all.syllabus });
+  issues.push(...capstoneBuild.issues);
+  for (const text of Object.values(await writeCapstones(path.join(outDir, 'capstones'), capstoneBuild.capstones))) hash.update(text);
+  all.capstoneBuild = capstoneBuild;
   let redirects = {};
   if (await exists(path.join(CONTENT_DIR, 'redirects.yaml'))) redirects = (await readYaml(path.join(CONTENT_DIR, 'redirects.yaml'))) ?? {};
   const index = {

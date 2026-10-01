@@ -349,7 +349,7 @@ function TransferView({ lesson, block }: { lesson: Lesson; block: TransferBlock 
       {unit?.capstoneStep && (capstone ? (
         <div className="transfer-variant"><span className="label">{t('transfer.yourVariant')} · {pick(app().index.capstones.find((c) => c.id === capstone)?.title, lang)}</span><p>{unit.capstoneStep.variants[capstone][lang]}</p></div>
       ) : <p className="ws-note">{t('transfer.noProject')}</p>)}
-      <a className="btn" href="#/project"><Icon name="folder" /> {capstone ? t('transfer.open') : t('transfer.choose')}</a>
+      <a className="btn" href={block.capstoneStep ? `#/project/${encodeURIComponent(block.capstoneStep)}` : '#/project'}><Icon name="folder" /> {capstone ? t('transfer.open') : t('transfer.choose')}</a>
     </BlockFrame>
   );
 }
