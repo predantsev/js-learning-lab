@@ -92,4 +92,3 @@ All settled course/style/language/hint/capstone/local/export invariants survive.
 Official breadth baselines are not exhaustive standards or an assurance that every selected version/library is current. Runtime/support versions, production command correctness, bilingual content, native targets, security implementations and competency assessments remain unconfirmed/unexecuted. Specialized depth classifications are explicit curriculum judgments with rationale, not claims that a source mandates a particular level.
 
 A Claude worker was attempted at the exact repository but stopped at folder trust before auditing; no review/changes are attributed to it. Codex performed the source audit and document checks. Root review checks placement/milestone consistency separately. Validation results and publication state are recorded in STATUS and the PR rather than invented here.
-

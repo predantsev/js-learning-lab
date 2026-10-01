@@ -1269,4 +1269,3 @@ Official/primary pages opened live by Codex on 2026-10-01; named sections delimi
 <a id="source-ts-generic"></a>
 
 - **TS-GENERIC**: [Generic type parameters and constraints](https://www.typescriptlang.org/docs/handbook/2/generics.html). Checked 2026-10-01.
-
