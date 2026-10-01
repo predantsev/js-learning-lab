@@ -1,5 +1,11 @@
 # Current project state
 
+## Implementation in progress (2026-10-01)
+
+The owner authorized implementation of the platform and the complete course on 2026-10-01. Work is tracked by epic [#13](https://github.com/predantsev/js-learning-lab/issues/13) with milestone issues #7 (M1 platform), #8 (M2 JavaScript), #9 (M3 React), #10 (M4 React Native), #11 (M5 Node.js) and #12 (M6 release verification). Until each milestone section below records its own evidence, every milestone is **in progress / unverified**. The baseline description that follows remains the pre-implementation record.
+
+## Documentation baseline
+
 Updated 2026-10-01 by the primary Codex agent. Requirements baseline 4 is ready to start development in a new authorized session. Current task is public documentation publication only; approved lesson design references are included; application implementation and deployment are deferred.
 
 ## Canonical repository and publication
