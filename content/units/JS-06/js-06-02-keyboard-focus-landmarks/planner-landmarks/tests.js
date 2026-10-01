@@ -19,14 +19,14 @@ test('the section links are inside a nav landmark', () => {
   expect(nav, 'a <nav> element').toBeInTheDocument();
   const links = [...nav.querySelectorAll('a[href]')].map(textOf);
   expect(links, 'links inside <nav>').toContain(L.today);
-  expect(links, 'links inside <nav>').toContain(L.stats);
+  expect(links, 'links inside <nav>').toContain(L.week);
 });
 
 test('the main content is inside a main landmark', () => {
   const main = screen.$('main');
   expect(main, 'a <main> element').toBeInTheDocument();
   expect(main.contains(screen.$('button')), 'the button is inside <main>').toBe(true);
-  expect(main.contains(document.getElementById('stats')), 'the statistics section is inside <main>').toBe(true);
+  expect(main.contains(document.getElementById('week')), 'the “this week” section is inside <main>').toBe(true);
 });
 
 test('the page has exactly one first-level heading', () => {
