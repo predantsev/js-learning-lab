@@ -1,0 +1,296 @@
+# Syllabus spine for NO-12. Schema and rules: content/syllabus/README.md. Validate: node scripts/content/validate-syllabus.mjs
+unit: NO-12
+stage: NO
+title: { uk: "Експлуатація сервера: спостережуваність, production-режим і відновлення", en: "Operating the server: observability, production mode and recovery" }
+summary:
+  uk: "Учень додає до сервера проєкту метрики й базові трасування, профілює й налагоджує його, збирає та конфігурує для production-режиму, запускає CI-перевірки, що дають перевірюваний артефакт, додає health-перевірки й коректне завершення роботи та за письмовим runbook репетирує backup/restore, оновлення й rollback на loopback — без жодної хмари."
+  en: "The learner instruments the capstone server with metrics and basic traces, profiles and debugs it, builds and configures it for production mode, runs CI checks that produce a verifiable artifact, adds health checks and graceful shutdown, and rehearses backup/restore, upgrades and rollback on loopback from a written runbook, with no cloud required."
+competencies: [B-09, B-10]
+capstoneStep:
+  mode: local
+  objective:
+    uk: "Запустити сервер проєкту в локальному production-режимі: збірка й конфігурація, health-перевірки й коректне завершення, метрики, репетиція backup/restore і rollback та runbook для інцидентів."
+    en: "Run the capstone server in local production mode: build/config, health and graceful shutdown, metrics, a backup/restore and rollback rehearsal, and an incident runbook."
+  variants:
+    wishlist:
+      uk: "Запустити сервер списку бажань зі зібраного артефакту на loopback, відкрити /readyz і лічильники запитів за маршрутами, відновити backup у новий каталог даних і переконатися, що кількість бажань і сума цін (price) бажаних речей збігаються, а потім відкотитися до попередньої збірки."
+      en: "Run the wishlist server from its built artifact on loopback, expose /readyz and per-route request counts, restore a backup into a fresh data directory and confirm the item count and the total price of wanted items match, then roll back to the previous build."
+    planner:
+      uk: "Запустити сервер планувальника в production-режимі, відновити backup і переконатися, що кількість невиконаних справ і справ із dueDate до фіксованого дня збігаються, а потім відрепетирувати rollback після оновлення, яке ламає сортування за priority."
+      en: "Run the planner server in production mode, restore a backup and confirm the pending count and the count of tasks due by a fixed day match, then rehearse a rollback after an upgrade that breaks sorting by priority."
+    habits:
+      uk: "Запустити сервер трекера звичок у production-режимі з метрикою записаних виконань, відновити backup і переконатися, що кількість completions і серія кожної звички на фіксований день збігаються, а потім відкотити оновлення."
+      en: "Run the habit server in production mode with a metric for recorded completions, restore a backup and confirm each habit's completion count and streak for a fixed day match, then roll back an upgrade."
+    expenses:
+      uk: "Запустити сервер трекера витрат у production-режимі з гістограмою затримки за маршрутами, відновити backup і переконатися, що загальна сума й суми за category в amountMinor збігаються до копійки, а потім відкотити оновлення."
+      en: "Run the expense server in production mode with a per-route latency histogram, restore a backup and confirm the overall and per-category totals in amountMinor match to the minor unit, then roll back an upgrade."
+# Retrieval plan: no-07-07-structured-logs-request-ids (logs) ; re-12-02-quality-checks-ci (CI) ; no-05-04-backup-restore-verification (backup) ; js-17-06-devtools-performance-memory (profiling)
+lessons:
+  - id: no-12-01-metrics-traces
+    title: { uk: "Метрики й базові трасування", en: "Metrics and basic traces" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Add a request counter, an error counter and a latency histogram per route and read p50 and p95 from them."
+      - "Explain what a metric shows that a log line does not, and follow one slow request through timed spans tied to its request id."
+    subskills:
+      - { family: B-09, skill: "metrics and basic traces", depth: intro }
+    misconceptions:
+      - "The average response time tells me how fast the server feels to its users."
+      - "Metrics are just shorter log lines."
+    prerequisites: [no-07-07-structured-logs-request-ids, no-11-03-event-loop-blocking]
+    glossary: [metric, latency-histogram, latency-percentile, trace-span]
+    visual: { kind: diagram, concept: "Requests flow into per-route counter and histogram boxes while the /metrics output updates at each step; one request expands into nested spans (parse, validate, repository, serialize) that share its request id with the log lines." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict the average and the p95 latency of 100 synthetic requests where 5 take 900 ms and the rest take 20 ms." }
+      - { kind: run-change, runtime: isolated-node, summary: "Send the synthetic load to the loopback lab server and read GET /metrics, then add a repository span and see which step owns the slow requests." }
+      - { kind: write, runtime: isolated-node, summary: "Write a createMetrics() module with counter and histogram helpers, a plain-text /metrics route and a span(name, fn) helper that logs duration with the request id." }
+    retrieval:
+      - { concept: "structured log lines with request ids", from: no-07-07-structured-logs-request-ids }
+  - id: no-12-02-profiling-service
+    title: { uk: "Профілювання й налагодження сервісу", en: "Profiling and debugging a service" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Attach the Node inspector to a running service, pause in a handler and inspect the request's state and call stack."
+      - "Record a CPU profile under synthetic load and name the function that dominates its self time."
+    subskills:
+      - { family: B-09, skill: "profiling/debugging", depth: intro }
+    misconceptions:
+      - "I can find the slow function just by reading the code."
+      - "Pausing a server at a breakpoint is harmless because only my request waits."
+    prerequisites: [no-12-01-metrics-traces, js-17-06-devtools-performance-memory]
+    glossary: [node-inspector, self-time]
+    visual: { kind: code-trace, concept: "A handler paused under the inspector: the highlighted line, the request's local variables and the call stack, followed by the CPU profile whose largest self-time entry is the same sorting helper the trace stopped in." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict which suspect (JSON serialization, a sort repeated inside a loop, the file read) dominates the CPU profile of GET /records?sort=name under load." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the lab service with --cpu-prof under the synthetic load script, print the profile's top self-time functions, then hoist the sort out of the loop and profile again." }
+      - { kind: write, runtime: isolated-node, summary: "Write a profiling note: the command used, the top three self-time functions before and after, and the p95 change read from /metrics." }
+      - { kind: local-task, runtime: local-node, summary: "On your machine, start the lab service with node --inspect, attach DevTools or VS Code, pause in the list handler and read the request state and the call stack." }
+    retrieval:
+      - { concept: "DevTools performance and memory panels", from: js-17-06-devtools-performance-memory }
+  - id: no-12-03-typed-contracts-tests
+    title: { uk: "Типізовані контракти в тестах", en: "Typed contracts in tests" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Validate every response in the service tests against the shared runtime schema, not only its status code."
+      - "Explain why a test that asserts only status 200 misses a contract break."
+    subskills:
+      - { family: B-09, skill: "typed contracts", depth: intro }
+    misconceptions:
+      - "If TypeScript compiles the test, the response must have the right shape."
+      - "Checking the status code is enough for an API test."
+    prerequisites: [no-12-02-profiling-service, no-06-04-shared-typed-contracts]
+    glossary: [schema-assertion]
+    visual: null
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict which of two tests fails when the server starts returning a numeric field as a string: one that checks status 200 and one that parses the body with the shared schema." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the suite against the loopback service, introduce the string value, then add schema assertions to the status-only tests and rerun." }
+      - { kind: write, runtime: isolated-node, summary: "Write expectContract(response, schema) for node:test that reports the failing path and value, and use it in the list and create tests." }
+    retrieval:
+      - { concept: "versioned contracts on the server", from: no-04-06-versioned-contracts }
+  - id: no-12-04-production-build-config
+    title: { uk: "Production-збірка, конфігурація та env", en: "Production build, config and env" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Build the server into a runnable artifact and start it with production configuration taken only from environment variables and explicit defaults."
+      - "Validate configuration at startup and refuse to start on a missing or invalid value instead of failing on the first request."
+    subskills:
+      - { family: B-10, skill: "production build/config/env", depth: intro }
+    misconceptions:
+      - "Setting NODE_ENV=production by itself makes the server production-ready."
+      - "It is fine to read process.env wherever a value is needed."
+    prerequisites: [no-12-03-typed-contracts-tests, re-12-01-production-build-env]
+    glossary: [node-env]
+    visual: { kind: diagram, concept: "Source, a build step and a dist/ artifact box; environment variables flow into one validated config object at startup, and an invalid PORT or a missing DATA_DIR stops the process before listen() is ever called." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict what happens when the built server starts with PORT=abc, with DATA_DIR unset and with NODE_ENV unset." }
+      - { kind: run-change, runtime: isolated-node, summary: "Build the lab service, start the artifact with the three env combinations, then add startup validation and repeat." }
+      - { kind: write, runtime: isolated-node, summary: "Write loadConfig(env) that returns a frozen, typed config with a loopback HOST and explicit defaults, or throws one error listing every invalid variable." }
+    retrieval:
+      - { concept: "env boundaries in a production bundle", from: re-12-01-production-build-env }
+      - { concept: "process.env in Node scripts", from: no-01-02-scripts-process-env }
+  - id: no-12-05-ci-checks-artifacts
+    title: { uk: "CI-перевірки й артефакти", en: "CI checks and artifacts" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Order lint, typecheck, tests and build into one local CI script that stops at the first failure and produces exactly one artifact."
+      - "Record the artifact's version and checksum so the same build is started, verified and rolled back to."
+    subskills:
+      - { family: B-10, skill: "CI checks/artifacts", depth: intro }
+    misconceptions:
+      - "CI only matters when a cloud service runs it."
+      - "Rebuilding the same commit later gives the same artifact, so there is no need to keep it."
+    prerequisites: [no-12-04-production-build-config, re-12-02-quality-checks-ci]
+    glossary: [artifact-checksum, immutable-artifact]
+    visual: { kind: diagram, concept: "A local CI pipeline of boxes (install from lockfile, lint, typecheck, test, build, checksum); a seeded failing test stops the run at its box, while a passing run emits a versioned artifact with its checksum recorded beside it." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict where the local CI script stops for a commit with a type error but passing tests, and whether an artifact is produced." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the supplied ci.mjs (lint, typecheck, test and build, with dependencies pre-installed) on the clean and the seeded lab service, then add a checksum step and compare the two release records." }
+      - { kind: write, runtime: isolated-node, summary: "Write the release record for the artifact: version, commit, Node version, checksum and the commands that verify it." }
+    retrieval:
+      - { concept: "lint, type and unit checks in a CI pipeline", from: re-12-02-quality-checks-ci }
+  - id: no-12-06-health-lifecycle-shutdown
+    title: { uk: "Health-перевірки, життєвий цикл процесу й коректне завершення", en: "Health, process lifecycle and graceful shutdown" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Expose liveness and readiness endpoints and explain why readiness fails while storage is unavailable even though the process is alive."
+      - "On SIGTERM, stop accepting connections, finish in-flight requests within a deadline, flush storage and exit with the right code."
+    subskills:
+      - { family: B-10, skill: "process lifecycle/health", depth: intro }
+      - { family: B-10, skill: "graceful shutdown", depth: intro }
+    misconceptions:
+      - "Killing the process is a fine way to stop a server; nothing gets lost."
+      - "If the process is running, the service is healthy."
+    prerequisites: [no-12-05-ci-checks-artifacts, no-11-06-workers-processes-graceful]
+    glossary: [liveness-check, readiness-check, graceful-shutdown]
+    visual: { kind: sequence, concept: "Signal, server, an in-flight request and storage over time: SIGTERM arrives, readiness flips to failing, server.close() stops new connections, the in-flight PATCH finishes and its write is flushed, and the process exits 0; a second run past the deadline shows a forced exit with a non-zero code and a log line." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict what happens to a slow in-flight PATCH and to a new request when the lab server receives SIGTERM, with and without a shutdown handler." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the server, send a slow request, signal SIGTERM from the harness, then add the shutdown handler with a 5 s deadline and repeat." }
+      - { kind: write, runtime: isolated-node, summary: "Write startServer(config) returning { close } with /livez and /readyz routes and a SIGTERM/SIGINT handler that drains, flushes the repository and exits with a meaningful code." }
+    retrieval:
+      - { concept: "starting, stopping and restarting a local server", from: no-03-05-start-stop-restart-local }
+  - id: no-12-07-production-mode-rehearsal
+    title: { uk: "Репетиція production-режиму на loopback", en: "Loopback production-mode rehearsal" }
+    kind: local-task
+    minutes: 25
+    objectives:
+      - "Start the built artifact in production mode on loopback on your own machine, verify health, metrics and logs, and stop it gracefully."
+      - "Record learner-confirmed evidence of every step (commands, outputs, checksum) in a rehearsal log."
+    subskills:
+      - { family: B-10, skill: "loopback production-mode rehearsal", depth: intro }
+    misconceptions: []
+    prerequisites: [no-12-06-health-lifecycle-shutdown]
+    glossary: [production-mode-rehearsal]
+    visual: null
+    analogy: null
+    practice:
+      - { kind: local-task, runtime: local-node, summary: "On your machine, start the lab service artifact with production config bound to 127.0.0.1, check /readyz and /metrics, run the load script, send SIGTERM, confirm a clean exit and save every output in rehearsal.md." }
+    retrieval:
+      - { concept: "verifying the production artifact", from: re-12-06-artifact-verification }
+  - id: no-12-08-runbook-monitoring-rollback
+    title: { uk: "Runbook, моніторинг і rollback", en: "Runbook, monitoring and rollback" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Write a runbook entry for one symptom with its signal, checks, action and rollback steps that someone else can follow."
+      - "Set an alert threshold from the metrics and decide when to roll back to the previous artifact instead of fixing forward."
+    subskills:
+      - { family: B-10, skill: "deployment/monitoring/rollback/runbook", depth: intro }
+    misconceptions:
+      - "A runbook is documentation you write after the incident."
+      - "Rolling back the code also rolls back the data."
+    prerequisites: [no-12-07-production-mode-rehearsal, re-12-04-static-delivery-rollback]
+    glossary: [runbook, alert-threshold]
+    visual: { kind: diagram, concept: "A runbook flow: an alert from a metric threshold leads to checks of /readyz, logs by request id and the latest release record, then a decision between fixing forward and returning to the previous checksum, guarded by a data-compatibility check before the rollback." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict whether returning to artifact v1.3 is safe after v1.4 migrated the stored data to a new schema version, and what the runbook must check first." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run lab service v1.4, trigger the seeded error-rate spike, follow the supplied runbook back to v1.3 and confirm health and metrics." }
+      - { kind: write, runtime: isolated-node, summary: "Write the runbook entry for 'error rate above 5% for 2 minutes': signals, checks, rollback command, data check and how to confirm recovery." }
+    retrieval:
+      - { concept: "static delivery and rollback", from: re-12-04-static-delivery-rollback }
+  - id: no-12-09-backup-restore-upgrades
+    title: { uk: "Backup/restore та оновлення залежностей", en: "Backup/restore and dependency upgrades" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Restore a backup into a fresh data directory and verify it by record ids and derived totals, not by file size."
+      - "Upgrade one dependency on a branch, run the CI script and the restore check, and keep the previous artifact ready for rollback."
+    subskills:
+      - { family: B-10, skill: "backup/restore", depth: intro }
+      - { family: B-10, skill: "dependency upgrades", depth: intro }
+    misconceptions:
+      - "If the backup file exists and is not empty, the backup works."
+      - "A minor-version upgrade cannot break anything."
+    prerequisites: [no-12-08-runbook-monitoring-rollback, no-05-04-backup-restore-verification]
+    glossary: [restore-drill, staged-upgrade]
+    visual: { kind: sequence, concept: "Operator, service, backup store and a fresh data directory over time: a consistent backup is taken while writes are paused, restored into the empty directory and checked by ids and totals; then an upgraded artifact starts, fails one contract test and the previous artifact is started again." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict whether a backup copied while a write was in progress restores cleanly, and which check would reveal the problem." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the supplied backup script against the loopback service, restore into a new temp directory and compare ids and totals, then swap in the supplied newer vendored copy of the date-parsing helper and rerun the checks." }
+      - { kind: write, runtime: isolated-node, summary: "Write verifyRestore(sourceDir, restoredDir) that compares record ids and the domain summary and exits non-zero on any difference." }
+      - { kind: local-task, runtime: local-node, summary: "On your machine, upgrade one dependency of the lab service on a branch, run ci.mjs and verifyRestore, and keep the previous artifact and lockfile ready for rollback." }
+    retrieval:
+      - { concept: "verified backup and restore", from: no-05-04-backup-restore-verification }
+  - id: no-12-10-debug-latency-defect
+    title: { uk: "Налагодження: дефект затримки, доведений логами й метриками", en: "Debug: a latency defect, proven by logs and metrics" }
+    kind: instructional
+    minutes: 15
+    objectives:
+      - "Locate a latency regression from the p95 metric, the slow request's spans and a CPU profile instead of guessing."
+      - "Show why the fixture-based tests missed it and add a test on a realistic synthetic dataset that reproduces it."
+      - "Prove the fix with before-and-after metrics and log lines that leak no identities or secrets."
+    subskills:
+      - { family: B-09, skill: "fixture/mocks limits", depth: assess }
+      - { family: B-09, skill: "metrics and basic traces", depth: assess }
+      - { family: B-09, skill: "profiling/debugging", depth: assess }
+    misconceptions:
+      - "If every test passes with the fixtures, the service cannot be slow."
+    prerequisites: [no-12-09-backup-restore-upgrades, no-12-02-profiling-service]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Before running, mark which of three recent changes (a synchronous file read per request, a sort inside a loop, larger log lines) you expect to raise p95 on GET /records." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the seeded service under the synthetic load, read /metrics, the slow request's spans and a CPU profile, and compare them with your prediction." }
+      - { kind: debug, runtime: isolated-node, summary: "Repair the latency defect, add a test on a 20,000-record synthetic dataset that fails before the fix, and attach before/after p95 values with redacted log lines." }
+    retrieval:
+      - { concept: "synchronous work blocking the event loop", from: no-11-03-event-loop-blocking }
+  - id: no-12-11-independent-incident-runbook
+    title: { uk: "Самостійно: експлуатація й відновлення за runbook", en: "Independent: operate and recover from the runbook" }
+    kind: assessment
+    minutes: 40
+    objectives:
+      - "Operate an unseen synthetic service from its runbook without hints: verify the artifact, start it in production mode on loopback, upgrade a dependency, recover from an injected failure and roll back."
+      - "Restore a backup, prove the restore with ids, totals and contract tests, and record evidence for every step."
+    subskills:
+      - { family: B-09, skill: "typed contracts", depth: assess }
+      - { family: B-10, skill: "production build/config/env", depth: assess }
+      - { family: B-10, skill: "CI checks/artifacts", depth: assess }
+      - { family: B-10, skill: "loopback production-mode rehearsal", depth: assess }
+      - { family: B-10, skill: "process lifecycle/health", depth: assess }
+      - { family: B-10, skill: "graceful shutdown", depth: assess }
+      - { family: B-10, skill: "deployment/monitoring/rollback/runbook", depth: assess }
+      - { family: B-10, skill: "backup/restore", depth: assess }
+      - { family: B-10, skill: "dependency upgrades", depth: assess }
+    misconceptions: []
+    prerequisites: [no-12-10-debug-latency-defect]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: independent, runtime: local-node, summary: "No-hint task on your machine: for a synthetic bookmarks service and its runbook, run the CI script, start the artifact with validated config, handle SIGTERM under load, restore last night's backup into a fresh directory, upgrade one dependency, roll back when its contract test fails and submit the evidence log." }
+    retrieval:
+      - { concept: "restart without loss and a verified restore", from: no-05-08-independent-restart-no-loss }
+    # design note: no-hint
+  - id: no-12-12-capstone-operate
+    title: { uk: "Проєкт: робота в production-режимі", en: "Capstone: production-mode operation" }
+    kind: capstone-step
+    minutes: 40
+    objectives:
+      - "Run the capstone server in loopback production mode with validated config, health checks, metrics and graceful shutdown, and rehearse backup/restore and rollback from the capstone runbook."
+    subskills:
+      - { family: B-10, skill: "loopback production-mode rehearsal", depth: practice }
+    misconceptions: []
+    prerequisites: [no-12-11-independent-incident-runbook, no-06-09-capstone-integrate-clients]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: write, runtime: local-node, summary: "In server/, add config validation, /livez and /readyz, /metrics, graceful shutdown and a ci.mjs script, and write the capstone runbook for start, stop, backup, restore and rollback." }
+      - { kind: local-task, runtime: local-node, summary: "Follow your runbook on your machine: start the artifact, take a backup, restore it into a fresh directory, confirm the domain summary matches, roll back to the previous artifact and keep the evidence." }
+    retrieval:
+      - { concept: "the hardened capstone API", from: no-07-10-capstone-harden-api }

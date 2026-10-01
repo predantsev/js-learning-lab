@@ -19,7 +19,7 @@ export const SUBSKILL_DEPTHS = ['intro', 'practice', 'assess'];
 export const LESSON_ID_PATTERN = /^(js|re|rn|no)-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const BLOCK_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 export const TERM_ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-export const GLOSSARY_LINK = /\[\[([a-z0-9-]+)(?:\|([^\]]+))?\]\]/g;
+export const GLOSSARY_LINK = /\[\[([a-z0-9-]+)(?:\\?\|([^\]]+))?\]\]/g;
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const nonEmpty = (v) => typeof v === 'string' && v.trim().length > 0;
