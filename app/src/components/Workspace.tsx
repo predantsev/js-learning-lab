@@ -46,7 +46,7 @@ function Value({ v, nested = false }: { v: ConsoleValue; nested?: boolean }) {
   }
 }
 
-function ConsoleView({ entries, errors }: { entries: ConsoleEntry[]; errors: RunError[] }) {
+export function ConsoleView({ entries, errors }: { entries: ConsoleEntry[]; errors: RunError[] }) {
   const t = useT();
   if (entries.length === 0 && errors.length === 0) return <p className="ws-empty">{t('ws.consoleEmpty')}</p>;
   return (

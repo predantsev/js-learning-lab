@@ -7,8 +7,9 @@ import { dueReviews, lessonEvidence, recordReview, skipLesson } from '../lib/pro
 import { lessonHref, navigate } from '../lib/router';
 import { useStore } from '../lib/store';
 import type { CapstoneId, IndexLesson, IndexUnit, Lang, Lesson, Question, ReviewItemState, StyleId } from '../lib/types';
-import { STYLE_IDS, app, createWorkspace, updateProfile, useActiveCapstone, useLang, useProfile, useT } from '../state/app';
+import { STYLE_IDS, app, updateProfile, useActiveCapstone, useLang, useProfile, useT } from '../state/app';
 import { QuestionView } from './blocks';
+import { startProject } from './project/workspace';
 import { Html, Icon, downloadText } from './ui';
 
 const STATE_ICON: Record<string, string> = { unseen: '○', 'in-progress': '◐', skipped: '⤼', completed: '✓' };
@@ -112,7 +113,7 @@ export function Onboarding() {
   const start = async () => {
     if (!choice) return;
     setBusy(true);
-    await createWorkspace(choice);
+    await startProject(choice);
     updateProfile({ onboardingDone: true });
     const first = app().flat.find((r) => r.lesson.authored);
     navigate(first ? lessonHref(first.lesson.id) : '#/course');
@@ -303,44 +304,5 @@ export function SettingsPage() {
   );
 }
 
-export function ProjectPage() {
-  const t = useT();
-  const lang = useLang();
-  const { index } = app();
-  const profile = useProfile();
-  const workspaces = useStore(app().workspaces.store, (w) => w.items);
-  const active = workspaces.find((w) => w.id === profile.activeWorkspaceId) ?? null;
-  const [switching, setSwitching] = useState(false);
-  const capTitle = (id: CapstoneId) => pick(index.capstones.find((c) => c.id === id)?.title, lang);
-  return (
-    <div className="page">
-      <header className="page-heading"><div><h1>{t('project.title')}{active && `: ${capTitle(active.capstoneId)}`}</h1>{active && <p className="page-lead">{pick(index.capstones.find((c) => c.id === active.capstoneId)?.pitch, lang)}</p>}</div>
-        <button type="button" className="btn" onClick={() => setSwitching((s) => !s)}>{active ? t('project.switch') : t('transfer.choose')}</button>
-      </header>
-      {!active && <p className="ws-note">{t('project.none')}</p>}
-      {(switching || !active) && (
-        <section className="banner banner-info"><div><p>{t('project.switchBody')}</p>
-          <div className="capstone-grid">{index.capstones.map((c) => <button key={c.id} type="button" className="capstone-card" onClick={() => { void createWorkspace(c.id).then(() => setSwitching(false)); }}><strong>{pick(c.title, lang)}</strong><span>{pick(c.pitch, lang)}</span></button>)}</div>
-        </div></section>
-      )}
-      {active && (
-        <section aria-labelledby="steps"><h2 id="steps">{t('project.steps')}</h2>
-          <ol className="step-list">
-            {index.stages.flatMap((s) => s.units).filter((u) => u.capstoneStep).map((u) => (
-              <li key={u.id} className="step"><span className="eyebrow">{u.id} · {pick(u.title, lang)}</span><p>{u.capstoneStep?.variants[active.capstoneId][lang]}</p></li>
-            ))}
-          </ol>
-        </section>
-      )}
-      {workspaces.length > 1 && (
-        <section aria-labelledby="ws"><h2 id="ws">{t('project.workspaces')}</h2>
-          <ul className="bookmark-list">{workspaces.map((w) => (
-            <li key={w.id} className="bookmark"><div><strong>{capTitle(w.capstoneId)}</strong><span className="bookmark-block">{t('project.created', { date: formatDate(w.createdAt, lang) })}</span></div>
-              {w.id === profile.activeWorkspaceId ? <span className="badge badge-ok">{t('project.active')}</span> : <button type="button" className="btn" onClick={() => updateProfile({ activeWorkspaceId: w.id })}>{t('project.activate')}</button>}
-            </li>
-          ))}</ul>
-        </section>
-      )}
-    </div>
-  );
-}
+// The project screen lives in ./project (capstone workspace, steps, snapshots, export).
+export { ProjectPage } from './project/ProjectPage';
