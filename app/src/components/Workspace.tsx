@@ -98,7 +98,18 @@ function TestsView({ block, state, lang }: { block: ExerciseBlock; state: RunSta
   if (!state.tests) return <p className="ws-empty">{state.status === 'checking' ? t('ws.checking') : t('ws.previewEmpty')}</p>;
   const passed = state.tests.filter((x) => x.status === 'pass').length;
   const all = passed === state.tests.length && state.tests.length > 0;
-  const feedbackFor = (test: TestResult) => block.feedback?.find((f) => f.when.test === test.name)?.message ?? null;
+  // Feedback for a failed test: the rule naming the test, otherwise a rule naming the error the test
+  // threw (an error inside a test, not at load time). The same error message is shown once.
+  const shownErrorFeedback = new Set<L10n>();
+  const feedbackFor = (test: TestResult): L10n | null => {
+    const byTest = block.feedback?.find((f) => f.when.test === test.name)?.message;
+    if (byTest) return byTest;
+    if (!test.errorName || test.errorName === 'AssertionError') return null;
+    const byError = feedbackForError(block, { name: test.errorName, message: test.message ?? '' });
+    if (!byError || shownErrorFeedback.has(byError)) return null;
+    shownErrorFeedback.add(byError);
+    return byError;
+  };
   return (
     <div className="tests">
       <p className={all ? 'tests-summary tests-ok' : 'tests-summary'}>{all ? <><Icon name="check" /> {t('ws.passedAll')}</> : t('ws.passedSome', { passed, total: state.tests.length })}</p>

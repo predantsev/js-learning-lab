@@ -154,6 +154,30 @@ test('authored feedback for SyntaxError appears next to a syntax error found bef
   }
 });
 
+test('authored feedback for an error thrown inside a test is shown with that test', async () => {
+  const lab = await Lab.start({ distDir });
+  try {
+    await lab.seed('profile', PROFILE);
+    const { page, problems, context } = await openApp(browser, lab, { hash: '#/lesson/js-01-02-fixture-practice/2' });
+    await page.locator('#block-practice-independent').waitFor();
+    // The starter has no double(): the test itself throws "scope.double is not a function".
+    await checkButton(page).click();
+    const failed = page.locator('.test.test-fail');
+    await failed.waitFor({ timeout: 15_000 });
+    assert.match(await failed.locator('.test-message').innerText(), /double is not a function/);
+    assert.match(await failed.locator('.test-feedback').innerText(), /ФІКСТУРА-ТИП: функції double ще немає/);
+    // A wrong result is an assertion failure, not a TypeError: no TypeError feedback then.
+    await replaceEditor(page, 'function double(n) {\n  return n + 2;\n}\n');
+    await checkButton(page).click();
+    await page.locator('.test.test-fail .test-message').filter({ hasText: 'double(4)' }).waitFor({ timeout: 15_000 });
+    assert.equal(await page.locator('.test-feedback').count(), 0);
+    assert.deepEqual(problems, []);
+    await context.close();
+  } finally {
+    await lab.dispose();
+  }
+});
+
 test('the content validator accepts a prediction whose code does not compile when it expects SyntaxError', async () => {
   const child = spawn(process.execPath, ['scripts/content/validate.mjs', '--lesson', L3], { cwd: ROOT, env: { ...process.env, JSLL_CONTENT_ROOT: FIXTURE_CONTENT } });
   let output = '';
