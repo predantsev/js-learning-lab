@@ -461,6 +461,19 @@ test('step through my code: the lesson workspace traces the learner code and sho
     await player.focus();
     await page.keyboard.press('End');
     assert.equal(await player.locator('.viz-file').innerText(), 'index.js');
+
+    // An HTML page with an inline <script type="module">: its steps show the script's own code.
+    await page.evaluate(() => { location.hash = '#/lesson/js-02-01-fixture-pages/1'; });
+    await page.locator('#block-pages-site').waitFor();
+    await replaceEditor(page, '<!doctype html>\n<p id="out"></p>\n<script type="module">\nconst out = document.getElementById("out");\nout.textContent = "hi";\nconsole.log(out.textContent);\n</script>\n');
+    await stepThrough().click();
+    await player.waitFor({ timeout: 20_000 });
+    assert.equal(await player.locator('.viz-file').innerText(), 'index.html.inline-1.js');
+    assert.match(await player.locator('.viz-code').innerText(), /const out = document\.getElementById\("out"\);/);
+    assert.match(await player.locator('.viz-code-line.viz-current').innerText(), /const out = document\.getElementById/, 'the highlighted line is the running line of the script');
+    await player.focus();
+    await page.keyboard.press('End');
+    assert.equal(await player.locator('[data-role="console"]').innerText(), 'hi');
     // The TypeError above is the learner program's own (thrown inside the sandbox frame on purpose).
     assert.deepEqual(problems.filter((p) => p !== "pageerror: Cannot read properties of null (reading 'name')"), []);
     await context.close();

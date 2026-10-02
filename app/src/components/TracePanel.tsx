@@ -9,7 +9,12 @@ import type { RunState } from './useRunner';
 
 export default function TracePanel({ state, files, entry, lang, children }: { state: RunState; files: Record<string, string> | null; entry: string; lang: Lang; children?: ReactNode }) {
   const t = useT();
-  const spec = useMemo(() => (state.trace && files ? (traceToSpec(state.trace, files, entry) as CodeTraceSpec) : null), [state.trace, files, entry]);
+  // Project files plus the inline module scripts of an HTML page (virtual paths, see prepareRun).
+  const spec = useMemo(() => {
+    if (!state.trace || !files) return null;
+    const sources = (state.trace as { sources?: Record<string, string> }).sources ?? {};
+    return traceToSpec(state.trace, { ...files, ...sources }, entry) as CodeTraceSpec;
+  }, [state.trace, files, entry]);
   if (state.status === 'compile-error') {
     const syntax = state.compileErrors.some((e) => e.kind === 'syntax');
     return <div className="trace-panel" data-trace="not-run"><p className="ws-note" role="status">{t(syntax ? 'ws.traceSyntax' : 'ws.traceNotRun')}</p>{children}</div>;

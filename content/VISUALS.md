@@ -236,8 +236,10 @@ program stopped with an uncaught error (the last step shows where) and when no s
 Tracing never changes the learner's files. Under the hood: `useRunner().start({ …, trace: true })`
 → `prepareRun({ …, options: { trace: true, extraPlugins: [traceBabelPlugin] } })` → `trace` event →
 `traceToSpec(trace, files, entry)`. With a map of files, each step shows the file it runs in
-(an imported module runs before the module that imports it). Both functions are exported from
-`shared/visuals/index.js`.
+(an imported module runs before the module that imports it; an inline `<script type="module">` of
+an HTML page appears as `index.html.inline-N.js` with its own code — `prepareRun` returns those
+sources as `meta.inlineModules`; classic, non-module scripts are not traced). Both functions are
+exported from `shared/visuals/index.js`.
 
 ### 4.2 `memory-graph` — bindings, values and references
 

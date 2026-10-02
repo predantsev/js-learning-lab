@@ -98,8 +98,9 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
   const heapChanged = changedHeap(step.heap, previous ? previous.heap : null);
   const frames = [...step.frames].reverse();
   // A run-time trace of a project with several modules carries every file: show the step's own file.
-  const shownFile = spec.files && step.file && step.file in spec.files ? step.file : spec.file;
-  const code = spec.files && shownFile in spec.files ? spec.files[shownFile] : spec.code;
+  // A step in a file whose code is not known shows no code rather than the lines of another file.
+  const shownFile = spec.files && step.file ? step.file : spec.file;
+  const code = spec.files ? spec.files[shownFile] ?? '' : spec.code;
   const context = step.frames.slice(0, -1).filter((f) => !f.file || f.file === shownFile).map((f) => f.line).filter((l) => l > 0);
   const consoleEntries = spec.console.slice(0, current.logged);
   const heapIds = Object.keys(step.heap);

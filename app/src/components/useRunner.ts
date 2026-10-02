@@ -110,7 +110,8 @@ export function useRunner() {
               options.onNavigate?.(event.path as string);
               break;
             case 'trace':
-              setState((s) => ({ ...s, trace: event.trace }));
+              // Inline module scripts of an HTML page run as virtual files: keep their code with the trace.
+              setState((s) => ({ ...s, trace: { ...(event.trace as object), sources: prepared.meta.inlineModules ?? {} } }));
               break;
             case 'unresponsive':
               setState((s) => ({ ...s, unresponsive: true }));
