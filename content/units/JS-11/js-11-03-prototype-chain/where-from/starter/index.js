@@ -9,6 +9,7 @@ function originOf(record, name) {
 // The names of the enumerable properties the record gets only from
 // its prototypes (not its own), in the order a for...in loop visits them.
 function inheritedNames(record) {
+  return []; // replace this line
 }
 
 const wish = Object.create(wishDefaults);

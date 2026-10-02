@@ -20,7 +20,8 @@
     const tracked = !(delay > TRACKED_TIMER_MS);
     const id = nativeSetTimeout((...a) => {
       pending.timers.delete(id);
-      if (typeof fn === 'function') fn(...a);
+      // Like the browser's own timer: the callback is called with `this` set to the window.
+      if (typeof fn === 'function') fn.apply(window, a);
       else (0, eval)(String(fn));
     }, delay, ...args);
     if (tracked) pending.timers.add(id);
