@@ -1,0 +1,295 @@
+id: js-12-13-weak-collections
+unit: JS-12
+title:
+  uk: "WeakMap/WeakSet і чого вони не вміють"
+  en: "WeakMap/WeakSet and what they cannot do"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Прикріплювати метадані до DOM-елементів чи об’єктів через `WeakMap`, який не тримає їх у пам’яті."
+    en: "Attach metadata to DOM elements or objects with a `WeakMap` that does not keep them alive."
+  - uk: "Пояснити, чому `WeakMap` не можна перебрати, дізнатися розмір чи рахувати ним прогрес, і чому код ніколи не має залежати від того, коли працює збирач сміття."
+    en: "Explain why a `WeakMap` cannot be iterated, sized or used to count progress, and why code must never depend on when garbage collection runs."
+prerequisites: [js-12-12-dedup-indexing, js-06-08-dom-query-create-update]
+subskills:
+  - { family: J-09, skill: "WeakMap/WeakSet lifecycle limits", depth: intro }
+  - { family: J-09, skill: "no deterministic weak enumeration/GC assumptions", depth: intro }
+glossary: [garbage-collection, reachability, weak-collection]
+selfCheck: [predict-weak, track-seen]
+
+blocks:
+  - id: reachable
+    kind: explanation
+    title:
+      uk: "Пам’ять звільняється сама — але не одразу"
+      en: "Memory frees itself — but not right away"
+    body:
+      uk: |
+        Об’єкти в JavaScript ніхто не видаляє вручну. [[garbage-collection|Збирач сміття]] (garbage collector) час від часу шукає об’єкти, до яких уже **неможливо дістатися** з програми, і звільняє їхню пам’ять. Об’єкт живе, доки він [[reachability|досяжний]]: на нього вказує змінна, елемент масиву, ключ чи значення `Map`.
+
+        Звідси пастка. Якщо зберігати стан карток у `Map` з ключем-елементом, то навіть після `card.remove()` `Map` тримає елемент — він досяжний і не звільниться ніколи.
+
+        [[weak-collection|Слабкі колекції]] вирішують саме це:
+
+        - `WeakMap` — ключі лише об’єкти; ключ **не** тримає об’єкт живим. Коли до об’єкта не лишилося інших шляхів, запис зникне разом із ним.
+        - `WeakSet` — те саме для набору: `add`, `has`, `delete`.
+
+        Ціна: у них немає `size`, їх не можна перебрати `for…of` чи `[...weak]`, немає `keys()` і `clear()`. Бо вміст залежить від того, **коли** спрацює збирач сміття, — а цього програма не знає.
+      en: |
+        Nobody deletes objects in JavaScript by hand. The [[garbage-collection|garbage collector]] now and then looks for objects that can **no longer be reached** from the program and frees their memory. An object lives as long as it is [[reachability|reachable]]: a variable, an array element, a `Map` key or value points to it.
+
+        Hence a trap. If you keep the state of cards in a `Map` keyed by the element, then even after `card.remove()` the `Map` holds the element — it is reachable and will never be freed.
+
+        [[weak-collection|Weak collections]] solve exactly this:
+
+        - `WeakMap` — keys are objects only; a key does **not** keep the object alive. When no other path leads to the object, the entry disappears together with it.
+        - `WeakSet` — the same for a set: `add`, `has`, `delete`.
+
+        The price: they have no `size`, they cannot be walked with `for…of` or `[...weak]`, and there are no `keys()` or `clear()`. Because their contents depend on **when** the garbage collector runs — and the program does not know that.
+
+  - id: notes-on-doors
+    kind: analogy
+    body:
+      uk: "Пам’ятаєш будинки й адреси з розділу JS-04? `WeakMap` — це записки, пришпилені до дверей будинків: «у цьому будинку відчинене вікно». Записка не заважає знести будинок; коли його знесуть, записка зникне разом із дверима. Прочитати записку можна, лише якщо в тебе є адреса будинку."
+      en: "Remember the houses and addresses from unit JS-04? A `WeakMap` is notes pinned to the doors of houses: “the window in this house is open”. A note does not stop the house from being demolished; when it is, the note goes with the door. You can read a note only if you have the house’s address."
+    limits:
+      uk: "Обійти місто й порахувати всі записки не можна: `WeakMap` не має ні переліку, ні розміру. І ніхто не каже, коли приїде бригада зносити будинки — збирач сміття працює тоді, коли сам вирішить, тож перевірити «вже знесли?» неможливо: щоб глянути на двері, потрібна адреса, а поки вона в тебе, будинок не знесуть."
+      en: "You cannot walk around the town and count all the notes: a `WeakMap` has neither a list nor a size. And nobody tells you when the demolition crew comes — the garbage collector runs when it decides to, so “has it been demolished yet?” cannot be checked: to look at the door you need the address, and while you hold it, the house will not be demolished."
+
+  - id: predict-weak
+    kind: prediction
+    prompt:
+      uk: "Що виведе код і на якому рядку він зупиниться?"
+      en: "What does the code print, and at which line does it stop?"
+    code: |
+      const card = document.createElement("li");
+      document.body.append(card);
+      const strong = new Map([[card, { open: true }]]);
+      const weak = new WeakMap([[card, { open: true }]]);
+      console.log(strong.size, weak.size, weak.has(card));
+      card.remove();
+      console.log(weak.has(card), strong.size);
+      console.log([...weak]);
+    verify:
+      logs: ["1 undefined true", "true 1"]
+      error: TypeError
+    answer:
+      type: choice
+      options:
+        - id: real
+          code: "1 undefined true\ntrue 1\nTypeError"
+        - id: has-size
+          code: "1 1 true\ntrue 1\nTypeError"
+          why:
+            uk: "У `WeakMap` немає властивості `size`: її вміст залежить від збирача сміття, тож точну кількість ніхто не гарантує. Читання відсутньої властивості дає `undefined`."
+            en: "A `WeakMap` has no `size` property: its contents depend on the garbage collector, so nobody guarantees an exact count. Reading a missing property gives `undefined`."
+        - id: vanishes
+          code: "1 undefined true\nfalse 0\nTypeError"
+          why:
+            uk: "`card.remove()` лише прибирає елемент зі сторінки. Змінна `card` і `Map` досі вказують на нього, тож запис нікуди не дівся."
+            en: "`card.remove()` only takes the element off the page. The variable `card` and the `Map` still point to it, so the entry has not gone anywhere."
+        - id: iterable
+          code: "1 undefined true\ntrue 1\n[]"
+          why:
+            uk: "`WeakMap` не можна перебрати: spread `[...weak]` кидає `TypeError`."
+            en: "A `WeakMap` cannot be iterated: the spread `[...weak]` throws a `TypeError`."
+      correct: [real]
+    explanation:
+      uk: "`weak.size` — `undefined`: розміру в `WeakMap` немає. Після `card.remove()` елемент зник зі сторінки, але змінна `card` і `Map` тримають його — тому і `weak.has(card)`, і розмір `Map` не змінилися. А `[...weak]` — `TypeError`: слабку колекцію не перебирають."
+      en: "`weak.size` is `undefined`: a `WeakMap` has no size. After `card.remove()` the element left the page, but the variable `card` and the `Map` still hold it — so both `weak.has(card)` and the `Map`’s size are unchanged. And `[...weak]` is a `TypeError`: a weak collection is not iterated."
+
+  - id: who-holds-the-card
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Хто тримає картку"
+      en: "Who holds the card"
+    textEquivalent:
+      uk: "Елемент картки li має три вхідні стрілки. Змінна card і звичайний Map тримають його суцільними стрілками — це сильні посилання, які роблять елемент досяжним. WeakMap тримає його пунктирною стрілкою — слабке посилання, яке досяжності не додає. Коли змінна card більше не вказує на елемент (наприклад, функція завершилася), лишається Map: елемент досі досяжний і пам’ять не звільниться. Коли й запис у Map видалено, лишається тільки пунктирна стрілка WeakMap. Тепер елемент можна зібрати як сміття, але невідомо коли, і перевірити це неможливо: щоб запитати WeakMap про елемент, потрібне посилання на нього, а воно знову зробило б його досяжним."
+      en: "The card element li has three incoming arrows. The variable card and an ordinary Map hold it with solid arrows — strong references that make the element reachable. A WeakMap holds it with a dashed arrow — a weak reference that adds no reachability. When the variable card no longer points to the element (say, the function finished), the Map is left: the element is still reachable and its memory will not be freed. When the Map entry is deleted too, only the WeakMap’s dashed arrow remains. Now the element can be collected as garbage, but at no known time, and it cannot be checked: to ask the WeakMap about the element you need a reference to it, which would make it reachable again."
+    spec:
+      layout: grid
+      nodes:
+        - { id: binding, col: 0, row: 0, w: 140, shape: pill, label: { uk: "змінна card", en: "variable card" } }
+        - { id: strong, col: 0, row: 1, w: 140, label: "Map" }
+        - { id: weak, col: 0, row: 2, w: 140, label: "WeakMap" }
+        - { id: element, col: 1, row: 1, w: 150, shape: round, label: { uk: "<li> картка", en: "<li> card" } }
+      edges:
+        - { id: from-binding, from: binding, to: element }
+        - { id: from-map, from: strong, to: element, label: { uk: "ключ", en: "key" } }
+        - { id: from-weak, from: weak, to: element, kind: dashed, label: { uk: "слабкий ключ", en: "weak key" } }
+      steps:
+        - caption:
+            uk: "Три шляхи до картки: змінна й `Map` — суцільні стрілки (сильні посилання), `WeakMap` — пунктирна (слабке)."
+            en: "Three paths to the card: the variable and the `Map` are solid arrows (strong references), the `WeakMap` is dashed (weak)."
+          highlight: [from-binding, from-map, from-weak]
+        - caption:
+            uk: "Змінна `card` більше не вказує на картку — скажімо, функція завершилася. Але `Map` досі тримає її: картка досяжна, пам’ять не звільниться."
+            en: "The variable `card` no longer points to the card — say, the function finished. But the `Map` still holds it: the card is reachable, its memory will not be freed."
+          dim: [binding, from-binding]
+          highlight: [from-map]
+        - caption:
+            uk: "Запис у `Map` видалено. Лишилася тільки пунктирна стрілка `WeakMap`, а вона досяжності не дає."
+            en: "The `Map` entry is deleted. Only the dashed arrow of the `WeakMap` is left, and it gives no reachability."
+          dim: [binding, from-binding, strong, from-map]
+          highlight: [from-weak]
+        - caption:
+            uk: "Картку можна зібрати як сміття — але невідомо коли. Перевірити це неможливо: щоб запитати `WeakMap`, потрібне посилання на картку, а воно знову робить її досяжною."
+            en: "The card can be collected as garbage — but at no known time. It cannot be checked: asking the `WeakMap` needs a reference to the card, and that makes it reachable again."
+          dim: [binding, from-binding, strong, from-map]
+          highlight: [element]
+          annotate:
+            - { id: element, text: { uk: "зібрати можна, коли — невідомо", en: "collectable, at no fixed time" } }
+
+  - id: card-state
+    kind: example
+    runtime: browser-js
+    dir: card-state
+    entry: index.js
+    preview: true
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      firstExpanded: { uk: "Перша картка розгорнута:", en: "First card expanded:" }
+      cardsLeft: { uk: "Карток на сторінці:", en: "Cards on the page:" }
+      stillReachable: { uk: "Запис для видаленої картки (змінна її ще тримає):", en: "Entry for the removed card (the variable still holds it):" }
+    title:
+      uk: "Стан карток у WeakMap"
+      en: "Card state in a WeakMap"
+    body:
+      uk: |
+        Кожна картка бажання має прапорець «розгорнута», прикріплений до самого елемента через `WeakMap`. Потім першу картку видаляють зі сторінки. Запусти й подивись на вкладку **Сторінка** та консоль.
+      en: |
+        Each wish card has an “expanded” flag attached to the element itself through a `WeakMap`. Then the first card is removed from the page. Run it and look at the **Page** tab and the console.
+    tryIt:
+      uk: |
+        1. Допиши `console.log(expanded.size);` — `undefined`. Потім `console.log([...expanded]);` — `TypeError`. Слабку колекцію не можна ні порахувати, ні перебрати. Прибери обидва рядки.
+        2. Заміни `new WeakMap()` на `new Map()` і допиши `console.log(expanded.size);`: `3`, хоча на сторінці 2 картки. `Map` тримає видалену картку, доки запис не видалять вручну, — так у застосунках накопичуються «мертві» елементи.
+      en: |
+        1. Add `console.log(expanded.size);` — `undefined`. Then `console.log([...expanded]);` — a `TypeError`. A weak collection can be neither counted nor walked. Remove both lines.
+        2. Replace `new WeakMap()` with `new Map()` and add `console.log(expanded.size);`: `3`, although the page has 2 cards. A `Map` holds the removed card until the entry is deleted by hand — that is how applications pile up “dead” elements.
+
+  - id: recall-remove
+    kind: review
+    strings:
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+    title:
+      uk: "Пригадай: remove"
+      en: "Recall: remove"
+    items:
+      - id: removed-still-object
+        from: js-06-08-dom-query-create-update
+        prompt:
+          uk: "Елемент додали на сторінку, а потім викликали `item.remove()`. Що виведе код?"
+          en: "An element was added to the page and then `item.remove()` was called. What does the code print?"
+        code: |
+          const item = document.createElement("li");
+          item.textContent = "%%walk%%";
+          document.body.append(item);
+          item.remove();
+          console.log(document.body.contains(item), item.textContent);
+        verify:
+          logs: ["false %%walk%%"]
+        answer:
+          type: choice
+          options:
+            - id: detached
+              text:
+                uk: "`false`, а потім текст елемента"
+                en: "`false`, then the element’s text"
+            - id: gone
+              text:
+                uk: "`false`, а потім помилка: елемента вже не існує"
+                en: "`false`, then an error: the element no longer exists"
+              why:
+                uk: "`remove()` від’єднує елемент від сторінки, але сам об’єкт живе, доки на нього вказує змінна `item`."
+                en: "`remove()` detaches the element from the page, but the object itself lives as long as the variable `item` points to it."
+            - id: still-there
+              text:
+                uk: "`true`, а потім текст елемента"
+                en: "`true`, then the element’s text"
+              why:
+                uk: "Після `remove()` елемента вже немає в документі, тож `contains` дає `false`."
+                en: "After `remove()` the element is no longer in the document, so `contains` gives `false`."
+          correct: [detached]
+        explanation:
+          uk: "`remove()` прибирає елемент зі сторінки, але не з пам’яті: змінна `item` досі на нього вказує, тож об’єкт досяжний. Саме тому `Map` з такими елементами-ключами і «тече»."
+          en: "`remove()` takes the element off the page but not out of memory: the variable `item` still points to it, so the object is reachable. That is exactly why a `Map` keyed by such elements “leaks”."
+
+  - id: track-seen
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: track-seen
+    entry: index.js
+    title:
+      uk: "Позначка «переглянуто» без витоку пам’яті"
+      en: "A “seen” mark without a memory leak"
+    instructions:
+      uk: |
+        `markSeen(card)` позначає картку як переглянуту, а `wasSeen(card)` відповідає, чи її позначено. Зараз позначки зберігаються в `Set` і тримають видалені картки в пам’яті назавжди. Переведи їх на слабку колекцію:
+
+        - позначка належить саме цьому об’єкту: окремий об’єкт з тим самим вмістом не позначений;
+        - позначати можна лише об’єкти: `markSeen("w-05")` кидає `TypeError` (так поводиться слабка колекція сама).
+
+        А в коментарі в коді одним реченням поясни, чому лічильник «пройдених уроків» має жити в `Map` чи масиві, а не тут. Коментар автоматично не перевіряється — він для тебе.
+      en: |
+        `markSeen(card)` marks a card as seen, and `wasSeen(card)` answers whether it was marked. Right now the marks are stored in a `Set` and keep removed cards in memory forever. Move them to a weak collection:
+
+        - a mark belongs to this very object: a separate object with the same contents is not marked;
+        - only objects can be marked: `markSeen("w-05")` throws a `TypeError` (a weak collection does that by itself).
+
+        And in the comment in the code, explain in one sentence why a “completed lessons” counter must live in a `Map` or an array, not here. The comment is not checked automatically — it is for you.
+    testTitles:
+      "a card is not seen until it is marked":
+        uk: "Картка не переглянута, доки її не позначили"
+        en: "A card is not seen until it is marked"
+      "marking one card does not mark another":
+        uk: "Позначка однієї картки не позначає іншу"
+        en: "Marking one card does not mark another"
+      "a separate object with the same contents is not seen":
+        uk: "Окремий об’єкт з тим самим вмістом не позначений"
+        en: "A separate object with the same contents is not seen"
+      "only objects can be marked: text is refused with a TypeError":
+        uk: "Позначати можна лише об’єкти: текст відхиляється з `TypeError`"
+        en: "Only objects can be marked: text is refused with a `TypeError`"
+    hints:
+      nudge:
+        uk: "Яка колекція з цього уроку робить те саме, що `Set` (`add`, `has`), але не тримає об’єкти в пам’яті?"
+        en: "Which collection from this lesson does the same as a `Set` (`add`, `has`) but does not keep objects in memory?"
+      explanation:
+        uk: "Слабкі колекції мають ті самі методи для додавання й перевірки, що й звичайні, тож функції майже не зміняться — змінюється сама колекція. Ключем має бути **сам об’єкт**, а не його `id`: слабка колекція приймає лише об’єкти, а на `has` для тексту просто відповідає `false`."
+        en: "Weak collections have the same adding and checking methods as ordinary ones, so the functions hardly change — the collection itself does. The key must be **the object itself**, not its `id`: a weak collection accepts only objects, and `has` for text simply answers `false`."
+    solutionNote:
+      uk: "`WeakSet` має `add` і `has`, як `Set`, але не тримає картки живими й сам відхиляє текст із `TypeError`. `WeakMap` із значенням `true` теж працює. А лічильник прогресу тут жити не може: у слабкої колекції немає `size` і перебору, а записи зникають тоді, коли вирішить збирач сміття, — отже, жодної надійної кількості."
+      en: "A `WeakSet` has `add` and `has` like a `Set`, but does not keep cards alive and refuses text with a `TypeError` by itself. A `WeakMap` with the value `true` works too. And a progress counter cannot live here: a weak collection has no `size` and no iteration, and entries disappear when the garbage collector decides — so there is no reliable count."
+    feedback:
+      - when: { test: "a card is not seen until it is marked" }
+        message:
+          uk: "Ця перевірка чекає `false` до `markSeen(card)` і `true` після. Якщо після позначки `false`, `wasSeen` шукає щось інше, ніж додає `markSeen` (наприклад, `card.id` замість `card`)."
+          en: "This check expects `false` before `markSeen(card)` and `true` after. If it is `false` after marking, `wasSeen` looks for something other than what `markSeen` adds (for example, `card.id` instead of `card`)."
+      - when: { test: "marking one card does not mark another" }
+        message:
+          uk: "Ця перевірка позначає одну картку й чекає `false` для іншої."
+          en: "This check marks one card and expects `false` for another."
+      - when: { test: "a separate object with the same contents is not seen" }
+        message:
+          uk: "Ця перевірка позначає `{ id: \"w-04\" }` і чекає `false` для іншого об’єкта з тим самим `id`. Позначка належить об’єкту, а не його вмісту."
+          en: "This check marks `{ id: \"w-04\" }` and expects `false` for another object with the same `id`. A mark belongs to the object, not to its contents."
+      - when: { test: "only objects can be marked: text is refused with a TypeError" }
+        message:
+          uk: "Ця перевірка чекає, що `markSeen(\"w-05\")` кидає `TypeError`. `Set` приймає будь-що, а слабка колекція — лише об’єкти: саме вона кидає цю помилку."
+          en: "This check expects `markSeen(\"w-05\")` to throw a `TypeError`. A `Set` accepts anything, while a weak collection accepts only objects: it is what throws this error."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` під час запуску буває, коли в слабку колекцію додають не об’єкт (`Invalid value used in weak set`) — подивись, що передає `markSeen` у коді внизу файлу. Через таку помилку функцій може не бути (`… is not a function`)."
+          en: "A `TypeError` while starting happens when something that is not an object is added to a weak collection (`Invalid value used in weak set`) — look at what `markSeen` receives in the code at the bottom of the file. Such an error can leave the functions missing (`… is not a function`)."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-12
+    body:
+      uk: "У проєкті слабкі колекції знадобляться хіба що для стану DOM-елементів. Наприкінці розділу ти переконаєшся, що все, що треба рахувати чи зберігати, — індекс, підсумки, прогрес — живе в `Map`, `Set` чи масиві, а не в `WeakMap`."
+      en: "In your project weak collections are needed at most for the state of DOM elements. At the end of this unit you will make sure that everything that has to be counted or stored — the index, totals, progress — lives in a `Map`, a `Set` or an array, not in a `WeakMap`."
