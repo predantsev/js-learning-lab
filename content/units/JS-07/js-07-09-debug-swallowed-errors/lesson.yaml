@@ -1,0 +1,375 @@
+id: js-07-09-debug-swallowed-errors
+unit: JS-07
+title:
+  uk: "Налагодження: проковтнуті помилки, return у finally, зіпсований JSON"
+  en: "Debug: swallowed errors, finally-return, bad JSON"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Знайти й виправити порожній `catch`, що ховає збій, і `return` у `finally`, що підміняє кинуту помилку значенням успіху."
+    en: "Find and repair an empty `catch` that hides a failure and a `return` inside `finally` that replaces a thrown error with a success value."
+  - uk: "Виправити завантаження, що падає на зіпсованому збереженому JSON, так, щоб воно повідомляло про проблему з `cause` і зберігало сирий текст."
+    en: "Repair a loader that crashes on malformed stored JSON so it reports the problem with a `cause` and keeps the raw text."
+prerequisites: [js-07-08-cjs-and-load-failures, js-07-05-persist-reload]
+subskills:
+  - { family: J-10, skill: "Error types/cause and throw", depth: assess }
+  - { family: J-10, skill: "try/catch/finally", depth: assess }
+  - { family: J-10, skill: "JSON parse/serialize limitations", depth: assess }
+glossary: [swallowed-error]
+selfCheck: [which-defect, repair-habits]
+
+blocks:
+  - id: quiet-failures
+    kind: explanation
+    title:
+      uk: "Коли помилку не видно"
+      en: "When an error is invisible"
+    body:
+      uk: |
+        Найнебезпечніші збої — ті, яких не видно: картки помилки немає, програма «працює», а результат неправильний. Часто їх ховає сам код обробки помилок:
+
+        - **порожній `catch`** — помилку перехоплено й нікуди не передано;
+        - **`return` у `finally`** — він спрацьовує завжди й підміняє і результат, і помилку, що саме летіла з функції;
+        - **`JSON.parse` без захисту** — зіпсований текст валить програму без пояснення, а іноді ще й в іншому місці, ніж справжня причина.
+
+        У цьому уроці ти побачиш усі три в роботі, а потім виправиш їх у модулі збереження трекера звичок.
+      en: |
+        The most dangerous failures are the invisible ones: there is no error card, the program “works”, and the result is wrong. Often they are hidden by the error-handling code itself:
+
+        - **an empty `catch`** — the error is caught and passed nowhere;
+        - **`return` in `finally`** — it always runs and replaces both the result and the error that was just leaving the function;
+        - **an unguarded `JSON.parse`** — damaged text crashes the program with no explanation, sometimes even in a different place from the real cause.
+
+        In this lesson you will see all three at work, and then repair them in the habit tracker’s storage module.
+
+  - id: which-defect
+    kind: prediction
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+    prompt:
+      uk: "У кожної з трьох функцій своя пастка. Друга витрата не має поля `label`. Що з’явиться в консолі?"
+      en: "Each of the three functions has its own trap. The second expense has no `label` field. What appears in the console?"
+    code: |
+      function labelsOf(expenses) {
+        const labels = [];
+        for (const expense of expenses) {
+          try {
+            labels.push(expense.label.trim());
+          } catch (error) {
+          }
+        }
+        return labels;
+      }
+
+      function exportAll(expenses) {
+        try {
+          return JSON.stringify({ schemaVersion: 1, records: expenses });
+        } finally {
+          return "exported";
+        }
+      }
+
+      function loadAll(text) {
+        return JSON.parse(text).records;
+      }
+
+      const expenses = [
+        { id: "e-01", label: " %%groceries%% ", amountMinor: 84550 },
+        { id: "e-08", amountMinor: 900 },
+      ];
+      console.log(labelsOf(expenses).length);
+      const text = exportAll(expenses);
+      console.log(text);
+      console.log(loadAll(text).length);
+    verify:
+      logs: ["1", "exported"]
+      error: SyntaxError
+    answer:
+      type: choice
+      options:
+        - id: all-three
+          text:
+            uk: "`1`, `exported`, а потім `SyntaxError` у `loadAll`"
+            en: "`1`, `exported`, then a `SyntaxError` in `loadAll`"
+        - id: type-error-first
+          text:
+            uk: "Одразу `TypeError` у `labelsOf`, і більше нічого"
+            en: "A `TypeError` in `labelsOf` right away, and nothing else"
+          why:
+            uk: "`TypeError` справді виникає, але порожній `catch` його ковтає: цикл іде далі, а функція повертає один підпис замість двох."
+            en: "A `TypeError` does happen, but the empty `catch` swallows it: the loop goes on, and the function returns one label instead of two."
+        - id: real-json
+          text:
+            uk: "`1`, потім текст JSON, потім `2`"
+            en: "`1`, then JSON text, then `2`"
+          why:
+            uk: "`return` у `finally` спрацьовує завжди й заміняє значення з `try`, навіть без жодної помилки. Тож `exportAll` завжди повертає `\"exported\"`."
+            en: "`return` in `finally` always runs and replaces the value from `try`, even without any error. So `exportAll` always returns `\"exported\"`."
+        - id: two-labels
+          text:
+            uk: "`2`, `exported`, а потім `SyntaxError` у `loadAll`"
+            en: "`2`, `exported`, then a `SyntaxError` in `loadAll`"
+          why:
+            uk: "Витрата без `label` у список не потрапила: помилка на ній зникла в порожньому `catch`, і `push` не виконався."
+            en: "The expense without `label` did not get into the list: its error vanished in the empty `catch`, and `push` never ran."
+      correct: [all-three]
+    explanation:
+      uk: "Три функції — три пастки. `labelsOf` мовчки втратила витрату без `label`: порожній `catch` проковтнув `TypeError`. `exportAll` повернула `\"exported\"` замість тексту JSON: `return` у `finally` замінив справжній результат. А `loadAll` впала з `SyntaxError` на тексті `\"exported\"` — картка помилки вказує на неї, хоча винна `exportAll`. Жодна з перших двох не показала помилки, а результати неправильні."
+      en: "Three functions — three traps. `labelsOf` silently lost the expense without `label`: the empty `catch` swallowed the `TypeError`. `exportAll` returned `\"exported\"` instead of JSON text: the `return` in `finally` replaced the real result. And `loadAll` crashed with a `SyntaxError` on the text `\"exported\"` — the error card points at it, although `exportAll` is to blame. Neither of the first two showed an error, and their results are wrong."
+
+  - id: replay
+    kind: example
+    runtime: browser-js
+    dir: replay
+    entry: index.js
+    expectError: true
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+    title:
+      uk: "Три тихі пастки в роботі"
+      en: "Three quiet traps at work"
+    body:
+      uk: |
+        Ті самі три функції й три витрати, одна з яких без `label`. Натисни **Запустити** й порівняй кожен рядок **Консолі** з коментарем над функцією: що вона мала зробити і що зробила.
+      en: |
+        The same three functions and three expenses, one of them without `label`. Press **Run** and compare every **Console** line with the comment above the function: what it should have done and what it did.
+    tryIt:
+      uk: |
+        1. У списку підписів лише два з трьох — і жодного слова про третю витрату. Замість тексту JSON — `exported`. А картка помилки показує `SyntaxError` у `loadAll`, хоча вона лише розбирала те, що їй дали.
+        2. Додай у порожній `catch` рядок коду `console.log(error.message);` і запусти: тепер видно, що саме ховалося. Друк — лише перший крок: помилку все одно проковтнуто, і підсумок неправильний.
+        3. Заміни в `exportAll` усю конструкцію `try { … } finally { … }` одним рядком коду `return JSON.stringify({ schemaVersion: 1, records: expenses });` і запусти: тепер друкується справжній текст JSON, а `loadAll` читає його без помилки. Збій у `loadAll` спричиняла `exportAll`.
+      en: |
+        1. The list has only two labels out of three — and not a word about the third expense. Instead of JSON text there is `exported`. And the error card shows a `SyntaxError` in `loadAll`, although it only parsed what it was given.
+        2. Add the line `console.log(error.message);` to the empty `catch` and run: now you can see what was hiding. Printing is only a first step: the error is still swallowed, and the result is still wrong.
+        3. In `exportAll`, replace the whole `try { … } finally { … }` construction with the single line `return JSON.stringify({ schemaVersion: 1, records: expenses });` and run: now the real JSON text is printed, and `loadAll` reads it without an error. The failure in `loadAll` was caused by `exportAll`.
+
+  - id: swallowed-steps
+    kind: visual
+    visual: code-trace
+    title:
+      uk: "Крок за кроком: куди зникають помилки"
+      en: "Step by step: where the errors vanish"
+    textEquivalent:
+      uk: "Звичка h-03 має масив completions, а h-07 — ні. countDone перебирає звички: для h-03 includes дає true, і count стає 1. Для h-07 вираз habit.completions дає undefined, а виклик includes у undefined кидає TypeError. Порожній catch перехоплює помилку й нічого з нею не робить: серед змінних видно об’єкт помилки error, але наступний крок — уже return count, і countDone повертає 1, ніби звичка h-07 не виконана. Далі об’єкт looped містить сам себе. saveAll викликає JSON.stringify, який кидає TypeError, бо текст вийшов би нескінченним. Помилка вже летить із функції, але finally виконується завжди, а його return підміняє і помилку, і результат: saveAll повертає saved, а рядок коду з console.log у try не виконався. Консоль показує 1 і saved — два «успіхи» і дві приховані помилки."
+      en: "Habit h-03 has a completions array, and h-07 does not. countDone goes through the habits: for h-03 includes gives true, and count becomes 1. For h-07 the expression habit.completions gives undefined, and calling includes on undefined throws a TypeError. The empty catch catches the error and does nothing with it: the error object is visible among the variables, but the next step is already return count, and countDone returns 1 as if habit h-07 were simply not done. Next, the object looped contains itself. saveAll calls JSON.stringify, which throws a TypeError because the text would be endless. The error is already leaving the function, but finally always runs, and its return replaces both the error and the result: saveAll returns saved, and the console.log line in try never ran. The console shows 1 and saved — two “successes” and two hidden errors."
+    spec:
+      file: visuals/swallowed.js
+      captions:
+        - at: { line: 24 }
+          text:
+            uk: "Дві звички. У `h-07` немає поля `completions`."
+            en: "Two habits. `h-07` has no `completions` field."
+        - at: { line: 5, kind: stmt }
+          text:
+            uk: "`h-03`: `habit.completions.includes(day)` дає `true`, і `count` зараз стане `1`."
+            en: "`h-03`: `habit.completions.includes(day)` gives `true`, and `count` is about to become `1`."
+        - at: { line: 5, kind: stmt, hit: 2 }
+          text:
+            uk: "`h-07`: `habit.completions` — `undefined`, тож виклик `includes` зараз кине `TypeError`."
+            en: "`h-07`: `habit.completions` is `undefined`, so calling `includes` is about to throw a `TypeError`."
+        - at: { line: 12, kind: return }
+          text:
+            uk: "А наступний крок — уже `return count`. Помилка потрапила в порожній `catch` — об’єкт `error` ще видно серед змінних — і зникла. `countDone` повертає `1`, ніби `h-07` просто не виконано."
+            en: "And the next step is already `return count`. The error went into the empty `catch` — the `error` object is still visible among the variables — and vanished. `countDone` returns `1`, as if `h-07` were simply not done."
+        - at: { line: 32, kind: stmt }
+          text:
+            uk: "`looped` містить сам себе: `looped.self = looped`. Такий об’єкт `JSON.stringify` записати не може."
+            en: "`looped` contains itself: `looped.self = looped`. `JSON.stringify` cannot write such an object."
+        - at: { line: 17 }
+          text:
+            uk: "`JSON.stringify` зараз кине `TypeError`, і рядок коду з `console.log` у `try` уже не виконається."
+            en: "`JSON.stringify` is about to throw a `TypeError`, and the `console.log` line in `try` will not run."
+        - at: { line: 20, kind: return }
+          text:
+            uk: "Помилка вже летіла з функції, але `finally` виконується завжди — і його `return` підміняє її значенням `\"saved\"`. Той, хто викликав, отримує «успіх»."
+            en: "The error was already leaving the function, but `finally` always runs — and its `return` replaces it with the value `\"saved\"`. The caller receives a “success”."
+        - at: { line: 32, kind: end }
+          text:
+            uk: "У консолі `1` і `saved`: два «успіхи» — і дві помилки, про які ніхто не дізнався."
+            en: "The console shows `1` and `saved`: two “successes” — and two errors nobody learned about."
+
+  - id: surface-it
+    kind: explanation
+    title:
+      uk: "Як дати помилці вийти на світло"
+      en: "How to bring an error into the light"
+    body:
+      uk: |
+        Помилку, яку перехопили й нікуди не передали, називають [[swallowed-error|проковтнутою]]. Три правила, що їх запобігають:
+
+        - **`catch` не буває порожнім.** Обробляй лише те, що розумієш (як в уроці про `try/catch/finally`), а решту кидай далі — краще з контекстом: що саме не вдалося, і з оригіналом у `cause`. Сам `console.log(error)` — це не обробка: помилку все одно проковтнуто.
+        - **`finally` — лише для прибирання.** Жодного `return` чи `throw` у ньому: вони підміняють і результат, і помилку. Повертай значення з `try` чи після всієї конструкції.
+        - **Сирий текст розбирай під захистом.** Перш ніж кинути помилку про зіпсовані дані, збережи їх копію під окремим ключем (як в уроці про сховище), а `SyntaxError` від `JSON.parse` поклади в `cause` нової помилки — тоді видно і що не вдалося, і чому.
+      en: |
+        An error that was caught and passed nowhere is called [[swallowed-error|swallowed]]. Three rules prevent it:
+
+        - **A `catch` is never empty.** Handle only what you understand (as in the lesson on `try/catch/finally`), and throw the rest further — preferably with context: what exactly failed, and the original in `cause`. A bare `console.log(error)` is not handling: the error is still swallowed.
+        - **`finally` is for cleanup only.** No `return` or `throw` in it: they replace both the result and the error. Return the value from `try` or after the whole construction.
+        - **Parse raw text under guard.** Before throwing an error about damaged data, keep a copy of it under a separate key (as in the storage lesson), and put the `SyntaxError` from `JSON.parse` into the `cause` of a new error — then both what failed and why are visible.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: немає помилки — ще не значить правильно"
+      en: "Recall: no error does not mean correct"
+    strings:
+      priceText: { uk: "Ціна: ", en: "Price: " }
+      noPrice: { uk: "без ціни", en: "no price" }
+    items:
+      - id: zero-price
+        from: js-02-10-debug-tdz-and-defaults
+        prompt:
+          uk: "Річ безкоштовна: її ціна — `0`. Що надрукує програма?"
+          en: "The thing is free: its price is `0`. What does the program print?"
+        code: |
+          function priceLabel(price) {
+            const shown = price || "%%noPrice%%";
+            return "%%priceText%%" + shown;
+          }
+
+          console.log(priceLabel(0));
+        verify:
+          logs: ["%%priceText%%%%noPrice%%"]
+        answer:
+          type: choice
+          options:
+            - id: no-price
+              text:
+                uk: "«Ціна: без ціни»"
+                en: "“Price: no price”"
+            - id: zero
+              text:
+                uk: "«Ціна: 0»"
+                en: "“Price: 0”"
+              why:
+                uk: "`||` замінює будь-яке хибне значення, і `0` теж: для нього `0` — «порожньо»."
+                en: "`||` replaces every falsy value, `0` included: to it, `0` is “empty”."
+            - id: error
+              text:
+                uk: "Помилку: `0` не можна додати до тексту"
+                en: "An error: `0` cannot be added to text"
+              why:
+                uk: "Помилки немає: `+` спокійно склеює текст і число. Програма працює — тільки показує неправду."
+                en: "There is no error: `+` happily glues text and a number. The program works — it just shows something untrue."
+          correct: [no-price]
+        explanation:
+          uk: "Помилки немає, а результат хибний: безкоштовна річ стала річчю «без ціни». Як у JS-02, відсутність помилки ще нічого не доводить. Порожній `catch` робить це гірше: він ховає навіть ті помилки, які JavaScript чесно кинув."
+          en: "There is no error, yet the result is wrong: a free thing became a thing with “no price”. As in JS-02, the absence of an error proves nothing yet. An empty `catch` makes it worse: it hides even the errors JavaScript honestly threw."
+
+  - id: repair-habits
+    kind: exercise
+    mode: debug
+    runtime: browser-js
+    dir: repair-habits
+    entry: index.js
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      read: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+      stretch: { uk: "Розтяжка", en: "Stretching" }
+      doneToday: { uk: "Виконано сьогодні: ", en: "Done today: " }
+    title:
+      uk: "Полагодь модуль збереження звичок"
+      en: "Repair the habit storage module"
+    instructions:
+      uk: |
+        У трьох функціях трекера звичок по одній тихій пастці. Коментар над кожною функцією каже, що вона **має** робити. На правильних даних усе виглядає гаразд — тож думай, що станеться на поганих: звичці без `completions`, об’єкті, що містить сам себе, недописаному JSON у сховищі.
+
+        Виправ функції так, щоб збої виходили назовні, як описано в коментарях, а правильні дані зберігалися й завантажувалися, як і раніше. Звіт унизу файла не змінюй.
+      en: |
+        Each of the three functions of the habit tracker has one quiet trap. The comment above each function says what it **should** do. On valid data everything looks fine — so think about what happens on bad data: a habit without `completions`, an object that contains itself, unfinished JSON in storage.
+
+        Repair the functions so that failures come out as the comments describe, while valid data is saved and loaded as before. Do not change the report at the bottom of the file.
+    testTitles:
+      "the file runs to its end":
+        uk: "Файл виконується до кінця"
+        en: "The file runs to its end"
+      "countDoneOn counts the habits done on a day":
+        uk: "countDoneOn рахує звички, виконані в день"
+        en: "countDoneOn counts the habits done on a day"
+      "countDoneOn throws for an unreadable habit, naming it":
+        uk: "countDoneOn кидає помилку для звички, яку не прочитати, і називає її"
+        en: "countDoneOn throws for an unreadable habit, naming it"
+      "the error from countDoneOn keeps the original error as its cause":
+        uk: "Помилка з countDoneOn зберігає оригінальну помилку як cause"
+        en: "The error from countDoneOn keeps the original error as its cause"
+      "saveHabits saves valid habits and reports ok":
+        uk: "saveHabits зберігає правильні звички й повідомляє ok"
+        en: "saveHabits saves valid habits and reports ok"
+      "saveHabits lets a failure reach the caller":
+        uk: "saveHabits передає збій тому, хто викликав"
+        en: "saveHabits lets a failure reach the caller"
+      "loadHabits reads valid stored habits":
+        uk: "loadHabits читає правильні збережені звички"
+        en: "loadHabits reads valid stored habits"
+      "loadHabits gives an empty list when nothing is saved":
+        uk: "loadHabits дає порожній список, коли нічого не збережено"
+        en: "loadHabits gives an empty list when nothing is saved"
+      "loadHabits throws an error caused by the parsing error":
+        uk: "loadHabits кидає помилку, спричинену помилкою розбору"
+        en: "loadHabits throws an error caused by the parsing error"
+      "loadHabits keeps unreadable text in the backup key":
+        uk: "loadHabits зберігає непрочитний текст під ключем резервної копії"
+        en: "loadHabits keeps unreadable text in the backup key"
+    hints:
+      nudge:
+        uk: "Для кожної функції знайди, де може виникнути помилка, і простеж, куди вона подінеться: у порожній блок, у `return` чи назовні без жодного пояснення."
+        en: "For each function, find where an error can appear and follow where it goes: into an empty block, into a `return`, or out of the function with no explanation."
+      explanation:
+        uk: "Порожній `catch` має кидати далі нову помилку: з назвою звички в повідомленні й оригіналом у `cause`. `return` у `finally` підміняє будь-яку помилку — поверни результат після `setItem`, а `finally` прибери. `JSON.parse` потребує власного `try/catch`: у `catch` спершу поклади сирий текст під `BACKUP_KEY`, а тоді кинь нову помилку з помилкою розбору в `cause`."
+        en: "The empty `catch` must throw a new error further: with the habit’s id in the message and the original in `cause`. A `return` in `finally` replaces any error — return the result after `setItem` and remove `finally`. `JSON.parse` needs its own `try/catch`: in `catch`, first put the raw text under `BACKUP_KEY`, then throw a new error with the parsing error in `cause`."
+    solutionNote:
+      uk: "Тепер жодна помилка не зникає. `countDoneOn` кидає помилку, що називає звичку, а причину зберігає в `cause`. `saveHabits` більше не має `return` у `finally`, тож збій `JSON.stringify` чи сховища доходить до того, хто викликав. `loadHabits` розбирає текст під захистом: зіпсований текст лягає в резервний ключ, а помилка пояснює, що сталося, і несе `SyntaxError` у `cause`. На правильних даних поведінка не змінилася."
+      en: "Now no error vanishes. `countDoneOn` throws an error that names the habit and keeps the reason in `cause`. `saveHabits` no longer has a `return` in `finally`, so a failure of `JSON.stringify` or of the storage reaches the caller. `loadHabits` parses the text under guard: damaged text goes into the backup key, and the error explains what happened and carries the `SyntaxError` in `cause`. On valid data the behavior has not changed."
+    feedback:
+      - when: { test: "the file runs to its end" }
+        message:
+          uk: "Ця перевірка чекає, що файл виконається до кінця без необробленої помилки: звіт унизу використовує лише правильні дані. Якщо картка показує помилку з однієї з трьох функцій, перевір, чи вона, як і раніше, працює на правильних даних."
+          en: "This check expects the file to run to its end without an uncaught error: the report at the bottom uses only valid data. If the card shows an error from one of the three functions, check that it still works on valid data."
+      - when: { test: "countDoneOn counts the habits done on a day" }
+        message:
+          uk: "Ця перевірка рахує звички, виконані `2026-03-01` (чекає `2`) і `2026-02-25` (чекає `0`), на правильних даних."
+          en: "This check counts the habits done on `2026-03-01` (expects `2`) and on `2026-02-25` (expects `0`), on valid data."
+      - when: { test: "countDoneOn throws for an unreadable habit, naming it" }
+        message:
+          uk: "Ця перевірка додає звичку `h-07` без `completions` і чекає, що `countDoneOn` кине помилку, у повідомленні якої є `h-07`. Порожній `catch` чи лише `console.log` у ньому помилку ковтають."
+          en: "This check adds habit `h-07` without `completions` and expects `countDoneOn` to throw an error whose message contains `h-07`. An empty `catch`, or one with only `console.log` in it, swallows the error."
+      - when: { test: "the error from countDoneOn keeps the original error as its cause" }
+        message:
+          uk: "Ця перевірка чекає в `cause` помилки з `countDoneOn` оригінальну `TypeError`, що виникла під час читання `completions`."
+          en: "This check expects the `cause` of the error from `countDoneOn` to be the original `TypeError` that happened while reading `completions`."
+      - when: { test: "saveHabits saves valid habits and reports ok" }
+        message:
+          uk: "Ця перевірка зберігає три правильні звички й чекає `{ ok: true, count: 3 }`, а в сховищі під ключем — `{ schemaVersion: 1, records }` з тими самими звичками."
+          en: "This check saves three valid habits and expects `{ ok: true, count: 3 }`, and in storage under the key — `{ schemaVersion: 1, records }` with the same habits."
+      - when: { test: "saveHabits lets a failure reach the caller" }
+        message:
+          uk: "Ця перевірка передає звичку, що містить сама себе, і чекає, що `saveHabits` кине помилку, а не поверне «успіх». `return` у `finally` підміняє будь-яку помилку."
+          en: "This check passes a habit that contains itself and expects `saveHabits` to throw an error instead of returning a “success”. A `return` in `finally` replaces any error."
+      - when: { test: "loadHabits reads valid stored habits" }
+        message:
+          uk: "Ця перевірка зберігає правильні звички й чекає, що `loadHabits` поверне їх масив."
+          en: "This check stores valid habits and expects `loadHabits` to return their array."
+      - when: { test: "loadHabits gives an empty list when nothing is saved" }
+        message:
+          uk: "Ця перевірка нічого не зберігає й чекає від `loadHabits` порожній масив."
+          en: "This check stores nothing and expects an empty array from `loadHabits`."
+      - when: { test: "loadHabits throws an error caused by the parsing error" }
+        message:
+          uk: "Ця перевірка зберігає недописаний JSON і чекає від `loadHabits` помилку, у `cause` якої — `SyntaxError` від `JSON.parse`."
+          en: "This check stores unfinished JSON and expects an error from `loadHabits` whose `cause` is the `SyntaxError` from `JSON.parse`."
+      - when: { test: "loadHabits keeps unreadable text in the backup key" }
+        message:
+          uk: "Ця перевірка зберігає недописаний JSON і чекає точно цей текст під ключем `jsll.habits.v1.backup` після виклику `loadHabits`."
+          en: "This check stores unfinished JSON and expects exactly that text under the key `jsll.habits.v1.backup` after calling `loadHabits`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-07
+    body:
+      uk: "Перш ніж здати крок проєкту, пошукай у своєму коді `catch` і `finally`. Чи є `catch`, з якого помилка нікуди не йде? Чи є `return` у `finally`? Чи розбираєш ти збережений текст під захистом, зберігаючи копію зіпсованих даних?"
+      en: "Before you hand in the project step, search your code for `catch` and `finally`. Is there a `catch` from which the error goes nowhere? Is there a `return` in `finally`? Do you parse the saved text under guard, keeping a copy of damaged data?"
