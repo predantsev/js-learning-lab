@@ -1,38 +1,41 @@
-const items = [
-  { id: "w-01", name: "%%headphones%%", price: 80, acquired: false },
-  { id: "w-02", name: "%%lamp%%", price: 45, acquired: false },
-  { id: "w-03", name: "%%bicycle%%", price: 240, acquired: false },
-  { id: "w-04", name: "%%book%%", price: 25, acquired: true },
-  { id: "w-05", name: "%%tickets%%", price: null, acquired: false },
+const tasks = [
+  { id: "t-01", title: "%%water%%", dueDate: "2026-03-02", done: false },
+  { id: "t-02", title: "%%books%%", dueDate: "2026-03-01", done: false },
+  { id: "t-03", title: "%%grandma%%", dueDate: null, done: false },
+  { id: "t-04", title: "%%internet%%", dueDate: "2026-02-27", done: true },
+  { id: "t-05", title: "%%dentist%%", dueDate: "2026-03-10", done: false },
 ];
 
 // Another valid approach: block bodies with return, one combined filter,
 // and sort on the intermediate array (filter already made a new one). The old loop is gone.
-const isWanted = (item) => {
-  return item.acquired === false;
+const isPending = (task) => {
+  return task.done === false;
 };
 
-const matchesQuery = (item, query) => {
-  const name = item.name.toLowerCase();
-  return name.includes(query.toLowerCase());
+const matchesQuery = (task, query) => {
+  const title = task.title.toLowerCase();
+  return title.includes(query.toLowerCase());
 };
 
-const byPriceAsc = (a, b) => {
-  const aMissing = a.price === null;
-  const bMissing = b.price === null;
+const byDueDate = (a, b) => {
+  const aMissing = a.dueDate === null;
+  const bMissing = b.dueDate === null;
   if (aMissing || bMissing) {
     return aMissing === bMissing ? 0 : aMissing ? 1 : -1;
   }
-  return a.price - b.price;
+  return a.dueDate.localeCompare(b.dueDate);
 };
 
-const toLabel = (item) => {
-  return item.name + ": " + (item.price ?? "%%noPrice%%");
+const toLabel = (task) => {
+  if (task.dueDate === null) {
+    return task.title + " · %%noDate%%";
+  }
+  return task.title + " · " + task.dueDate;
 };
 
-function wantedLabels(list, query) {
-  const wanted = list.filter((item) => isWanted(item) && matchesQuery(item, query));
-  return wanted.sort(byPriceAsc).map(toLabel);
+function pendingLabels(list, query) {
+  const pending = list.filter((task) => isPending(task) && matchesQuery(task, query));
+  return pending.sort(byDueDate).map(toLabel);
 }
 
-console.log(wantedLabels(items, ""));
+console.log(pendingLabels(tasks, ""));

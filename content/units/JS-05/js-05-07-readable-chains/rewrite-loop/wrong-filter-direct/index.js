@@ -19,14 +19,14 @@ const byDueDate = (a, b) => {
 
 const toLabel = (task) => task.title + " · " + (task.dueDate ?? "%%noDate%%");
 
-// map comes first: every later step receives labels instead of tasks,
-// and matchesQuery crashes reading task.title of a label.
+// filter calls matchesQuery(task, index, list): the second argument is the index, not the query,
+// so query.toLowerCase is not a function.
 function pendingLabels(list, query) {
   return list
-    .map(toLabel)
     .filter(isPending)
-    .filter((task) => matchesQuery(task, query))
-    .toSorted(byDueDate);
+    .filter(matchesQuery)
+    .toSorted(byDueDate)
+    .map(toLabel);
 }
 
 console.log(pendingLabels(tasks, ""));
