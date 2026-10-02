@@ -1,0 +1,424 @@
+id: js-13-02-generators
+unit: JS-13
+title:
+  uk: "Генератори та for-await (ознайомлення)"
+  en: "Generators and for-await (awareness)"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Написати генератор, що ліниво віддає сторінки записів, і передбачити, коли насправді виконується його тіло."
+    en: "Write a generator that yields pages of records lazily and predict when its body actually runs."
+  - uk: "Зупинити генератор достроково через `break` і показати, що блок `finally` всередині нього все одно виконується."
+    en: "Stop a generator early with `break` and show that a `finally` block inside it still runs."
+  - uk: "Прочитати цикл `for await...of` над асинхронним генератором і сказати, на що він чекає на кожному кроці."
+    en: "Read a `for await...of` loop over an async generator and say what it waits for on each step."
+prerequisites: [js-13-01-iterable-protocol, js-08-05-async-await]
+subskills:
+  - { family: J-12, skill: "generators and for-await awareness", depth: intro }
+glossary: [generator, yield, lazy-evaluation, async-iterator]
+selfCheck: [predict-order, paginate]
+
+blocks:
+  - id: function-star
+    kind: explanation
+    title:
+      uk: "Функція, яка вміє ставати на паузу"
+      en: "A function that can pause"
+    body:
+      uk: |
+        Писати ітератор вручну — з `next()`, `index` і `{ value, done }` — довго. [[generator|Генератор]] робить те саме коротше:
+
+        ```js
+        function* firstTwo(list) {   // the star makes it a generator
+          yield list[0];
+          yield list[1];
+        }
+        const gen = firstTwo(["a", "b"]);   // nothing has run yet
+        gen.next(); // { value: "a", done: false }
+        ```
+
+        Головне — **виклик `firstTwo(...)` не виконує тіла**. Він повертає об’єкт-генератор, тобто ітератор. Тіло починає працювати лише з першим `next()` і йде до найближчого [[yield|`yield`]]: там функція віддає значення й **ставиться на паузу**, зберігаючи свої змінні. Наступний `next()` продовжує з того самого місця.
+
+        Тому генератор — [[lazy-evaluation|лінивий]]: він обчислює наступне значення тільки тоді, коли його просять. `for...of` і spread працюють із ним, бо генератор — iterable.
+      en: |
+        Writing an iterator by hand — with `next()`, `index` and `{ value, done }` — takes a while. A [[generator]] does the same in less code:
+
+        ```js
+        function* firstTwo(list) {   // the star makes it a generator
+          yield list[0];
+          yield list[1];
+        }
+        const gen = firstTwo(["a", "b"]);   // nothing has run yet
+        gen.next(); // { value: "a", done: false }
+        ```
+
+        The key point: **calling `firstTwo(...)` does not run the body**. It returns a generator object, which is an iterator. The body starts only with the first `next()` and runs up to the nearest [[yield|`yield`]]: there the function hands out a value and **pauses**, keeping its variables. The next `next()` continues from that very spot.
+
+        That makes a generator [[lazy-evaluation|lazy]]: it computes the next value only when asked. `for...of` and spread work with it, because a generator is iterable.
+
+  - id: predict-order
+    kind: prediction
+    prompt:
+      uk: "Генератор друкує рядок перед кожним `yield` і після нього, а цикл бере два значення й виходить через `break`. Що з’явиться в консолі?"
+      en: "The generator prints a line before and after each `yield`, and the loop takes two values and leaves with `break`. What appears in the console?"
+    code: |
+      function* numbered(ids) {
+        console.log("start");
+        for (const id of ids) {
+          console.log("before", id);
+          yield id;
+          console.log("after", id);
+        }
+        console.log("end");
+      }
+
+      const gen = numbered(["t-01", "t-02", "t-03"]);
+      console.log("created");
+      for (const id of gen) {
+        console.log("got", id);
+        if (id === "t-02") {
+          break;
+        }
+      }
+      console.log("done");
+    verify:
+      logs: ["created", "start", "before t-01", "got t-01", "after t-01", "before t-02", "got t-02", "done"]
+    answer:
+      type: choice
+      options:
+        - id: lazy
+          code: "created\nstart\nbefore t-01\ngot t-01\nafter t-01\nbefore t-02\ngot t-02\ndone"
+        - id: runs-on-call
+          code: "start\ncreated\nbefore t-01\ngot t-01\nafter t-01\nbefore t-02\ngot t-02\ndone"
+          why:
+            uk: "Виклик `numbered(...)` лише створює генератор; тіло не виконується, доки цикл не попросить перше значення. Тому `created` іде першим."
+            en: "Calling `numbered(...)` only creates the generator; the body does not run until the loop asks for the first value. So `created` comes first."
+        - id: eager
+          code: "created\nstart\nbefore t-01\nafter t-01\nbefore t-02\nafter t-02\nbefore t-03\nafter t-03\nend\ngot t-01\ngot t-02\ndone"
+          why:
+            uk: "Генератор не збирає всіх результатів наперед. Кожен `yield` ставить його на паузу, і тіло циклу виконується саме в цю паузу."
+            en: "A generator does not collect all the results in advance. Every `yield` pauses it, and the body of the loop runs exactly during that pause."
+        - id: finishes-after-break
+          code: "created\nstart\nbefore t-01\ngot t-01\nafter t-01\nbefore t-02\ngot t-02\nafter t-02\ndone"
+          why:
+            uk: "Після `break` цикл більше не викликає `next()`, тож генератор так і не продовжить роботу після другого `yield`: `after t-02` не друкується."
+            en: "After `break` the loop never calls `next()` again, so the generator never continues after the second `yield`: `after t-02` is not printed."
+      correct: [lazy]
+    explanation:
+      uk: "Тіло генератора й тіло циклу виконуються по черзі: `next()` запускає генератор до `yield`, цикл обробляє значення, наступний `next()` продовжує генератор. Після `break` генератор лишається на паузі назавжди — `after t-02` і `end` не друкуються."
+      en: "The body of the generator and the body of the loop take turns: `next()` runs the generator up to a `yield`, the loop handles the value, the next `next()` resumes the generator. After `break` the generator stays paused forever — `after t-02` and `end` are not printed."
+
+  - id: turns
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Цикл і генератор передають одне одному хід"
+      en: "The loop and the generator hand the turn to each other"
+    textEquivalent:
+      uk: "Дві учасники: цикл for...of і генератор pages(tasks, 2). Цикл викликає pages(tasks, 2) — з’являється об’єкт-генератор, але його тіло ще не виконується. Перший next() запускає тіло: воно створює першу сторінку й зупиняється на yield, віддаючи сторінку з двох справ. Цикл виконує своє тіло зі сторінкою, поки генератор стоїть на паузі. Другий next() продовжує генератор із того ж місця, той віддає другу сторінку й знову стає на паузу. Тепер цикл виконує break. break не просто виходить із циклу: він викликає в генератора метод return(). Генератор продовжує роботу так, ніби на місці yield стоїть return, тож виконується його блок finally, і лише тоді генератор повідомляє done: true. Третя сторінка так і не створюється."
+      en: "Two participants: the for...of loop and the generator pages(tasks, 2). The loop calls pages(tasks, 2) — a generator object appears, but its body does not run yet. The first next() starts the body: it builds the first page and stops at yield, handing out a page of two tasks. The loop runs its body with that page while the generator stays paused. The second next() resumes the generator from the same spot; it hands out the second page and pauses again. Now the loop runs break. break does not just leave the loop: it calls the generator's return() method. The generator continues as if a return stood where the yield was, so its finally block runs, and only then does the generator report done: true. The third page is never built."
+    spec:
+      actors:
+        - { id: loop, label: "for...of" }
+        - { id: gen, label: "pages(tasks, 2)" }
+      intro:
+        uk: "Два учасники: цикл `for...of` і генератор `pages(tasks, 2)` із блоком `try...finally` навколо `yield`."
+        en: "Two participants: the `for...of` loop and the generator `pages(tasks, 2)` with a `try...finally` block around its `yield`."
+      messages:
+        - from: loop
+          to: gen
+          label: "pages(tasks, 2)"
+          caption:
+            uk: "Виклик створює об’єкт-генератор. Тіло **ще не виконується** — жодного рядка."
+            en: "The call creates a generator object. The body **does not run yet** — not a single line."
+        - from: loop
+          to: gen
+          label: "next()"
+          caption:
+            uk: "Перший `next()`: тіло починає працювати й іде до першого `yield`."
+            en: "The first `next()`: the body starts running and goes to the first `yield`."
+        - from: gen
+          to: loop
+          label: "yield [t-01, t-02]"
+          kind: return
+          caption:
+            uk: "Генератор віддає першу сторінку й **стає на паузу**. Тепер працює тіло циклу."
+            en: "The generator hands out the first page and **pauses**. Now the body of the loop runs."
+        - from: loop
+          to: gen
+          label: "next()"
+          caption:
+            uk: "Другий `next()` продовжує генератор із того самого місця — змінні збережено."
+            en: "The second `next()` resumes the generator from the same spot — its variables are kept."
+        - from: gen
+          to: loop
+          label: "yield [t-03, t-04]"
+          kind: return
+          caption:
+            uk: "Друга сторінка. Генератор знову на паузі."
+            en: "The second page. The generator is paused again."
+        - from: loop
+          to: gen
+          label: "return()"
+          caption:
+            uk: "Цикл виконує `break`. Перш ніж вийти, він викликає в генератора `return()`."
+            en: "The loop runs `break`. Before leaving, it calls the generator's `return()`."
+        - from: gen
+          to: gen
+          label: "finally"
+          kind: note
+          caption:
+            uk: "Генератор продовжує так, ніби на місці `yield` стоїть `return`: виконується його `finally`. Тут закривають те, що генератор відкрив."
+            en: "The generator continues as if a `return` stood where the `yield` was: its `finally` runs. This is where you close what the generator opened."
+        - from: gen
+          to: loop
+          label: "{ done: true }"
+          kind: return
+          caption:
+            uk: "Генератор завершено. Третю сторінку так і не створено — лінивість зекономила роботу."
+            en: "The generator is finished. The third page was never built — laziness saved the work."
+
+  - id: pages
+    kind: example
+    runtime: browser-js
+    dir: pages
+    entry: index.js
+    strings:
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      bill: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      opened: { uk: "генератор почав роботу", en: "the generator started" }
+      finished: { uk: "генератор дійшов до кінця", en: "the generator reached the end" }
+      arrived: { uk: "сторінка прийшла, справ:", en: "a page arrived, tasks:" }
+      all: { uk: "усі сторінки отримано", en: "all pages received" }
+    title:
+      uk: "Сторінки справ: break, finally і for await"
+      en: "Pages of tasks: break, finally and for await"
+    body:
+      uk: |
+        Генератор `pages` віддає справи сторінками по дві, а цикл бере першу сторінку й виходить. Натисни **Запустити**: рядка «генератор дійшов до кінця» немає — після `break` генератор стоїть на паузі й далі не йде.
+
+        Друга частина — для ознайомлення. `async function*` — **асинхронний генератор**: перед кожною сторінкою він чекає (`await`) 300 мс, як чекав би на відповідь сервера. Його перебирає [[async-iterator|`for await...of`]]: на кожному кроці цикл чекає, доки генератор віддасть наступну сторінку, і лише потім просить ще одну.
+      en: |
+        The generator `pages` gives tasks in pages of two, and the loop takes the first page and leaves. Press **Run**: there is no line “the generator reached the end” — after `break` the generator stays paused and goes no further.
+
+        The second part is for awareness. `async function*` is an **async generator**: before every page it waits (`await`) 300 ms, as it would wait for a server's answer. It is walked by [[async-iterator|`for await...of`]]: on every step the loop waits until the generator hands out the next page, and only then asks for another.
+    tryIt:
+      uk: |
+        1. Обгорни цикл у `pages` блоком `try...finally`: перед рядком `for (let start = 0; …)` напиши `try {`, а після закривної дужки циклу — `} finally { console.log("finally"); }`. Запусти: тепер після першої сторінки з’являється `finally`. `break` викликав у генератора `return()`, і `finally` виконався.
+        2. Прибери `break;` у першому циклі. Тепер виводяться три сторінки, потім «генератор дійшов до кінця», а `finally` — наприкінці, коли генератор завершився сам.
+        3. У `delayedPages` заміни `300` на `600`. Між рядками «сторінка прийшла» тепер помітно довша пауза: дві сторінки чекають одна за одною, а не одночасно.
+      en: |
+        1. Wrap the loop in `pages` in a `try...finally` block: before the line `for (let start = 0; …)` write `try {`, and after the closing brace of the loop write `} finally { console.log("finally"); }`. Run: now `finally` appears after the first page. `break` called the generator's `return()`, and `finally` ran.
+        2. Remove `break;` in the first loop. Now three pages are printed, then “the generator reached the end”, and `finally` comes at the end, when the generator finished by itself.
+        3. In `delayedPages` replace `300` with `600`. The pause between the “a page arrived” lines is now noticeably longer: the two pages wait one after the other, not at the same time.
+
+  - id: predict-for-await
+    kind: prediction
+    prompt:
+      uk: "Асинхронний генератор друкує `request` перед тим, як чекати на кожну сторінку, а цикл друкує `got`. У якому порядку з’являться рядки?"
+      en: "An async generator prints `request` before it waits for each page, and the loop prints `got`. In which order do the lines appear?"
+    code: |
+      async function* loadPages() {
+        for (const page of [1, 2, 3]) {
+          console.log("request", page);
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          yield page;
+        }
+      }
+
+      for await (const page of loadPages()) {
+        console.log("got", page);
+      }
+    verify:
+      logs: ["request 1", "got 1", "request 2", "got 2", "request 3", "got 3"]
+    answer:
+      type: choice
+      options:
+        - id: one-by-one
+          code: "request 1\ngot 1\nrequest 2\ngot 2\nrequest 3\ngot 3"
+        - id: all-at-once
+          code: "request 1\nrequest 2\nrequest 3\ngot 1\ngot 2\ngot 3"
+          why:
+            uk: "`for await` не запускає всі кроки одночасно. Він просить наступне значення лише тоді, коли попереднє вже прийшло й тіло циклу виконалось, тож кожен запит починається після попереднього `got`."
+            en: "`for await` does not start all the steps at once. It asks for the next value only after the previous one has arrived and the loop body has run, so each request starts after the previous `got`."
+        - id: got-first
+          code: "got 1\nrequest 1\ngot 2\nrequest 2\ngot 3\nrequest 3"
+          why:
+            uk: "Генератор ліниво доходить до `yield` лише після `request` і `await`: значення не може прийти раніше, ніж його попросили."
+            en: "The generator reaches its `yield` only after `request` and the `await`: a value cannot arrive before it was asked for."
+      correct: [one-by-one]
+    explanation:
+      uk: "Асинхронний генератор теж лінивий: кожен `request` друкується лише тоді, коли `for await` попросив наступне значення, а це стається після попереднього `got`. Три сторінки по 100 мс разом чекають близько 300 мс. Щоб запустити запити одночасно, потрібен інший інструмент — наприклад, `Promise.all`."
+      en: "An async generator is lazy too: each `request` is printed only when `for await` asks for the next value, which happens after the previous `got`. Three pages of 100 ms each wait about 300 ms in total. To start the requests at the same time you need another tool — for example `Promise.all`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: що зупиняє await"
+      en: "Recall: what await pauses"
+    items:
+      - id: await-pauses
+        from: js-08-05-async-await
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          async function load() {
+            console.log("A");
+            await null;
+            console.log("C");
+          }
+          load();
+          console.log("B");
+        verify:
+          logs: ["A", "B", "C"]
+        answer:
+          type: choice
+          options:
+            - id: abc
+              code: "A\nB\nC"
+            - id: acb
+              code: "A\nC\nB"
+              why:
+                uk: "`await` ставить на паузу лише функцію `load`, а не всю програму. Поки вона чекає, код після виклику `load()` продовжує роботу й друкує `B`."
+                en: "`await` pauses only the function `load`, not the whole program. While it waits, the code after the call `load()` keeps going and prints `B`."
+            - id: bac
+              code: "B\nA\nC"
+              why:
+                uk: "Тіло асинхронної функції до першого `await` виконується одразу під час виклику, тож `A` друкується раніше за `B`."
+                en: "The body of an async function runs right away during the call, up to the first `await`, so `A` is printed before `B`."
+          correct: [abc]
+        explanation:
+          uk: "`await` ставить на паузу лише свою функцію, а решта коду продовжує. `yield` у генераторі схожий: пауза стосується лише генератора, а хід переходить до того, хто викликав `next()`."
+          en: "`await` pauses only its own function, and the rest of the code continues. `yield` in a generator is similar: the pause applies only to the generator, and control passes to whoever called `next()`."
+
+  - id: paginate
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: paginate
+    entry: index.js
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      read: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      words: { uk: "Вчити англійські слова", en: "Learn English words" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+      stretch: { uk: "Розтяжка", en: "Stretching" }
+    title:
+      uk: "Генератор сторінок для звичок"
+      en: "A page generator for habits"
+    instructions:
+      uk: |
+        Напиши генератор `paginate(records, size)`, який віддає записи **сторінками** — масивами щонайбільше з `size` записів, у тому самому порядку.
+
+        - 7 записів по 3 — сторінки з 3, 3 і 1 запису; 6 записів по 3 — рівно дві сторінки, **без порожньої** третьої;
+        - для порожнього списку — жодної сторінки, для одного запису — одна сторінка з ним;
+        - `paginate` має бути функцією-генератором (`function*`);
+        - сторінки будуються **ліниво**: перевірка бере першу сторінку, потім додає запис у кінець вихідного масиву й очікує побачити його в останній сторінці.
+
+        Унизу файла готовий код: він друкує розміри сторінок для 7 звичок — `3,3,1`.
+      en: |
+        Write a generator `paginate(records, size)` that gives the records in **pages** — arrays of at most `size` records, in the same order.
+
+        - 7 records with size 3 give pages of 3, 3 and 1 record; 6 records with size 3 give exactly two pages, **without an empty** third one;
+        - an empty list gives no page at all, a single record gives one page with it;
+        - `paginate` must be a generator function (`function*`);
+        - the pages are built **lazily**: a check takes the first page, then adds a record to the end of the source array and expects to see it in the last page.
+
+        At the bottom of the file there is ready code: it prints the page sizes for 7 habits — `3,3,1`.
+    testTitles:
+      "the program prints 3,3,1":
+        uk: "Програма друкує 3,3,1"
+        en: "The program prints 3,3,1"
+      "7 records in pages of 3 give 3 + 3 + 1":
+        uk: "7 записів сторінками по 3 — це 3 + 3 + 1"
+        en: "7 records in pages of 3 give 3 + 3 + 1"
+      "0 records give no pages at all":
+        uk: "0 записів — жодної сторінки"
+        en: "0 records give no pages at all"
+      "1 record gives one page with it":
+        uk: "1 запис — одна сторінка з ним"
+        en: "1 record gives one page with it"
+      "an exact multiple ends without an empty page":
+        uk: "Кратна кількість закінчується без порожньої сторінки"
+        en: "An exact multiple ends without an empty page"
+      "paginate is a generator function":
+        uk: "`paginate` — функція-генератор"
+        en: "`paginate` is a generator function"
+      "a page is built only when it is asked for":
+        uk: "Сторінка будується лише тоді, коли її просять"
+        en: "A page is built only when it is asked for"
+    hints:
+      nudge:
+        uk: "Де починається кожна сторінка? Перша — з номера 0, наступна — на `size` далі. Коли саме варто зупинитися, щоб не віддати порожню сторінку?"
+        en: "Where does each page start? The first at index 0, the next `size` further on. When exactly should you stop so as not to hand out an empty page?"
+      explanation:
+        uk: |
+          Генератор може віддавати значення прямо з циклу — кожен `yield` ставить його на паузу до наступного запиту. Ось той самий прийом для іншої задачі — пари сусідніх днів:
+
+          ```js
+          function* neighbours(days) {
+            for (let i = 0; i + 1 < days.length; i = i + 1) {
+              yield [days[i], days[i + 1]];   // one pair per request
+            }
+          }
+          ```
+
+          Для сторінок крок циклу — не 1, а `size`, а шматок масиву від початку сторінки дає `slice` (кінець за межами масиву він просто обрізає). Не збирай усі сторінки в масив перед першим `yield`: тоді запис, доданий пізніше, у сторінки не потрапить.
+        en: |
+          A generator can hand out values straight from a loop — each `yield` pauses it until the next request. Here is the same technique for another task — pairs of neighbouring days:
+
+          ```js
+          function* neighbours(days) {
+            for (let i = 0; i + 1 < days.length; i = i + 1) {
+              yield [days[i], days[i + 1]];   // one pair per request
+            }
+          }
+          ```
+
+          For pages the loop step is not 1 but `size`, and `slice` gives the piece of the array from the start of a page (it simply cuts off an end beyond the array). Do not collect all pages into an array before the first `yield`: then a record added later does not get into the pages.
+    solutionNote:
+      uk: "Цикл іде з кроком `size`, а умова `start < records.length` зупиняє його до порожньої сторінки. Кожна сторінка будується лише тоді, коли цикл споживача просить наступну, тому генератор читає масив у той момент — і бачить записи, додані після першої сторінки. Варіант із накопиченням `page` і `yield` при заповненні теж лінивий."
+      en: "The loop steps by `size`, and the condition `start < records.length` stops it before an empty page. Each page is built only when the consumer's loop asks for the next one, so the generator reads the array at that moment — and sees records added after the first page. A variant that fills a `page` array and yields it when full is lazy too."
+    feedback:
+      - when: { test: "the program prints 3,3,1" }
+        message:
+          uk: "Ця перевірка очікує один рядок `3,3,1`: розміри сторінок для 7 звичок по 3. Порожній рядок означає, що генератор не віддав жодної сторінки."
+          en: "This check expects one line `3,3,1`: the page sizes for 7 habits with size 3. An empty line means the generator handed out no pages."
+      - when: { test: "7 records in pages of 3 give 3 + 3 + 1" }
+        message:
+          uk: "Ця перевірка очікує для `[1…7]` і розміру 3 рівно `[[1, 2, 3], [4, 5, 6], [7]]`: сторінки у вихідному порядку, остання — неповна."
+          en: "This check expects exactly `[[1, 2, 3], [4, 5, 6], [7]]` for `[1…7]` and size 3: pages in the original order, the last one partial."
+      - when: { test: "0 records give no pages at all" }
+        message:
+          uk: "Ця перевірка очікує, що для порожнього масиву генератор не віддасть нічого: `[]`, а не `[[]]`."
+          en: "This check expects the generator to give nothing for an empty array: `[]`, not `[[]]`."
+      - when: { test: "1 record gives one page with it" }
+        message:
+          uk: "Ця перевірка очікує для одного запису одну сторінку: `[[\"only\"]]`."
+          en: "This check expects one page for a single record: `[[\"only\"]]`."
+      - when: { test: "an exact multiple ends without an empty page" }
+        message:
+          uk: "Ця перевірка очікує для 6 записів по 3 рівно дві сторінки. Порожня третя з’являється, коли цикл продовжується ще й тоді, коли початок сторінки дорівнює довжині масиву."
+          en: "This check expects exactly two pages for 6 records with size 3. An empty third one appears when the loop also continues while the start of a page equals the length of the array."
+      - when: { test: "paginate is a generator function" }
+        message:
+          uk: "Ця перевірка очікує, що `paginate(...)` повертає генератор: об’єкт із методом `next`, який сам собі ітератор. Функцію оголошують як `function*`, а сторінки віддають через `yield`, а не повертають масивом."
+          en: "This check expects `paginate(...)` to return a generator: an object with a `next` method that is its own iterator. The function is declared with `function*`, and pages are handed out with `yield`, not returned as an array."
+      - when: { test: "a page is built only when it is asked for" }
+        message:
+          uk: "Ця перевірка бере першу сторінку, додає `8` у кінець вихідного масиву й очікує далі `[[4, 5, 6], [7, 8]]`. Генератор має будувати кожну сторінку, коли її просять, а не всі одразу на першому кроці."
+          en: "This check takes the first page, adds `8` to the end of the source array and then expects `[[4, 5, 6], [7, 8]]`. The generator must build each page when it is asked for, not all of them on the first step."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-13
+    body:
+      uk: "Саме такий `paginate(records, size)` ти поставиш за кнопкою «Показати ще» у своєму проєкті: кожне натискання викликатиме `next()` і показуватиме наступну сторінку, а коли `done` стане `true`, кнопка зникне."
+      en: "This very `paginate(records, size)` will sit behind the “Show more” button in your project: each press will call `next()` and show the next page, and when `done` becomes `true`, the button disappears."

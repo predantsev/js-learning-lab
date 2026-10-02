@@ -1,0 +1,411 @@
+id: js-13-08-module-cycles
+unit: JS-13
+title:
+  uk: "Діагностуємо циклічне завантаження модулів"
+  en: "Diagnosing circular module loads"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Намалювати граф імпортів трьох модулів і знайти цикл, через який один модуль читає значення іншого ще до його ініціалізації."
+    en: "Draw the import graph of three modules and find the cycle that makes one module read a binding before it is initialized."
+  - uk: "Розірвати цикл: винести спільне в окремий модуль або відкласти звернення до моменту виклику."
+    en: "Break the cycle by moving shared code into its own module or by deferring the access until call time."
+prerequisites: [js-13-07-memory-leak-diagnosis, js-07-07-live-bindings-dynamic-import]
+subskills:
+  - { family: J-10, skill: "module load/circular dependency diagnosis", depth: practice }
+glossary: [module-evaluation-order]
+selfCheck: [predict-cycle, untangle]
+
+blocks:
+  - id: evaluation-order
+    kind: explanation
+    title:
+      uk: "У якому порядку виконуються модулі"
+      en: "In which order modules run"
+    body:
+      uk: |
+        У JS-07 ти бачив, що [[circular-dependency|циклічна залежність]] може залишити значення неініціалізованим. Тепер — точний механізм. Браузер спершу завантажує **весь** граф імпортів, а потім виконує модулі в такому [[module-evaluation-order|порядку]]:
+
+        - перш ніж виконати модуль, він виконує все, що той імпортує, — глибина першою;
+        - якщо імпорт веде до модуля, який **уже почали обробляти** (це цикл), браузер не ходить по колу: він виконує поточний модуль далі, хоча в того модуля ще не виконано жодного рядка.
+
+        Тож у циклі `a.js → b.js → a.js` модуль `b.js` виконується **раніше** за `a.js`. Якщо `b.js` на верхньому рівні читає `const` з `a.js`, це `ReferenceError: Cannot access '…' before initialization` — та сама temporal dead zone, що й для змінної, прочитаної до свого рядка. А якщо читання стоїть усередині функції, яку викличуть пізніше, все працює: до того часу `a.js` уже виконався. Тому цикл може роками жити в робочому застосунку — і вистрілити після невинного переміщення одного рядка.
+      en: |
+        In JS-07 you saw that a [[circular-dependency]] can leave a value uninitialized. Now the exact mechanism. The browser first loads the **whole** import graph, then runs the modules in this [[module-evaluation-order|order]]:
+
+        - before running a module, it runs everything that module imports — depth first;
+        - if an import leads to a module it has **already started on** (that is a cycle), the browser does not go round in circles: it carries on with the current module, although not a single line of that other module has run yet.
+
+        So in the cycle `a.js → b.js → a.js`, `b.js` runs **before** `a.js`. If `b.js` reads a `const` of `a.js` at its top level, that is `ReferenceError: Cannot access '…' before initialization` — the same temporal dead zone as for a variable read before its line. But if the read sits inside a function called later, everything works: by then `a.js` has run. That is why a cycle can live for years in a working app — and fire after an innocent move of one line.
+
+  - id: predict-cycle
+    kind: prediction
+    prompt:
+      uk: "`index.js` імпортує `a.js`, `a.js` імпортує `b.js`, а `b.js` — знову `a.js`. Є два варіанти `b.js`. Що станеться з кожним?"
+      en: "`index.js` imports `a.js`, `a.js` imports `b.js`, and `b.js` imports `a.js` again. There are two versions of `b.js`. What happens with each?"
+    code: |
+      // index.js
+      import { label } from "./a.js";
+      console.log(label());
+
+      // a.js
+      import { suffix } from "./b.js";
+      console.log("a runs");
+      export const PREFIX = "w-";
+      export function label() {
+        return PREFIX + suffix();
+      }
+
+      // b.js, version 1: reads PREFIX inside a function
+      import { PREFIX } from "./a.js";
+      console.log("b runs");
+      export function suffix() {
+        return PREFIX.length;
+      }
+
+      // b.js, version 2: reads PREFIX at the top level
+      import { PREFIX } from "./a.js";
+      console.log("b runs");
+      const size = PREFIX.length;
+      export function suffix() {
+        return size;
+      }
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: depends-on-when
+          text:
+            uk: "Версія 1 друкує `b runs`, `a runs`, `w-2`. Версія 2 друкує `b runs` і падає з `ReferenceError: Cannot access 'PREFIX' before initialization`."
+            en: "Version 1 prints `b runs`, `a runs`, `w-2`. Version 2 prints `b runs` and fails with `ReferenceError: Cannot access 'PREFIX' before initialization`."
+        - id: always-error
+          text:
+            uk: "Обидві версії падають ще до першого рядка: циклічний імпорт — завжди помилка завантаження."
+            en: "Both versions fail before the first line: a circular import is always a load error."
+          why:
+            uk: "Сам цикл не помилка: браузер його обробляє. Ламає лише **читання** значення, яке ще не ініціалізовано, — у версії 1 його читають пізніше, коли все вже готово."
+            en: "The cycle itself is not an error: the browser handles it. Only **reading** a value that is not initialized yet breaks things — version 1 reads it later, when everything is ready."
+        - id: undefined
+          text:
+            uk: "Версія 1 друкує `w-2`, а версія 2 — `w-NaN`, бо `PREFIX` поки що `undefined`."
+            en: "Version 1 prints `w-2`, and version 2 prints `w-NaN`, because `PREFIX` is `undefined` so far."
+          why:
+            uk: "`const`, оголошений через `export const`, до свого рядка не `undefined`, а в temporal dead zone: читання кидає `ReferenceError`. Тихе `undefined` дає CommonJS — про нього нижче."
+            en: "A `const` declared with `export const` is not `undefined` before its line, it is in the temporal dead zone: reading it throws a `ReferenceError`. A silent `undefined` is what CommonJS gives — more on that below."
+        - id: a-first
+          text:
+            uk: "В обох версіях спершу `a runs`, потім `b runs`: модуль, який імпортували першим, і виконується першим."
+            en: "In both versions first `a runs`, then `b runs`: the module imported first also runs first."
+          why:
+            uk: "Перш ніж виконати `a.js`, браузер виконує його імпорт — `b.js`. Тому `b runs` завжди друкується першим."
+            en: "Before running `a.js`, the browser runs its import — `b.js`. So `b runs` is always printed first."
+      correct: [depends-on-when]
+    explanation:
+      uk: "Цей приклад запущено в пісочниці платформи в обох версіях: версія 1 вивела `b runs`, `a runs`, `w-2`; версія 2 — `b runs` і помилку в `b.js`, рядок 3. Цикл однаковий; різниця лише в тому, **коли** читають значення."
+      en: "This example was run in the platform's sandbox in both versions: version 1 printed `b runs`, `a runs`, `w-2`; version 2 printed `b runs` and an error in `b.js`, line 3. The cycle is the same; the only difference is **when** the value is read."
+
+  - id: cycle-diagram
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Хто виконується першим у циклі з трьох модулів"
+      en: "Who runs first in a cycle of three modules"
+    textEquivalent:
+      uk: "Чотири модулі: index.js імпортує records.js, records.js імпортує validate.js, validate.js імпортує format.js, а format.js імпортує records.js — це стрілка, що замикає цикл. Браузер починає з index.js, але спершу має виконати його імпорт records.js; той, своєю чергою, чекає на validate.js, а validate.js — на format.js. format.js імпортує records.js, який уже в роботі, тож браузер не повертається до нього, а виконує format.js першим. На цей момент у records.js не виконано жодного рядка, і MAX_NAME ще не ініціалізовано. format.js на верхньому рівні читає MAX_NAME — ReferenceError. Виправлення: перенести MAX_NAME у constants.js, який нічого не імпортує; тоді і records.js, і format.js імпортують його звідти, а циклу більше немає."
+      en: "Four modules: index.js imports records.js, records.js imports validate.js, validate.js imports format.js, and format.js imports records.js — that is the arrow closing the cycle. The browser starts with index.js, but first it must run its import records.js; that in turn waits for validate.js, and validate.js for format.js. format.js imports records.js, which is already in progress, so the browser does not go back to it but runs format.js first. At that moment not a single line of records.js has run, and MAX_NAME is not initialized yet. format.js reads MAX_NAME at its top level — a ReferenceError. The fix: move MAX_NAME into constants.js, which imports nothing; then records.js and format.js both import it from there, and there is no cycle any more."
+    spec:
+      layout: grid
+      nodes:
+        - { id: index, label: "index.js", col: 0, row: 0 }
+        - { id: records, label: "records.js", col: 1, row: 0 }
+        - { id: validate, label: "validate.js", col: 1, row: 1 }
+        - { id: format, label: "format.js", col: 0, row: 1 }
+        - { id: constants, label: "constants.js", col: 0, row: 2 }
+      edges:
+        - { id: i-r, from: index, to: records }
+        - { id: r-v, from: records, to: validate }
+        - { id: v-f, from: validate, to: format }
+        - { id: f-r, from: format, to: records, label: { uk: "замикає цикл", en: "closes the cycle" } }
+        - { id: f-c, from: format, to: constants, kind: dashed }
+      hidden: [constants, f-c]
+      steps:
+        - caption:
+            uk: "Граф імпортів: `index → records → validate → format`, і `format` імпортує `records` — цикл."
+            en: "The import graph: `index → records → validate → format`, and `format` imports `records` — a cycle."
+        - caption:
+            uk: "Перш ніж виконати `records.js`, браузер мусить виконати його імпорт `validate.js`, а той — `format.js`. `records.js` уже «в роботі», але жодного його рядка ще не виконано."
+            en: "Before running `records.js` the browser must run its import `validate.js`, and that one `format.js`. `records.js` is already “in progress”, but not one of its lines has run."
+          highlight: [records, i-r, r-v, v-f]
+        - caption:
+            uk: "`format.js` імпортує `records.js`, який уже в роботі. Браузер не повертається туди й виконує `format.js` **першим** — а той на верхньому рівні читає `MAX_NAME`: `ReferenceError`."
+            en: "`format.js` imports `records.js`, which is already in progress. The browser does not go back and runs `format.js` **first** — and it reads `MAX_NAME` at its top level: a `ReferenceError`."
+          highlight: [format, f-r]
+          annotate:
+            - { id: f-r, text: { uk: "MAX_NAME ще не ініціалізовано", en: "MAX_NAME not initialized yet" } }
+        - caption:
+            uk: "Виправлення: `MAX_NAME` переїжджає в `constants.js`, який нічого не імпортує. `format.js` бере значення звідти — стрілки до `records.js` більше немає, цикл розірвано."
+            en: "The fix: `MAX_NAME` moves to `constants.js`, which imports nothing. `format.js` takes the value from there — there is no arrow to `records.js` any more, the cycle is broken."
+          show: [constants, f-c]
+          highlight: [constants, f-c]
+          dim: [f-r]
+
+  - id: three-modules
+    kind: example
+    runtime: browser-js
+    dir: three-modules
+    entry: index.js
+    expectError: true
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+    title:
+      uk: "Цикл із трьох модулів і його розрив"
+      en: "A cycle of three modules and how to break it"
+    body:
+      uk: |
+        Це ті самі модулі, що на схемі. Натисни **Запустити**: консоль порожня, а картка помилки показує `ReferenceError: Cannot access 'MAX_NAME' before initialization` у `format.js`, рядок 3. Помилка в `format.js`, але причина — у формі графа: стрілка `format.js → records.js` замикає цикл.
+
+        Файл `constants.js` поки порожній — він знадобиться для виправлення.
+      en: |
+        These are the same modules as in the diagram. Press **Run**: the console is empty, and the error card shows `ReferenceError: Cannot access 'MAX_NAME' before initialization` in `format.js`, line 3. The error is in `format.js`, but the cause is the shape of the graph: the arrow `format.js → records.js` closes the cycle.
+
+        The file `constants.js` is empty for now — it is needed for the fix.
+    tryIt:
+      uk: |
+        1. У `constants.js` додай `export const MAX_NAME = 80;`.
+        2. У `records.js` заміни рядок `export const MAX_NAME = 80;` на `export { MAX_NAME } from "./constants.js";` — `records.js` і далі експортує `MAX_NAME`, але бере його з `constants.js` (такий запис одразу імпортує й експортує значення).
+        3. У `format.js` заміни `"./records.js"` на `"./constants.js"`. Запусти: тепер `1` і назва лампи. Циклу більше немає, а всі модулі експортують те саме, що й раніше.
+      en: |
+        1. In `constants.js` add `export const MAX_NAME = 80;`.
+        2. In `records.js` replace the line `export const MAX_NAME = 80;` with `export { MAX_NAME } from "./constants.js";` — `records.js` still exports `MAX_NAME`, but takes it from `constants.js` (this form imports and exports the value in one go).
+        3. In `format.js` replace `"./records.js"` with `"./constants.js"`. Run: now `1` and the lamp's name. There is no cycle any more, and every module exports the same as before.
+
+  - id: commonjs-cycle
+    kind: explanation
+    title:
+      uk: "Той самий цикл у CommonJS — без помилки, і це гірше"
+      en: "The same cycle in CommonJS — with no error, and that is worse"
+    body:
+      uk: |
+        У Node.js із `require` (CommonJS із JS-07) цикл поводиться інакше. Модуль, який іще виконується, віддає свій **недозаповнений** об’єкт `module.exports`, і замість помилки ти отримуєш `undefined`:
+
+        ```js
+        // a.js
+        const b = require("./b.js");
+        const PREFIX = "w-";
+        module.exports = { PREFIX, label: () => PREFIX + b.size };
+
+        // b.js
+        const a = require("./a.js");          // a.js is still running: a is {}
+        console.log("b sees PREFIX:", a.PREFIX);
+        module.exports = { size: String(a.PREFIX).length };
+        ```
+
+        Запуск `main.js`, що викликає `label()`, у Node.js 25.2.1 надрукував `b sees PREFIX: undefined` і `w-9` (довжина тексту `"undefined"`) — плюс попередження `Accessing non-existent property 'PREFIX' of module exports inside circular dependency`. Програма не впала, а тихо порахувала неправильно. ES-модулі з їхнім `ReferenceError` чесніші: помилка показує рядок, де значення прочитали зарано.
+      en: |
+        In Node.js with `require` (CommonJS from JS-07) a cycle behaves differently. A module that is still running hands out its **half-filled** `module.exports` object, and instead of an error you get `undefined`:
+
+        ```js
+        // a.js
+        const b = require("./b.js");
+        const PREFIX = "w-";
+        module.exports = { PREFIX, label: () => PREFIX + b.size };
+
+        // b.js
+        const a = require("./a.js");          // a.js is still running: a is {}
+        console.log("b sees PREFIX:", a.PREFIX);
+        module.exports = { size: String(a.PREFIX).length };
+        ```
+
+        Running a `main.js` that calls `label()` in Node.js 25.2.1 printed `b sees PREFIX: undefined` and `w-9` (the length of the text `"undefined"`) — plus the warning `Accessing non-existent property 'PREFIX' of module exports inside circular dependency`. The program did not crash, it silently computed the wrong thing. ES modules with their `ReferenceError` are more honest: the error shows the line where the value was read too early.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: завантаження модулів і TDZ"
+      en: "Recall: module loading and the TDZ"
+    items:
+      - id: tdz-read
+        from: js-02-07-var-hoisting-tdz
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          try {
+            console.log(limit);
+          } catch (error) {
+            console.log(error.name);
+          }
+          const limit = 80;
+          console.log(limit);
+        verify:
+          logs: ["ReferenceError", "80"]
+        answer:
+          type: choice
+          options:
+            - id: tdz
+              code: "ReferenceError\n80"
+            - id: undefined-first
+              code: "undefined\n80"
+              why:
+                uk: "`undefined` до свого рядка дає лише `var`. `const` і `let` до свого рядка в temporal dead zone: читання кидає `ReferenceError`."
+                en: "Only `var` gives `undefined` before its line. `const` and `let` are in the temporal dead zone before their line: reading throws a `ReferenceError`."
+            - id: hoisted-value
+              code: "80\n80"
+              why:
+                uk: "Піднімається лише оголошення, а не значення: до рядка `const limit = 80;` значення ще немає."
+                en: "Only the declaration is hoisted, not the value: before the line `const limit = 80;` there is no value yet."
+          correct: [tdz]
+        explanation:
+          uk: "У модульному циклі відбувається те саме, лише між файлами: `export const` іншого модуля, чий код ще не виконано, перебуває в temporal dead zone."
+          en: "In a module cycle the same thing happens, only across files: an `export const` of another module whose code has not run yet is in the temporal dead zone."
+      - id: dependency-fails
+        from: js-07-08-cjs-and-load-failures
+        prompt:
+          uk: "`main.js` імпортує `labels.js`, а `labels.js` під час виконання кидає `ReferenceError`. Що встигне виконатися з коду самого `main.js`?"
+          en: "`main.js` imports `labels.js`, and `labels.js` throws a `ReferenceError` while running. What of `main.js`'s own code gets to run?"
+        answer:
+          type: choice
+          options:
+            - id: nothing
+              text:
+                uk: "Нічого: модуль виконується лише після всіх своїх імпортів, а один із них упав."
+                en: "Nothing: a module runs only after all its imports, and one of them failed."
+            - id: up-to-use
+              text:
+                uk: "Усе до першого рядка, що звертається до `labels.js`."
+                en: "Everything up to the first line that uses `labels.js`."
+              why:
+                uk: "Імпорти виконуються **до** першого рядка модуля, тож помилка в залежності зупиняє все ще до коду `main.js`."
+                en: "Imports run **before** the first line of a module, so an error in a dependency stops everything before `main.js`'s code."
+            - id: everything
+              text:
+                uk: "Усе: помилка в іншому файлі не стосується `main.js`."
+                en: "Everything: an error in another file does not concern `main.js`."
+              why:
+                uk: "Модуль, чий імпорт не вдалося виконати, не виконується зовсім — у консолі буде лише картка помилки."
+                en: "A module whose import failed to run does not run at all — the console shows only the error card."
+          correct: [nothing]
+        explanation:
+          uk: "Тому помилка в циклі виглядає як помилка «десь глибоко»: картка вказує на модуль, що прочитав значення зарано, а код, з якого все почалося, мовчить."
+          en: "That is why an error in a cycle looks like an error “somewhere deep”: the card points at the module that read the value too early, while the code where everything started stays silent."
+
+  - id: untangle
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: untangle
+    entry: index.js
+    editable: [tasks.js, rules.js, labels.js]
+    strings:
+      water: { uk: "Полити квіти", en: "Water the plants" }
+    title:
+      uk: "Розплутай модулі планувальника"
+      en: "Untangle the planner modules"
+    instructions:
+      uk: |
+        Три модулі планувальника імпортують один одного по колу, і програма падає ще під час завантаження. Перебудуй їх так, щоб:
+
+        - кожен модуль завантажувався без помилки, а програма друкувала опис справи (назва, `(3/3)` і `!`);
+        - у графі імпортів **не лишилося жодного циклу** — перевірка будує граф за рядками `import … from "./…"` і `export … from "./…"` у твоїх файлах;
+        - кожен модуль експортував **те саме**, що й зараз: `tasks.js` — `PRIORITIES` і `createTask`; `rules.js` — `DEFAULT_PRIORITY` (текст `"normal"`) і `checkPriority`; `labels.js` — `describeTask`, і поведінка не змінилася.
+
+        `index.js` змінювати не можна. Нових файлів у вправі створити не можна, тож перенось код між цими трьома.
+      en: |
+        The three planner modules import each other in a circle, and the program fails while loading. Rebuild them so that:
+
+        - every module loads without an error, and the program prints the task's description (the title, `(3/3)` and `!`);
+        - **no cycle remains** in the import graph — the check builds the graph from the `import … from "./…"` and `export … from "./…"` lines of your files;
+        - every module exports **the same** as now: `tasks.js` — `PRIORITIES` and `createTask`; `rules.js` — `DEFAULT_PRIORITY` (the text `"normal"`) and `checkPriority`; `labels.js` — `describeTask`, and the behavior does not change.
+
+        You cannot change `index.js`. New files cannot be created in this exercise, so move code between these three.
+    testTitles:
+      "the program prints the task label":
+        uk: "Програма друкує опис справи"
+        en: "The program prints the task label"
+      "all three modules load without an error":
+        uk: "Усі три модулі завантажуються без помилки"
+        en: "All three modules load without an error"
+      "no import cycle remains":
+        uk: "Циклу імпортів не лишилося"
+        en: "No import cycle remains"
+      "tasks.js still exports PRIORITIES and createTask":
+        uk: "`tasks.js` і далі експортує `PRIORITIES` і `createTask`"
+        en: "`tasks.js` still exports `PRIORITIES` and `createTask`"
+      "rules.js still exports DEFAULT_PRIORITY and checkPriority":
+        uk: "`rules.js` і далі експортує `DEFAULT_PRIORITY` і `checkPriority`"
+        en: "`rules.js` still exports `DEFAULT_PRIORITY` and `checkPriority`"
+      "createTask still rejects an unknown priority":
+        uk: "`createTask` і далі відхиляє невідомий пріоритет"
+        en: "`createTask` still rejects an unknown priority"
+      "labels.js still describes tasks the same way":
+        uk: "`labels.js` описує справи так само"
+        en: "`labels.js` still describes tasks the same way"
+    hints:
+      nudge:
+        uk: "Намалюй стрілки: хто кого імпортує? Яке значення потрібне двом модулям, що імпортують одне одного, і чи можна покласти його туди, звідки обидва його візьмуть без зустрічної стрілки?"
+        en: "Draw the arrows: who imports whom? Which value do the two modules that import each other both need, and can you put it where both can take it without an arrow pointing back?"
+      explanation:
+        uk: |
+          Цикл тут — `tasks.js ↔ rules.js`: `tasks` бере перевірку з `rules`, а `rules` бере список із `tasks`. Розірвати його можна, якщо одне з двох «поселити» поруч з іншим: або список пріоритетів живе там, де його перевіряють, або перевірка — там, де живе список. Щоб модуль і далі експортував значення, яке тепер оголошено деінде, його можна імпортувати й експортувати знову:
+
+          ```js
+          // colors.js keeps exporting PALETTE, now declared in theme.js
+          import { PALETTE } from "./theme.js";
+          export { PALETTE };
+          ```
+
+          Просто перенести читання всередину функції недостатньо: програма запуститься, але стрілки циклу лишаться.
+        en: |
+          The cycle here is `tasks.js ↔ rules.js`: `tasks` takes the check from `rules`, and `rules` takes the list from `tasks`. You can break it by moving one of the two next to the other: either the list of priorities lives where it is checked, or the check lives where the list is. For a module to keep exporting a value that is now declared elsewhere, it can import it and export it again:
+
+          ```js
+          // colors.js keeps exporting PALETTE, now declared in theme.js
+          import { PALETTE } from "./theme.js";
+          export { PALETTE };
+          ```
+
+          Just moving the read into a function is not enough: the program will start, but the arrows of the cycle stay.
+    solutionNote:
+      uk: "Список `PRIORITIES` переїхав у `rules.js`, де його й перевіряють, тож `rules.js` більше нічого не імпортує. `tasks.js` імпортує звідти і список, і перевірку та експортує `PRIORITIES` далі через `export { PRIORITIES };`. Граф тепер `index → tasks → rules`, `index → labels → tasks, rules` — без стрілок назад. Інший правильний шлях — перенести `checkPriority` у `tasks.js`, а `rules.js` реекспортувати її."
+      en: "The list `PRIORITIES` moved to `rules.js`, where it is checked, so `rules.js` imports nothing any more. `tasks.js` imports both the list and the check from there and keeps exporting `PRIORITIES` with `export { PRIORITIES };`. The graph is now `index → tasks → rules`, `index → labels → tasks, rules` — no arrows back. Another correct way is to move `checkPriority` into `tasks.js` and have `rules.js` re-export it."
+    feedback:
+      - when: { test: "the program prints the task label" }
+        message:
+          uk: "Ця перевірка очікує один рядок: назва справи, `(3/3)` і ` !` — пріоритет `high` третій із трьох і не типовий."
+          en: "This check expects one line: the task's title, `(3/3)` and ` !` — the priority `high` is the third of three and not the default."
+      - when: { test: "all three modules load without an error" }
+        message:
+          uk: "Ця перевірка по черзі імпортує `tasks.js`, `rules.js` і `labels.js` і очікує, що жоден не кидає помилку. `Cannot access '…' before initialization` означає, що в циклі модуль читає значення іншого ще до його ініціалізації."
+          en: "This check imports `tasks.js`, `rules.js` and `labels.js` in turn and expects none of them to throw. `Cannot access '…' before initialization` means that in a cycle a module reads a value of another before it is initialized."
+      - when: { test: "no import cycle remains" }
+        message:
+          uk: "Ця перевірка будує граф імпортів із твоїх файлів і показує знайдений цикл стрілками. Програма може запускатися й з циклом — але його не має лишитися."
+          en: "This check builds the import graph from your files and shows a cycle it found as arrows. The program may start even with a cycle — but none must remain."
+      - when: { test: "tasks.js still exports PRIORITIES and createTask" }
+        message:
+          uk: "Ця перевірка очікує з `tasks.js` масив `PRIORITIES` `[\"low\", \"normal\", \"high\"]` і `createTask`, що повертає `{ id, title, priority, done: false }`."
+          en: "This check expects `tasks.js` to export the array `PRIORITIES` `[\"low\", \"normal\", \"high\"]` and a `createTask` that returns `{ id, title, priority, done: false }`."
+      - when: { test: "rules.js still exports DEFAULT_PRIORITY and checkPriority" }
+        message:
+          uk: "Ця перевірка очікує з `rules.js` текст `DEFAULT_PRIORITY` — `\"normal\"` (не функцію) — і `checkPriority`, що пропускає `\"high\"` й кидає `RangeError` для `\"urgent\"`."
+          en: "This check expects `rules.js` to export the text `DEFAULT_PRIORITY` — `\"normal\"` (not a function) — and a `checkPriority` that accepts `\"high\"` and throws a `RangeError` for `\"urgent\"`."
+      - when: { test: "createTask still rejects an unknown priority" }
+        message:
+          uk: "Ця перевірка очікує `RangeError` від `createTask` із пріоритетом `\"urgent\"`."
+          en: "This check expects a `RangeError` from `createTask` with the priority `\"urgent\"`."
+      - when: { test: "labels.js still describes tasks the same way" }
+        message:
+          uk: "Ця перевірка очікує `A (2/3)` для справи з пріоритетом `normal` і `B (1/3) !` для `low`."
+          en: "This check expects `A (2/3)` for a task with the priority `normal` and `B (1/3) !` for `low`."
+      - when: { error: ReferenceError }
+        message:
+          uk: "`Cannot access '…' before initialization` у файлі з картки означає: цей модуль у циклі виконався раніше за той, чиє значення він читає на верхньому рівні. Подивись, кого він імпортує і чи не імпортує той його у відповідь."
+          en: "`Cannot access '…' before initialization` in the file on the card means: in a cycle this module ran before the one whose value it reads at its top level. Look at whom it imports and whether that module imports it back."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-13
+    body:
+      uk: "У проєкті залежності мають іти в один бік: `app.js` і `ui/page.js` імпортують `domain/` і `storage/`, а `domain/` не імпортує нічого з `ui/`. Якщо колись захочеш узяти щось з `ui/` у `domain/`, це перша ознака майбутнього циклу — винеси спільне в окремий модуль."
+      en: "In the project dependencies should go one way: `app.js` and `ui/page.js` import `domain/` and `storage/`, and `domain/` imports nothing from `ui/`. If you ever want to take something from `ui/` into `domain/`, that is the first sign of a future cycle — move the shared part into its own module."

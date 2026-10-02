@@ -1,0 +1,432 @@
+id: js-13-10-weakref-resources-legacy
+unit: JS-13
+title:
+  uk: "Ознайомлення: WeakRef, синтаксис керування ресурсами, застарілі патерни"
+  en: "Awareness: WeakRef, explicit resource syntax, legacy patterns"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Пояснити, чому на результат `WeakRef.deref()` і на виклик колбека `FinalizationRegistry` ніколи не можна покладатися ні для правильності, ні для часу прибирання."
+    en: "Explain why a `WeakRef.deref()` result or a `FinalizationRegistry` callback can never be relied on for correctness or cleanup timing."
+  - uk: "Прочитати оголошення `using` із `Symbol.dispose`, перевірити його підтримку за таблицею версій і замінити на `try/finally` там, де підтримки немає."
+    en: "Read a `using` declaration with `Symbol.dispose`, check its support in a version table, and fall back to `try/finally` where support is missing."
+  - uk: "Упізнати застарілі патерни (модулі-IIFE з `var`, `arguments`, вкладені колбеки, ручне з’єднання прототипів) і назвати їхні сучасні стандартні відповідники."
+    en: "Recognize legacy patterns (var-based IIFE modules, `arguments`, nested callbacks, manual prototype wiring) and name their current standard equivalents."
+prerequisites: [js-13-09-proxy-workers-awareness, js-13-06-cleanup-listeners-timers]
+subskills:
+  - { family: J-14, skill: "WeakRef/finalizers nondeterminism", depth: intro }
+  - { family: J-14, skill: "explicit resource-management syntax support", depth: intro }
+  - { family: J-14, skill: "legacy patterns vs current standards", depth: intro }
+glossary: [weakref, finalization-registry, explicit-resource-management, using-declaration, legacy-pattern]
+selfCheck: [predict-finalizer, predict-using, modernize]
+
+blocks:
+  - id: weak-refs
+    kind: explanation
+    title:
+      uk: "WeakRef і FinalizationRegistry: «можливо, колись»"
+      en: "WeakRef and FinalizationRegistry: “maybe, some day”"
+    body:
+      uk: |
+        У JS-12 слабкі колекції тримали об’єкти, не заважаючи збирачу сміття. Є ще два інструменти того ж роду:
+
+        - [[weakref|`WeakRef`]] — слабке посилання на один об’єкт. `ref.deref()` повертає об’єкт або `undefined`, якщо його вже зібрали. Коли саме це станеться — невідомо: може, через секунду, а може, ніколи.
+        - [[finalization-registry|`FinalizationRegistry`]] — реєстр колбеків, які викликаються **колись після** того, як об’єкт зібрали. Специфікація прямо не гарантує, що колбек буде викликано взагалі (наприклад, якщо сторінку закрили раніше).
+
+        Звідси правило: **ніколи не покладайся на них для правильності**. Не зберігай дані в колбеку фіналізації, не звільняй у ньому важливих ресурсів, не перевіряй `deref()`, щоб дізнатися, «чи закрито вже панель». Для всього цього є явне прибирання — `teardown`, `finally`, `abort()`. `WeakRef` — інструмент для рідкісних кешів, де втрата значення нічого не ламає, і він потребує окремого спайку.
+      en: |
+        In JS-12 weak collections held objects without getting in the garbage collector's way. There are two more tools of that kind:
+
+        - [[weakref|`WeakRef`]] is a weak reference to one object. `ref.deref()` returns the object, or `undefined` if it has already been collected. When exactly that happens is unknown: maybe in a second, maybe never.
+        - [[finalization-registry|`FinalizationRegistry`]] is a registry of callbacks that are called **some time after** an object was collected. The specification explicitly does not guarantee that the callback is called at all (for example, if the page was closed earlier).
+
+        Hence the rule: **never rely on them for correctness**. Do not save data in a finalization callback, do not release important resources in it, do not check `deref()` to learn “whether the panel is closed yet”. For all of that there is explicit cleanup — `teardown`, `finally`, `abort()`. `WeakRef` is a tool for rare caches where losing a value breaks nothing, and it needs a separate spike.
+
+  - id: predict-finalizer
+    kind: prediction
+    prompt:
+      uk: "Чернетку витрати реєструють у `FinalizationRegistry`, а потім змінній дають `null`. Що можна гарантовано сказати про колбек?"
+      en: "An expense draft is registered in a `FinalizationRegistry`, then its variable is set to `null`. What can be said for certain about the callback?"
+    code: |
+      const registry = new FinalizationRegistry((id) => {
+        console.log("finalized", id);
+        saveDraft(id);                     // "save before it is gone"
+      });
+      let draft = { id: "e-07", label: "Lunch" };
+      registry.register(draft, draft.id);
+      draft = null;
+      console.log("dropped");
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: no-guarantee
+          text:
+            uk: "Спершу `dropped`. Колбек може виконатися будь-коли пізніше — або ніколи, тож зберігати в ньому чернетку не можна."
+            en: "First `dropped`. The callback may run any time later — or never, so the draft must not be saved in it."
+        - id: next-line
+          text:
+            uk: "`finalized e-07` одразу після `draft = null`, ще до `dropped`: на об’єкт більше ніщо не вказує."
+            en: "`finalized e-07` right after `draft = null`, before `dropped`: nothing points to the object any more."
+          why:
+            uk: "`null` лише прибирає одне посилання. Збирач сміття працює тоді, коли сам вирішить, а колбек фіналізації — ще пізніше. Він ніколи не виконується посеред твого коду."
+            en: "`null` only removes one reference. The garbage collector runs when it decides to, and the finalization callback even later. It never runs in the middle of your code."
+        - id: soon
+          text:
+            uk: "Колбек точно виконається протягом кількох секунд, тож чернетку буде збережено."
+            en: "The callback will surely run within a few seconds, so the draft will be saved."
+          why:
+            uk: "Жодної гарантії часу — і навіть самого виклику — немає. Якщо сторінку закриють раніше, чернетку буде втрачено."
+            en: "There is no guarantee of timing — or even of the call itself. If the page is closed earlier, the draft is lost."
+      correct: [no-guarantee]
+    explanation:
+      uk: "Специфікація дозволяє рушію викликати колбек фіналізації пізно або не викликати зовсім. Тому результат запуску тут не перевіриш: два запуски можуть поводитися по-різному. Зберігати чернетку треба явно — під час закриття форми чи в `teardown`."
+      en: "The specification lets the engine call a finalization callback late or not at all. That is why a run cannot check this: two runs may behave differently. The draft must be saved explicitly — when the form closes, or in `teardown`."
+
+  - id: using-syntax
+    kind: explanation
+    title:
+      uk: "using: прибирання наприкінці блоку"
+      en: "using: cleanup at the end of a block"
+    body:
+      uk: |
+        [[explicit-resource-management|Явне керування ресурсами]] — новий синтаксис для того самого `try/finally`. Об’єкт із методом `[Symbol.dispose]()` оголошують через [[using-declaration|`using`]]:
+
+        ```js
+        {
+          using file = openFile("report.csv");
+          file.write("…");
+        }   // here file[Symbol.dispose]() runs — also when write throws
+        ```
+
+        Кілька `using` у блоці прибираються у **зворотному** порядку. Але це новий синтаксис, і з ним треба знати межі. Ось що виміряно під час підготовки уроку:
+
+        | Середовище | `typeof Symbol.dispose` | Код із `using` |
+        |---|---|---|
+        | Пісочниця платформи (Chrome 154) | `symbol` | працює |
+        | Node.js 25.2.1 | `symbol` | працює |
+        | Node.js 20.18.0 | `symbol` | `SyntaxError: Unexpected identifier 'handle'` |
+
+        Останній рядок — головний урок: **символ є, а синтаксису немає**. Перевірка `typeof Symbol.dispose` нічого не каже про те, чи прочитає рушій `using`, а один `using` у файлі не дає запуститися всьому файлу. Тому підтримку перевіряють для **кожного** середовища, де працюватиме проєкт (таблиці сумісності MDN, документація середовища, власний запуск), а без неї пишуть `try/finally`.
+      en: |
+        [[explicit-resource-management|Explicit resource management]] is new syntax for the same `try/finally`. An object with a `[Symbol.dispose]()` method is declared with [[using-declaration|`using`]]:
+
+        ```js
+        {
+          using file = openFile("report.csv");
+          file.write("…");
+        }   // here file[Symbol.dispose]() runs — also when write throws
+        ```
+
+        Several `using` declarations in one block are disposed in **reverse** order. But this is new syntax, and you need to know its limits. Here is what was measured while preparing this lesson:
+
+        | Runtime | `typeof Symbol.dispose` | Code with `using` |
+        |---|---|---|
+        | The platform's sandbox (Chrome 154) | `symbol` | works |
+        | Node.js 25.2.1 | `symbol` | works |
+        | Node.js 20.18.0 | `symbol` | `SyntaxError: Unexpected identifier 'handle'` |
+
+        The last row is the main lesson: **the symbol exists, the syntax does not**. Checking `typeof Symbol.dispose` says nothing about whether the engine can read `using`, and one `using` in a file stops the whole file from starting. So support is checked for **every** runtime the project will run in (MDN compatibility tables, the runtime's documentation, your own run), and without it you write `try/finally`.
+
+  - id: predict-using
+    kind: prediction
+    prompt:
+      uk: "У блоці два `using`. У якому порядку з’являться рядки?"
+      en: "A block has two `using` declarations. In which order do the lines appear?"
+    code: |
+      function open(name) {
+        console.log("open", name);
+        return {
+          [Symbol.dispose]() {
+            console.log("close", name);
+          },
+        };
+      }
+
+      {
+        using first = open("a");
+        using second = open("b");
+        console.log("work");
+      }
+      console.log("after");
+    verify:
+      logs: ["open a", "open b", "work", "close b", "close a", "after"]
+    answer:
+      type: choice
+      options:
+        - id: reverse
+          code: "open a\nopen b\nwork\nclose b\nclose a\nafter"
+        - id: same-order
+          code: "open a\nopen b\nwork\nclose a\nclose b\nafter"
+          why:
+            uk: "Ресурси прибираються у **зворотному** порядку: те, що відкрили останнім, закривають першим — бо воно могло залежати від попереднього."
+            en: "Resources are disposed in **reverse** order: what was opened last is closed first — because it might depend on the earlier one."
+        - id: never
+          code: "open a\nopen b\nwork\nafter"
+          why:
+            uk: "`using` гарантує виклик `[Symbol.dispose]()` наприкінці блоку — це й є його призначення."
+            en: "`using` guarantees a call of `[Symbol.dispose]()` at the end of the block — that is its whole purpose."
+        - id: later
+          code: "open a\nopen b\nwork\nafter\nclose b\nclose a"
+          why:
+            uk: "`using` — не збирач сміття: прибирання відбувається точно в момент виходу з блоку, до наступного рядка."
+            en: "`using` is not the garbage collector: cleanup happens exactly when the block is left, before the next line."
+      correct: [reverse]
+    explanation:
+      uk: "На відміну від фіналізації, `using` — детермінований: `dispose` викликається рівно наприкінці блоку, у зворотному порядку. Це те саме, що вкладені `try/finally`, лише коротше."
+      en: "Unlike finalization, `using` is deterministic: `dispose` is called exactly at the end of the block, in reverse order. It is the same as nested `try/finally`, only shorter."
+
+  - id: capabilities
+    kind: example
+    runtime: browser-js
+    dir: capabilities
+    entry: index.js
+    strings:
+      parses: { uk: "using: синтаксис підтримується", en: "using: the syntax is supported" }
+      noParse: { uk: "using: синтаксис НЕ підтримується —", en: "using: the syntax is NOT supported —" }
+      open: { uk: "відкрито", en: "opened" }
+      close: { uk: "закрито", en: "closed" }
+      after: { uk: "після блоку", en: "after the block" }
+    title:
+      uk: "Перевірка можливостей і using → try/finally"
+      en: "A capability check and using → try/finally"
+    body:
+      uk: |
+        Спершу програма перевіряє, що вміє ця пісочниця: чи є `WeakRef`, `FinalizationRegistry`, `Symbol.dispose` і чи **розбирається** код із `using` (`new Function(...)` пробує прочитати текст коду й кидає `SyntaxError`, якщо не може). Потім — блок із `using`. Натисни **Запустити** й порівняй із таблицею вище.
+      en: |
+        First the program checks what this sandbox can do: whether `WeakRef`, `FinalizationRegistry`, `Symbol.dispose` exist and whether code with `using` **parses** (`new Function(...)` tries to read the text of the code and throws a `SyntaxError` if it cannot). Then comes a block with `using`. Press **Run** and compare with the table above.
+    tryIt:
+      uk: |
+        1. Під рядком `using log = openLog("expenses");` додай `using audit = openLog("audit");`. Запусти: `audit` закривається **перед** `expenses`.
+        2. Прибери рядок з `audit`. Перепиши блок для середовища без `using` — заміни три рядки блоку `{ … }` на:
+
+           ```js
+           const log = openLog("expenses");
+           try {
+             log.write("e-07");
+           } finally {
+             log[Symbol.dispose]();
+           }
+           ```
+
+           Вивід той самий: «закрито expenses» і лише потім «після блоку».
+      en: |
+        1. Below the line `using log = openLog("expenses");` add `using audit = openLog("audit");`. Run: `audit` is closed **before** `expenses`.
+        2. Remove the `audit` line. Rewrite the block for a runtime without `using` — replace the three lines of the `{ … }` block with:
+
+           ```js
+           const log = openLog("expenses");
+           try {
+             log.write("e-07");
+           } finally {
+             log[Symbol.dispose]();
+           }
+           ```
+
+           The output is the same: “closed expenses” and only then “after the block”.
+
+  - id: legacy
+    kind: explanation
+    title:
+      uk: "Застарілі патерни та їхні сучасні відповідники"
+      en: "Legacy patterns and their current equivalents"
+    body:
+      uk: |
+        У старому коді (і в багатьох відповідях в інтернеті) ти зустрінеш [[legacy-pattern|застарілі патерни]]. Вони працюють, але сьогодні для них є стандартні заміни:
+
+        | Застаріле | Сьогодні |
+        |---|---|
+        | «Модуль»-IIFE: `var Tools = (function () { … return { … }; })();` | ES-модуль: `export function …`, приватне — те, що не експортовано |
+        | `var` з областю видимості функції | `const` і `let` з блоковою |
+        | `arguments` і `fn.apply(null, arguments)` | rest-параметри `(...amounts)` і spread `fn(...amounts)` |
+        | вкладені колбеки «один у одному» | `async`/`await` над промісами |
+        | `Child.prototype = Object.create(Parent.prototype)` вручну | `class Child extends Parent` (або композиція) |
+
+        Переписуючи, зберігай **поведінку** й те, що бачать інші модулі. Сліпа заміна теж буває небезпечною: `var` у циклі з колбеками й `let` поводяться по-різному.
+      en: |
+        In old code (and in many answers on the internet) you will meet [[legacy-pattern|legacy patterns]]. They work, but today there are standard replacements for them:
+
+        | Legacy | Today |
+        |---|---|
+        | An IIFE “module”: `var Tools = (function () { … return { … }; })();` | An ES module: `export function …`, private is whatever is not exported |
+        | `var` with function scope | `const` and `let` with block scope |
+        | `arguments` and `fn.apply(null, arguments)` | rest parameters `(...amounts)` and spread `fn(...amounts)` |
+        | callbacks nested “one inside another” | `async`/`await` over promises |
+        | `Child.prototype = Object.create(Parent.prototype)` by hand | `class Child extends Parent` (or composition) |
+
+        When rewriting, keep the **behavior** and what other modules see. Blind replacement can be dangerous too: `var` in a loop with callbacks and `let` behave differently.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: слабкі колекції і var"
+      en: "Recall: weak collections and var"
+    items:
+      - id: weak-no-size
+        from: js-12-13-weak-collections
+        prompt:
+          uk: "Чому у `WeakMap` немає `size` і її не можна перебрати `for...of`?"
+          en: "Why does a `WeakMap` have no `size`, and why can it not be walked with `for...of`?"
+        answer:
+          type: choice
+          options:
+            - id: gc-decides
+              text:
+                uk: "Її вміст залежить від того, коли спрацює збирач сміття, а цього програма не знає — тож точної кількості чи списку не існує."
+                en: "Its contents depend on when the garbage collector runs, which the program does not know — so there is no exact count or list."
+            - id: speed
+              text:
+                uk: "Щоб працювати швидше: підрахунок записів зайняв би забагато часу."
+                en: "To be faster: counting the entries would take too long."
+              why:
+                uk: "Справа не у швидкості. Записи можуть зникати будь-коли, тож будь-яке число чи список були б випадковими."
+                en: "It is not about speed. Entries may disappear at any time, so any number or list would be random."
+            - id: private
+              text:
+                uk: "Щоб ховати ключі від інших модулів."
+                en: "To hide the keys from other modules."
+              why:
+                uk: "Приватність тут ні до чого: без ключа запис узагалі не дістати, а зникнути він може будь-коли."
+                en: "Privacy has nothing to do with it: without the key an entry cannot be reached at all, and it may disappear at any time."
+          correct: [gc-decides]
+        explanation:
+          uk: "`WeakRef` і `FinalizationRegistry` мають ту саму природу: усе, що залежить від збирача сміття, — недетерміноване. Тому правильність будують на явному прибиранні."
+          en: "`WeakRef` and `FinalizationRegistry` share that nature: everything that depends on the garbage collector is nondeterministic. That is why correctness is built on explicit cleanup."
+      - id: var-scope
+        from: js-02-07-var-hoisting-tdz
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          for (var i = 0; i < 3; i = i + 1) {
+          }
+          console.log(i);
+        verify:
+          logs: ["3"]
+        answer:
+          type: choice
+          options:
+            - id: three
+              code: "3"
+            - id: error
+              code: "ReferenceError"
+              why:
+                uk: "Так було б із `let`: його видно лише в циклі. А `var` має область видимості функції (або модуля), тож `i` видно й після циклу."
+                en: "That would be so with `let`: it is visible only in the loop. `var` has function (or module) scope, so `i` is visible after the loop too."
+            - id: two
+              code: "2"
+              why:
+                uk: "Цикл зупиняється, коли умова `i < 3` хибна, тобто коли `i` вже 3."
+                en: "The loop stops when the condition `i < 3` is false, that is, when `i` is already 3."
+          correct: [three]
+        explanation:
+          uk: "`var` «протікає» з блоку, і це одна з причин, чому в сучасному коді його замінюють на `let` і `const`."
+          en: "`var` “leaks” out of the block, and that is one of the reasons why modern code replaces it with `let` and `const`."
+
+  - id: modernize
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: modernize
+    entry: index.js
+    editable: [budget.js]
+    title:
+      uk: "Осучаснити старий модуль бюджету"
+      en: "Modernize an old budget module"
+    instructions:
+      uk: |
+        `budget.js` написано по-старому: IIFE, `var`, `arguments`. `index.js` уже імпортує його як ES-модуль, і програма падає. Перепиши `budget.js`:
+
+        - іменовані експорти `sum`, `format` і `formatTotal` із тією самою поведінкою: `sum` додає будь-яку кількість сум (без аргументів — 0), `format(12345)` дає `"123.45 UAH"`, `formatTotal(100, 250)` — `"3.50 UAH"`;
+        - валюта лишається приватною — модуль її не експортує;
+        - замість `var` — `const`/`let`, замість `arguments` — rest-параметри. Одна перевірка читає текст `budget.js` (без коментарів) і шукає в ньому слова `var` і `arguments`.
+
+        `index.js` змінювати не можна. У консолі мають з’явитися `154550`, `1545.50 UAH` і `99.90 UAH`.
+      en: |
+        `budget.js` is written the old way: an IIFE, `var`, `arguments`. `index.js` already imports it as an ES module, and the program fails. Rewrite `budget.js`:
+
+        - named exports `sum`, `format` and `formatTotal` with the same behavior: `sum` adds any number of amounts (with no arguments, 0), `format(12345)` gives `"123.45 UAH"`, `formatTotal(100, 250)` gives `"3.50 UAH"`;
+        - the currency stays private — the module does not export it;
+        - instead of `var` use `const`/`let`, instead of `arguments` use rest parameters. One check reads the text of `budget.js` (without comments) and looks for the words `var` and `arguments` in it.
+
+        You cannot change `index.js`. The console must show `154550`, `1545.50 UAH` and `99.90 UAH`.
+    testTitles:
+      "the program prints the sum, the formatted total and one amount":
+        uk: "Програма друкує суму, відформатований підсумок і одну суму"
+        en: "The program prints the sum, the formatted total and one amount"
+      "budget.js exports sum, format and formatTotal by name":
+        uk: "`budget.js` має іменовані експорти `sum`, `format` і `formatTotal`"
+        en: "`budget.js` exports `sum`, `format` and `formatTotal` by name"
+      "sum adds any number of amounts":
+        uk: "`sum` додає будь-яку кількість сум"
+        en: "`sum` adds any number of amounts"
+      "format and formatTotal show hryvnias with two decimals":
+        uk: "`format` і `formatTotal` показують гривні з двома знаками"
+        en: "`format` and `formatTotal` show hryvnias with two decimals"
+      "currency stays private to the module":
+        uk: "Валюта лишається приватною"
+        en: "The currency stays private to the module"
+      "budget.js no longer uses var or arguments":
+        uk: "У `budget.js` більше немає `var` і `arguments`"
+        en: "`budget.js` no longer uses `var` or `arguments`"
+    hints:
+      nudge:
+        uk: "Що в ES-модулі замінює «повернути об’єкт із функціями з IIFE»? І як оголосити функцію, що приймає будь-яку кількість аргументів, не звертаючись до `arguments`?"
+        en: "What replaces “return an object of functions from an IIFE” in an ES module? And how do you declare a function that takes any number of arguments without touching `arguments`?"
+      explanation:
+        uk: |
+          У модулі обгортка-IIFE не потрібна: усе, що не експортовано, і так приватне. Тож функції оголошують на верхньому рівні з `export`, а змінна, що була всередині IIFE, стає звичайною `const` модуля. Rest-параметр збирає аргументи в справжній масив, а spread розкладає масив назад в аргументи — так само, як робив `apply`:
+
+          ```js
+          function longest(...words) {            // words is an array
+            return Math.max(...words.map((w) => w.length));
+          }
+          ```
+        en: |
+          A module does not need an IIFE wrapper: whatever is not exported is private anyway. So the functions are declared at the top level with `export`, and the variable that was inside the IIFE becomes an ordinary module `const`. A rest parameter collects the arguments into a real array, and spread unpacks an array back into arguments — just as `apply` did:
+
+          ```js
+          function longest(...words) {            // words is an array
+            return Math.max(...words.map((w) => w.length));
+          }
+          ```
+    solutionNote:
+      uk: "IIFE зникла: модуль сам ховає `currency`, бо її не експортовано. `sum(...amounts)` отримує справжній масив, тож замість `arguments` — `for...of` (або `reduce`), а `formatTotal` передає суми далі через spread `sum(...amounts)` замість `apply`. Поведінка й те, що бачить `index.js`, лишилися ті самі."
+      en: "The IIFE is gone: the module hides `currency` itself, because it is not exported. `sum(...amounts)` gets a real array, so `for...of` (or `reduce`) replaces `arguments`, and `formatTotal` passes the amounts on with the spread `sum(...amounts)` instead of `apply`. The behavior and what `index.js` sees stayed the same."
+    feedback:
+      - when: { test: "the program prints the sum, the formatted total and one amount" }
+        message:
+          uk: "Ця перевірка очікує три рядки: `154550`, `1545.50 UAH` і `99.90 UAH`."
+          en: "This check expects three lines: `154550`, `1545.50 UAH` and `99.90 UAH`."
+      - when: { test: "budget.js exports sum, format and formatTotal by name" }
+        message:
+          uk: "Ця перевірка імпортує `budget.js` і очікує три **іменовані** експорти-функції. Об’єкт в `export default` чи змінна `BudgetTools` без `export` цю перевірку не пройдуть."
+          en: "This check imports `budget.js` and expects three **named** function exports. An object in `export default` or a variable `BudgetTools` without `export` does not pass this check."
+      - when: { test: "sum adds any number of amounts" }
+        message:
+          uk: "Ця перевірка очікує `sum(1, 2, 3)` — 6, `sum(500)` — 500, `sum()` — 0 і `sum(...[10, 20, 30, 40])` — 100: суми передають окремими аргументами, а не масивом."
+          en: "This check expects `sum(1, 2, 3)` to be 6, `sum(500)` 500, `sum()` 0 and `sum(...[10, 20, 30, 40])` 100: the amounts are passed as separate arguments, not as an array."
+      - when: { test: "format and formatTotal show hryvnias with two decimals" }
+        message:
+          uk: "Ця перевірка очікує `\"123.45 UAH\"` для `format(12345)`, `\"3.50 UAH\"` для `formatTotal(100, 250)` і `\"0.00 UAH\"` для `formatTotal()`."
+          en: "This check expects `\"123.45 UAH\"` for `format(12345)`, `\"3.50 UAH\"` for `formatTotal(100, 250)` and `\"0.00 UAH\"` for `formatTotal()`."
+      - when: { test: "currency stays private to the module" }
+        message:
+          uk: "Ця перевірка очікує, що `budget.js` не експортує `currency`."
+          en: "This check expects `budget.js` not to export `currency`."
+      - when: { test: "budget.js no longer uses var or arguments" }
+        message:
+          uk: "Ця перевірка шукає слова `var` і `arguments` у коді `budget.js` (коментарі й текст у лапках не враховуються) і очікує, що їх немає."
+          en: "This check looks for the words `var` and `arguments` in the code of `budget.js` (comments and text in quotes do not count) and expects none."
+      - when: { error: TypeError }
+        message:
+          uk: "`budget.sum is not a function` означає, що `budget.js` ще не експортує `sum` з такою назвою. `amounts.reduce is not a function` — що `sum` чекає масив, а отримує окремі числа."
+          en: "`budget.sum is not a function` means `budget.js` does not export `sum` by that name yet. `amounts.reduce is not a function` means `sum` expects an array but gets separate numbers."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-13
+    body:
+      uk: "У проєкті `teardown` має бути явним — не розраховуй на `FinalizationRegistry`, щоб зняти listeners. А `using` у проєкті поки не бери: спершу перевір, чи підтримують його всі браузери, у яких відкриватимуть твою сторінку."
+      en: "In the project `teardown` must be explicit — do not count on `FinalizationRegistry` to remove listeners. And do not use `using` in the project yet: first check that every browser your page will be opened in supports it."

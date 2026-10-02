@@ -1,0 +1,355 @@
+id: js-13-04-encoding-boundaries
+unit: JS-13
+title:
+  uk: "Межі кодування: текст у байти й назад"
+  en: "Encoding boundaries: text to bytes and back"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Закодувати український текст у байти UTF-8 через `TextEncoder`, декодувати назад через `TextDecoder` і передбачити кількість байтів."
+    en: "Encode a Ukrainian string to UTF-8 bytes with `TextEncoder`, decode it back with `TextDecoder` and predict the byte count."
+  - uk: "Показати, як декодування не тим кодуванням або кожного шматка окремо псує текст, і виправити це потоковим декодуванням."
+    en: "Show how decoding with the wrong encoding, or each chunk separately, corrupts text, and fix it with streaming decoding."
+prerequisites: [js-13-03-bytes-typed-arrays, js-12-01-strings-unicode]
+subskills:
+  - { family: J-12, skill: "encoding boundaries", depth: intro }
+glossary: [character-encoding, utf-8, text-encoder, mojibake]
+selfCheck: [predict-byte-count, byte-limit]
+
+blocks:
+  - id: text-is-not-bytes
+    kind: explanation
+    title:
+      uk: "Текст ≠ байти"
+      en: "Text ≠ bytes"
+    body:
+      uk: |
+        Файл чи мережа не знають, що таке літера, — вони передають байти. Правило, за яким літери стають байтами, називають [[character-encoding|кодуванням]]. Сьогодні майже скрізь це [[utf-8|UTF-8]]:
+
+        | Символи | Байтів на символ |
+        |---|---|
+        | латиниця, цифри, `,` | 1 |
+        | кирилиця (`К`, `ї`) | 2 |
+        | більшість емодзі (`🐈`) | 4 |
+
+        Перетворювачі — [[text-encoder|`TextEncoder` і `TextDecoder`]]:
+
+        ```js
+        const bytes = new TextEncoder().encode("ok");   // Uint8Array(2) [111, 107]
+        new TextDecoder().decode(bytes);                 // "ok"
+        ```
+
+        А `string.length` рахує не байти й навіть не символи, а code units (це ти бачив у JS-12). Тому довжина тексту в коді й розмір того самого тексту у файлі чи запиті — **різні числа**. Межа між ними — місце, де текст найчастіше ламається.
+      en: |
+        A file or a network does not know what a letter is — it carries bytes. The rule by which letters become bytes is called a [[character-encoding|character encoding]]. Today it is almost always [[utf-8|UTF-8]]:
+
+        | Characters | Bytes per character |
+        |---|---|
+        | Latin letters, digits, `,` | 1 |
+        | Cyrillic (`К`, `ї`) | 2 |
+        | most emoji (`🐈`) | 4 |
+
+        The converters are [[text-encoder|`TextEncoder` and `TextDecoder`]]:
+
+        ```js
+        const bytes = new TextEncoder().encode("ok");   // Uint8Array(2) [111, 107]
+        new TextDecoder().decode(bytes);                 // "ok"
+        ```
+
+        And `string.length` counts neither bytes nor even characters, but code units (you saw that in JS-12). So the length of a text in code and the size of the same text in a file or a request are **different numbers**. The boundary between them is where text breaks most often.
+
+  - id: predict-byte-count
+    kind: prediction
+    prompt:
+      uk: "Для трьох текстів програма друкує `length` і кількість байтів UTF-8, а потім декодує лише перші 3 байти слова «Київ». Що з’явиться в консолі?"
+      en: "For three texts the program prints `length` and the number of UTF-8 bytes, then decodes only the first 3 bytes of the word “Київ”. What appears in the console?"
+    code: |
+      const encoder = new TextEncoder();
+      for (const text of ["abc", "Київ", "🐈"]) {
+        console.log(text.length, encoder.encode(text).length);
+      }
+      const bytes = encoder.encode("Київ");
+      console.log(new TextDecoder().decode(bytes.slice(0, 3)));
+    verify:
+      logs: ["3 3", "4 8", "2 4", "К�"]
+    answer:
+      type: choice
+      options:
+        - id: utf8
+          code: "3 3\n4 8\n2 4\nК�"
+        - id: one-byte-each
+          code: "3 3\n4 4\n1 1\nКиї"
+          why:
+            uk: "Символ — не завжди один байт. У UTF-8 кожна кирилична літера займає 2 байти, а кіт-емодзі — 4. Тож 3 байти — це півтори літери, а не три."
+            en: "A character is not always one byte. In UTF-8 every Cyrillic letter takes 2 bytes, and the cat emoji 4. So 3 bytes are one and a half letters, not three."
+        - id: length-is-bytes
+          code: "3 3\n4 4\n2 2\nКи"
+          why:
+            uk: "`length` рахує code units, а не байти: для «Київ» це 4, а байтів — 8. І декодер не відкидає недописану літеру мовчки: замість неї з’являється символ заміни `�`."
+            en: "`length` counts code units, not bytes: for “Київ” it is 4, while there are 8 bytes. And the decoder does not silently drop an unfinished letter: the replacement character `�` appears in its place."
+        - id: emoji-one
+          code: "3 3\n4 8\n1 4\nК�"
+          why:
+            uk: "`length` емодзі `🐈` — 2: він складається з двох code units. Байтів у UTF-8 — 4."
+            en: "The `length` of the emoji `🐈` is 2: it consists of two code units. In UTF-8 it takes 4 bytes."
+      correct: [utf8]
+    explanation:
+      uk: "Латиниця — по байту на літеру, кирилиця — по два, емодзі — чотири, а `length` рахує code units. Перші 3 байти «Київ» — це вся `К` (2 байти) і половина `и`: декодер бачить незакінчену послідовність і ставить замість неї символ заміни `�` (U+FFFD)."
+      en: "Latin letters take one byte each, Cyrillic two, the emoji four, while `length` counts code units. The first 3 bytes of “Київ” are the whole `К` (2 bytes) and half of `и`: the decoder sees an unfinished sequence and puts the replacement character `�` (U+FFFD) in its place."
+
+  - id: kyiv-bytes
+    kind: visual
+    visual: diagram
+    title:
+      uk: "«Київ» у байти, розріз — і назад"
+      en: "“Київ” to bytes, a cut — and back"
+    textEquivalent:
+      uk: "Слово «Київ» — чотири літери. TextEncoder перетворює кожну на два байти UTF-8: К — d0 9a, и — d0 b8, ї — d1 97, в — d0 b2, разом 8 байтів. Байти приходять двома шматками, і розріз пройшов після третього байта — посеред літери и: перший шматок d0 9a d0, другий b8 d1 97 d0 b2. Якщо декодувати кожен шматок окремим декодером, обидва бачать половинку літери: перший дає «К�», другий «�їв», разом «К��їв» — літеру и втрачено, на її місці два символи заміни. Якщо ж один декодер отримує шматки по черзі з { stream: true }, він притримує незакінчений байт d0 до наступного шматка, склеює його з b8 і повертає «Київ» без пошкоджень."
+      en: "The word “Київ” is four letters. TextEncoder turns each into two UTF-8 bytes: К is d0 9a, и is d0 b8, ї is d1 97, в is d0 b2, 8 bytes in total. The bytes arrive in two chunks, and the cut fell after the third byte — in the middle of the letter и: the first chunk is d0 9a d0, the second b8 d1 97 d0 b2. If each chunk is decoded by its own decoder, both see half a letter: the first gives “К�”, the second “�їв”, together “К��їв” — the letter и is lost, with two replacement characters in its place. If instead one decoder receives the chunks in turn with { stream: true }, it holds the unfinished byte d0 until the next chunk, joins it with b8 and returns “Київ” undamaged."
+    spec:
+      layout: tb
+      nodes:
+        - { id: text, label: "Київ", w: 120 }
+        - { id: bytes, label: "d0 9a | d0 b8 | d1 97 | d0 b2", w: 220 }
+        - { id: chunks, label: "d0 9a d0 ‖ b8 d1 97 d0 b2", w: 220 }
+        - { id: broken, label: "К��їв", w: 110 }
+        - { id: whole, label: "Київ", w: 90 }
+      edges:
+        - { id: encode, from: text, to: bytes, label: "TextEncoder" }
+        - { id: cut, from: bytes, to: chunks, label: { uk: "розріз після 3-го байта", en: "cut after byte 3" } }
+        - { id: alone, from: chunks, to: broken, label: { uk: "кожен окремо", en: "each alone" } }
+        - { id: stream, from: chunks, to: whole, label: "stream: true" }
+      hidden: [broken, whole, alone, stream]
+      steps:
+        - caption:
+            uk: "Чотири літери, по два байти UTF-8 кожна: `К` — `d0 9a`, `и` — `d0 b8`, `ї` — `d1 97`, `в` — `d0 b2`."
+            en: "Four letters, two UTF-8 bytes each: `К` is `d0 9a`, `и` is `d0 b8`, `ї` is `d1 97`, `в` is `d0 b2`."
+          highlight: [text, bytes, encode]
+          dim: [chunks, cut]
+        - caption:
+            uk: "Байти приходять двома шматками, і розріз пройшов **посеред** літери `и`: `d0` лишився в першому шматку, `b8` — у другому."
+            en: "The bytes arrive in two chunks, and the cut fell **in the middle** of the letter `и`: `d0` stayed in the first chunk, `b8` went into the second."
+          highlight: [chunks, cut]
+          dim: [text, encode]
+        - caption:
+            uk: "Окремий декодер для кожного шматка бачить лише половинку `и` — і ставить символ заміни `�`. Літеру втрачено: `К��їв`."
+            en: "A separate decoder for each chunk sees only half of `и` — and puts the replacement character `�`. The letter is lost: `К��їв`."
+          show: [broken, alone]
+          highlight: [broken, alone]
+          dim: [text, encode, bytes]
+        - caption:
+            uk: "Один декодер із `{ stream: true }` притримує незакінчене `d0` до наступного шматка, склеює його з `b8` — і повертає `Київ` цілим."
+            en: "One decoder with `{ stream: true }` holds the unfinished `d0` until the next chunk, joins it with `b8` — and returns `Київ` whole."
+          show: [whole, stream]
+          highlight: [whole, stream]
+          dim: [text, encode, bytes, broken, alone]
+
+  - id: chunks
+    kind: example
+    runtime: browser-js
+    dir: chunks
+    entry: index.js
+    strings:
+      total: { uk: "байтів:", en: "bytes:" }
+      separate: { uk: "кожен шматок окремо:", en: "each chunk alone:" }
+      streamed: { uk: "один декодер, stream:", en: "one decoder, stream:" }
+    title:
+      uk: "Шматки байтів: окремо чи потоком"
+      en: "Chunks of bytes: separately or as a stream"
+    body:
+      uk: |
+        Так текст приходить із мережі чи великого файлу: шматками, і розріз між ними може пройти посеред літери. Натисни **Запустити**.
+
+        «Київ, Львів» — 20 байтів. Розріз після 5-го байта розполовинив `ї`: окремі декодери дають `Ки��в, Львів`. Один декодер із `{ stream: true }` пам’ятає незакінчену літеру до наступного шматка й дає правильний текст. Останній виклик — без `stream`: так декодер знає, що це кінець.
+      en: |
+        This is how text comes from a network or a large file: in chunks, and the cut between them may fall in the middle of a letter. Press **Run**.
+
+        “Київ, Львів” is 20 bytes. The cut after byte 5 split `ї` in half: separate decoders give `Ки��в, Львів`. One decoder with `{ stream: true }` remembers the unfinished letter until the next chunk and gives the correct text. The last call is without `stream`: that is how the decoder knows it is the end.
+    tryIt:
+      uk: |
+        1. Заміни `5` на `6` в обох рядках із `slice`. Тепер розріз проходить **між** літерами, і обидва способи дають правильний текст. Тобто помилка з’являється лише іноді — тому її так легко пропустити в перевірках. Поверни `5`.
+        2. У кінці файла додай `console.log(new TextDecoder("windows-1251").decode(bytes));`. Виходить `РљРёС—РІ, Р›СЊРІС–РІ` — **mojibake**: байти UTF-8 прочитано за правилами старого кодування `windows-1251`, де кожен байт — окрема літера. Байти цілі, але прочитано їх не тим кодуванням.
+      en: |
+        1. Replace `5` with `6` in both `slice` lines. Now the cut falls **between** letters, and both ways give the correct text. So the bug shows up only sometimes — that is why it is so easy to miss in checks. Put `5` back.
+        2. At the end of the file add `console.log(new TextDecoder("windows-1251").decode(bytes));`. You get `РљРёС—РІ, Р›СЊРІС–РІ` — **mojibake**: UTF-8 bytes read by the rules of the old `windows-1251` encoding, where every byte is a separate letter. The bytes are intact, but they were read with the wrong encoding.
+
+  - id: mojibake-note
+    kind: explanation
+    title:
+      uk: "Два різні зламані тексти"
+      en: "Two different kinds of broken text"
+    body:
+      uk: |
+        Тепер ти бачив обидві поломки на межі «байти ↔ текст»:
+
+        - **`�` (U+FFFD)** — декодер отримав незакінчену чи неправильну послідовність байтів. Причина — розріз посеред символу або байти, що взагалі не є UTF-8. Ліки — потоковий декодер або розрізи лише між цілими символами.
+        - [[mojibake|**Mojibake**]] (`РљРёС—РІ`) — байти правильні, але прочитані іншим кодуванням. Ліки — читати тим кодуванням, яким писали; у вебі й JSON це UTF-8.
+
+        І третє правило: обмеження «не більше N байтів» (поле бази, заголовок запиту) перевіряють довжиною в байтах, а не `length`.
+      en: |
+        Now you have seen both breakages at the “bytes ↔ text” boundary:
+
+        - **`�` (U+FFFD)** — the decoder received an unfinished or invalid byte sequence. The cause is a cut in the middle of a character, or bytes that are not UTF-8 at all. The cure is a streaming decoder, or cuts only between whole characters.
+        - [[mojibake|**Mojibake**]] (`РљРёС—РІ`) — the bytes are right, but read with another encoding. The cure is to read with the encoding they were written with; on the web and in JSON that is UTF-8.
+
+        And a third rule: a limit of “at most N bytes” (a database field, a request header) is checked with the length in bytes, not with `length`.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: code units і code points"
+      en: "Recall: code units and code points"
+    items:
+      - id: units-points
+        from: js-12-01-strings-unicode
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          const cat = "🐈";
+          console.log(cat.length, [...cat].length);
+        verify:
+          logs: ["2 1"]
+        answer:
+          type: choice
+          options:
+            - id: two-one
+              code: "2 1"
+            - id: one-one
+              code: "1 1"
+              why:
+                uk: "`length` рахує code units UTF-16. Емодзі `🐈` не вміщується в один і складається з двох (surrogate pair)."
+                en: "`length` counts UTF-16 code units. The emoji `🐈` does not fit into one and consists of two (a surrogate pair)."
+            - id: two-two
+              code: "2 2"
+              why:
+                uk: "Spread іде по тексту code points, тож пара code units емодзі стає одним елементом масиву."
+                en: "Spread walks a text by code points, so the emoji's pair of code units becomes one item of the array."
+          correct: [two-one]
+        explanation:
+          uk: "`length` — 2 code units, а spread і `for...of` ідуть по code points — 1 символ. У UTF-8 цей самий символ займає ще одне число — 4 байти. Три різні «довжини» одного тексту."
+          en: "`length` is 2 code units, while spread and `for...of` walk by code points — 1 character. In UTF-8 the same character takes yet another number — 4 bytes. Three different “lengths” of one text."
+
+  - id: byte-limit
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: byte-limit
+    entry: index.js
+    title:
+      uk: "Підпис, що влазить у задану кількість байтів"
+      en: "A label that fits into a number of bytes"
+    instructions:
+      uk: |
+        Сервер приймає назву запису не довшу за задану кількість **байтів** UTF-8. Напиши дві функції:
+
+        - `byteLength(text)` — скільки байтів UTF-8 займає текст (`"abc"` — 3, `"Київ"` — 8, `"🐈"` — 4, `""` — 0);
+        - `truncateToBytes(text, maxBytes)` — найдовший **початок** тексту, що влазить у `maxBytes` байтів, без жодного розрізаного символу: `("Київ", 5)` — `"Ки"`, `("🐈🐈", 5)` — `"🐈"`, `("Київ", 1)` — `""`. Перевірка пробує різні тексти й межі від 0 і переконується, що результат влазить, є початком тексту й не має `�` чи половинок символів.
+
+        Унизу файла готовий код: у консолі має з’явитися `13` і `Киї`.
+      en: |
+        A server accepts a record name of at most a given number of UTF-8 **bytes**. Write two functions:
+
+        - `byteLength(text)` — how many UTF-8 bytes the text takes (`"abc"` is 3, `"Київ"` 8, `"🐈"` 4, `""` 0);
+        - `truncateToBytes(text, maxBytes)` — the longest **beginning** of the text that fits into `maxBytes` bytes, with no character cut: `("Київ", 5)` gives `"Ки"`, `("🐈🐈", 5)` gives `"🐈"`, `("Київ", 1)` gives `""`. A check tries several texts and limits from 0 and makes sure the result fits, is a beginning of the text and has no `�` or halves of characters.
+
+        At the bottom of the file there is ready code: the console must show `13` and `Киї`.
+    testTitles:
+      "the program prints 13 and Киї":
+        uk: "Програма друкує 13 і Киї"
+        en: "The program prints 13 and Киї"
+      "byteLength counts UTF-8 bytes, not string length":
+        uk: "`byteLength` рахує байти UTF-8, а не `length`"
+        en: "`byteLength` counts UTF-8 bytes, not string length"
+      "Cyrillic text is cut only between letters":
+        uk: "Кирилицю розрізано лише між літерами"
+        en: "Cyrillic text is cut only between letters"
+      "an emoji is kept whole or left out":
+        uk: "Емодзі або цілий, або його немає"
+        en: "An emoji is kept whole or left out"
+      "ASCII text is cut at exactly maxBytes":
+        uk: "Латиницю розрізано рівно на `maxBytes`"
+        en: "ASCII text is cut at exactly `maxBytes`"
+      "the result always fits, starts the text and has no broken characters":
+        uk: "Результат завжди влазить, є початком тексту й не має зламаних символів"
+        en: "The result always fits, starts the text and has no broken characters"
+      "the longest fitting beginning is returned":
+        uk: "Повертається найдовший початок, що влазить"
+        en: "The longest fitting beginning is returned"
+    hints:
+      nudge:
+        uk: "Чим виміряти байти — `length` чи `TextEncoder`? І по чому краще йти, коли обрізаєш: по байтах, по code units чи по цілих символах?"
+        en: "What measures bytes — `length` or `TextEncoder`? And what is it better to walk when cutting: bytes, code units or whole characters?"
+      explanation:
+        uk: |
+          Байти дає лише кодування: довжина `Uint8Array` після `encode`. Якщо ж обрізати масив байтів і декодувати, можна розрізати символ — з’явиться `�`. Надійніше йти по тексту **цілими символами** (`for...of` іде по code points) і додавати їх, доки наступний не перевищить ліміт. Той самий прийом для іншої межі — не більше N емодзі:
+
+          ```js
+          let kept = "";
+          let count = 0;
+          for (const character of "🐈🐕🐈") {
+            if (count === 2) {
+              break;                     // stop before going over
+            }
+            kept = kept + character;
+            count = count + 1;
+          }
+          ```
+
+          Цикл за номером `text[i]` іде по code units і може відрізати половинку емодзі.
+        en: |
+          Only encoding gives bytes: the length of the `Uint8Array` after `encode`. If you cut the bytes and decode them, you may cut a character — a `�` appears. It is more reliable to walk the text by **whole characters** (`for...of` walks code points) and add them until the next one would go over the limit. The same technique for another limit — at most N emoji:
+
+          ```js
+          let kept = "";
+          let count = 0;
+          for (const character of "🐈🐕🐈") {
+            if (count === 2) {
+              break;                     // stop before going over
+            }
+            kept = kept + character;
+            count = count + 1;
+          }
+          ```
+
+          A loop by index `text[i]` walks code units and may cut off half an emoji.
+    solutionNote:
+      uk: "`byteLength` міряє результат `TextEncoder`. `truncateToBytes` іде по символах (`for...of`), рахує байти кожного й зупиняється перед першим, що вже не влазить, — тож розрізаного символу не буває. Інший спосіб — `encodeInto`: він записує в буфер лише цілі символи й повідомляє, скільки тексту прочитав."
+      en: "`byteLength` measures the result of `TextEncoder`. `truncateToBytes` walks the characters (`for...of`), counts the bytes of each and stops before the first one that no longer fits — so a character is never cut. Another way is `encodeInto`: it writes only whole characters into the buffer and reports how much of the text it read."
+    feedback:
+      - when: { test: "the program prints 13 and Киї" }
+        message:
+          uk: "Ця перевірка очікує два рядки: `13` (байти `\"Київ 🐈\"`: 8 + 1 + 4) і `Киї` (найдовший початок у 6 байтів)."
+          en: "This check expects two lines: `13` (the bytes of `\"Київ 🐈\"`: 8 + 1 + 4) and `Киї` (the longest beginning within 6 bytes)."
+      - when: { test: "byteLength counts UTF-8 bytes, not string length" }
+        message:
+          uk: "Ця перевірка очікує 3 для `\"abc\"`, 8 для `\"Київ\"`, 4 для `\"🐈\"` і 0 для `\"\"`. `length` дав би 4 і 2 — це code units, а не байти."
+          en: "This check expects 3 for `\"abc\"`, 8 for `\"Київ\"`, 4 for `\"🐈\"` and 0 for `\"\"`. `length` would give 4 and 2 — those are code units, not bytes."
+      - when: { test: "Cyrillic text is cut only between letters" }
+        message:
+          uk: "Ця перевірка очікує `\"Ки\"` для 5 байтів (третя літера вже не влазить), `\"Київ\"` для 8 і `\"\"` для 1."
+          en: "This check expects `\"Ки\"` for 5 bytes (the third letter no longer fits), `\"Київ\"` for 8 and `\"\"` for 1."
+      - when: { test: "an emoji is kept whole or left out" }
+        message:
+          uk: "Ця перевірка очікує `\"🐈\"` для `(\"🐈🐈\", 5)` і `\"a\"` для `(\"a🐈\", 3)`: емодзі (4 байти) або входить цілим, або не входить зовсім."
+          en: "This check expects `\"🐈\"` for `(\"🐈🐈\", 5)` and `\"a\"` for `(\"a🐈\", 3)`: an emoji (4 bytes) either goes in whole or not at all."
+      - when: { test: "ASCII text is cut at exactly maxBytes" }
+        message:
+          uk: "Ця перевірка очікує `\"abcd\"` для `(\"abcdef\", 4)` і весь текст `\"abc\"`, коли ліміт більший за розмір."
+          en: "This check expects `\"abcd\"` for `(\"abcdef\", 4)` and the whole text `\"abc\"` when the limit is larger than the size."
+      - when: { test: "the result always fits, starts the text and has no broken characters" }
+        message:
+          uk: "Ця перевірка для кількох текстів і кожної межі від 0 очікує результат-текст, що влазить у ліміт, є початком тексту, не містить `�` і не обриває символ посередині. Повідомлення про помилку називає текст і межу, на яких це не так."
+          en: "For several texts and every limit from 0 this check expects a text result that fits into the limit, is a beginning of the text, contains no `�` and does not cut a character in the middle. The failure message names the text and the limit where that is not so."
+      - when: { test: "the longest fitting beginning is returned" }
+        message:
+          uk: "Ця перевірка очікує `\"Київ \"` (з пробілом) для 9 байтів і весь `\"Київ 🐈\"` для 13: обрізати треба лише те, що не влазить."
+          en: "This check expects `\"Київ \"` (with the space) for 9 bytes and the whole `\"Київ 🐈\"` for 13: cut only what does not fit."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-13
+    body:
+      uk: "У проєкті назви записів обмежено 80 символами — це `length` після `trim`, бо так записано в правилах домену. Якщо колись обмеження стане байтовим (поле бази даних, заголовок запиту), ти вже знаєш, чим його міряти й як обрізати, не зламавши кирилиці."
+      en: "In the project record names are limited to 80 characters — that is `length` after `trim`, because that is what the domain rules say. If a limit ever becomes a byte limit (a database field, a request header), you already know what to measure it with and how to cut without breaking Cyrillic."

@@ -1,0 +1,382 @@
+id: js-13-05-allocation-retained-references
+unit: JS-13
+title:
+  uk: "Виділення пам’яті та утримувані посилання"
+  en: "Allocation and retained references"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Простежити, які об’єкти лишаються досяжними від коренів (змінні модуля, живі замикання, listeners, таймери, кеші) після того, як частину інтерфейсу прибрали зі сторінки."
+    en: "Trace which objects stay reachable from roots (module scope, live closures, listeners, timers, caches) after a feature is removed from the page."
+  - uk: "Пояснити, чому необмежений кеш чи замикання над великим масивом тримають пам’ять, і обмежити або звільнити її."
+    en: "Explain why an unbounded cache or a closure over a large array keeps memory alive, and bound or release it."
+prerequisites: [js-13-04-encoding-boundaries, js-12-13-weak-collections]
+subskills:
+  - { family: J-12, skill: "allocation/retained references", depth: intro }
+glossary: [allocation, retained-reference, gc-root]
+selfCheck: [predict-reachable, bounded-cache]
+
+blocks:
+  - id: roots
+    kind: explanation
+    title:
+      uk: "Пам’ять звільняється лише для недосяжного"
+      en: "Memory is freed only for the unreachable"
+    body:
+      uk: |
+        Кожен новий об’єкт, масив чи функція займає пам’ять — це [[allocation|виділення пам’яті]]. Звільняє її [[garbage-collection|збирач сміття]], але лише для об’єктів, до яких **уже не дістатися** (у JS-12 це звалося [[reachability|досяжністю]]).
+
+        Звідки «дістаються»? Від [[gc-root|коренів]]:
+
+        - змінні модуля та глобальний об’єкт `window`;
+        - змінні функцій, що зараз виконуються;
+        - **listeners, які браузер іще тримає** (`addEventListener`), і **таймери, що ще чекають** (`setTimeout`, `setInterval`) — браузер зберігає їхні функції, а з ними й усе, що ці функції замикають.
+
+        Тому «JavaScript сам прибирає пам’ять» не означає «витоку не буде». Якщо забутий listener замикає масив на 10 000 записів, масив — [[retained-reference|утримуваний]]: прибрати його не можна, хоча ти його вже ніде не показуєш. А `x = null` лише прибирає **одне** посилання: об’єкт звільниться, коли не лишиться жодного, і то в невідомий момент.
+      en: |
+        Every new object, array or function takes memory — that is [[allocation]]. It is freed by the [[garbage-collection|garbage collector]], but only for objects that **can no longer be reached** (JS-12 called that [[reachability]]).
+
+        Reached from where? From [[gc-root|roots]]:
+
+        - module variables and the global object `window`;
+        - the variables of functions that are running right now;
+        - **listeners the browser still holds** (`addEventListener`) and **timers that are still waiting** (`setTimeout`, `setInterval`) — the browser keeps their functions, and with them everything those functions close over.
+
+        So “JavaScript cleans memory by itself” does not mean “there will be no leak”. If a forgotten listener closes over an array of 10 000 records, the array is [[retained-reference|retained]]: it cannot be freed, although you no longer show it anywhere. And `x = null` removes only **one** reference: the object is freed when none is left, and even then at an unknown moment.
+
+  - id: predict-reachable
+    kind: prediction
+    prompt:
+      uk: "`openPanel` показує розділ із кількістю записів, кладе число в кеш і реєструє listener. Після `remove()` розділу на сторінці немає. Обери **всі** об’єкти, які ще лишаються досяжними (утримуваними) — їх збирач сміття звільнити не може."
+      en: "`openPanel` shows a section with the number of records, puts a number into the cache and registers a listener. After `remove()` the section is gone from the page. Choose **all** objects that are still reachable (retained) — the garbage collector cannot free them."
+    code: |
+      const cache = new Map();
+
+      function makeRecords(count) {
+        return Array.from({ length: count }, (_, i) => ({ id: "e-" + i }));
+      }
+
+      function openPanel() {
+        const records = makeRecords(10000);
+        const panel = document.createElement("section");
+        panel.textContent = records.length + " records";
+        document.body.append(panel);
+        cache.set("last", records.length);
+        window.addEventListener("resize", () => {
+          console.log(records.length);
+        });
+        return panel;
+      }
+
+      openPanel().remove();
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: records
+          text:
+            uk: "Масив `records` на 10 000 записів"
+            en: "The array `records` of 10 000 records"
+        - id: listener
+          text:
+            uk: "Стрілкова функція-listener для `resize`"
+            en: "The arrow function listening for `resize`"
+        - id: cache
+          text:
+            uk: "`Map` у змінній `cache`"
+            en: "The `Map` in the variable `cache`"
+        - id: panel
+          text:
+            uk: "Елемент `section`"
+            en: "The `section` element"
+          why:
+            uk: "Після `remove()` на розділ не вказує ні сторінка, ні змінна: `panel` жила лише всередині функції, а listener її не згадує. Його вже можна звільнити."
+            en: "After `remove()` neither the page nor a variable points to the section: `panel` lived only inside the function, and the listener does not mention it. It can be freed now."
+        - id: nothing
+          text:
+            uk: "Нічого: функція `openPanel` завершилася, тож усі її змінні вже звільнено"
+            en: "Nothing: the function `openPanel` has finished, so all its variables are already freed"
+          why:
+            uk: "Завершення функції не звільняє того, що її замикання передали далі. Браузер тримає listener, listener замикає `records`, а `cache` — змінна модуля."
+            en: "A function finishing does not free what its closures handed on. The browser holds the listener, the listener closes over `records`, and `cache` is a module variable."
+      correct: [records, listener, cache]
+    explanation:
+      uk: "Браузер тримає зареєстрований listener, а через його замикання — масив `records`, хоча на екрані вже нічого немає. `cache` досяжний як змінна модуля. Сам `section` недосяжний: сторінка його відпустила, а на нього не вказує жодне замикання. Це не можна перевірити запуском — збирач сміття працює непомітно, тож міркуємо стрілками від коренів."
+      en: "The browser holds the registered listener, and through its closure the array `records`, although nothing is on screen any more. `cache` is reachable as a module variable. The `section` itself is unreachable: the page let it go, and no closure points to it. This cannot be checked by running — the garbage collector works invisibly, so we reason with arrows from the roots."
+
+  - id: retention-graph
+    kind: visual
+    visual: memory-graph
+    title:
+      uk: "Розділ прибрали, а масив лишився"
+      en: "The section is gone, the array stays"
+    textEquivalent:
+      uk: "Ліворуч корені: змінна модуля cache і window. Після openPanel() від window іде стрілка до списку listeners для resize, а в ньому — замикання стрілкової функції, яке вказує на масив records на 10 000 записів. Від document.body іде стрілка до елемента section. cache — Map із записом last → 10000. Після panel.remove() стрілка від body до section зникає: на section більше ніщо не вказує, тож його можна звільнити. Але ланцюжок window → listeners → замикання → records лишився цілим — масив утримано, хоча на екрані його вже немає. Коли listener знято через removeEventListener, а кеш очищено, від коренів більше не веде жодна стрілка ні до замикання, ні до масиву: тепер збирач сміття може їх звільнити — у момент, який він обере сам."
+      en: "On the left are the roots: the module variable cache and window. After openPanel() an arrow leads from window to the list of resize listeners, and in it the closure of the arrow function, which points to the array records of 10 000 records. An arrow leads from document.body to the section element. cache is a Map with the entry last → 10000. After panel.remove() the arrow from body to the section disappears: nothing points to the section any more, so it can be freed. But the chain window → listeners → closure → records is intact — the array is retained, although it is no longer on screen. Once the listener is removed with removeEventListener and the cache is cleared, no arrow leads from the roots to the closure or to the array any more: now the garbage collector may free them — at a moment it chooses itself."
+    spec:
+      code: |
+        const panel = openPanel();
+        panel.remove();
+        window.removeEventListener("resize", onResize);
+        cache.clear();
+      states:
+        - caption:
+            uk: "Після `openPanel()`: `body` показує `section`, `window` тримає listener, listener замикає `records`, у `cache` — один запис."
+            en: "After `openPanel()`: `body` shows the `section`, `window` holds the listener, the listener closes over `records`, `cache` has one entry."
+          line: 1
+          bindings:
+            - { name: cache, kind: const, value: { ref: map } }
+            - { name: window, kind: var, value: { ref: win } }
+          heap:
+            map: { kind: map, entries: [["last", 10000]] }
+            win: { kind: object, props: { body: { ref: body }, resizeListeners: { ref: list } } }
+            body: { kind: object, ctor: HTMLBodyElement, props: { child: { ref: section } } }
+            section: { kind: object, ctor: HTMLElement, props: { tag: "section" } }
+            list: { kind: array, items: [{ ref: onResize }] }
+            onResize: { kind: object, ctor: closure, props: { records: { ref: records } } }
+            records: { kind: array, items: ["{ id: e-0 }", "…", "{ id: e-9999 }"] }
+        - caption:
+            uk: "`panel.remove()` прибирає стрілку `body → section`. На `section` більше ніщо не вказує — його можна звільнити. А `records` досі досяжний через listener."
+            en: "`panel.remove()` removes the arrow `body → section`. Nothing points to the `section` any more — it can be freed. But `records` is still reachable through the listener."
+          line: 2
+          bindings:
+            - { name: cache, kind: const, value: { ref: map } }
+            - { name: window, kind: var, value: { ref: win } }
+          heap:
+            map: { kind: map, entries: [["last", 10000]] }
+            win: { kind: object, props: { body: { ref: body }, resizeListeners: { ref: list } } }
+            body: { kind: object, ctor: HTMLBodyElement, props: { child: null } }
+            section: { kind: object, ctor: HTMLElement, props: { tag: "section" } }
+            list: { kind: array, items: [{ ref: onResize }] }
+            onResize: { kind: object, ctor: closure, props: { records: { ref: records } } }
+            records: { kind: array, items: ["{ id: e-0 }", "…", "{ id: e-9999 }"] }
+          changed: [body]
+        - caption:
+            uk: "`removeEventListener` прибирає listener зі списку `window`. Замикання й `records` тепер недосяжні, як і `section` (його вже не намальовано)."
+            en: "`removeEventListener` takes the listener out of `window`'s list. The closure and `records` are unreachable now, like the `section` (no longer drawn)."
+          line: 3
+          bindings:
+            - { name: cache, kind: const, value: { ref: map } }
+            - { name: window, kind: var, value: { ref: win } }
+          heap:
+            map: { kind: map, entries: [["last", 10000]] }
+            win: { kind: object, props: { body: { ref: body }, resizeListeners: { ref: list } } }
+            body: { kind: object, ctor: HTMLBodyElement, props: { child: null } }
+            list: { kind: array, items: [] }
+            onResize: { kind: object, ctor: closure, props: { records: { ref: records } } }
+            records: { kind: array, items: ["{ id: e-0 }", "…", "{ id: e-9999 }"] }
+          changed: [list]
+        - caption:
+            uk: "`cache.clear()` спорожняє `Map`. Від коренів досяжні лише `cache`, `window` і `body`. `section`, замикання й `records` тут уже не намальовано: вони недосяжні, і збирач сміття звільнить їх, коли сам вирішить."
+            en: "`cache.clear()` empties the `Map`. From the roots only `cache`, `window` and `body` are reachable. The `section`, the closure and `records` are no longer drawn here: they are unreachable, and the garbage collector frees them when it decides to."
+          line: 4
+          bindings:
+            - { name: cache, kind: const, value: { ref: map } }
+            - { name: window, kind: var, value: { ref: win } }
+          heap:
+            map: { kind: map, entries: [] }
+            win: { kind: object, props: { body: { ref: body }, resizeListeners: { ref: list } } }
+            body: { kind: object, ctor: HTMLBodyElement, props: { child: null } }
+            list: { kind: array, items: [] }
+          changed: [map]
+
+  - id: retention
+    kind: example
+    runtime: browser-js
+    dir: retention
+    entry: index.js
+    strings:
+      food: { uk: "Їжа", en: "Food" }
+      fun: { uk: "Розваги", en: "Fun" }
+      opened: { uk: "відкрито —", en: "opened —" }
+      closed: { uk: "закрито —", en: "closed —" }
+      sections: { uk: "розділів на сторінці:", en: "sections on the page:" }
+      cache: { uk: "у кеші:", en: "in the cache:" }
+      listeners: { uk: "listeners:", en: "listeners:" }
+      held: { uk: "записів, утримуваних listeners:", en: "records held by listeners:" }
+    title:
+      uk: "Звіт про утримане: що лишилося після закриття"
+      en: "A retention report: what is left after closing"
+    body:
+      uk: |
+        Збирач сміття працює непомітно, тож програма веде власний облік коренів: `cache` (змінна модуля) і `liveListeners` — які listeners ще зареєстровано і скільки записів тримає кожен. Натисни **Запустити**.
+
+        Після закриття розділів на сторінці 0, а в кеші — 2 масиви, listeners — 2 і 20 000 записів, утримуваних listeners. `closePanel` прибрала лише те, що видно.
+      en: |
+        The garbage collector works invisibly, so the program keeps its own record of the roots: `cache` (a module variable) and `liveListeners` — which listeners are still registered and how many records each holds. Press **Run**.
+
+        After closing there are 0 sections on the page, but 2 arrays in the cache, 2 listeners and 20 000 records held by the listeners. `closePanel` removed only what can be seen.
+    tryIt:
+      uk: |
+        1. У `closePanel` під рядком `handle.panel.remove();` додай `window.removeEventListener("resize", handle.onResize);` і `liveListeners.delete(handle.onResize);`. Запусти: у рядку «закрито» тепер 0 listeners і 0 утримуваних записів. Зверни увагу: знімаємо **ту саму** функцію `handle.onResize`, яку реєстрували.
+        2. Додай туди ж `cache.delete(handle.name);`. Тепер і в кеші 0.
+        3. Зауваж: змінні модуля `food` і `fun` досі вказують на об’єкти з `panel`, тож самі елементи `section` теж утримано, хоч їх і немає на сторінці. Таке посилання непомітне — його не показує жоден рядок звіту.
+      en: |
+        1. In `closePanel`, below the line `handle.panel.remove();`, add `window.removeEventListener("resize", handle.onResize);` and `liveListeners.delete(handle.onResize);`. Run: the “closed” line now shows 0 listeners and 0 held records. Note that we remove **the same** function `handle.onResize` that was registered.
+        2. Add `cache.delete(handle.name);` there too. Now the cache is at 0 as well.
+        3. Notice: the module variables `food` and `fun` still point to objects with `panel`, so the `section` elements themselves are retained too, even though they are not on the page. Such a reference is invisible — no line of the report shows it.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: що тримає замикання"
+      en: "Recall: what a closure keeps"
+    items:
+      - id: closure-keeps
+        from: js-03-05-closures
+        prompt:
+          uk: "Функція `makeCounter` уже завершилася. Що виведе цей код?"
+          en: "The function `makeCounter` has already finished. What does this code print?"
+        code: |
+          function makeCounter() {
+            let count = 0;
+            return () => {
+              count = count + 1;
+              return count;
+            };
+          }
+          const next = makeCounter();
+          next();
+          next();
+          console.log(next());
+        verify:
+          logs: ["3"]
+        answer:
+          type: choice
+          options:
+            - id: three
+              code: "3"
+            - id: one
+              code: "1"
+              why:
+                uk: "`count` не створюється заново на кожен виклик `next`: це змінна `makeCounter`, яку тримає замикання, і вона пам’ятає попередні значення."
+                en: "`count` is not created anew on every call of `next`: it is a variable of `makeCounter` held by the closure, and it remembers the previous values."
+            - id: error
+              code: "ReferenceError"
+              why:
+                uk: "Змінні зовнішньої функції живуть стільки, скільки живе замикання, що їх використовує, — навіть коли сама функція давно завершилася."
+                en: "The variables of the outer function live as long as the closure that uses them — even when the function itself finished long ago."
+          correct: [three]
+        explanation:
+          uk: "Замикання тримає `count` живим, доки живе `next`. Той самий механізм тримає великий масив у пам’яті, якщо його замикає забутий listener чи таймер."
+          en: "The closure keeps `count` alive as long as `next` lives. The same mechanism keeps a large array in memory when a forgotten listener or timer closes over it."
+
+  - id: bounded-cache
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: bounded-cache
+    entry: index.js
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+    title:
+      uk: "Кеш, що не росте без меж"
+      en: "A cache that does not grow without limit"
+    instructions:
+      uk: |
+        Кеш у змінній модуля — корінь: усе, що в ньому лежить, живе до кінця роботи сторінки. Тому кешу потрібна межа. Допиши `createCache(limit)`:
+
+        - `set(key, value)` записує значення; якщо записів стало більше за `limit`, прибирає **найстаріший**;
+        - повторний `set` наявного ключа замінює значення й робить запис **найновішим**;
+        - `get(key)` повертає значення або `undefined` і порядку не змінює;
+        - `size` — кількість записів; він ніколи не перевищує `limit`;
+        - кожен кеш має власні записи.
+
+        Унизу файла готовий код: у консолі має з’явитися `2`, `undefined` і назва велосипеда.
+      en: |
+        A cache in a module variable is a root: everything in it lives until the page closes. That is why a cache needs a limit. Complete `createCache(limit)`:
+
+        - `set(key, value)` stores the value; if there are now more than `limit` entries, it removes the **oldest**;
+        - setting an existing key again replaces its value and makes the entry the **newest**;
+        - `get(key)` returns the value or `undefined` and does not change the order;
+        - `size` is the number of entries; it never exceeds `limit`;
+        - every cache has its own entries.
+
+        At the bottom of the file there is ready code: the console must show `2`, `undefined` and the bicycle's name.
+    testTitles:
+      "the program prints 2, undefined and the bicycle":
+        uk: "Програма друкує 2, undefined і велосипед"
+        en: "The program prints 2, undefined and the bicycle"
+      "size never exceeds the limit":
+        uk: "`size` ніколи не перевищує межі"
+        en: "`size` never exceeds the limit"
+      "the oldest entry is removed first":
+        uk: "Першим прибирається найстаріший запис"
+        en: "The oldest entry is removed first"
+      "setting an existing key makes it the newest":
+        uk: "Повторний `set` робить запис найновішим"
+        en: "Setting an existing key makes it the newest"
+      "get returns the value, or undefined for a missing key":
+        uk: "`get` повертає значення або `undefined` для відсутнього ключа"
+        en: "`get` returns the value, or `undefined` for a missing key"
+      "a limit of 1 keeps only the newest entry":
+        uk: "Межа 1 тримає лише найновіший запис"
+        en: "A limit of 1 keeps only the newest entry"
+      "two caches do not share entries":
+        uk: "Два кеші не мають спільних записів"
+        en: "Two caches do not share entries"
+    hints:
+      nudge:
+        uk: "Яка колекція з JS-12 пам’ятає порядок, у якому ключі вперше додали? Як знайти в ній перший ключ?"
+        en: "Which collection from JS-12 remembers the order in which keys were first added? How do you find its first key?"
+      explanation:
+        uk: |
+          `Map` віддає ключі в порядку першого додавання, тож найстаріший — перший. Перший елемент будь-якого ітератора дає один виклик `next()`:
+
+          ```js
+          const queue = new Set(["t-01", "t-02"]);
+          const first = queue.values().next().value;   // "t-01"
+          ```
+
+          Повторний `set` наявного ключа **не** переносить його в кінець — щоб запис став найновішим, спершу видали його, а потім запиши знову. І тримай `Map` усередині `createCache`, а не в змінній модуля, інакше всі кеші ділитимуть одні записи.
+        en: |
+          A `Map` gives its keys in the order they were first added, so the oldest is the first one. One `next()` call gives the first item of any iterator:
+
+          ```js
+          const queue = new Set(["t-01", "t-02"]);
+          const first = queue.values().next().value;   // "t-01"
+          ```
+
+          Setting an existing key again does **not** move it to the end — to make the entry the newest, delete it first and then write it again. And keep the `Map` inside `createCache`, not in a module variable, or all caches will share one set of entries.
+    solutionNote:
+      uk: "`Map` усередині `createCache` — у кожного кешу свій. `set` спершу видаляє ключ, щоб повторний запис став найновішим, а коли розмір перевищує межу, прибирає перший ключ — `entries.keys().next().value`. Так кеш займає щонайбільше `limit` записів, хоч би скільки разів у нього писали."
+      en: "The `Map` lives inside `createCache` — every cache has its own. `set` first deletes the key, so a repeated write becomes the newest, and when the size goes over the limit it removes the first key — `entries.keys().next().value`. That way the cache holds at most `limit` entries, however often it is written to."
+    feedback:
+      - when: { test: "the program prints 2, undefined and the bicycle" }
+        message:
+          uk: "Ця перевірка очікує один рядок: `2` (розмір при межі 2), `undefined` (найстаріший `w-01` прибрано) і назву велосипеда (`w-03`)."
+          en: "This check expects one line: `2` (the size with limit 2), `undefined` (the oldest `w-01` was removed) and the bicycle's name (`w-03`)."
+      - when: { test: "size never exceeds the limit" }
+        message:
+          uk: "Ця перевірка робить 10 записів у кеш із межею 3 і після кожного очікує `size` не більше 3, а наприкінці — рівно 3."
+          en: "This check makes 10 writes into a cache with limit 3 and after each one expects `size` to be at most 3, and exactly 3 at the end."
+      - when: { test: "the oldest entry is removed first" }
+        message:
+          uk: "Ця перевірка записує `a`, `b`, `c`, `d` при межі 3 й очікує, що `a` зник, а `b`, `c`, `d` лишилися зі своїми значеннями."
+          en: "This check writes `a`, `b`, `c`, `d` with limit 3 and expects `a` to be gone and `b`, `c`, `d` to stay with their values."
+      - when: { test: "setting an existing key makes it the newest" }
+        message:
+          uk: "Ця перевірка записує `a`, `b`, `c`, потім знову `a` (розмір лишається 3), потім `d` — і очікує, що зник `b`, а `a` лишився зі значенням 10."
+          en: "This check writes `a`, `b`, `c`, then `a` again (the size stays 3), then `d` — and expects `b` to be gone and `a` to stay with the value 10."
+      - when: { test: "get returns the value, or undefined for a missing key" }
+        message:
+          uk: "Ця перевірка очікує, що `get` поверне записаний об’єкт, `undefined` для ключа, якого не було, а `size` після одного запису — 1."
+          en: "This check expects `get` to return the stored object, `undefined` for a key that was never set, and `size` to be 1 after one write."
+      - when: { test: "a limit of 1 keeps only the newest entry" }
+        message:
+          uk: "Ця перевірка при межі 1 записує `a` і `b` й очікує розмір 1, `undefined` для `a` і 2 для `b`."
+          en: "With limit 1 this check writes `a` and `b` and expects size 1, `undefined` for `a` and 2 for `b`."
+      - when: { test: "two caches do not share entries" }
+        message:
+          uk: "Ця перевірка пише в один кеш і очікує, що другий лишається порожнім. Записи мають жити всередині кожного `createCache(...)`, а не в змінній модуля."
+          en: "This check writes into one cache and expects the other to stay empty. The entries must live inside each `createCache(...)`, not in a module variable."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-13
+    body:
+      uk: "У проєкті подивись на змінні модулів `ui/page.js` і `app.js`: що в них живе весь час роботи сторінки й чи може воно рости без меж? А кожен listener, який створює список, на кроці цього розділу отримає пару — зняття в `teardown()`."
+      en: "In the project, look at the module variables of `ui/page.js` and `app.js`: what lives in them for as long as the page runs, and can it grow without limit? And every listener the list creates will get a partner in this unit's step — its removal in `teardown()`."
