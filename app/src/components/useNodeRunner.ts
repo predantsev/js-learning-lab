@@ -95,7 +95,7 @@ function streamRun(body: unknown, onEvent: (event: { type: string; [k: string]: 
   });
 }
 
-const initial: NodeRunState = { status: 'idle', mode: null, console: [], errors: [], compileErrors: [], tests: null, harnessError: null, unresponsive: false, failure: null, runCount: 0, live: false, notice: null };
+const initial: NodeRunState = { status: 'idle', mode: null, console: [], errors: [], compileErrors: [], tests: null, harnessError: null, unresponsive: false, failure: null, runCount: 0, live: false, trace: null, notice: null };
 const MAX_CONSOLE = 1000;
 const STDERR_KEEP = 256 * 1024;
 

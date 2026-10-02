@@ -15,6 +15,11 @@ export function localizeText(text, block, lang) {
   const table = stringsFor(block, lang);
   return text.replace(STRING_PLACEHOLDER, (match, key) => (key in table ? table[key] : match));
 }
+/** A bilingual { uk, en } text whose %%key%% placeholders are resolved from each language's own strings. */
+export function localizePair(pair, block) {
+  if (!block.strings || pair === null || typeof pair !== 'object' || Array.isArray(pair)) return pair;
+  return Object.fromEntries(Object.entries(pair).map(([lang, text]) => [lang, localizeText(text, block, lang)]));
+}
 export function localizeFiles(files, block, lang) {
   if (!block.strings) return files;
   return Object.fromEntries(Object.entries(files).map(([path, text]) => [path, localizeText(text, block, lang)]));

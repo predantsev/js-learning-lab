@@ -96,6 +96,33 @@ export function traceBabelPlugin({ types: t }, options = {}) {
           }
           return '(anonymous)';
         };
+        /**
+         * The `name` the engine gives an anonymous function or arrow expression from its position
+         * (NamedEvaluation): `const f = () => …`, `f = …`, `{ f: … }`, class fields, defaults,
+         * `export default`. Unlike functionName() this never invents a display name ("map callback").
+         * Wrapping the expression in __jsllTrace.fn(…) defeats the engine's inference, so the runtime
+         * restores exactly this name.
+         */
+        const inferredName = (path) => {
+          const node = path.node;
+          if (node.id) return null;
+          const parent = path.parentPath;
+          const keyName = (key, computed) => {
+            if (computed) return null;
+            if (t.isIdentifier(key)) return key.name;
+            if (t.isStringLiteral(key)) return key.value;
+            if (t.isNumericLiteral(key)) return String(key.value);
+            if (t.isPrivateName(key)) return `#${key.id.name}`;
+            return null;
+          };
+          if (parent.isVariableDeclarator() && parent.node.init === node && t.isIdentifier(parent.node.id)) return parent.node.id.name;
+          if (parent.isAssignmentExpression() && parent.node.right === node && t.isIdentifier(parent.node.left) && ['=', '||=', '&&=', '??='].includes(parent.node.operator)) return parent.node.left.name;
+          if (parent.isAssignmentPattern() && parent.node.right === node && t.isIdentifier(parent.node.left)) return parent.node.left.name;
+          if (parent.isObjectProperty() && parent.node.value === node) return keyName(parent.node.key, parent.node.computed);
+          if ((parent.isClassProperty() || parent.isClassPrivateProperty()) && parent.node.value === node) return keyName(parent.node.key, parent.node.computed);
+          if (parent.isExportDefaultDeclaration()) return 'default';
+          return null;
+        };
         const usesThis = (fnPath) => {
           if (fnPath.isArrowFunctionExpression()) return false;
           let found = false;
@@ -216,9 +243,20 @@ export function traceBabelPlugin({ types: t }, options = {}) {
               if (node.update) updateParts.push(node.update);
               node.update = t.sequenceExpression(updateParts);
               if (v) {
-                let anchor = path;
-                while (anchor.parentPath && anchor.parentPath.isLabeledStatement()) anchor = anchor.parentPath;
-                anchor.insertBefore(t.variableDeclaration('let', [t.variableDeclarator(t.cloneNode(v), t.nullLiteral())]));
+                const init = node.init;
+                if (t.isVariableDeclaration(init) && init.kind === 'let') {
+                  // The instance variable joins the `let` head, so the engine copies it into every
+                  // iteration's environment together with the loop variables: a closure created in
+                  // iteration k keeps seeing iteration k's instance (and thus its own `i`), exactly
+                  // like it keeps its own `i`. Declared outside the loop it would hold the last
+                  // instance by the time the closure runs.
+                  init.declarations.push(t.variableDeclarator(t.cloneNode(v), t.nullLiteral()));
+                } else {
+                  // `const` heads have no per-iteration copies: one environment, one variable.
+                  let anchor = path;
+                  while (anchor.parentPath && anchor.parentPath.isLabeledStatement()) anchor = anchor.parentPath;
+                  anchor.insertBefore(t.variableDeclaration('let', [t.variableDeclarator(t.cloneNode(v), t.nullLiteral())]));
+                }
               }
             },
           },
@@ -238,6 +276,11 @@ export function traceBabelPlugin({ types: t }, options = {}) {
               }
               prelude.push(atStatement(node, 'iter', build ? build() : refFor(path.scope)));
               body.unshiftContainer('body', prelude);
+              // The iterated expression runs before the first `iter` step and may call functions:
+              // move the frame to the loop line first (no step), as for return expressions.
+              const owner = path.getFunctionParent();
+              const fr = frameVars.get(owner ? owner.scope.uid : programPath.scope.uid);
+              if (fr && node.right && node.right.loc) node.right = t.sequenceExpression([rt('pos', [t.cloneNode(fr), num(node.loc.start.line), refForParentOf(path.scope)]), node.right]);
             },
           },
           BlockStatement: {
@@ -265,7 +308,11 @@ export function traceBabelPlugin({ types: t }, options = {}) {
               if (!fn) return;
               const fr = frameVars.get(fn.scope.uid);
               if (!fr) return;
-              node.argument = rt('returning', [t.cloneNode(fr), node.argument || t.identifier('undefined'), num(node.loc.start.line), num(node.loc.start.column)]);
+              // A return statement has no step of its own, but its expression may call functions:
+              // `pos` first moves this frame to the return line (no step), so while `b` runs in
+              // `return a(b(x))` the waiting caller frame points at the return, not the previous line.
+              const value = t.sequenceExpression([rt('pos', [t.cloneNode(fr), num(node.loc.start.line), refFor(path.scope)]), node.argument || t.identifier('undefined')]);
+              node.argument = rt('returning', [t.cloneNode(fr), value, num(node.loc.start.line), num(node.loc.start.column)]);
             },
           },
           AwaitExpression: {
@@ -309,10 +356,12 @@ export function traceBabelPlugin({ types: t }, options = {}) {
               );
               // Directives ("use strict") stay in body.directives, so the declaration is the first statement.
               body.node.body = [t.variableDeclaration('let', [t.variableDeclarator(t.cloneNode(fr), t.nullLiteral())]), guarded];
-              // Function values remember the scope they were created in (closure link in the heap).
+              // Function values remember the scope they were created in (closure link in the heap)
+              // and keep the name the engine would have inferred without the wrapper.
               if ((path.isFunctionExpression() || path.isArrowFunctionExpression()) && node.loc && !node.__jsllWrapped) {
                 node.__jsllWrapped = true;
-                path.replaceWith(rt('fn', [node, refForParentOf(path.scope)]));
+                const name = inferredName(path);
+                path.replaceWith(rt('fn', [node, refForParentOf(path.scope), ...(name ? [str(name)] : [])]));
               }
             },
           },

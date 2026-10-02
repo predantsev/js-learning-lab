@@ -1,6 +1,6 @@
 // Practice pane: editor + real result (page, console, checks, storage) for an example or exercise.
 // Learner files are never overwritten by feedback, hints or the solution (REQ-018, REQ-019).
-import { type KeyboardEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, Suspense, lazy, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { localizeFiles } from '@shared/exercise.js';
 import type { Doc } from '../lib/persist';
 import { type Key } from '../lib/i18n';
@@ -15,7 +15,9 @@ import { type NodeRunState, nodeFeature, nodeGuidanceKey, useNodeRunner } from '
 import { AUTO_STOP_AFTER_MS, type RunState, useRunner } from './useRunner';
 
 type WsBlock = ExampleBlock | ExerciseBlock;
-type Tab = 'preview' | 'console' | 'tests' | 'storage';
+type Tab = 'preview' | 'console' | 'tests' | 'storage' | 'steps';
+// "Step through": the learner's code in the code-trace player (loaded with the visual players).
+const TracePanel = lazy(() => import('./TracePanel'));
 
 // A Node.js program has no page: its result is the console and the checks.
 const hasPreview = (block: WsBlock): boolean => block.runtime !== 'isolated-node' && (block.preview ?? (block.entry.endsWith('.html') || block.runtime === 'browser-react' || block.runtime === 'concept-preview'));
@@ -189,9 +191,12 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   const runner = isNode ? nodeRunner : browserRunner;
   // Without proven isolation nothing runs; the drafts stay editable and saved (REQ-021).
   const nodeOff = isNode && !nodeFeature().available;
+  const tracer = useRunner();
+  const [tracedFiles, setTracedFiles] = useState<Record<string, string> | null>(null);
   const runButton = useRef<HTMLButtonElement>(null);
   const frameHost = useRef<HTMLDivElement>(null);
   const hiddenHost = useRef<HTMLDivElement>(null);
+  const traceHost = useRef<HTMLDivElement>(null);
   const editable = block.kind === 'exercise' ? block.editable : fileNames;
   const exerciseProgress = useStore(app().progress.store, (p) => (block.kind === 'exercise' ? p.lessons[lesson.id]?.exercises[block.id] : undefined));
 
@@ -237,6 +242,16 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
     if (mode === 'run' && recordProgress && block.kind === 'example') app().progress.update((p) => recordExampleRun(p, lesson, block.id));
   };
 
+  // Step through: the current files run off screen with the tracer; the Steps tab shows the trace.
+  const traceRun = () => {
+    const container = traceHost.current;
+    if (!container || tracer.isActive) return;
+    const current = drafts.value.blocks[draftKey]?.files ?? starter;
+    setTracedFiles(current);
+    setTab('steps');
+    tracer.start({ block, files: current, mode: 'run', trace: true, storage: drafts.value.blocks[draftKey]?.storage ?? {}, lang: codeLang, container, title: t('ws.trace') });
+  };
+
   // Compile errors and the first runtime error are also marked in the editor gutter.
   const issues: EditorIssue[] = useMemo(() => {
     const s = runner.state;
@@ -266,7 +281,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   })();
   const passedNow = block.kind === 'exercise' && s.tests !== null && !s.harnessError && s.tests.length > 0 && s.tests.every((x) => x.status === 'pass');
   const storageKeys = Object.keys(storage);
-  const tabs: Tab[] = [...(hasPreview(block) ? (['preview'] as Tab[]) : []), 'console', ...(block.kind === 'exercise' ? (['tests'] as Tab[]) : []), ...(!isNode && (storageKeys.length > 0 || /localStorage|sessionStorage/.test(Object.values(files).join('\n'))) ? (['storage'] as Tab[]) : [])];
+  const tabs: Tab[] = [...(hasPreview(block) ? (['preview'] as Tab[]) : []), 'console', ...(block.kind === 'exercise' ? (['tests'] as Tab[]) : []), ...(!isNode && (storageKeys.length > 0 || /localStorage|sessionStorage/.test(Object.values(files).join('\n'))) ? (['storage'] as Tab[]) : []), ...(tracer.state.runCount > 0 ? (['steps'] as Tab[]) : [])];
   const consoleCount = s.console.filter((e) => e.level !== 'system').length + s.errors.length + s.compileErrors.length;
   // A check whose program failed while loading: one error card and one line, no per-check feedback.
   const loadError = s.mode === 'test' ? s.errors.find((e) => e.atLoad) ?? null : null;
@@ -290,6 +305,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
         <div className="ws-actions">
           {/* aria-disabled, not disabled: a focused button that becomes disabled drops keyboard focus to the page body. */}
           <button ref={runButton} type="button" className="btn btn-primary" onClick={() => { if (!runBusy) run('run'); }} aria-disabled={runBusy || undefined}><Icon name="play" /> {t('ws.run')}</button>
+          {block.runtime === 'browser-js' && <button type="button" className="btn btn-trace" onClick={traceRun} aria-disabled={tracer.isActive || undefined}><Icon name="steps" /> {t('ws.trace')}</button>}
           {block.kind === 'exercise' && <button type="button" className="btn btn-check" onClick={() => { if (!checkBusy) run('test'); }} aria-disabled={checkBusy || undefined}><Icon name="check" /> {t('ws.check')}</button>}
           {(s.live || runner.isActive) && <button type="button" className="btn" onClick={() => { runner.stop(); runButton.current?.focus(); }}><Icon name="stop" /> {t('ws.stop')}</button>}
           <span className="ws-actions-gap" />
@@ -343,6 +359,13 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
               <TestsView block={block} state={s} lang={lang} quiet={loadError !== null} note={s.notice ? statusText : null} />
             </>
           )}
+          {tab === 'steps' && (
+            <Suspense fallback={<p className="ws-empty">{t('app.loading')}</p>}>
+              <TracePanel state={tracer.state} files={tracedFiles} entry={block.entry} lang={lang}>
+                {tracer.state.compileErrors.map((e, i) => <ErrorCard key={i} error={e} title={t('ws.compileError')} feedback={feedbackForError(block, e)} lang={lang} />)}
+              </TracePanel>
+            </Suspense>
+          )}
           {tab === 'storage' && (
             <div className="storage">
               <p className="ws-note">{t('ws.storageNote')}</p>
@@ -356,6 +379,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
           )}
         </div>
         <div ref={hiddenHost} className="hidden-frame-host" aria-hidden="true" />
+        <div ref={traceHost} className="hidden-frame-host" aria-hidden="true" />
       </section>
     </div>
   );
