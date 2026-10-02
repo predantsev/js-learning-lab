@@ -1,11 +1,25 @@
-import type { Recipe } from "./recipe.ts";
+import type { Course, Recipe } from "./recipe.ts";
 
 export type ParseResult =
   | { ok: true; value: Recipe[] }
   | { ok: false; errors: string[] };
 
-const COURSES: readonly unknown[] = ["main", "dessert"];
-const RATINGS: readonly unknown[] = [1, 2, 3, 4, 5];
+type Rating = 1 | 2 | 3 | 4 | 5 | null;
+
+const COURSES: readonly Course[] = ["main", "dessert"];
+const RATINGS: readonly Rating[] = [null, 1, 2, 3, 4, 5];
+
+function isCourse(value: unknown): value is Course {
+  return COURSES.some((course) => course === value);
+}
+
+function isRating(value: unknown): value is Rating {
+  return RATINGS.some((rating) => rating === value);
+}
+
+function isTagList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((tag) => typeof tag === "string");
+}
 
 type RecipeCheck = { ok: true; recipe: Recipe } | { ok: false; fields: string[] };
 
@@ -28,36 +42,41 @@ function checkRecipe(input: unknown): RecipeCheck {
   const rating = "rating" in input ? input.rating : undefined;
   const course = "course" in input ? input.course : undefined;
 
-  const goodId = typeof id === "string" && id.length > 0;
-  const goodTitle = typeof title === "string" && title.trim().length > 0;
-  const goodServings = Number.isInteger(servings) && typeof servings === "number" && servings > 0;
-  const goodTags = Array.isArray(tags) && tags.every((tag) => typeof tag === "string");
-  const goodRating = rating === null || RATINGS.includes(rating);
-  const goodCourse = COURSES.includes(course);
+  if (
+    typeof id === "string" &&
+    id !== "" &&
+    typeof title === "string" &&
+    title.trim() !== "" &&
+    typeof servings === "number" &&
+    Number.isInteger(servings) &&
+    servings > 0 &&
+    isTagList(tags) &&
+    isRating(rating) &&
+    isCourse(course)
+  ) {
+    return { ok: true, recipe: { id, title: title.trim(), servings, tags: [...tags], rating, course } };
+  }
 
-  const fields = [
-    goodId ? "" : "id",
-    goodTitle ? "" : "title",
-    goodServings ? "" : "servings",
-    goodTags ? "" : "tags",
-    goodRating ? "" : "rating",
-    goodCourse ? "" : "course",
-  ].filter((field) => field !== "");
-  if (fields.length > 0) {
-    return { ok: false, fields };
+  const fields: string[] = [];
+  if (typeof id !== "string" || id === "") {
+    fields.push("id");
   }
-  if (typeof id !== "string" || typeof title !== "string" || typeof servings !== "number" || !Array.isArray(tags)) {
-    return { ok: false, fields: ["record"] };
+  if (typeof title !== "string" || title.trim() === "") {
+    fields.push("title");
   }
-  const recipe: Recipe = {
-    id,
-    title: title.trim(),
-    servings,
-    tags: tags.filter((tag): tag is string => typeof tag === "string"),
-    rating: rating === 1 || rating === 2 || rating === 3 || rating === 4 || rating === 5 ? rating : null,
-    course: course === "dessert" ? "dessert" : "main",
-  };
-  return { ok: true, recipe };
+  if (typeof servings !== "number" || !Number.isInteger(servings) || servings <= 0) {
+    fields.push("servings");
+  }
+  if (!isTagList(tags)) {
+    fields.push("tags");
+  }
+  if (!isRating(rating)) {
+    fields.push("rating");
+  }
+  if (!isCourse(course)) {
+    fields.push("course");
+  }
+  return { ok: false, fields };
 }
 
 export function parseRecipes(text: string): ParseResult {

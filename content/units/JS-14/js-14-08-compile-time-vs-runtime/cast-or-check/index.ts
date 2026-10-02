@@ -17,5 +17,5 @@ const parsed: unknown = JSON.parse(stored);
 const records = Array.isArray(parsed) ? parsed : [];
 for (const record of records) {
   const result = validateItem(record);
-  console.log(result.ok ? `ok: ${result.value.id}` : `rejected: ${Object.keys(result.errors).join(", ")}`);
+  console.log(result.ok ? `%%accepted%%: ${result.value.id}` : `%%rejected%%: ${Object.keys(result.errors).join(", ")}`);
 }
