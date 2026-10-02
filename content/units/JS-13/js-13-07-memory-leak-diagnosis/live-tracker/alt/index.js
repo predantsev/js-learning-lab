@@ -22,7 +22,12 @@ function createListenerTracker() {
     const handlers = handlersFor(target, type);
     handlers.add(handler);
     target.addEventListener(type, handler);
+    let removed = false;
     return function remove() {
+      if (removed) {
+        return;
+      }
+      removed = true;
       target.removeEventListener(type, handler);
       handlers.delete(handler);
     };

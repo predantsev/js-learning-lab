@@ -244,7 +244,7 @@ blocks:
         }
         ```
 
-        `catch` тут немає, тож помилка з `formatToast` після `finally` сама йде далі — та сама, з тим самим повідомленням. А прапорець [[idempotent-cleanup|ідемпотентного]] прибирання (`if (done) return;`) робить повторний виклик безпечним.
+        `catch` тут немає, тож помилка з `formatToast` після `finally` сама йде далі — та сама, з тим самим повідомленням. Функцію, яку повертає `showToast`, можна викликати й двічі: `clearTimeout` і `remove` для вже прибраного нічого не роблять. Але щойно прибирання змінює ще щось (лічильник, вміст `root`), потрібен прапорець [[idempotent-cleanup|ідемпотентного]] прибирання: `if (done) { return; }` на початку, `done = true;` одразу після нього.
       en: |
         Sometimes a widget has already started a timer, and the next step (drawing, reading data) throws an error. Nobody has received `teardown` yet — so nobody will call it. The cleanup has to happen right there, in `finally`, and the error must **not be swallowed**: the caller has to learn what exactly broke.
 
@@ -268,7 +268,7 @@ blocks:
         }
         ```
 
-        There is no `catch` here, so the error from `formatToast` carries on by itself after `finally` — the same one, with the same message. And the flag of [[idempotent-cleanup|idempotent cleanup]] (`if (done) return;`) makes a second call safe.
+        There is no `catch` here, so the error from `formatToast` carries on by itself after `finally` — the same one, with the same message. The function that `showToast` returns can also be called twice: `clearTimeout` and `remove` do nothing for what is already cleaned up. But as soon as cleanup changes anything else (a counter, the content of `root`), it needs the flag of [[idempotent-cleanup|idempotent cleanup]]: `if (done) { return; }` at the start, `done = true;` right after it.
 
   - id: recall
     kind: review
@@ -410,8 +410,8 @@ blocks:
         uk: "Збережи номер інтервалу й або функції listeners (тоді знімай **ті самі** функції), або один `AbortController`, чий `signal` передаєш обом `addEventListener`. Прапорець у замиканні (`let done = false`) робить `teardown` ідемпотентним: перший виклик ставить його й прибирає, наступні одразу виходять. Для помилки в `render` подивись на `showToast` з пояснення: `try` з прапорцем «налаштування завершено» і `finally`, що прибирає, коли прапорець не став `true`, — помилка тоді йде далі сама. Підійде й `catch`, що прибирає й кидає **ту саму** помилку."
         en: "Keep the interval's id and either the listener functions (then remove **the same** functions) or one `AbortController` whose `signal` you pass to both `addEventListener` calls. A flag in the closure (`let done = false`) makes `teardown` idempotent: the first call sets it and cleans up, later calls leave at once. For an error in `render`, look at `showToast` in the explanation: a `try` with a “setup finished” flag and a `finally` that cleans up when the flag did not become `true` — the error then carries on by itself. A `catch` that cleans up and throws **the same** error works too."
     solutionNote:
-      uk: "Один `AbortController` знімає обидва listeners, `clearInterval(timer)` зупиняє таймер, а прапорець `active` робить повторний `teardown` порожнім — тож він не спорожнить `root` нового віджета. Налаштування стоїть у `try`; якщо `render` кинув, `mounted` лишився `false`, і `finally` викликає `teardown`, а помилка йде до викликача без змін."
-      en: "One `AbortController` removes both listeners, `clearInterval(timer)` stops the timer, and the `active` flag makes a repeated `teardown` empty — so it does not empty the `root` of a new widget. The setup sits in `try`; if `render` threw, `mounted` stayed `false`, `finally` calls `teardown`, and the error reaches the caller unchanged."
+      uk: "Один `AbortController` знімає обидва listeners, `clearInterval(timer)` зупиняє таймер, а прапорець `active` робить повторний `teardown` порожнім — тож він не спорожнить `root` нового віджета. Налаштування стоїть у `try`; якщо `render` кинув, `mounted` лишився `false`, і `finally` викликає `teardown`, а помилка йде до викликача без змін. Перевірки приймають і інший порядок — спершу `render`, потім listeners і таймер: тоді після помилки вмикати ще нічого не встигли. Але в справжньому віджеті налаштування часто не можна переставити, тож прийом із `finally` варто вміти."
+      en: "One `AbortController` removes both listeners, `clearInterval(timer)` stops the timer, and the `active` flag makes a repeated `teardown` empty — so it does not empty the `root` of a new widget. The setup sits in `try`; if `render` threw, `mounted` stayed `false`, `finally` calls `teardown`, and the error reaches the caller unchanged. The checks also accept the other order — `render` first, then the listeners and the timer: after a failure nothing has been switched on yet. But in a real widget setup often cannot be reordered, so the `finally` technique is worth knowing."
     feedback:
       - when: { test: "the program prints the clean message and the render error" }
         message:
@@ -443,8 +443,8 @@ blocks:
           en: "This check mounts widget A, cleans it up, mounts B into the same `root` and calls A's `teardown` again. It expects B's content to remain, its `resize` to work and its timer not to be stopped: a repeated call must do nothing."
       - when: { test: "a failing render is cleaned up and its own error reaches the caller" }
         message:
-          uk: "Ця перевірка дає `render`, що кидає помилку, і очікує, що з `mountWidget` вилетить саме цей об’єкт помилки, а після цього `resize` і клік нічого не змінюють і запущений таймер зупинено."
-          en: "This check gives a `render` that throws and expects exactly that error object to come out of `mountWidget`; after that a `resize` and a click must change nothing, and the started timer must be stopped."
+          uk: "Ця перевірка дає `render`, що кидає помилку, і очікує, що з `mountWidget` вилетить саме цей об’єкт помилки, а після цього `resize` і клік нічого не змінюють, а інтервал, якщо його встигли запустити до помилки, зупинено."
+          en: "This check gives a `render` that throws and expects exactly that error object to come out of `mountWidget`; after that a `resize` and a click must change nothing, and the interval, if it was started before the failure, must be stopped."
 
   - id: to-project
     kind: transfer
