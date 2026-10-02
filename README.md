@@ -36,6 +36,8 @@ Verified: macOS 26 on Apple silicon, Google Chrome 154, Node.js 22, 24 and 25, v
 
 Not verified: Windows, Linux, Firefox, Safari, screen readers, and running with the network disconnected. They may work; nothing here claims that they do.
 
+Known not to work: browsers built into other applications that block frames from another local address. Learner code runs in a frame served from a separate sandbox address (`jsll-run-N.localhost`, fallback `127.0.0.1`); the browser pane of the Claude desktop application blocks both (`net::ERR_BLOCKED_BY_CLIENT`), so lessons open there but code does not run. Use Google Chrome.
+
 ## How code runs
 
 | Runtime | What it is | What it is not |

@@ -180,7 +180,7 @@ export const en: Dict = {
   'ws.stopped': 'Execution stopped. Your code and saved work are unchanged.',
   'ws.unresponsive': 'The code has not responded for {s} s — it looks like an infinite loop. You can stop it.',
   'ws.autoStopped': 'The code did not respond for more than {s} s, so it was stopped. Your code is unchanged — fix the end condition and run again.',
-  'ws.sandboxUnreachable': 'The sandbox could not start. Check that the local server is running and reload the page. Your code is saved.',
+  'ws.sandboxUnreachable': 'The sandbox could not start: the browser did not load its address. Check that the local server is running and reload the page. If this is a browser built into another application, open the platform in Google Chrome: some built-in browsers block the separate sandbox address. Your code is saved.',
   'ws.reloaded': 'The page in the sandbox reloaded, so the program stopped. Run it again.',
   'ws.compileError': 'The code could not start',
   'ws.runtimeError': 'Error while running',
