@@ -80,6 +80,7 @@ export function useRunner() {
       }
       const visible = options.mode === 'run' && !options.trace;
       if (!visible) prepared.payload.options.offscreen = true;
+      let loaded = false; // errors before the sandbox's "loaded" event were thrown while the program loaded
       setState((s) => ({ ...initial, runCount: s.runCount + 1, status: options.mode === 'test' ? 'checking' : 'running', mode: options.mode, live: true }));
       const run = new SandboxRun({
         container: options.container,
@@ -93,8 +94,11 @@ export function useRunner() {
             case 'console':
               setState((s) => ({ ...s, console: [...s.console, ...(event.entries as ConsoleEntry[])].slice(-MAX_CONSOLE) }));
               break;
+            case 'loaded':
+              loaded = true;
+              break;
             case 'error': {
-              const error = { ...(event.error as RunError), phase: event.phase as string };
+              const error: RunError = { ...(event.error as RunError), phase: event.phase as string, ...(loaded ? {} : { atLoad: true }) };
               errorsRef.current = [...errorsRef.current, error];
               setState((s) => ({ ...s, errors: [...s.errors, error].slice(-20) }));
               break;

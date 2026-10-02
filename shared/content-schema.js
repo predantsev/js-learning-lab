@@ -126,6 +126,21 @@ function checkStrings(issues, block, p) {
   }
 }
 
+/** isolated-node capabilities map one to one to the executor request (docs/platform/SERVER-API.md). */
+function checkNodeCapabilities(issues, caps, p) {
+  if (caps === undefined) return;
+  if (!isPlainObject(caps)) {
+    issues.add(p, 'must be a mapping');
+    return;
+  }
+  const allowed = ['network', 'workers', 'timeoutMs', 'testTimeoutMs'];
+  for (const key of Object.keys(caps)) if (!allowed.includes(key)) issues.add(`${p}.${key}`, `unknown capability for isolated-node (allowed: ${allowed.join(', ')})`);
+  if (caps.network !== undefined && caps.network !== 'none' && caps.network !== 'loopback') issues.add(`${p}.network`, 'must be "none" (default) or "loopback" for isolated-node');
+  if (caps.workers !== undefined && typeof caps.workers !== 'boolean') issues.add(`${p}.workers`, 'must be true or false');
+  if (caps.timeoutMs !== undefined && !(Number.isInteger(caps.timeoutMs) && caps.timeoutMs >= 100 && caps.timeoutMs <= 60000)) issues.add(`${p}.timeoutMs`, 'must be a whole number of milliseconds between 100 and 60000');
+  if (caps.testTimeoutMs !== undefined && !(Number.isInteger(caps.testTimeoutMs) && caps.testTimeoutMs >= 50 && caps.testTimeoutMs <= 30000)) issues.add(`${p}.testTimeoutMs`, 'must be a whole number of milliseconds between 50 and 30000');
+}
+
 function checkBlock(issues, block, lesson, ctx) {
   const p = `block "${block.id}"`;
   checkStrings(issues, block, p);
@@ -169,6 +184,8 @@ function checkBlock(issues, block, lesson, ctx) {
       if (!nonEmpty(block.dir)) issues.add(`${p}.dir`, 'missing directory with the block files');
       if (!nonEmpty(block.entry)) issues.add(`${p}.entry`, 'missing entry file');
       if (block.runtime === 'concept-preview') checkLocalized(issues, block.limits, `${p}.limits`);
+      if (block.limits !== undefined && block.runtime !== 'concept-preview') checkLocalized(issues, block.limits, `${p}.limits`);
+      if (block.runtime === 'isolated-node') checkNodeCapabilities(issues, block.capabilities, `${p}.capabilities`);
       if (block.kind === 'example') {
         checkLocalized(issues, block.body, `${p}.body`);
         if (block.tryIt !== undefined) checkLocalized(issues, block.tryIt, `${p}.tryIt`);

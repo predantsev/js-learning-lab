@@ -34,7 +34,8 @@ export interface AnalogyBlock extends BlockBase { kind: 'analogy'; body: L10n; l
 export interface VisualBlock extends BlockBase { kind: 'visual'; visual: string; title: L10n; textEquivalent: L10n; spec: unknown }
 export interface PredictionBlock extends BlockBase, Omit<Question, 'id'> { kind: 'prediction' }
 export interface ReviewBlock extends BlockBase { kind: 'review'; title: L10n; items: (Question & { id: string; from: string })[] }
-export interface Capabilities { network?: 'none' | 'lab'; loopBudgetMs?: number; testTimeoutMs?: number; settleTimeoutMs?: number }
+/** Browser runtimes: network none | lab, loopBudgetMs, settleTimeoutMs. isolated-node: network none | loopback, workers, timeoutMs. Both: testTimeoutMs. */
+export interface Capabilities { network?: 'none' | 'lab' | 'loopback'; loopBudgetMs?: number; testTimeoutMs?: number; settleTimeoutMs?: number; workers?: boolean; timeoutMs?: number }
 export interface ExampleBlock extends BlockBase { kind: 'example'; title: L10n; body: L10n; tryIt?: L10n; runtime: RuntimeKind; entry: string; files: Record<string, string>; strings?: Record<string, L10n>; limits?: L10n; capabilities?: Capabilities; expectError?: boolean; preview?: boolean }
 export interface FeedbackRule { when: { test?: string; error?: string }; message: L10n }
 export interface ExerciseBlock extends BlockBase {
@@ -133,5 +134,6 @@ export interface ReviewDoc { items: Record<string, ReviewItemState> }
 
 export interface ConsoleValue { t: string; v?: unknown; [k: string]: unknown }
 export interface ConsoleEntry { level: string; args: ConsoleValue[]; at: number; code?: string; detail?: string }
-export interface RunError { name: string; message: string; stack?: string; file?: string | null; line?: number | null; column?: number | null; phase?: string; loopBudgetMs?: number | null; kind?: string; frame?: string | null; code?: string }
+/** `atLoad`: thrown while the program loaded, before checks could run (both runtimes mark it). */
+export interface RunError { name: string; message: string; stack?: string; file?: string | null; line?: number | null; column?: number | null; phase?: string; loopBudgetMs?: number | null; kind?: string; frame?: string | null; code?: string; atLoad?: boolean }
 export interface TestResult { name: string; status: 'pass' | 'fail'; message?: string; ms?: number; errorName?: string; stack?: string }

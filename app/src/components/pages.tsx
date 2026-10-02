@@ -9,6 +9,7 @@ import { useStore } from '../lib/store';
 import type { CapstoneId, IndexLesson, IndexUnit, Lang, Lesson, Question, ReviewItemState, StyleId } from '../lib/types';
 import { STYLE_IDS, app, updateProfile, useActiveCapstone, useLang, useProfile, useT } from '../state/app';
 import { QuestionView } from './blocks';
+import { NodeRuntimeSettings } from './NodeRuntime';
 import { startProject } from './project/workspace';
 import { Html, Icon, downloadText } from './ui';
 
@@ -315,7 +316,7 @@ export function SettingsPage() {
         ) : <div className="banner banner-danger" role="alert"><p>{t('settings.restoreProblems')}</p><ul>{backup.preview.problems.map((p, i) => <li key={i}>{p}</li>)}</ul></div>)}
         {message && <p role="status" className="ws-note">{message}</p>}
       </section>
-      <section><h2>{t('settings.runtime')}</h2><p>{t('settings.runtimeBody')}</p></section>
+      <section><h2>{t('settings.runtime')}</h2><p>{t('settings.runtimeBody')}</p><NodeRuntimeSettings /></section>
       <section><h2>{t('settings.about')}</h2><p>{t('settings.aboutBody', { version: bootstrap.version, node: bootstrap.node, content: index.contentVersion })}</p></section>
     </div>
   );

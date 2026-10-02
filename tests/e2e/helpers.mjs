@@ -69,19 +69,22 @@ export const launchChrome = () => chromium.launch({ channel: 'chrome', headless:
 
 // ---------- server on a learner data directory ----------
 export class Lab {
-  constructor({ distDir, dataDir, testHooks }) {
-    Object.assign(this, { distDir, dataDir, testHooks, server: null, port: 0 });
+  constructor({ distDir, dataDir, testHooks, overrides = {} }) {
+    Object.assign(this, { distDir, dataDir, testHooks, overrides, server: null, port: 0 });
   }
 
-  /** Start on a fresh temporary data directory (a fresh learner profile). */
-  static async start({ distDir = DIST, dataDir = null, testHooks = true } = {}) {
-    const lab = new Lab({ distDir, dataDir: dataDir ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-e2e-data-'))), testHooks });
+  /**
+   * Start on a fresh temporary data directory (a fresh learner profile). `overrides` go to
+   * startServer as well (for example `nodeRunner` options for the isolated Node executor).
+   */
+  static async start({ distDir = DIST, dataDir = null, testHooks = true, overrides = {} } = {}) {
+    const lab = new Lab({ distDir, dataDir: dataDir ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-e2e-data-'))), testHooks, overrides });
     await lab.#listen(0);
     return lab;
   }
 
   async #listen(port) {
-    this.server = await startServer({ port, dataDir: this.dataDir, distDir: this.distDir, testHooks: this.testHooks, quiet: true });
+    this.server = await startServer({ ...this.overrides, port, dataDir: this.dataDir, distDir: this.distDir, testHooks: this.testHooks, quiet: true });
     this.port = this.server.port;
   }
 
