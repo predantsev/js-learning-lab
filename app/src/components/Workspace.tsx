@@ -3,10 +3,11 @@
 import { type KeyboardEvent, Suspense, lazy, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { localizeFiles } from '@shared/exercise.js';
 import type { Doc } from '../lib/persist';
+import { errorFeedback, testFeedback } from '../lib/feedback';
 import { type Key } from '../lib/i18n';
 import { recordExampleRun, recordExerciseCheck } from '../lib/progress';
 import { useStore } from '../lib/store';
-import type { ConsoleEntry, ConsoleValue, DraftsDoc, ExampleBlock, ExerciseBlock, L10n, Lang, Lesson, RunError, TestResult } from '../lib/types';
+import type { ConsoleEntry, ConsoleValue, DraftsDoc, ExampleBlock, ExerciseBlock, L10n, Lang, Lesson, RunError } from '../lib/types';
 import { app, useT } from '../state/app';
 import { CodeEditor, type EditorIssue } from './CodeEditor';
 import { NodeRuntimeNote } from './NodeRuntime';
@@ -73,12 +74,9 @@ export function guidanceKey(error: RunError): Key {
   return (known.includes(error.name) ? `err.guide.${error.name}` : 'err.guide.generic') as Key;
 }
 
-/** Authored feedback for an error (`when: { error: Name }`). A syntax error found before running
- *  has no error name of its own; it counts as SyntaxError, the most common beginner error. */
+/** Authored feedback for an error (`when: { error: Name }`) of an exercise (lib/feedback.ts). */
 export function feedbackForError(block: WsBlock, error: RunError): L10n | null {
-  if (block.kind !== 'exercise') return null;
-  const name = error.kind === 'syntax' ? 'SyntaxError' : error.name;
-  return block.feedback?.find((f) => f.when.error === name)?.message ?? null;
+  return block.kind === 'exercise' ? errorFeedback(block.feedback, error) : null;
 }
 
 /** Localized guidance next to the verbatim diagnostic (REQ-019), plus the lesson's own feedback. */
@@ -110,18 +108,7 @@ function TestsView({ block, state, lang, quiet = false, note = null }: { block: 
   if (!state.tests) return <p className="ws-empty">{state.status === 'checking' ? t('ws.checking') : note ?? t('ws.previewEmpty')}</p>;
   const passed = state.tests.filter((x) => x.status === 'pass').length;
   const all = passed === state.tests.length && state.tests.length > 0;
-  // Feedback for a failed test: the rule naming the test, otherwise a rule naming the error the test
-  // threw (an error inside a test, not at load time). The same error message is shown once.
-  const shownErrorFeedback = new Set<L10n>();
-  const feedbackFor = (test: TestResult): L10n | null => {
-    const byTest = block.feedback?.find((f) => f.when.test === test.name)?.message;
-    if (byTest) return byTest;
-    if (!test.errorName || test.errorName === 'AssertionError') return null;
-    const byError = feedbackForError(block, { name: test.errorName, message: test.message ?? '' });
-    if (!byError || shownErrorFeedback.has(byError)) return null;
-    shownErrorFeedback.add(byError);
-    return byError;
-  };
+  const feedbackFor = testFeedback(block.feedback);
   return (
     <div className="tests">
       <p className={all ? 'tests-summary tests-ok' : 'tests-summary'}>{all ? <><Icon name="check" /> {t('ws.passedAll')}</> : t('ws.passedSome', { passed, total: state.tests.length })}</p>

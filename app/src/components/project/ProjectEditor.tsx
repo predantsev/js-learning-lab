@@ -4,10 +4,11 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { sortPaths } from '@shared/capstone.js';
 import { MISSING_IMAGE_PREFIX } from '@shared/runner.js';
+import { errorFeedback, testFeedback } from '../../lib/feedback';
 import { type Key } from '../../lib/i18n';
 import type { Doc } from '../../lib/persist';
 import { useStore } from '../../lib/store';
-import type { ConsoleEntry, Lang, TestResult } from '../../lib/types';
+import type { ConsoleEntry, L10n, Lang, RunError, TestResult } from '../../lib/types';
 import { type WorkspaceDoc, useLang, useT } from '../../state/app';
 import { CodeEditor, type EditorIssue } from '../CodeEditor';
 import { Html, Icon, announce } from '../ui';
@@ -23,12 +24,20 @@ type Outcome = { unit: string; passed: number; total: number; counted: boolean; 
 /** A missing project image is reported by the sandbox as a blocked resource; say what is missing. */
 const explainEntries = (entries: ConsoleEntry[]): ConsoleEntry[] => entries.map((e) => (e.level === 'system' && e.code === 'resource-blocked' && e.detail?.startsWith(MISSING_IMAGE_PREFIX) ? { ...e, code: 'missing-file', detail: e.detail.slice(MISSING_IMAGE_PREFIX.length) } : e));
 
-function ChecksView({ step, tests, outcome, uiLang, wsLang, notRun }: { step: CapstoneStep; tests: TestResult[] | null; outcome: Outcome | null; uiLang: Lang; wsLang: Lang; notRun: boolean }) {
+/** Authored step feedback with its %%key%% text in the workspace language (the text the checks expect). */
+const resolveFeedback = (message: L10n | null, step: CapstoneStep, wsLang: Lang): L10n | null => (message ? { uk: resolveHtml(message.uk, step.strings, wsLang), en: resolveHtml(message.en, step.strings, wsLang) } : null);
+
+/**
+ * Check results of the step with its authored feedback (lib/feedback.ts, as in lesson exercises).
+ * `quiet`: the program failed while loading, so its error card stands for every failed check and
+ * the checks' own feedback is not shown.
+ */
+function ChecksView({ step, tests, outcome, uiLang, wsLang, notRun, quiet }: { step: CapstoneStep; tests: TestResult[] | null; outcome: Outcome | null; uiLang: Lang; wsLang: Lang; notRun: boolean; quiet: boolean }) {
   const t = useT();
   if (notRun) return <p className="ws-note">{t('project.checkNotRun')}</p>;
   if (!tests) return <p className="ws-empty">{t('project.checksEmpty')}</p>;
   const title = (name: string) => (step.testTitles[name] ? resolveHtml(step.testTitles[name][uiLang], step.strings, wsLang) : name);
-  const feedback = (name: string) => step.feedback.find((f) => f.when.test === name)?.message ?? null;
+  const feedbackFor = testFeedback(step.feedback);
   const summary = outcome && outcome.unit === step.unit
     ? outcome.counted ? t(outcome.newlyDone ? 'project.checkPassed' : 'project.checkPassedAgain', { unit: step.unit }) : outcome.supplied ? t('project.checkSupplied') : t('project.checkFailed', { passed: outcome.passed, total: outcome.total })
     : null;
@@ -37,7 +46,7 @@ function ChecksView({ step, tests, outcome, uiLang, wsLang, notRun }: { step: Ca
       {summary && <p className={outcome?.counted ? 'tests-summary tests-ok' : 'tests-summary'}>{outcome?.counted && <Icon name="check" />} {summary}</p>}
       <ul className="test-list">
         {tests.map((test) => {
-          const fb = test.status === 'fail' ? feedback(test.name) : null;
+          const fb = test.status === 'fail' && !quiet ? feedbackFor(test) : null;
           return (
             <li key={test.name} className={`test test-${test.status}`}>
               <span className="test-mark" aria-hidden="true">{test.status === 'pass' ? '✓' : '✕'}</span>
@@ -126,6 +135,11 @@ export function ProjectEditor({ doc, capstone, step }: { doc: Doc<WorkspaceDoc>;
     }
   })();
   const consoleEntries = useMemo(() => explainEntries(s.console), [s.console]);
+  // The step's `when: { error }` rules next to the errors, as in lesson exercises.
+  const errorHelp = (error: RunError): L10n | null => (step ? resolveFeedback(errorFeedback(step.feedback, error), step, wsLang) : null);
+  // A check whose program failed while loading: one error card and one line, no per-check feedback.
+  const loadError = s.mode === 'test' ? s.errors.find((e) => e.atLoad) ?? null : null;
+  const checkError = loadError ?? (s.mode === 'test' ? s.errors[0] ?? null : null);
   const consoleCount = consoleEntries.filter((e) => e.level !== 'system').length + s.errors.length + s.compileErrors.length;
   const storageKeys = Object.keys(ws.storage);
   const tabs: Tab[] = ['preview', 'console', ...(checkable ? (['checks'] as Tab[]) : []), 'storage'];
@@ -212,15 +226,16 @@ export function ProjectEditor({ doc, capstone, step }: { doc: Doc<WorkspaceDoc>;
           </div>
           {tab === 'console' && (
             <div className="console-wrap">
-              {s.compileErrors.map((e, i) => <ErrorCard key={`c${i}`} error={e} title={t('ws.compileError')} />)}
+              {s.compileErrors.map((e, i) => <ErrorCard key={`c${i}`} error={e} title={t('ws.compileError')} feedback={errorHelp(e)} lang={uiLang} />)}
               <ConsoleView entries={consoleEntries} errors={s.errors} />
-              {s.errors.map((e, i) => <ErrorCard key={`r${i}`} error={e} title={t('ws.runtimeError')} />)}
+              {s.errors.map((e, i) => <ErrorCard key={`r${i}`} error={e} title={t('ws.runtimeError')} feedback={errorHelp(e)} lang={uiLang} />)}
             </div>
           )}
           {tab === 'checks' && step && (
             <>
-              {s.mode === 'test' && s.errors.slice(0, 1).map((e, i) => <ErrorCard key={i} error={e} title={t('ws.runtimeError')} />)}
-              <ChecksView step={step} tests={s.mode === 'test' ? s.tests : null} outcome={outcome} uiLang={uiLang} wsLang={wsLang} notRun={s.mode === 'test' && s.status === 'compile-error'} />
+              {checkError && <ErrorCard error={checkError} title={t('ws.runtimeError')} feedback={errorHelp(checkError)} lang={uiLang} />}
+              {loadError && s.tests && <p className="ws-note ws-load-error">{t('ws.loadErrorFirst')}</p>}
+              <ChecksView step={step} tests={s.mode === 'test' ? s.tests : null} outcome={outcome} uiLang={uiLang} wsLang={wsLang} notRun={s.mode === 'test' && s.status === 'compile-error'} quiet={loadError !== null} />
             </>
           )}
           {tab === 'storage' && (
