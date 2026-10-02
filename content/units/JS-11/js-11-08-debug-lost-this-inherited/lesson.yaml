@@ -1,0 +1,422 @@
+id: js-11-08-debug-lost-this-inherited
+unit: JS-11
+title:
+  uk: "Налагодження: загублений this і помилки успадкованих властивостей"
+  en: "Debugging: a lost this and inherited-property bugs"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Діагностувати `TypeError` від відокремленого методу, використаного як обробник чи callback таймера, і виправити його через `bind` або стрілку, не змінюючи поведінки методу."
+    en: "Diagnose a `TypeError` from a detached method used as a handler or timer callback and repair it with `bind` or an arrow without changing the method’s behavior."
+  - uk: "Знайти дані, спільні через прототип, і конструктор, викликаний без `new`, та перенести стан у кожен екземпляр."
+    en: "Find data shared by accident through the prototype and a constructor called without `new`, and move the state onto each instance."
+prerequisites: [js-11-07-inheritance-vs-composition]
+subskills:
+  - { family: J-04, skill: "lexical vs dynamic this", depth: assess }
+  - { family: J-04, skill: "call/apply/bind", depth: assess }
+  - { family: J-06, skill: "prototype chain and own properties", depth: assess }
+  - { family: J-06, skill: "constructor/new", depth: assess }
+glossary: []
+selfCheck: [predict-four-symptoms, fix-notes]
+
+blocks:
+  - id: four-symptoms
+    kind: explanation
+    title:
+      uk: "Чотири симптоми, дві причини"
+      en: "Four symptoms, two causes"
+    body:
+      uk: |
+        Помилки цього розділу трапляються в **двох** місцях, але виглядають по-різному. Ось як їх розпізнати:
+
+        - **Метод працює, коли його викликаєш сам, а як обробник чи callback — ні.** Повідомлення на кшталт `Cannot read properties of undefined (reading 'items')` означає, що `this` порожній: метод викликали **без об’єкта перед крапкою**. На цій платформі так виглядає й `setTimeout(obj.method, …)`: функцію таймера викликають із `this` = `undefined` (в інших середовищах значення може бути інше, але це не твій об’єкт).
+        - **Нічого не падає, а об’єкт не змінюється**, у змінних з’являються `NaN` чи `undefined`. Так буває в обробнику події: `this` у звичайній функції-слухачі — це **елемент**, на якому подія, тож метод мовчки пише в кнопку.
+        - **Дані одного об’єкта з’являються в усіх.** Масив чи об’єкт лежить на прототипі, а не в екземплярі: `this.tags.push(…)` знаходить `tags` ланцюжком і змінює спільний масив. Присвоєння створює власну властивість, а `push` — ні.
+        - **`TypeError` при створенні об’єкта** конструктором: забули `new`, і `this` — `undefined`.
+
+        Перший крок завжди той самий: на початку методу виведи `console.log(this)` і подивись, хто там. Виправляй **найменшою зміною**: для `this` — обгорни виклик стрілкою (`() => player.play()`) або прив’яжи (`player.play.bind(player)`), сам метод не переписуй; для спільних даних — створи масив у конструкторі (`this.tags = []`); для `new` — додай його (або перейди на `class`, який без `new` не запуститься).
+      en: |
+        The bugs of this section happen in **two** places but look different. Here is how to recognize them:
+
+        - **The method works when you call it yourself, but not as a handler or a callback.** A message like `Cannot read properties of undefined (reading 'items')` means `this` is empty: the method was called **with no object before the dot**. On this platform `setTimeout(obj.method, …)` looks the same: the timer calls the function with `this` = `undefined` (in other environments the value may be different, but it is not your object).
+        - **Nothing crashes, but the object does not change**, and `NaN` or `undefined` appear in values. This happens in an event handler: `this` in a regular listener function is the **element** the event happened on, so the method silently writes into the button.
+        - **The data of one object shows up in all of them.** An array or an object lies on the prototype instead of in the instance: `this.tags.push(…)` finds `tags` along the chain and changes the shared array. An assignment creates an own property; `push` does not.
+        - **A `TypeError` when creating an object** with a constructor: `new` was forgotten, and `this` is `undefined`.
+
+        The first step is always the same: print `console.log(this)` at the start of the method and see who is there. Repair with the **smallest change**: for `this`, wrap the call in an arrow (`() => player.play()`) or bind it (`player.play.bind(player)`), and do not rewrite the method itself; for shared data, create the array in the constructor (`this.tags = []`); for `new`, add it (or switch to a `class`, which refuses to run without `new`).
+
+  - id: predict-four-symptoms
+    kind: prediction
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+    prompt:
+      uk: "У програмі чотири типові дефекти: метод, відданий слухачеві кліку, метод, відданий таймеру, масив на прототипі й конструктор без `new`. Яким буде вивід консолі? (Необроблена помилка від таймера показується окремою карткою, серед рядків виводу її немає.)"
+      en: "The program holds four typical defects: a method handed to a click listener, a method handed to a timer, an array on the prototype and a constructor without `new`. What does the console print? (The uncaught error from the timer is shown as a separate card and is not one of the lines.)"
+    code: |
+      class Store {
+        saved = false;
+
+        markSaved() {
+          this.saved = true;
+        }
+      }
+
+      class Poller {
+        ticks = 0;
+
+        tick() {
+          this.ticks += 1;
+        }
+      }
+
+      function Basket(name) {
+        this.name = name;
+      }
+      Basket.prototype.tags = [];
+
+      const store = new Store();
+      const button = document.createElement("button");
+      button.addEventListener("click", store.markSaved);
+      button.click();
+      console.log("saved: " + store.saved);
+
+      const poller = new Poller();
+      setTimeout(poller.tick, 10);
+      setTimeout(() => console.log("ticks: " + poller.ticks), 50);
+
+      const first = new Basket("%%lamp%%");
+      const second = new Basket("x");
+      first.tags.push("gift");
+      console.log("second tags: " + second.tags.length);
+
+      try {
+        const basket = Basket("y");
+        console.log(basket.name);
+      } catch (error) {
+        console.log(error.name);
+      }
+    verify:
+      logs: ["saved: false", "second tags: 1", "TypeError", "ticks: 0"]
+      error: TypeError
+    answer:
+      type: choice
+      options:
+        - id: all-four
+          code: "saved: false\nsecond tags: 1\nTypeError\nticks: 0"
+        - id: click-works
+          code: "saved: true\nsecond tags: 1\nTypeError\nticks: 0"
+          why:
+            uk: "`store.markSaved` передано слухачу без `store`. Браузер викликає його з `this` = кнопка: `store.saved` лишається `false`, а поле `saved` з’являється на кнопці."
+            en: "`store.markSaved` was given to the listener without `store`. The browser calls it with `this` = the button: `store.saved` stays `false`, and the field `saved` appears on the button."
+        - id: shared-separate
+          code: "saved: false\nsecond tags: 0\nTypeError\nticks: 0"
+          why:
+            uk: "Масив `tags` лежить на `Basket.prototype`, тож `first.tags` і `second.tags` — один і той самий масив. `push` через `first` змінює його для обох."
+            en: "The array `tags` lies on `Basket.prototype`, so `first.tags` and `second.tags` are one and the same array. A `push` through `first` changes it for both."
+        - id: no-new-works
+          code: "saved: false\nsecond tags: 1\ny\nticks: 0"
+          why:
+            uk: "Без `new` конструктор — звичайний виклик: `this` порожній, і `this.name = name` кидає `TypeError`. Об’єкт ніхто не створює, тож до `y` справа не доходить."
+            en: "Without `new` a constructor is an ordinary call: `this` is empty, and `this.name = name` throws a `TypeError`. Nobody creates an object, so `y` is never reached."
+        - id: timer-works
+          code: "saved: false\nsecond tags: 1\nTypeError\nticks: 1"
+          why:
+            uk: "`setTimeout(poller.tick, 10)` передає функцію без `poller`. Таймер викликає її без об’єкта, `this.ticks` кидає `TypeError` (на цій платформі), і `poller.ticks` лишається 0."
+            en: "`setTimeout(poller.tick, 10)` passes the function without `poller`. The timer calls it with no object, `this.ticks` throws a `TypeError` (on this platform), and `poller.ticks` stays 0."
+      correct: [all-four]
+    explanation:
+      uk: "Обробник кліку: `this` — кнопка, тож нічого не падає, а `store.saved` лишається `false` (мовчки). Спільний масив на прототипі: другий кошик «бачить» тег першого. Конструктор без `new`: `TypeError`, який перехоплює `catch`. Таймер: `this` порожній, `TypeError` не перехоплює ніхто — він з’являється карткою помилки, а `ticks` лишається 0."
+      en: "The click handler: `this` is the button, so nothing crashes and `store.saved` stays `false` (silently). The shared array on the prototype: the second basket “sees” the first one’s tag. A constructor without `new`: a `TypeError`, which `catch` catches. The timer: `this` is empty, nobody catches the `TypeError` — it appears as an error card, and `ticks` stays 0."
+
+  - id: lost-this-trace
+    kind: visual
+    visual: code-trace
+    title:
+      uk: "Крок за кроком: що відбувається з відокремленим методом"
+      en: "Step by step: what happens to a detached method"
+    textEquivalent:
+      uk: "Об’єкт store має поле saved і метод markSaved, який записує this.saved = true. Функція fire(handler) просто викликає handler() без об’єкта перед крапкою — так з функцією поводиться таймер чи слухач події. Виклик fire(store.markSaved) передає лише функцію, без store. Коли fire викликає handler(), у кадрі markSaved змінна this дорівнює undefined, і запис this.saved = true кидає TypeError, який перехоплює catch. Справжній клік дав би this елемент-кнопку, і поле saved мовчки записалося б у кнопку; але в обох випадках це не store. Тому store.saved лишається false. Другий виклик fire(() => store.markSaved()) передає стрілку; всередині неї markSaved викликається через store., тож this — store, і store.saved стає true. У консолі: TypeError, false і true."
+      en: "The object store has a field saved and a method markSaved that writes this.saved = true. The function fire(handler) simply calls handler() with no object before the dot — this is how a timer or an event listener treats a function. The call fire(store.markSaved) passes only the function, without store. When fire calls handler(), in the frame of markSaved the variable this is undefined, and the write this.saved = true throws a TypeError that catch catches. A real click would give this the button element, and the field saved would be silently written into the button; but in both cases it is not store. So store.saved stays false. The second call fire(() => store.markSaved()) passes an arrow; inside it markSaved is called through store., so this is store, and store.saved becomes true. The console shows TypeError, false and true."
+    spec:
+      file: visuals/lost-this.js
+      captions:
+        - at: { line: 13 }
+          text:
+            uk: "`fire(store.markSaved)` передає **лише функцію**: `store` у виклик не потрапляє."
+            en: "`fire(store.markSaved)` passes **only the function**: `store` does not go into the call."
+        - at: { line: 3, kind: call, hit: 1 }
+          text:
+            uk: "`fire` викликає `handler()` без об’єкта, тож у кадрі `markSaved` `this` — `undefined`. (Справжній клік дав би тут кнопку. В обох випадках це не `store`.)"
+            en: "`fire` calls `handler()` with no object, so in the frame of `markSaved` `this` is `undefined`. (A real click would give the button here. In both cases it is not `store`.)"
+        - at: { line: 4, kind: throw }
+          text:
+            uk: "`this.saved = true` на `undefined` — `TypeError`. `catch` його перехопить."
+            en: "`this.saved = true` on `undefined` is a `TypeError`. `catch` will catch it."
+        - at: { line: 17 }
+          text:
+            uk: "Зараз `console.log(store.saved)` покаже `false`: метод до `store` так і не дістався."
+            en: "Now `console.log(store.saved)` will show `false`: the method never reached `store`."
+        - at: { line: 18 }
+          text:
+            uk: "Виправлення: у `fire` передаємо стрілку, яка сама викликає `store.markSaved()` — з `store` перед крапкою."
+            en: "The repair: we pass `fire` an arrow that calls `store.markSaved()` itself — with `store` before the dot."
+        - at: { line: 3, kind: call, hit: 2 }
+          text:
+            uk: "Тепер у кадрі `markSaved` `this` — `store` (#2). Метод лишився тим самим, змінилося лише місце виклику."
+            en: "Now in the frame of `markSaved` `this` is `store` (#2). The method stayed the same; only the call site changed."
+        - at: { line: 19, kind: end }
+          text:
+            uk: "Консоль: `TypeError`, `false`, `true`."
+            en: "Console: `TypeError`, `false`, `true`."
+
+  - id: shared-tags-graph
+    kind: visual
+    visual: memory-graph
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      gift: { uk: "подарунок", en: "gift" }
+    title:
+      uk: "Один масив тегів на двох"
+      en: "One array of tags for two"
+    textEquivalent:
+      uk: "Функція Basket має властивість prototype, що веде до Basket.prototype, а в ньому лежить властивість tags — масив, поки що порожній. Об’єкти a і b, створені через new Basket, мають лише власне поле name і приховане посилання [[Prototype]] на Basket.prototype; власного tags у них немає. Коли виконується a.tags.push, пошук tags іде ланцюжком до прототипа й знаходить спільний масив. push додає в нього тег, і масив у прототипі тепер містить один елемент. Тому b.tags.length дорівнює 1, хоча в b нічого не додавали: b і a читають один і той самий масив."
+      en: "The function Basket has a property prototype leading to Basket.prototype, and in it lies the property tags — an array, still empty. The objects a and b created with new Basket have only their own field name and the hidden [[Prototype]] link to Basket.prototype; they have no tags of their own. When a.tags.push runs, the search for tags goes along the chain to the prototype and finds the shared array. push adds a tag to it, and the array in the prototype now holds one element. So b.tags.length is 1, although nothing was added to b: b and a read one and the same array."
+    spec:
+      code: |
+        function Basket(name) {
+          this.name = name;
+        }
+        Basket.prototype.tags = [];
+        const a = new Basket("%%lamp%%");
+        const b = new Basket("%%mug%%");
+        a.tags.push("%%gift%%");
+        console.log(b.tags.length);
+      states:
+        - caption:
+            uk: "Масив `tags` лежить у `Basket.prototype`, а не в якомусь екземплярі. Він порожній."
+            en: "The array `tags` lies in `Basket.prototype`, not in any instance. It is empty."
+          line: 4
+          bindings:
+            - { name: Basket, kind: function, value: { ref: basketFn } }
+          heap:
+            basketFn: { kind: object, ctor: "function Basket", props: { prototype: { ref: proto } } }
+            proto: { kind: object, ctor: "Basket.prototype", props: { tags: { ref: tags } } }
+            tags: { kind: array, items: [] }
+        - caption:
+            uk: "`a` і `b` мають лише власне `name` і посилання на прототип. Власної `tags` у них **немає**."
+            en: "`a` and `b` have only their own `name` and the link to the prototype. They have **no** `tags` of their own."
+          line: 6
+          bindings:
+            - { name: Basket, kind: function, value: { ref: basketFn } }
+            - { name: a, kind: const, value: { ref: aObj } }
+            - { name: b, kind: const, value: { ref: bObj } }
+          heap:
+            basketFn: { kind: object, ctor: "function Basket", props: { prototype: { ref: proto } } }
+            proto: { kind: object, ctor: "Basket.prototype", props: { tags: { ref: tags } } }
+            tags: { kind: array, items: [] }
+            aObj: { kind: object, props: { name: "%%lamp%%", "[[Prototype]]": { ref: proto } } }
+            bObj: { kind: object, props: { name: "%%mug%%", "[[Prototype]]": { ref: proto } } }
+        - caption:
+            uk: "`a.tags` знаходиться ланцюжком — це масив з прототипа. `push` змінює саме його: тег з’явився у спільному масиві."
+            en: "`a.tags` is found along the chain — it is the array from the prototype. `push` changes exactly that array: the tag appeared in the shared array."
+          line: 7
+          bindings:
+            - { name: Basket, kind: function, value: { ref: basketFn } }
+            - { name: a, kind: const, value: { ref: aObj } }
+            - { name: b, kind: const, value: { ref: bObj } }
+          heap:
+            basketFn: { kind: object, ctor: "function Basket", props: { prototype: { ref: proto } } }
+            proto: { kind: object, ctor: "Basket.prototype", props: { tags: { ref: tags } } }
+            tags: { kind: array, items: ["%%gift%%"] }
+            aObj: { kind: object, props: { name: "%%lamp%%", "[[Prototype]]": { ref: proto } } }
+            bObj: { kind: object, props: { name: "%%mug%%", "[[Prototype]]": { ref: proto } } }
+          changed: [tags]
+        - caption:
+            uk: "`b.tags` — той самий масив, тож `b.tags.length` дорівнює 1. У `b` нічого не додавали."
+            en: "`b.tags` is the same array, so `b.tags.length` is 1. Nothing was added to `b`."
+          line: 8
+          bindings:
+            - { name: Basket, kind: function, value: { ref: basketFn } }
+            - { name: a, kind: const, value: { ref: aObj } }
+            - { name: b, kind: const, value: { ref: bObj } }
+          heap:
+            basketFn: { kind: object, ctor: "function Basket", props: { prototype: { ref: proto } } }
+            proto: { kind: object, ctor: "Basket.prototype", props: { tags: { ref: tags } } }
+            tags: { kind: array, items: ["%%gift%%"] }
+            aObj: { kind: object, props: { name: "%%lamp%%", "[[Prototype]]": { ref: proto } } }
+            bObj: { kind: object, props: { name: "%%mug%%", "[[Prototype]]": { ref: proto } } }
+          changed: []
+
+  - id: save-click
+    kind: example
+    runtime: browser-js
+    dir: save-click
+    entry: index.html
+    strings:
+      lang: { uk: "uk", en: "en" }
+      pageTitle: { uk: "Нотатки", en: "Notes" }
+      saveButton: { uk: "Зберегти", en: "Save" }
+      notesTitle: { uk: "Нотатки", en: "Notes" }
+    title:
+      uk: "Кнопка, що пише не туди"
+      en: "A button that writes to the wrong place"
+    body:
+      uk: |
+        Кнопка «Зберегти» має збільшувати лічильник збережень в об’єкті `notes` і показувати його під кнопкою. Натисни **Запустити**, потім кнопку на **Сторінці**, і прочитай консоль та напис під кнопкою.
+      en: |
+        The “Save” button must increase the save counter in the object `notes` and show it under the button. Press **Run**, then the button on the **Page**, and read the console and the text under the button.
+    tryIt:
+      uk: |
+        1. Після кліку в консолі `this is the button: true`, а під кнопкою `undefined: NaN`. Помилки немає: метод мовчки записав `saveCount` у кнопку, а `heading` у кнопці немає.
+        2. Заміни останній рядок коду файла `main.js` на `saveButton.addEventListener("click", () => notes.save());`, запусти й натисни кнопку. Тепер `this is the button: false`, а під кнопкою — назва й `1`; ще клік — `2`. Метод лишився тим самим.
+        3. Спробуй і другий спосіб: `saveButton.addEventListener("click", notes.save.bind(notes));`. Результат такий самий.
+      en: |
+        1. After a click the console shows `this is the button: true`, and under the button `undefined: NaN`. There is no error: the method silently wrote `saveCount` into the button, and the button has no `heading`.
+        2. Replace the last line of the file `main.js` with `saveButton.addEventListener("click", () => notes.save());`, run and press the button. Now `this is the button: false`, and under the button there is the title and `1`; one more click — `2`. The method stayed the same.
+        3. Try the second way too: `saveButton.addEventListener("click", notes.save.bind(notes));`. The result is the same.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: які ключі обходить for…in"
+      en: "Recall: which keys for…in visits"
+    items:
+      - id: for-in-keys
+        from: js-04-06-for-of-vs-for-in
+        prompt:
+          uk: "Що виведе програма?"
+          en: "What does the program print?"
+        code: |
+          const defaults = { done: false };
+          const task = Object.create(defaults);
+          task.id = "t-01";
+
+          const keys = [];
+          for (const key in task) {
+            keys.push(key);
+          }
+          console.log(keys.join());
+          console.log(Object.keys(task).join());
+        verify:
+          logs: ["id,done", "id"]
+        answer:
+          type: choice
+          options:
+            - id: own-then-inherited
+              code: "id,done\nid"
+            - id: only-own
+              code: "id\nid"
+              why:
+                uk: "Цикл `for…in` обходить і власні, і успадковані перелічувані властивості. Лише `Object.keys` повертає самі власні."
+                en: "A `for…in` loop visits both own and inherited enumerable properties. Only `Object.keys` returns just the own ones."
+            - id: all-inherited
+              code: "done,id\nid,done"
+              why:
+                uk: "Спершу обходять власні властивості, потім успадковані. А `Object.keys` успадкованих не містить."
+                en: "Own properties are visited first, then inherited ones. And `Object.keys` contains no inherited ones."
+          correct: [own-then-inherited]
+        explanation:
+          uk: "`for…in` іде спершу власними властивостями, а потім успадкованими перелічуваними: `id`, `done`. `Object.keys` дає лише власні. Саме тому дані на прототипі так легко не помітити: вони видні в `for…in` і в читанні, але не в `Object.keys`."
+          en: "`for…in` goes through own properties first and then inherited enumerable ones: `id`, `done`. `Object.keys` gives only own ones. That is exactly why data on a prototype is so easy to overlook: it is visible in `for…in` and in reading, but not in `Object.keys`."
+
+  - id: fix-notes
+    kind: exercise
+    mode: debug
+    runtime: browser-js
+    dir: fix-notes
+    entry: index.js
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      gift: { uk: "подарунок", en: "gift" }
+      sale: { uk: "розпродаж", en: "sale" }
+    title:
+      uk: "Чотири дефекти в застосунку з нотатками"
+      en: "Four defects in a notes app"
+    instructions:
+      uk: |
+        У файлі невеликий застосунок із нотатками, і в ньому **чотири дефекти**: метод, відданий слухачеві кліку, метод, відданий таймеру, масив на прототипі й конструктор без `new`. Знайди кожен і виправ найменшою зміною, яка зберігає поведінку:
+
+        - клік по кнопці має позначати сховище `NoteStore` збереженим (`store.saved`);
+        - `start()` у `Poller` має через 10 мс запустити `tick()` саме на цьому `Poller`;
+        - у кожного `Basket` має бути власний список тегів;
+        - `createBasket(name)` має повертати новий `Basket`.
+
+        Методи `markSaved` і `tick` переписувати не треба — їх треба викликати правильно. Натисни **Запустити**: демо внизу файла показує три з чотирьох симптомів. Четвертий (таймер) покажуть лише перевірки — натисни **Перевірити**.
+      en: |
+        The file holds a small notes app, and it has **four defects**: a method handed to a click listener, a method handed to a timer, an array on the prototype and a constructor without `new`. Find each one and repair it with the smallest change that keeps the behavior:
+
+        - a click on the button must mark the `NoteStore` as saved (`store.saved`);
+        - `start()` in `Poller` must run `tick()` 10 ms later on this very `Poller`;
+        - every `Basket` must have its own list of tags;
+        - `createBasket(name)` must return a new `Basket`.
+
+        You do not need to rewrite the methods `markSaved` and `tick` — they need to be called correctly. Press **Run**: the demo at the bottom of the file shows three of the four symptoms. The fourth (the timer) is shown only by the checks — press **Check**.
+    testTitles:
+      "clicking the button marks the store as saved":
+        uk: "Клік по кнопці позначає сховище збереженим"
+        en: "Clicking the button marks the store as saved"
+      "wiring the button saves nothing until the click":
+        uk: "Підключення кнопки нічого не зберігає до кліку"
+        en: "Wiring the button saves nothing until the click"
+      "start makes the poller tick once, 10 ms later, on itself":
+        uk: "start змушує poller тикнути один раз через 10 мс — на собі"
+        en: "start makes the poller tick once, 10 ms later, on itself"
+      "each basket keeps its own tags":
+        uk: "Кожен кошик має власні теги"
+        en: "Each basket keeps its own tags"
+      "createBasket returns a new Basket with the given name":
+        uk: "createBasket повертає новий Basket із цією назвою"
+        en: "createBasket returns a new Basket with the given name"
+      "the store still keeps notes and can be marked saved directly":
+        uk: "Сховище й далі зберігає нотатки й позначається збереженим напряму"
+        en: "The store still keeps notes and can be marked saved directly"
+    hints:
+      nudge:
+        uk: "Для кожного дефекту спитай себе: хто стоїть перед крапкою, коли функцію нарешті викличуть? І: де лежить масив — в екземплярі чи на прототипі? На початку методу допоможе `console.log(this)`."
+        en: "For each defect ask yourself: what stands before the dot when the function is finally called? And: where does the array lie — in the instance or on the prototype? A `console.log(this)` at the start of a method helps."
+      explanation:
+        uk: "Слухачу й таймеру віддавай не «голий» метод, а функцію, яка зберігає власника: стрілку, що викликає метод через крапку (на кшталт `() => player.play()`), або прив’язану копію (`player.play.bind(player)`). Масив, який має бути в кожного екземпляра, створюй у конструкторі через `this.…`, а не на прототипі. А конструктор-функцію запускають оператором `new`."
+        en: "Give the listener and the timer not a “bare” method but a function that keeps the owner: an arrow that calls the method through a dot (like `() => player.play()`) or a bound copy (`player.play.bind(player)`). Create an array that every instance must have in the constructor with `this.…`, not on the prototype. And a constructor function is started with the operator `new`."
+    solutionNote:
+      uk: "Слухач і таймер викликають функцію без об’єкта, тож `markSaved` і `tick` треба передати в обгортці (стрілка чи `bind`) — самі методи лишилися незмінними. Масив тегів створюється в конструкторі, тож у кожного кошика він свій. `createBasket` має викликати `Basket` з `new`: тоді `this` — новий об’єкт."
+      en: "A listener and a timer call a function with no object, so `markSaved` and `tick` must be handed over in a wrapper (an arrow or `bind`) — the methods themselves stay unchanged. The array of tags is created in the constructor, so every basket has its own. `createBasket` must call `Basket` with `new`: then `this` is the new object."
+    feedback:
+      - when: { test: "clicking the button marks the store as saved" }
+        message:
+          uk: "Ця перевірка клікає по кнопці й очікує `store.saved === true`, а на самій кнопці поля `saved` бути не має. Слухач викликають із `this` = кнопка, тож `store.markSaved` слід передати так, щоб метод запускався на `store`."
+          en: "This check clicks the button and expects `store.saved === true` and no field `saved` on the button itself. A listener is called with `this` = the button, so `store.markSaved` must be passed in a way that runs the method on `store`."
+      - when: { test: "wiring the button saves nothing until the click" }
+        message:
+          uk: "Ця перевірка викликає `wireSaveButton` і очікує, що до кліку `store.saved` усе ще `false`. Слухачу потрібна функція, а не результат її виклику."
+          en: "This check calls `wireSaveButton` and expects `store.saved` to be still `false` before the click. A listener needs a function, not the result of calling it."
+      - when: { test: "start makes the poller tick once, 10 ms later, on itself" }
+        message:
+          uk: "Ця перевірка викликає `start()`, очікує `ticks` рівним 0 одразу після виклику, а через 80 мс — рівним 1. Таймер має викликати `tick` на тому самому `Poller`, і не раніше, ніж мине час."
+          en: "This check calls `start()`, expects `ticks` to be 0 right after the call and 1 after 80 ms. The timer must call `tick` on the same `Poller`, and not before the time has passed."
+      - when: { test: "each basket keeps its own tags" }
+        message:
+          uk: "Ця перевірка додає два теги першому кошику й очікує їх у ньому в порядку додавання, а в іншому новому кошику — порожній список. Кожен кошик має мати власний масив `tags`, і `addTag` має додавати в нього, а не замінювати його."
+          en: "This check adds two tags to the first basket and expects them in it in the order they were added, and an empty list in another new basket. Every basket must have its own array `tags`, and `addTag` must add to it, not replace it."
+      - when: { test: "createBasket returns a new Basket with the given name" }
+        message:
+          uk: "Ця перевірка викликає `createBasket` і очікує екземпляр `Basket` із переданою назвою. Конструктор-функція створює об’єкт лише тоді, коли її викликано через `new`."
+          en: "This check calls `createBasket` and expects a `Basket` instance with the given name. A constructor function creates an object only when it is called with `new`."
+      - when: { test: "the store still keeps notes and can be marked saved directly" }
+        message:
+          uk: "Ця перевірка викликає `add` двічі й `store.markSaved()` напряму: нотатки лишаються в порядку, `saved` стає `true`. Виправлення не мають зіпсувати ці виклики."
+          en: "This check calls `add` twice and `store.markSaved()` directly: the notes stay in order and `saved` becomes `true`. The repairs must not break these calls."
+      - when: { error: TypeError }
+        message:
+          uk: "Повідомлення `Cannot read properties of undefined` чи `Cannot set properties of undefined` зазвичай означає, що `this` порожній: функцію викликали без об’єкта перед крапкою або конструктор — без `new`. Знайди місце, де це відбувається. Якщо ж кожна перевірка пише `… is not a function`, програма зупинилася ще під час завантаження: спершу виправ помилку в консолі."
+          en: "A message like `Cannot read properties of undefined` or `Cannot set properties of undefined` usually means `this` is empty: a function was called with no object before the dot, or a constructor without `new`. Find the place where it happens. If instead every check says `… is not a function`, the program stopped while loading: fix the error in the console first."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-11
+    body:
+      uk: "У проєкті ці дефекти виглядають так: кнопка «Видалити» кидає `TypeError` або мовчки нічого не робить, бо метод репозиторію віддали слухачу «голим»; два екрани ділять один масив записів, бо його створили на прототипі. Коли побачиш таке, спершу виведи `console.log(this)` і подивись, хто там."
+      en: "In the project these defects look like this: the “Delete” button throws a `TypeError` or silently does nothing, because a repository method was handed to a listener “bare”; two screens share one array of records because it was created on the prototype. When you see this, first print `console.log(this)` and look who is there."
