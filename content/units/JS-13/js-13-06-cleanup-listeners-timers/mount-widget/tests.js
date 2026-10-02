@@ -130,8 +130,11 @@ test('a failing render is cleaned up and its own error reaches the caller', () =
     expect(root.dataset.width, 'data-width after a resize that came after the failure').toBe('before');
     root.click();
     expect(root.dataset.clicks, 'data-clicks after a click that came after the failure').toBe('0');
-    expect(timers.created.length, 'intervals started before the failure').toBe(1);
-    expect(timers.cleared, 'ids passed to clearInterval').toContain(timers.created[0]);
+    // Starting the interval before render (and stopping it) or only after a successful render are both fine.
+    expect(timers.created.length <= 1, `${timers.created.length} intervals started before the failure is at most 1`).toBe(true);
+    if (timers.created.length === 1) {
+      expect(timers.cleared, 'ids passed to clearInterval').toContain(timers.created[0]);
+    }
   } finally {
     timers.restore();
   }
