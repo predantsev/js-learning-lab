@@ -8,7 +8,7 @@ Promise.resolve("w-05")
     }
     return price;
   })
-  .then((price) => price + " UAH")
-  .catch((error) => "price unknown")
+  .then((price) => price + " %%currency%%")
+  .catch((error) => "%%unknown%%")
   .then((label) => console.log(label))
-  .finally(() => console.log("loading off"));
+  .finally(() => console.log("%%loadingOff%%"));
