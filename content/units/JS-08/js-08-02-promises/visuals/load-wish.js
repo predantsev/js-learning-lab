@@ -1,7 +1,7 @@
 function loadWish(id) {
   return new Promise((resolve) => {
     setTimeout(() => {
-      resolve({ id: id, name: "Lamp" });
+      resolve({ id: id, name: "%%lamp%%" });
     }, 500);
   });
 }

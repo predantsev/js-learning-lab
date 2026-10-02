@@ -8,7 +8,7 @@ async function saveWish(name) {
 }
 
 function onSave() {
-  saveWish("Lamp");
+  saveWish("%%lamp%%");
   console.log("UI: saved!");
 }
 
@@ -18,5 +18,5 @@ async function search(query, ms) {
 }
 
 onSave();
-search("la", 400);
-search("lamp", 100);
+search("%%short%%", 400);
+search("%%long%%", 100);
