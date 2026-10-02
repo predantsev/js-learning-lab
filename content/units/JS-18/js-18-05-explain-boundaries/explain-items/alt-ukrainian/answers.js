@@ -29,7 +29,7 @@ export const answers = {
   // [Access-Control-Allow-Origin] "server-handles-page-cannot-read" | "browser-never-sends" | "server-refuses"
   cors: {
     outcome: "server-handles-page-cannot-read",
-    reason: "Браузер надсилає цей простий POST без preflight, і сервер його отримує й обробляє. Без Access-Control-Allow-Origin браузер лише ховає відповідь від скрипту сторінки, тож CORS захищає читача в браузері, а не сервер: сервер має перевіряти запит сам.",
+    reason: "Браузер надсилає цей простий POST без preflight, і сервер його отримує й обробляє. Без Access-Control-Allow-Origin браузер лише ховає відповідь від коду сторінки, тож CORS захищає читача в браузері, а не сервер: сервер має перевіряти запит сам.",
   },
 
   // [FinalizationRegistry] "maybe-later-or-never" | "right-after-dropped" | "before-dropped"
