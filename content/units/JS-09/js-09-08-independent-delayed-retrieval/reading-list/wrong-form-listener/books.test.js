@@ -5,14 +5,11 @@ import { mount } from "./ui.js";
 
 // A stand-in for localStorage: a fresh, empty store for every test.
 function makeStorage() {
-  const data = new Map();
+  const data = {};
   return {
-    getItem: (key) => (data.has(key) ? data.get(key) : null),
+    getItem: (key) => (key in data ? data[key] : null),
     setItem: (key, value) => {
-      data.set(key, String(value));
-    },
-    removeItem: (key) => {
-      data.delete(key);
+      data[key] = String(value);
     },
   };
 }
