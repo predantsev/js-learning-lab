@@ -5,7 +5,7 @@
 // Console:
 //   Access to fetch at 'http://127.0.0.1:8080/habits.json' from origin 'http://127.0.0.1:5173' has been
 //   blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
-//   Uncaught TypeError: Failed to fetch
+//   Uncaught (in promise) TypeError: Failed to fetch
 // Log of the server on port 8080:
 //   127.0.0.1:58818 - "GET /habits.json" 200 [0ms]
 // Headers of its response:
@@ -19,7 +19,7 @@
 //   Access to fetch at 'http://127.0.0.1:3000/expenses' from origin 'http://127.0.0.1:5173' has been
 //   blocked by CORS policy: Request header field content-type is not allowed by
 //   Access-Control-Allow-Headers in preflight response.
-//   Uncaught TypeError: Failed to fetch
+//   Uncaught (in promise) TypeError: Failed to fetch
 // Log of the server on port 3000:
 //   OPTIONS /expenses 204
 // Headers of its OPTIONS response:

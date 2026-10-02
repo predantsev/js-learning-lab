@@ -95,6 +95,9 @@ test('a 200 HTML fallback page shows the failure message and no events', async (
 
 test('only the city preference is stored, and it comes back', async () => {
   localStorage.clear();
+  await user.select(screen.$('#city'), 'lviv');
+  expect(localStorage.getItem('events.city'), 'the stored city right after choosing it').toBe('lviv');
+  localStorage.clear();
   await submitSearch(json(200, EVENTS), { query: L.walk, city: 'odesa' });
   expect(Object.keys(localStorage), 'keys in localStorage').toEqual(['events.city']);
   expect(localStorage.getItem('events.city'), 'the stored city').toBe('odesa');
