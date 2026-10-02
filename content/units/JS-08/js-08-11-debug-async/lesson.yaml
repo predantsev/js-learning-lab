@@ -1,0 +1,394 @@
+id: js-08-11-debug-async
+unit: JS-08
+title:
+  uk: "Налагодження: застаріла відповідь, пропущений await, необроблене відхилення"
+  en: "Debug: stale response, missing await, unhandled rejection"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Розпізнати за консоллю й за шкалою event loop пропущений `await`, необроблене відхилення й застарілу відповідь і назвати причину кожного."
+    en: "Diagnose a missing `await`, an unhandled rejection and a stale response from the console and the event-loop timeline, and state the cause of each."
+  - uk: "Виправити функцію запиту, що вважає відповідь `500` успіхом."
+    en: "Repair a fetch helper that treats a `500` response as success."
+prerequisites: [js-08-10-stale-responses-retry]
+subskills:
+  - { family: J-11, skill: "promise chaining and rejection", depth: assess }
+  - { family: J-11, skill: "async/await", depth: assess }
+  - { family: J-11, skill: "races/retry/timeouts", depth: assess }
+  - { family: W-04, skill: "fetch response checks", depth: assess }
+glossary: [floating-promise]
+selfCheck: [match-defects, repair-four]
+
+blocks:
+  - id: quiet-async-bugs
+    kind: explanation
+    title:
+      uk: "Чотири тихі асинхронні помилки"
+      en: "Four quiet async bugs"
+    body:
+      uk: |
+        Асинхронні помилки підступні: програма часто не «падає», а просто робить не те, і не в ту мить. Чотири найчастіші:
+
+        - **Пропущений `await`.** `saveWish(name)` без `await` запускає збереження й одразу йде далі: напис «Збережено» з’являється раніше, ніж сервер відповів, а помилку збереження ніхто не побачить. Promise, на який ніхто не чекає і чиїх помилок ніхто не обробляє, — це [[floating-promise|«загублений» promise]].
+        - **Відхилення без обробника.** Ланцюжок без `.catch` (чи `await` без `try/catch`) дає [[unhandled-rejection|необроблене відхилення]]: у консолі червона картка, а людина нічого не бачить.
+        - **Немає перевірки `ok`.** Відповідь `500` розбирають як дані — і на екрані `undefined` замість повідомлення про помилку.
+        - **Немає правила «перемагає найновіший».** Повільна давня відповідь перекриває нову.
+
+        Дві пастки мислення: «немає червоної помилки — отже, працює» (три з чотирьох помилок червоного не дають) і «додам `await` усюди — і все мине» (порядок відповідей сервера від цього не зміниться).
+      en: |
+        Async bugs are sneaky: a program often does not “crash” but simply does the wrong thing, at the wrong moment. The four most common:
+
+        - **A missing `await`.** `saveWish(name)` without `await` starts the save and moves on at once: “Saved” appears before the server answered, and nobody will see a save failure. A promise that nobody waits for and whose errors nobody handles is a [[floating-promise]].
+        - **A rejection without a handler.** A chain without `.catch` (or `await` without `try/catch`) gives an [[unhandled-rejection]]: a red card in the console, and the person sees nothing.
+        - **No `ok` check.** A `500` answer is parsed as data — and the screen shows `undefined` instead of an error message.
+        - **No latest-wins rule.** A slow old answer overwrites the new one.
+
+        Two thinking traps: “no red error means it works” (three of the four bugs give nothing red) and “I will add `await` everywhere and it will go away” (that does not change the order of the server’s answers).
+
+  - id: match-defects
+    kind: prediction
+    prompt:
+      uk: |
+        Програма має чотири дефекти:
+
+        - **A** — `saveWish(name)` викликано без `await`;
+        - **B** — у `loadTips()` немає `.catch`, а файла з порадами немає;
+        - **C** — `loadStats()` не перевіряє `response.ok`, а сервер відповідає `500`;
+        - **D** — у `search()` немає правила «перемагає найновіший».
+
+        І чотири симптоми:
+
+        1. результати давнішого пошуку замінюють новіші;
+        2. «Збережено» з’являється раніше, ніж сервер відповів;
+        3. на екрані «Усього бажань: undefined»;
+        4. у консолі картка про promise, помилку якого ніхто не обробив.
+
+        Який дефект дає який симптом?
+      en: |
+        A program has four defects:
+
+        - **A** — `saveWish(name)` is called without `await`;
+        - **B** — `loadTips()` has no `.catch`, and there is no tips file;
+        - **C** — `loadStats()` does not check `response.ok`, and the server answers `500`;
+        - **D** — `search()` has no latest-wins rule.
+
+        And four symptoms:
+
+        1. the results of an older search replace newer ones;
+        2. “Saved” appears before the server answered;
+        3. the screen shows “Wishes in total: undefined”;
+        4. the console shows a card about a promise whose error nobody handled.
+
+        Which defect gives which symptom?
+    answer:
+      type: choice
+      options:
+        - id: right
+          text:
+            uk: "A → 2, B → 4, C → 3, D → 1"
+            en: "A → 2, B → 4, C → 3, D → 1"
+        - id: c-rejects
+          text:
+            uk: "A → 2, B → 3, C → 4, D → 1"
+            en: "A → 2, B → 3, C → 4, D → 1"
+          why:
+            uk: "На `500` `fetch` не відхиляється — він виконується з `ok: false`. Тож C не дає картки, а мовчки показує `undefined`. Картку дає B: `response.json()` для сторінки 404 відхиляється, а `.catch` немає."
+            en: "On `500` `fetch` does not reject — it fulfills with `ok: false`. So C gives no card; it quietly shows `undefined`. The card comes from B: `response.json()` on the 404 page rejects, and there is no `.catch`."
+        - id: await-fixes-order
+          text:
+            uk: "A → 1, B → 4, C → 3, D → 2"
+            en: "A → 1, B → 4, C → 3, D → 2"
+          why:
+            uk: "Пропущений `await` у збереженні не впливає на порядок відповідей пошуку. Він дає ранній напис «Збережено». А порядок пошуку псує відсутність правила «перемагає найновіший»."
+            en: "A missing `await` in saving does not affect the order of search answers. It gives the early “Saved”. The search order is broken by the missing latest-wins rule."
+      correct: [right]
+    explanation:
+      uk: "A: без `await` код не чекає збереження й одразу пише «Збережено» (2). B: відхилення, яке ніхто не обробив, — червона картка (4). C: відповідь `500` розбирають як дані, тож `total` — `undefined` (3). D: повільна давня відповідь приходить останньою й перекриває нову (1). Лише B дає щось червоне — решта тиха."
+      en: "A: without `await` the code does not wait for the save and writes “Saved” at once (2). B: a rejection nobody handled is the red card (4). C: the `500` answer is parsed as data, so `total` is `undefined` (3). D: the slow old answer arrives last and overwrites the new one (1). Only B gives anything red — the rest are quiet."
+
+  - id: replay-steps
+    kind: visual
+    visual: event-loop
+    title:
+      uk: "Дефекти A і D на шкалі часу"
+      en: "Defects A and D on the timeline"
+    textEquivalent:
+      uk: "onSave викликає async-функцію saveWish без await: saveWish ставить таймер на 300 мс і призупиняється, а onSave одразу друкує UI: saved! — сервер ще нічого не зберіг. Потім запускаються два пошуки: la з затримкою 400 мс і lamp із затримкою 100 мс. Через 100 мс приходить відповідь для lamp: show: lamp. Через 300 мс збереження нарешті завершується: server saved: Lamp — уже після того, як людина прочитала «збережено». Через 400 мс приходить запізніла відповідь для la і перекриває lamp: show: la. У консолі: UI: saved!, show: lamp, server saved: Lamp, show: la. Жодного червоного повідомлення — обидва дефекти тихі. Необроблене відхилення на цій шкалі не показано: його видно в прикладі цього уроку як червону картку в консолі."
+      en: "onSave calls the async function saveWish without await: saveWish sets a 300 ms timer and pauses, and onSave prints UI: saved! at once — the server has saved nothing yet. Then two searches start: la with a 400 ms delay and lamp with a 100 ms delay. At 100 ms the answer for lamp arrives: show: lamp. At 300 ms the save finally finishes: server saved: Lamp — after the person has already read “saved”. At 400 ms the late answer for la arrives and overwrites lamp: show: la. The console shows: UI: saved!, show: lamp, server saved: Lamp, show: la. Nothing red — both defects are quiet. The unhandled rejection is not on this timeline: the lesson’s example shows it as a red card in the console."
+    spec:
+      file: visuals/replay.js
+      steps:
+        - line: 11
+          caption:
+            uk: "`onSave` викликає `saveWish` **без** `await`. `saveWish` ставить таймер на 300 мс і призупиняється на своєму `await`."
+            en: "`onSave` calls `saveWish` **without** `await`. `saveWish` sets a 300 ms timer and pauses at its own `await`."
+          stack: ["replay.js", "onSave", "saveWish"]
+          webApis: ["save: 300 ms"]
+        - line: 12
+          log: "UI: saved!"
+          caption:
+            uk: "`onSave` не чекає й одразу друкує `UI: saved!`. Сервер ще нічого не зберіг — це дефект A."
+            en: "`onSave` does not wait and prints `UI: saved!` at once. The server has saved nothing yet — that is defect A."
+          stack: ["replay.js", "onSave"]
+          webApis: ["save: 300 ms"]
+        - line: 21
+          caption:
+            uk: "Два пошуки: `la` відповідає за 400 мс, `lamp` — за 100 мс. Обидва запущено разом."
+            en: "Two searches: `la` answers in 400 ms, `lamp` in 100 ms. Both are started together."
+          stack: ["replay.js"]
+          webApis: ["save: 300 ms", "la: 400 ms", "lamp: 100 ms"]
+        - caption:
+            uk: "Код файла закінчився. Червоних помилок немає — і все ж два дефекти вже запущено."
+            en: "The file’s code has finished. No red errors — and yet two defects are already on their way."
+          stack: []
+          webApis: ["save: 300 ms", "la: 400 ms", "lamp: 100 ms"]
+        - line: 17
+          log: "show: lamp"
+          caption:
+            uk: "**100 мс**: відповідь для `lamp` — `show: lamp`. Поки що правильно."
+            en: "**100 ms**: the answer for `lamp` — `show: lamp`. Correct so far."
+          stack: ["search lamp"]
+          webApis: ["save: 300 ms", "la: 400 ms"]
+        - line: 7
+          log: "server saved: Lamp"
+          caption:
+            uk: "**300 мс**: збереження нарешті завершилося — через 300 мс після того, як людина побачила «збережено». Якби воно не вдалося, ніхто б не дізнався."
+            en: "**300 ms**: the save has finally finished — 300 ms after the person saw “saved”. Had it failed, nobody would have known."
+          stack: ["saveWish after await"]
+          webApis: ["la: 400 ms"]
+        - line: 17
+          log: "show: la"
+          caption:
+            uk: "**400 мс**: запізніла відповідь для `la` перекриває `lamp` — дефект D. І знову нічого червоного."
+            en: "**400 ms**: the late answer for `la` overwrites `lamp` — defect D. And again nothing red."
+          stack: ["search la"]
+        - caption:
+            uk: "Підсумок: `UI: saved!`, `show: lamp`, `server saved: Lamp`, `show: la`. Порядок рядків у консолі — головна підказка для обох тихих дефектів."
+            en: "Summary: `UI: saved!`, `show: lamp`, `server saved: Lamp`, `show: la`. The order of the console lines is the main clue for both quiet defects."
+          stack: []
+
+  - id: seeded-run
+    kind: example
+    runtime: browser-js
+    dir: seeded-run
+    entry: index.js
+    expectError: true
+    capabilities: { network: lab }
+    strings:
+      lang: { uk: "uk", en: "en" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      serverAnswered: { uk: "сервер відповів на збереження:", en: "the server answered the save:" }
+      uiSaved: { uk: "інтерфейс: «Збережено»", en: "interface: “Saved”" }
+      wishesTotal: { uk: "усього бажань:", en: "wishes in total:" }
+      showing: { uk: "показую результати для", en: "showing the results for" }
+      shortQuery: { uk: "а", en: "a" }
+      longQuery: { uk: "лампа", en: "lamp" }
+    title:
+      uk: "Запусти програму з чотирма дефектами"
+      en: "Run the program with four defects"
+    body:
+      uk: |
+        Програма робить справжні запити до навчального сервера, і в ній є всі чотири дефекти: A, B, C і D (кожен підписано в коментарі). Запусти й прочитай **Консоль** згори донизу: для кожного рядка знайди дефект, що його дав. Рядки дефектів позначено літерами, а необроблене відхилення від B з’являється як картка «Помилка під час виконання».
+      en: |
+        The program makes real requests to the lab server and has all four defects: A, B, C and D (each is labelled in a comment). Run it and read the **Console** top to bottom: for every line find the defect that produced it. The defects’ lines are marked with letters, and B’s unhandled rejection appears as the card “Error while running”.
+    tryIt:
+      uk: |
+        1. Знайди в консолі рядок «A: сервер відповів…» і порівняй його місце з рядком «A: інтерфейс: «Збережено»». Що людина бачить раніше — і чи це правда в ту мить?
+        2. Знайди картку «Помилка під час виконання»: який рядок коду запустив promise, помилку якого ніхто не обробив?
+        3. Додай `await` перед обома викликами `search(...)` в останніх рядках коду: пошуки тепер ідуть по черзі, і «лампа» лишається останньою. Але так людина чекає довше, а в справжньому інтерфейсі пошуки запускає не код файла, а кожна нова літера — і `await` там не допоможе. Правильний захист — номер запиту або скасування.
+      en: |
+        1. Find the line “A: the server answered…” in the console and compare its place with the line “A: interface: “Saved””. What does the person see first — and is it true at that moment?
+        2. Find the card “Error while running”: which line of code started the promise whose error nobody handled?
+        3. Add `await` in front of both `search(...)` calls on the last lines of code: the searches now run one after another, and “lamp” stays last. But the person waits longer, and in a real interface searches are started not by the file’s code but by every new letter — `await` does not help there. The right protection is a request number or aborting.
+
+  - id: diagnose
+    kind: explanation
+    title:
+      uk: "Від симптому до причини"
+      en: "From symptom to cause"
+    body:
+      uk: |
+        | Симптом | Причина | Виправлення |
+        |---|---|---|
+        | повідомлення про успіх з’являється раніше за відповідь сервера | пропущений `await` | `await` перед викликом і `try/catch` навколо нього |
+        | картка про promise, помилку якого ніхто не обробив | відхилення без обробника | `.catch(...)` у кінці ланцюжка або `try/catch` навколо `await` |
+        | `undefined` замість даних чи повідомлення | немає перевірки `response.ok` | перевірити `ok` до читання тіла й показати помилку |
+        | на екрані дані для старого запиту | немає правила «перемагає найновіший» | номер запиту або скасування попереднього |
+
+        Порядок дій той самий, що й з будь-якою помилкою: відтвори, порівняй порядок рядків у консолі з тим, що мало статися, знайди **перше** місце, де пішло не так, і виправ саме його.
+      en: |
+        | Symptom | Cause | Fix |
+        |---|---|---|
+        | a success message appears before the server’s answer | a missing `await` | `await` in front of the call and `try/catch` around it |
+        | a card about a promise whose error nobody handled | a rejection without a handler | `.catch(...)` at the end of the chain or `try/catch` around `await` |
+        | `undefined` instead of data or a message | no `response.ok` check | check `ok` before reading the body and show an error |
+        | the screen shows data for an old request | no latest-wins rule | a request number or aborting the previous one |
+
+        The routine is the same as for any bug: reproduce it, compare the order of the console lines with what should have happened, find the **first** place where things went wrong, and fix exactly that.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: порожній catch"
+      en: "Recall: an empty catch"
+    items:
+      - id: empty-catch-hides
+        from: js-07-09-debug-swallowed-errors
+        prompt:
+          uk: "У `catch` нічого немає. Що надрукує код?"
+          en: "The `catch` is empty. What does the code print?"
+        code: |
+          function readPrice(text) {
+            try {
+              return JSON.parse(text).price;
+            } catch (error) {
+            }
+          }
+
+          console.log(readPrice('{"price": 45}'), readPrice("{price: 45}"));
+        verify:
+          logs: ["45 undefined"]
+        answer:
+          type: choice
+          options:
+            - id: hidden
+              text:
+                uk: "`45 undefined`"
+                en: "`45 undefined`"
+            - id: error-card
+              text:
+                uk: "`45`, а потім картка з `SyntaxError`"
+                en: "`45`, then a card with a `SyntaxError`"
+              why:
+                uk: "`catch` перехопив помилку — і нічого з нею не зробив. Картки не буде: помилку проковтнуто."
+                en: "`catch` caught the error — and did nothing with it. There is no card: the error was swallowed."
+            - id: zero
+              text:
+                uk: "`45 0`"
+                en: "`45 0`"
+              why:
+                uk: "Порожній `catch` нічого не повертає, тож функція дає `undefined`, а не `0`."
+                en: "An empty `catch` returns nothing, so the function gives `undefined`, not `0`."
+          correct: [hidden]
+        explanation:
+          uk: "Порожній `catch` ховає збій: ні картки, ні повідомлення — лише `undefined` далі по коду. Як і в асинхронних помилках цього уроку, «немає червоного» не означає «працює»."
+          en: "An empty `catch` hides the failure: no card, no message — only an `undefined` further along. As with this lesson’s async bugs, “nothing red” does not mean “it works”."
+
+  - id: repair-four
+    kind: exercise
+    mode: debug
+    runtime: browser-js
+    dir: repair-four
+    entry: index.html
+    editable: [index.js]
+    capabilities: { network: lab }
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Інструменти списку бажань", en: "Wishlist tools" }
+      saveButton: { uk: "Зберегти лампу", en: "Save the lamp" }
+      tipsButton: { uk: "Поради", en: "Tips" }
+      statsButton: { uk: "Статистика", en: "Statistics" }
+      searchButton: { uk: "Набрати «а», потім «лампа»", en: "Type “a”, then “lamp”" }
+      saving: { uk: "Зберігаю…", en: "Saving…" }
+      saved: { uk: "Збережено", en: "Saved" }
+      saveFailed: { uk: "Не вдалося зберегти", en: "Could not save" }
+      statsError: { uk: "Статистика недоступна", en: "Statistics are unavailable" }
+      total: { uk: "Усього бажань:", en: "Wishes in total:" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      shortQuery: { uk: "а", en: "a" }
+      longQuery: { uk: "лампа", en: "lamp" }
+    title:
+      uk: "Полагодь чотири асинхронні дефекти"
+      en: "Repair four async defects"
+    instructions:
+      uk: |
+        У кожній із чотирьох функцій по одному дефекту. Коментар над функцією каже, що вона **має** робити. Натисни кнопки на **Сторінці**, подивись у **Консоль**, знайди причину й виправ:
+
+        1. `saveAndConfirm` пише «Збережено» лише після відповіді сервера, а при невдачі — «Не вдалося зберегти» (без відхиленого promise).
+        2. `loadTips` при будь-якому збої дає порожній список, а не відхилення.
+        3. `showStats` при відповіді `500` показує «Статистика недоступна».
+        4. `search` показує лише результат найновішого пошуку.
+
+        Перевірки підставляють власні відповіді сервера з різними затримками.
+      en: |
+        Each of the four functions has one defect. The comment above a function says what it **should** do. Press the buttons on the **Page**, look at the **Console**, find the cause and fix it:
+
+        1. `saveAndConfirm` writes “Saved” only after the server answered, and on failure “Could not save” (without a rejected promise).
+        2. `loadTips` gives an empty list on any failure, not a rejection.
+        3. `showStats` shows “Statistics are unavailable” on a `500` answer.
+        4. `search` shows only the result of the latest search.
+
+        The checks put in their own server answers with different delays.
+    testTitles:
+      "saveAndConfirm says it saved only after the server answered":
+        uk: "saveAndConfirm пише «Збережено» лише після відповіді сервера"
+        en: "saveAndConfirm says it saved only after the server answered"
+      "saveAndConfirm shows the failure text when the save fails":
+        uk: "saveAndConfirm показує текст невдачі, коли зберегти не вдалося"
+        en: "saveAndConfirm shows the failure text when the save fails"
+      "loadTips gives the tips when the server has them":
+        uk: "loadTips дає поради, коли вони є на сервері"
+        en: "loadTips gives the tips when the server has them"
+      "loadTips gives an empty list instead of a rejection":
+        uk: "loadTips дає порожній список замість відхилення"
+        en: "loadTips gives an empty list instead of a rejection"
+      "showStats shows the total for a 200 answer":
+        uk: "showStats показує кількість для відповіді 200"
+        en: "showStats shows the total for a 200 answer"
+      "showStats shows the error text for a 500 answer":
+        uk: "showStats показує текст помилки для відповіді 500"
+        en: "showStats shows the error text for a 500 answer"
+      "only the latest search result stays on the page":
+        uk: "На сторінці лишається лише результат найновішого пошуку"
+        en: "Only the latest search result stays on the page"
+    hints:
+      nudge:
+        uk: "Для кожної функції порівняй, **коли** з’являється напис чи рядок у консолі, з тим, коли мав би. Яку зі «чотирьох тихих помилок» нагадує кожен випадок?"
+        en: "For each function compare **when** the text or the console line appears with when it should. Which of the “four quiet bugs” does each case resemble?"
+      explanation:
+        uk: "1 — пропущений `await`: без нього напис змінюється раніше, ніж закінчилося збереження, а помилка збереження стає необробленою; оточи очікування `try/catch`. 2 — ланцюжку бракує обробника відхилення, що дає запасне значення. 3 — `fetch` виконується й на `500`, тож перевір `ok` до читання тіла. 4 — пронумеруй пошуки або скасовуй попередній: додатковий `await` порядку відповідей не змінить."
+        en: "1 — a missing `await`: without it the text changes before the save has finished, and a save error becomes unhandled; surround the waiting with `try/catch`. 2 — the chain lacks a rejection handler that gives a fallback value. 3 — `fetch` fulfills on `500` too, so check `ok` before reading the body. 4 — number the searches or abort the previous one: an extra `await` does not change the order of the answers."
+    solutionNote:
+      uk: "`await saveWish(...)` у `try/catch` чекає відповіді й перетворює невдачу на напис; `.catch(() => [])` закінчує ланцюжок порад; перевірка `response.ok` не дає прочитати `500` як дані; номер найновішого пошуку (або скасування попереднього) не пускає на екран застарілу відповідь."
+      en: "`await saveWish(...)` inside `try/catch` waits for the answer and turns a failure into a message; `.catch(() => [])` ends the tips chain; the `response.ok` check keeps a `500` from being read as data; the number of the latest search (or aborting the previous one) keeps a stale answer off the screen."
+    feedback:
+      - when: { test: "saveAndConfirm says it saved only after the server answered" }
+        message:
+          uk: "Ця перевірка очікує «Зберігаю…», поки запит ще триває (150 мс), і «Збережено» — лише після відповіді. Якщо «Збережено» з’являється одразу, збереження не чекають."
+          en: "This check expects “Saving…” while the request is still running (150 ms), and “Saved” only after the answer. If “Saved” appears at once, nobody waits for the save."
+      - when: { test: "saveAndConfirm shows the failure text when the save fails" }
+        message:
+          uk: "Ця перевірка відповідає `500` на збереження й очікує напис «Не вдалося зберегти», а сама `saveAndConfirm` при цьому не має відхилятися. Помилку з `await` перехоплює `try/catch`."
+          en: "This check answers `500` to the save and expects the text “Could not save”, while `saveAndConfirm` itself must not reject. The error from `await` is taken by `try/catch`."
+      - when: { test: "loadTips gives the tips when the server has them" }
+        message:
+          uk: "Ця перевірка відповідає списком порад і очікує саме цей масив."
+          en: "This check answers with a list of tips and expects exactly that array."
+      - when: { test: "loadTips gives an empty list instead of a rejection" }
+        message:
+          uk: "Ця перевірка відповідає 404 із текстом, а потім обриває мережу, і щоразу очікує `[]`. Ланцюжку потрібен обробник відхилення з запасним значенням."
+          en: "This check answers 404 with text and then cuts the network, and both times expects `[]`. The chain needs a rejection handler with a fallback value."
+      - when: { test: "showStats shows the total for a 200 answer" }
+        message:
+          uk: "Ця перевірка відповідає `200` з `{ total: 6 }` і очікує «Усього бажань: 6». Перевірка `ok` не має заважати успішній відповіді."
+          en: "This check answers `200` with `{ total: 6 }` and expects “Wishes in total: 6”. The `ok` check must not get in the way of a successful answer."
+      - when: { test: "showStats shows the error text for a 500 answer" }
+        message:
+          uk: "Ця перевірка відповідає `500` і очікує «Статистика недоступна». `fetch` при `500` не відхиляється, тож `catch` тут не спрацює — перевір `response.ok`."
+          en: "This check answers `500` and expects “Statistics are unavailable”. `fetch` does not reject on `500`, so a `catch` will not fire here — check `response.ok`."
+      - when: { test: "only the latest search result stays on the page" }
+        message:
+          uk: "Ця перевірка запускає повільний пошук «а», а за ним швидкий «лампа» й очікує результат для «лампа». Якщо лишається «а», давня відповідь перекриває нову: потрібне правило «перемагає найновіший», а не додатковий `await`."
+          en: "This check starts a slow search for “a” followed by a fast one for “lamp” and expects the result for “lamp”. If “a” stays, the old answer overwrites the new one: you need the latest-wins rule, not an extra `await`."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` означає, що значення має не той тип, на який розраховує код. Якщо бачиш `… is not a function`, програма зупинилася ще під час завантаження — виправ спершу помилку з картки «Помилка під час виконання»."
+          en: "A `TypeError` means a value has a different type than the code expects. If you see `… is not a function`, the program stopped while loading — fix the error from the card “Error while running” first."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-08
+    body:
+      uk: "Перед тим як здати крок проєкту, пройдися по цих чотирьох місцях: кожен виклик async-функції або чекають, або свідомо відпускають з обробкою помилок; кожен ланцюжок закінчується обробкою відхилення; кожна відповідь перевіряється на `ok`; кожен запит фільтра захищено від застарілої відповіді."
+      en: "Before you hand in the project step, go over these four places: every call of an async function is either awaited or deliberately let go with error handling; every chain ends with rejection handling; every response is checked for `ok`; every filter request is protected from a stale answer."

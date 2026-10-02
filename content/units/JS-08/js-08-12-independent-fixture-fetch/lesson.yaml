@@ -1,0 +1,374 @@
+id: js-08-12-independent-fixture-fetch
+unit: JS-08
+title:
+  uk: "Самостійно: завантаження фікстур зі скасуванням, повтором і правильним порядком"
+  en: "Independent: fixture fetch with cancel, retry and ordering"
+kind: assessment
+minutes: 25
+contentVersion: 1
+purpose:
+  uk: "Без підказок поєднати все з цього розділу в новій ситуації — пошуку в бібліотечному каталозі: перевірити запит і відповідь, повторити тимчасовий збій, скасувати застарілий пошук, показати окремі стани для кожного виду збою й паралельно завантажити подробиці. А ще — довести, що порядок подій і вибір комбінатора ти визначаєш, а не вгадуєш."
+  en: "Combine everything from this unit without hints in a new situation — a search in a library catalog: check the request and the response, retry a temporary failure, cancel a stale search, show separate states for every kind of failure and load the details concurrently. And show that you determine the order of events and the choice of a combinator rather than guess them."
+objectives:
+  - uk: "Без підказок реалізувати завантажувач фікстур із перевіркою методу, статусу й Content-Type, станами завантаження й помилок, скасуванням застарілого пошуку, обмеженим повтором, паралельним завантаженням подробиць і правильним порядком відповідей."
+    en: "Implement, without hints, a fixture loader with method, status and Content-Type checks, loading and error states, cancel-on-new-request, a bounded retry, concurrent detail loading and correct response ordering."
+  - uk: "Упорядкувати вивід змішаного фрагмента з синхронним кодом, microtasks і tasks та обрати потрібний комбінатор promises для двох вимог."
+    en: "Order the output of a mixed synchronous/microtask/task snippet and choose the right promise combinator for two stated requirements."
+prerequisites: [js-08-11-debug-async]
+subskills:
+  - { family: J-11, skill: "call stack/tasks/microtasks", depth: assess }
+  - { family: J-11, skill: "all/allSettled/race/any selection", depth: assess }
+  - { family: J-11, skill: "cancellation/AbortController", depth: assess }
+  - { family: J-11, skill: "cleanup and sequential vs concurrent requests", depth: assess }
+  - { family: W-04, skill: "network/offline failures", depth: assess }
+  - { family: W-04, skill: "HTTP methods/status/headers", depth: assess }
+  - { family: W-04, skill: "JSON content types", depth: assess }
+glossary: []
+
+blocks:
+  - id: the-task
+    kind: explanation
+    title:
+      uk: "Що перевіряє цей урок"
+      en: "What this lesson checks"
+    body:
+      uk: |
+        Тут ти працюєш **без підказок**: лише умова, редактор і перевірки. Завдань два, і разом вони складаються в пошук у бібліотечному каталозі: спершу надійна функція запиту, потім сам пошук зі станами, скасуванням і подробицями.
+
+        Перевірки підставляють власні відповіді сервера: повільні й швидкі, у переставленому порядку, з помилками `404`, `500`, `503`, без мережі й без відповіді взагалі. Вони рахують запити, записують паузи й стежать, коли запити стартують. Час не чекають по-справжньому: для тайм-ауту перевірки самі переводять годинник.
+
+        Якщо перевірка не проходить, прочитай її назву й повідомлення: вони кажуть, *що* очікувалося, а не *як* це написати.
+      en: |
+        Here you work **without hints**: just the task, the editor and the checks. There are two tasks, and together they make up a search in a library catalog: first a reliable request function, then the search itself with states, cancellation and details.
+
+        The checks put in their own server answers: slow and fast ones, in swapped order, with `404`, `500` and `503` errors, without a network and with no answer at all. They count requests, record pauses and watch when requests start. They do not wait for real time: for the timeout the checks move the clock themselves.
+
+        If a check fails, read its title and message: they say *what* was expected, not *how* to write it.
+
+  - id: request-json
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: browser-js
+    dir: request-json
+    entry: index.js
+    title:
+      uk: "Надійна функція запиту"
+      en: "A reliable request function"
+    instructions:
+      uk: |
+        Напиши async-функцію `requestJson(url, signal)`:
+
+        1. Надсилає запит методом `GET` із заголовком `Accept: application/json` і передає в `fetch` сигнал `signal`.
+        2. Відповідь `503` повторює, але щонайбільше двічі (тобто не більше трьох запитів разом), а перед кожним повтором чекає (готова `wait(ms)`) — і кожна наступна пауза довша за попередню.
+        3. Будь-яку іншу відповідь, що не `ok`, — і `503` після останньої спроби — відхиляє одразу об’єктом `Error` із властивістю `status`.
+        4. Відповідь, чий Content-Type не містить `application/json`, відхиляє об’єктом `Error`.
+        5. Інакше повертає розібране тіло.
+
+        Збій мережі й скасування не повторюй: такі відхилення мають вийти з функції як є.
+      en: |
+        Write the async function `requestJson(url, signal)`:
+
+        1. It sends the request with the `GET` method and the header `Accept: application/json` and passes the `signal` to `fetch`.
+        2. It retries a `503` answer, but at most twice (that is, no more than three requests in total), and before each retry it waits (the ready `wait(ms)`) — every next pause longer than the previous one.
+        3. It rejects any other answer that is not `ok` — and a `503` after the last attempt — at once with an `Error` that has a `status` property.
+        4. It rejects an answer whose Content-Type does not contain `application/json` with an `Error`.
+        5. Otherwise it returns the parsed body.
+
+        Do not retry a network failure or a cancellation: such rejections must leave the function as they are.
+    testTitles:
+      "sends a GET request that asks for JSON":
+        uk: "Надсилає запит GET, що просить JSON"
+        en: "Sends a GET request that asks for JSON"
+      "returns the parsed body of a JSON answer":
+        uk: "Повертає розібране тіло JSON-відповіді"
+        en: "Returns the parsed body of a JSON answer"
+      "rejects a 404 at once with its status":
+        uk: "Одразу відхиляє 404 з його статусом"
+        en: "Rejects a 404 at once with its status"
+      "retries a 503 at most twice":
+        uk: "Повторює 503 щонайбільше двічі"
+        en: "Retries a 503 at most twice"
+      "waits longer before each next attempt":
+        uk: "Перед кожною наступною спробою чекає довше"
+        en: "Waits longer before each next attempt"
+      "rejects an answer whose Content-Type is not JSON":
+        uk: "Відхиляє відповідь, чий Content-Type — не JSON"
+        en: "Rejects an answer whose Content-Type is not JSON"
+      "passes the signal on, so an aborted request rejects with AbortError":
+        uk: "Передає сигнал далі, тож скасований запит відхиляється з AbortError"
+        en: "Passes the signal on, so an aborted request rejects with AbortError"
+    solutionNote:
+      uk: "Цикл спроб повторює лише `503` і чекає дедалі довше (100, 200 мс); будь-яка інша відповідь не `ok` одразу стає помилкою зі `status`; Content-Type перевіряється до розбору тіла. Збій мережі й `AbortError` виходять із функції самі, бо їх ніхто не перехоплює, — а сигнал скасування доходить до `fetch`."
+      en: "The attempt loop retries only `503` and waits longer each time (100, 200 ms); any other answer that is not `ok` becomes an error with `status` at once; the Content-Type is checked before the body is parsed. A network failure and an `AbortError` leave the function by themselves because nothing catches them — and the abort signal reaches `fetch`."
+    feedback:
+      - when: { test: "sends a GET request that asks for JSON" }
+        message:
+          uk: "Ця перевірка очікує, що запит має метод `GET` і заголовок `Accept` зі значенням `application/json`."
+          en: "This check expects the request to have the `GET` method and an `Accept` header with the value `application/json`."
+      - when: { test: "rejects a 404 at once with its status" }
+        message:
+          uk: "Ця перевірка відповідає `404` і очікує один запит та відхилення об’єктом `Error` зі `status` `404`."
+          en: "This check answers `404` and expects one request and a rejection with an `Error` whose `status` is `404`."
+      - when: { test: "retries a 503 at most twice" }
+        message:
+          uk: "Ця перевірка очікує три запити для `503`, `503`, `200` і рівно три запити, коли сервер весь час відповідає `503`, — а тоді помилку зі `status` `503`."
+          en: "This check expects three requests for `503`, `503`, `200`, and exactly three requests when the server keeps answering `503` — followed by an error whose `status` is `503`."
+      - when: { test: "waits longer before each next attempt" }
+        message:
+          uk: "Ця перевірка записує паузи, яких просить код, і очікує дві паузи між трьома спробами, де друга довша за першу."
+          en: "This check records the pauses your code asks for and expects two pauses between three attempts, the second longer than the first."
+      - when: { test: "passes the signal on, so an aborted request rejects with AbortError" }
+        message:
+          uk: "Ця перевірка скасовує запит через 20 мс і очікує помилку з назвою `AbortError`."
+          en: "This check aborts the request after 20 ms and expects an error named `AbortError`."
+
+  - id: catalog-search
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: browser-js
+    dir: catalog-search
+    entry: index.html
+    editable: [index.js]
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Бібліотечний каталог", en: "Library catalog" }
+      searchLabel: { uk: "Пошук книжки:", en: "Find a book:" }
+      booksHeading: { uk: "Книжки", en: "Books" }
+      detailsHeading: { uk: "Подробиці", en: "Details" }
+      loading: { uk: "Шукаю…", en: "Searching…" }
+      found: { uk: "Знайдено:", en: "Found:" }
+      httpError: { uk: "Каталог зараз не відповідає. Спробуй пізніше.", en: "The catalog is not answering right now. Try again later." }
+      offline: { uk: "Немає з’єднання з мережею.", en: "No network connection." }
+      timeout: { uk: "Каталог відповідає надто довго.", en: "The catalog is taking too long to answer." }
+      unavailable: { uk: "подробиці недоступні", en: "details unavailable" }
+      book1: { uk: "Сад над річкою", en: "The Garden by the River" }
+      book2: { uk: "Зимові листи", en: "Winter Letters" }
+      book3: { uk: "Мапа без країв", en: "A Map Without Edges" }
+      book4: { uk: "Тиха станція", en: "The Quiet Station" }
+      summary1: { uk: "Роман про родину садівників.", en: "A novel about a family of gardeners." }
+      summary2: { uk: "Листування двох друзів.", en: "Letters between two friends." }
+    title:
+      uk: "Пошук у каталозі"
+      en: "A catalog search"
+    instructions:
+      uk: |
+        Напиши async-функцію `searchBooks(query)`. Готові: `getJson(url, signal)` (файл `request.js`), `withTimeout(promise, ms)` (файл `timeout.js`), `searchUrl(query)` і `detailsUrl(id)`.
+
+        1. Поки йде пошук, `#status` показує «Шукаю…».
+        2. Новий пошук скасовує попередній запит, а скасований пошук нічого не змінює на сторінці. Видно лише результат найновішого пошуку.
+        3. Відповідь на пошук чекай не довше 3000 мс.
+        4. Успіх: `#status` — «Знайдено:», пробіл і кількість книжок (`body.results`), а `#books` — по пункту `<li>` з назвою (`title`) кожної книжки.
+        5. Збій: `#books` порожній, а `#status` — окреме повідомлення для кожного виду: «Каталог зараз не відповідає. Спробуй пізніше.» для відповіді не `ok`, «Немає з’єднання з мережею.» для збою мережі, «Каталог відповідає надто довго.» для тайм-ауту.
+        6. Після успіху завантаж подробиці перших трьох книжок **одночасно** й дочекайся всіх. `#details` показує для кожної з них пункт «назва: summary» або «назва: подробиці недоступні», якщо її подробиці не завантажилися.
+      en: |
+        Write the async function `searchBooks(query)`. Ready for you: `getJson(url, signal)` (the file `request.js`), `withTimeout(promise, ms)` (the file `timeout.js`), `searchUrl(query)` and `detailsUrl(id)`.
+
+        1. While a search runs, `#status` shows “Searching…”.
+        2. A new search aborts the previous request, and an aborted search changes nothing on the page. Only the latest search’s result is visible.
+        3. Wait for the search answer no longer than 3000 ms.
+        4. Success: `#status` — “Found:”, a space and the number of books (`body.results`), and `#books` — one `<li>` with the `title` of every book.
+        5. Failure: `#books` is empty, and `#status` shows a separate message for each kind: “The catalog is not answering right now. Try again later.” for an answer that is not `ok`, “No network connection.” for a network failure, “The catalog is taking too long to answer.” for the timeout.
+        6. After a success, load the details of the first three books **at the same time** and wait for all of them. `#details` shows for each of them an item “title: summary”, or “title: details unavailable” if its details did not load.
+    testTitles:
+      "shows the loading text while a search runs":
+        uk: "Поки йде пошук, показує «Шукаю…»"
+        en: "Shows the loading text while a search runs"
+      "shows the titles of the books found":
+        uk: "Показує назви знайдених книжок"
+        en: "Shows the titles of the books found"
+      "a newer search aborts the older one and only the newer results stay":
+        uk: "Новіший пошук скасовує давніший, і лишаються лише новіші результати"
+        en: "A newer search aborts the older one and only the newer results stay"
+      "an aborted search shows no error message":
+        uk: "Скасований пошук не показує повідомлення про помилку"
+        en: "An aborted search shows no error message"
+      "shows the server message when the search answers 500":
+        uk: "Показує повідомлення про сервер, коли пошук відповідає 500"
+        en: "Shows the server message when the search answers 500"
+      "shows the offline message without a network":
+        uk: "Показує повідомлення про відсутність мережі"
+        en: "Shows the offline message without a network"
+      "shows the timeout message after 3 seconds without an answer":
+        uk: "Показує повідомлення про тайм-аут після 3 секунд без відповіді"
+        en: "Shows the timeout message after 3 seconds without an answer"
+      "loads the details of the first three books at the same time":
+        uk: "Завантажує подробиці перших трьох книжок одночасно"
+        en: "Loads the details of the first three books at the same time"
+      "shows every detail, or that it is unavailable":
+        uk: "Показує кожну подробицю або те, що вона недоступна"
+        en: "Shows every detail, or that it is unavailable"
+    solutionNote:
+      uk: "Новий контролер на кожен пошук і `abort()` для попереднього дають «перемагає найновіший»; `AbortError` мовчки завершує давній пошук. `withTimeout` перетворює мовчання на `TimeoutError`, а назва чи тип помилки обирає повідомлення. Подробиці стартують разом через `map`, а `Promise.allSettled` дає показати і вдалі, і невдалі."
+      en: "A new controller for every search and `abort()` for the previous one give “latest wins”; an `AbortError` quietly ends the old search. `withTimeout` turns silence into a `TimeoutError`, and the error’s name or type picks the message. The details start together through `map`, and `Promise.allSettled` lets both the successful and the failed ones be shown."
+    feedback:
+      - when: { test: "a newer search aborts the older one and only the newer results stay" }
+        message:
+          uk: "Ця перевірка запускає повільний пошук «s» і швидкий «sad». Вона очікує, що сигнал першого запиту скасовано, щойно почався другий, а в `#books` лишаються результати «sad»."
+          en: "This check starts a slow search “s” and a fast one “sad”. It expects the first request’s signal to be aborted as soon as the second starts, and the results of “sad” to stay in `#books`."
+      - when: { test: "shows the timeout message after 3 seconds without an answer" }
+        message:
+          uk: "Ця перевірка очікує «Шукаю…» через 2999 мс без відповіді й повідомлення про тайм-аут через 3000 мс."
+          en: "This check expects “Searching…” after 2999 ms without an answer and the timeout message after 3000 ms."
+      - when: { test: "loads the details of the first three books at the same time" }
+        message:
+          uk: "Ця перевірка очікує, що всі три запити подробиць стартують, ще поки жоден не відповів (перша відповідь — через 40 мс)."
+          en: "This check expects all three detail requests to start while none has answered yet (the first answer comes after 40 ms)."
+      - when: { test: "shows every detail, or that it is unavailable" }
+        message:
+          uk: "Ця перевірка відповідає `500` на подробиці другої книжки й очікує в `#details` три пункти: подробиці першої, «недоступні» для другої й подробиці третьої."
+          en: "This check answers `500` for the second book’s details and expects three items in `#details`: the first one’s summary, “unavailable” for the second and the third one’s summary."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: перевірити дані перед використанням"
+      en: "Recall: check the data before using it"
+    strings:
+      load: { uk: "завантажую збережене", en: "loading the saved data" }
+      reset: { uk: "починаю з фікстур", en: "starting from the fixtures" }
+    items:
+      - id: validate-before-use
+        from: js-07-05-persist-reload
+        prompt:
+          uk: "Збережений текст розібрано без помилки. Що надрукує код?"
+          en: "The stored text was parsed without an error. What does the code print?"
+        code: |
+          const stored = '{"schemaVersion": 2, "records": []}';
+          const data = JSON.parse(stored);
+          const valid = data.schemaVersion === 1 && Array.isArray(data.records);
+          console.log(valid ? "%%load%%" : "%%reset%%");
+        verify:
+          logs: ["%%reset%%"]
+        answer:
+          type: choice
+          options:
+            - id: reset
+              text:
+                uk: "«починаю з фікстур»"
+                en: "“starting from the fixtures”"
+            - id: load
+              text:
+                uk: "«завантажую збережене»"
+                en: "“loading the saved data”"
+              why:
+                uk: "Текст розібрався, але версія не та: `2`, а код очікує `1`. Розібраний JSON — ще не перевірені дані."
+                en: "The text parsed, but the version is wrong: `2`, while the code expects `1`. Parsed JSON is not yet checked data."
+          correct: [reset]
+        explanation:
+          uk: "`JSON.parse` лише перетворює текст на значення; чи підходять ці дані, перевіряє твій код. З відповіддю сервера так само: статус і Content-Type кажуть, що прийшов JSON, але форму тіла — чи є `results`, чи це масив — варто перевірити, перш ніж показувати."
+          en: "`JSON.parse` only turns text into a value; whether the data fits is checked by your code. Same with a server answer: the status and Content-Type say JSON arrived, but the body’s shape — whether there is `results`, whether it is an array — is worth checking before it is shown."
+
+  - id: order-eight
+    kind: prediction
+    prompt:
+      uk: "Розташуй вісім рядків консолі в тому порядку, в якому їх надрукує цей код."
+      en: "Put the eight console lines in the order this code prints them."
+    code: |
+      console.log("A");
+      setTimeout(() => console.log("B"), 0);
+      queueMicrotask(() => console.log("C"));
+
+      async function run() {
+        console.log("D");
+        await Promise.resolve();
+        console.log("E");
+      }
+
+      run();
+      Promise.resolve().then(() => console.log("F"));
+      console.log("G");
+      setTimeout(() => console.log("H"), 0);
+    verify:
+      logs: ["A", "D", "G", "C", "E", "F", "B", "H"]
+    answer:
+      type: order
+      items:
+        - { id: a, code: "A" }
+        - { id: d, code: "D" }
+        - { id: g, code: "G" }
+        - { id: c, code: "C" }
+        - { id: e, code: "E" }
+        - { id: f, code: "F" }
+        - { id: b, code: "B" }
+        - { id: h, code: "H" }
+    explanation:
+      uk: "Синхронно: `A`, потім `D` (async-функція виконується одразу до першого `await`), потім `G`. Далі microtasks у порядку постановки в чергу: `C`, продовження `run` після `await` — `E`, і `.then` — `F`. Останніми — задачі таймерів у порядку реєстрації: `B`, `H`."
+      en: "Synchronously: `A`, then `D` (an async function runs at once up to its first `await`), then `G`. Next the microtasks in the order they were queued: `C`, the rest of `run` after `await` — `E`, and the `.then` — `F`. Last, the timer tasks in registration order: `B`, `H`."
+
+  - id: pick-all
+    kind: prediction
+    prompt:
+      uk: "Сторінка звички має сенс лише тоді, коли завантажилися **і** сама звичка, **і** її позначки виконання. Якщо щось не вдалося — одне повідомлення про помилку й жодних часткових даних. Який комбінатор?"
+      en: "A habit page makes sense only when **both** the habit itself **and** its completions have loaded. If anything fails — one error message and no partial data. Which combinator?"
+    answer:
+      type: choice
+      options:
+        - id: all
+          text:
+            uk: "`Promise.all`"
+            en: "`Promise.all`"
+        - id: all-settled
+          text:
+            uk: "`Promise.allSettled`"
+            en: "`Promise.allSettled`"
+          why:
+            uk: "`allSettled` потрібен, коли часткові результати корисні. Тут частина без цілого не має сенсу, а `allSettled` змусить чекати й розбирати кожен результат."
+            en: "`allSettled` is for when partial results are useful. Here a part without the whole is useless, and `allSettled` would make you wait for and unpack every result."
+        - id: race
+          text:
+            uk: "`Promise.race`"
+            en: "`Promise.race`"
+          why:
+            uk: "`race` дає лише перший завершений результат, а потрібні обидва."
+            en: "`race` gives only the first result to settle, and both are needed."
+        - id: any
+          text:
+            uk: "`Promise.any`"
+            en: "`Promise.any`"
+          why:
+            uk: "`any` виконується першим успішним — одним, а потрібні обидва."
+            en: "`any` fulfills with the first success — just one, and both are needed."
+      correct: [all]
+    explanation:
+      uk: "«Усе або нічого» — це `Promise.all`: він дає обидва значення разом або відхиляється при першій помилці, не чекаючи решти, — саме тоді й треба показати одне повідомлення."
+      en: "“All or nothing” is `Promise.all`: it gives both values together or rejects at the first error without waiting for the rest — exactly when one message should be shown."
+
+  - id: pick-any
+    kind: prediction
+    prompt:
+      uk: "Той самий файл фікстур лежить на двох серверах-дзеркалах. Підійде відповідь будь-якого, аби вдала; невдача одного не має значення, якщо інший відповів. Який комбінатор?"
+      en: "The same fixture file is on two mirror servers. An answer from either will do, as long as it succeeds; one of them failing does not matter if the other answered. Which combinator?"
+    answer:
+      type: choice
+      options:
+        - id: any
+          text:
+            uk: "`Promise.any`"
+            en: "`Promise.any`"
+        - id: race
+          text:
+            uk: "`Promise.race`"
+            en: "`Promise.race`"
+          why:
+            uk: "`race` бере перший **завершений** результат — навіть якщо це помилка швидкого, але зламаного дзеркала."
+            en: "`race` takes the first result to **settle** — even if it is the error of a fast but broken mirror."
+        - id: all
+          text:
+            uk: "`Promise.all`"
+            en: "`Promise.all`"
+          why:
+            uk: "`all` вимагає, щоб удалися обидва, і відхиляється, якщо одне дзеркало не працює, — хоча друге відповіло."
+            en: "`all` requires both to succeed and rejects if one mirror is down — although the other answered."
+      correct: [any]
+    explanation:
+      uk: "«Перший успішний» — це `Promise.any`: він пропускає відхилення й відхиляється сам, лише коли не вдалися всі."
+      en: "“The first success” is `Promise.any`: it skips rejections and rejects itself only when all of them fail."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-08
+    body:
+      uk: "Наступний крок — твій проєкт. Те саме завантаження, тільки для твого домену: записи з фікстури через `fetch`, стани завантаження й помилки з кнопкою повтору, скасування застарілого запиту при зміні фільтра."
+      en: "The next step is your project. The same loading, just for your domain: records from a fixture through `fetch`, loading and error states with a retry button, and cancelling a stale request when the filter changes."

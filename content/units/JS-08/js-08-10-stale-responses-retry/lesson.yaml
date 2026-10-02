@@ -1,0 +1,407 @@
+id: js-08-10-stale-responses-retry
+unit: JS-08
+title:
+  uk: "Застарілі відповіді й повторні спроби"
+  en: "Stale responses and retry"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Відтворити перегони, у яких повільна давніша відповідь перекриває новіший результат, і виправити їх правилом «перемагає найновіший» (номер запиту або скасування)."
+    en: "Reproduce a race in which a slow earlier response overwrites a newer result, and fix it with a latest-wins guard (request id or abort)."
+  - uk: "Написати обмежений повтор із дедалі довшою паузою, що повторює лише збої мережі й відповіді 5xx і здається зрозумілою помилкою."
+    en: "Implement a bounded retry with a growing delay that retries only network errors and 5xx responses and gives up with a clear error."
+prerequisites: [js-08-09-cancellation-abort, js-04-10-immutable-updates]
+subskills:
+  - { family: J-11, skill: "races/retry/timeouts", depth: practice }
+  - { family: J-11, skill: "cleanup and sequential vs concurrent requests", depth: practice }
+glossary: [stale-response, race-condition, latest-wins, bounded-retry]
+selfCheck: [which-stays, fetch-with-retry]
+
+blocks:
+  - id: out-of-order
+    kind: explanation
+    title:
+      uk: "Відповіді не стоять у черзі"
+      en: "Answers do not wait in line"
+    body:
+      uk: |
+        Людина набирає в пошуку «ла», а потім «лампа». Запит «ла» сервер обробляє довше: результатів більше. Відповідь на «лампа» приходить першою — і на екрані правильний список. А потім приходить запізніла відповідь на «ла» й **перекриває** його. Тепер у полі пошуку «лампа», а під ним — результати для «ла».
+
+        Це [[race-condition|перегони]] (race condition): результат залежить від того, хто першим «добіжить», а ніхто цього не гарантує. Відповідь, що прийшла для вже неактуального запиту, — [[stale-response|застаріла відповідь]].
+
+        Захист — правило [[latest-wins|«перемагає найновіший»]]. Два способи:
+
+        - **скасувати** попередній запит (`AbortController`, попередній урок) — застаріла відповідь не прийде зовсім;
+        - **пронумерувати** запити й показувати відповідь, лише якщо її номер досі найновіший:
+
+        ```js
+        let latest = 0;
+
+        async function showHabits(filter) {
+          latest += 1;
+          const mine = latest;
+          const habits = await loadHabits(filter);
+          if (mine !== latest) return; // a newer request has started: this answer is stale
+          render(habits);
+        }
+        ```
+      en: |
+        A person types “la” into a search and then “lamp”. The server takes longer over “la”: there are more results. The answer for “lamp” arrives first — and the screen shows the right list. Then the late answer for “la” arrives and **overwrites** it. Now the search field says “lamp”, and below it are the results for “la”.
+
+        This is a [[race-condition]]: the result depends on who “runs in” first, and nobody guarantees that. An answer that arrives for a request that no longer matters is a [[stale-response]].
+
+        The protection is the [[latest-wins]] rule. Two ways:
+
+        - **abort** the previous request (`AbortController`, the previous lesson) — the stale answer never arrives;
+        - **number** the requests and show an answer only if its number is still the latest:
+
+        ```js
+        let latest = 0;
+
+        async function showHabits(filter) {
+          latest += 1;
+          const mine = latest;
+          const habits = await loadHabits(filter);
+          if (mine !== latest) return; // a newer request has started: this answer is stale
+          render(habits);
+        }
+        ```
+
+  - id: which-stays
+    kind: prediction
+    strings:
+      resultsFor: { uk: "результати для", en: "results for" }
+      short: { uk: "ла", en: "la" }
+      long: { uk: "лампа", en: "lamp" }
+    prompt:
+      uk: "Запит «ла» відповідає через 800 мс, запит «лампа» — через 200 мс; набрано їх саме в такому порядку. Кожна відповідь записується в `shown`. Що надрукує код через секунду?"
+      en: "The request “la” answers after 800 ms, the request “lamp” after 200 ms; they were typed in that order. Every answer is written into `shown`. What does the code print after a second?"
+    code: |
+      let shown = "";
+
+      function fakeSearch(query, ms) {
+        return new Promise((resolve) => {
+          setTimeout(() => resolve("%%resultsFor%% " + query), ms);
+        });
+      }
+
+      fakeSearch("%%short%%", 800).then((text) => { shown = text; });
+      fakeSearch("%%long%%", 200).then((text) => { shown = text; });
+
+      setTimeout(() => console.log(shown), 1000);
+    verify:
+      logs: ["%%resultsFor%% %%short%%"]
+    answer:
+      type: choice
+      options:
+        - id: stale
+          text:
+            uk: "«результати для ла»"
+            en: "“results for la”"
+        - id: latest
+          text:
+            uk: "«результати для лампа»"
+            en: "“results for lamp”"
+          why:
+            uk: "Відповіді приходять не в порядку запитів, а тоді, коли готові. «Лампа» записалася о 200 мс, а «ла» — о 800 мс, тобто пізніше, і перекрила її."
+            en: "Answers arrive not in the order of the requests but when they are ready. “Lamp” was written at 200 ms, and “la” at 800 ms — later — and overwrote it."
+        - id: empty
+          text:
+            uk: "Порожній рядок у консолі: відповіді ще не прийшли"
+            en: "An empty line in the console: the answers have not arrived yet"
+          why:
+            uk: "Через секунду обидві відповіді вже прийшли: 200 і 800 мс — менше за 1000."
+            en: "After a second both answers have arrived: 200 and 800 ms are both less than 1000."
+      correct: [stale]
+    explanation:
+      uk: "Обидва запити йдуть одночасно, і перемагає не новіший, а **повільніший**: його відповідь записується останньою. Людина набрала «лампа», а бачить результати для «ла». Без правила «перемагає найновіший» таке трапляється щоразу, коли давніший запит повільніший."
+      en: "Both requests run at the same time, and the winner is not the newer one but the **slower** one: its answer is written last. The person typed “lamp” but sees the results for “la”. Without the latest-wins rule this happens every time the older request is slower."
+
+  - id: race-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Перегони, захист і повтори"
+      en: "A race, a guard and retries"
+    textEquivalent:
+      uk: "Код сторінки надсилає запит 1 — пошук «ла», що відповідає за 800 мс, — і одразу запит 2 — «лампа», що відповідає за 200 мс. Першою приходить відповідь на запит 2, і сторінка показує результати для «лампа». Потім приходить запізніла відповідь на запит 1 і перекриває їх — це застаріла відповідь. Із захистом код порівнює номер відповіді з номером найновішого запиту: 1 не дорівнює 2, тож відповідь ігнорується. Далі — повтори: запит списку отримує 503, код чекає 200 мс і пробує вдруге, знову отримує 503, чекає 400 мс і пробує втретє — тепер 200 OK. Якби й третя спроба не вдалася, код здався б і показав зрозумілу помилку, а не пробував безкінечно."
+      en: "The page code sends request 1 — a search for “la” that takes 800 ms — and right after it request 2 — “lamp”, which takes 200 ms. The answer to request 2 arrives first, and the page shows the results for “lamp”. Then the late answer to request 1 arrives and overwrites them — a stale response. With the guard, the code compares the answer’s number with the number of the latest request: 1 is not 2, so the answer is ignored. Next, retries: a list request gets 503, the code waits 200 ms and tries again, gets 503 again, waits 400 ms and tries a third time — now 200 OK. Had the third attempt failed too, the code would give up with a clear error instead of trying forever."
+    spec:
+      actors:
+        - { id: page, label: { uk: "Код сторінки", en: "Page code" } }
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+      messages:
+        - from: page
+          to: server
+          label: "1: GET ?q=la"
+          kind: async
+          note: { uk: "відповідає за 800 мс", en: "answers in 800 ms" }
+          caption:
+            uk: "Запит 1: пошук «ла». Сервер працюватиме над ним 800 мс."
+            en: "Request 1: a search for “la”. The server will work on it for 800 ms."
+        - from: page
+          to: server
+          label: "2: GET ?q=lamp"
+          kind: async
+          note: { uk: "відповідає за 200 мс", en: "answers in 200 ms" }
+          caption:
+            uk: "Запит 2: людина вже набрала «лампа». Цей запит швидший."
+            en: "Request 2: the person has already typed “lamp”. This request is faster."
+        - from: server
+          to: page
+          label: "2: results for «lamp»"
+          kind: return
+          caption:
+            uk: "Першою приходить відповідь на **запит 2**: на екрані правильні результати для «лампа»."
+            en: "The answer to **request 2** arrives first: the screen shows the right results for “lamp”."
+        - from: server
+          to: page
+          label: "1: results for «la»"
+          kind: return
+          note: { uk: "без захисту: перекриває «лампа»", en: "without a guard: overwrites “lamp”" }
+          caption:
+            uk: "Потім запізніла відповідь на **запит 1** — і без захисту вона перекриває новіші результати. Це застаріла відповідь."
+            en: "Then the late answer to **request 1** — and without a guard it overwrites the newer results. It is a stale response."
+        - from: page
+          to: page
+          label: "1 ≠ latest (2) → ignore"
+          kind: note
+          caption:
+            uk: "Із захистом код порівнює номер відповіді з номером найновішого запиту: 1 ≠ 2, відповідь ігнорується, на екрані лишається «лампа»."
+            en: "With the guard, the code compares the answer’s number with the latest request’s number: 1 ≠ 2, the answer is ignored, and “lamp” stays on the screen."
+        - from: page
+          to: server
+          label: "GET /items (attempt 1)"
+          kind: async
+          caption:
+            uk: "Інший випадок — повтори. Спроба 1."
+            en: "Another case — retries. Attempt 1."
+        - from: server
+          to: page
+          label: "503 Service Unavailable"
+          kind: return
+          caption:
+            uk: "`503` — сервер тимчасово недоступний. Такий збій може минути, тож є сенс спробувати ще."
+            en: "`503` — the server is temporarily unavailable. Such a failure may pass, so trying again makes sense."
+        - from: page
+          to: server
+          label: "attempt 2 (after 200 ms)"
+          kind: async
+          caption:
+            uk: "Пауза 200 мс — і спроба 2. Пауза дає серверу час прийти до тями."
+            en: "A 200 ms pause — and attempt 2. The pause gives the server time to recover."
+        - from: server
+          to: page
+          label: "503 Service Unavailable"
+          kind: return
+          caption:
+            uk: "Знову `503`."
+            en: "`503` again."
+        - from: page
+          to: server
+          label: "attempt 3 (after 400 ms)"
+          kind: async
+          caption:
+            uk: "Пауза довша — 400 мс. Дедалі довші паузи не завалюють сервер, якому й так важко."
+            en: "A longer pause — 400 ms. Growing pauses do not swamp a server that is already struggling."
+        - from: server
+          to: page
+          label: "200 OK"
+          kind: return
+          caption:
+            uk: "Третя спроба вдалася. Якби ні, код **здався б** і показав зрозумілу помилку: спроб обмежена кількість."
+            en: "The third attempt worked. If it had not, the code would **give up** and show a clear error: the number of attempts is limited."
+
+  - id: race-and-guard
+    kind: example
+    runtime: browser-js
+    dir: race-and-guard
+    entry: index.html
+    capabilities: { network: lab }
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Перегони пошуку", en: "A search race" }
+      runButton: { uk: "Набрати «а», потім «лампа»", en: "Type “a”, then “lamp”" }
+      resultsFor: { uk: "Результати для", en: "Results for" }
+      answerFor: { uk: "прийшла відповідь для", en: "answer arrived for" }
+      shortQuery: { uk: "а", en: "a" }
+      longQuery: { uk: "лампа", en: "lamp" }
+    title:
+      uk: "Відтвори перегони й виправ їх"
+      en: "Reproduce the race and fix it"
+    body:
+      uk: |
+        Кнопка імітує швидке набирання: пошук «а» (сервер відповідає за 800 мс), а одразу за ним — «лампа» (200 мс). Натисни **Запустити**, на **Сторінці** — кнопку й зачекай секунду. У **Консолі** видно порядок відповідей, а на сторінці лишилися результати для «а», хоча останнім набрано «лампа».
+      en: |
+        The button imitates fast typing: a search for “a” (the server answers in 800 ms) and right after it “lamp” (200 ms). Press **Run**, then the button on the **Page**, and wait a second. The **Console** shows the order of the answers, and the page is left with the results for “a”, although “lamp” was typed last.
+    tryIt:
+      uk: |
+        1. Додай правило «перемагає найновіший» з номером запиту: над функцією `search` — рядок коду `let latest = 0;`, на початку `search` — `latest += 1;` і `const mine = latest;`, а перед `render(...)` — `if (mine !== latest) return;`. Запусти й натисни кнопку: тепер лишаються результати для «лампа».
+        2. Поміняй 800 і 200 місцями: «а» тепер швидший, і правильний результат виходить навіть без захисту. Перегони підступні тим, що проявляються не завжди.
+      en: |
+        1. Add the latest-wins rule with a request number: above the function `search` add the line of code `let latest = 0;`, at the start of `search` add `latest += 1;` and `const mine = latest;`, and before `render(...)` add `if (mine !== latest) return;`. Run and press the button: now the results for “lamp” stay.
+        2. Swap 800 and 200: “a” is now faster, and the result is right even without the guard. Races are sneaky because they do not always show up.
+
+  - id: bounded-retry-explained
+    kind: explanation
+    title:
+      uk: "Повторювати — але з розумом"
+      en: "Retry — but wisely"
+    body:
+      uk: |
+        Деякі збої минають самі: сервер на мить перевантажений (`503`), зв’язок пропав на секунду. Тоді варто спробувати ще раз. Але «пробувати, доки не вийде» — погана ідея:
+
+        - **Повторюй лише те, що може змінитися:** збій мережі й відповіді 5xx. Відповідь `404` чи `400` наступного разу буде такою самою.
+        - **Обмеж кількість спроб** і здавайся зрозумілою помилкою, яку можна показати людині. Це [[bounded-retry|обмежений повтор]].
+        - **Пауза між спробами росте:** 200 мс, потім 400 мс… Миттєві повтори від тисяч користувачів добивають сервер, якому й так важко.
+        - **Обережно із запитами, що змінюють дані.** Повторний `POST` після обірваного з’єднання може створити запис удруге, якщо перший насправді дійшов до сервера.
+      en: |
+        Some failures pass by themselves: the server is overloaded for a moment (`503`), the connection dropped for a second. Then it is worth trying again. But “keep trying until it works” is a bad idea:
+
+        - **Retry only what can change:** a network error and 5xx answers. A `404` or `400` answer will be the same next time.
+        - **Limit the number of attempts** and give up with a clear error you can show the person. That is a [[bounded-retry]].
+        - **The pause between attempts grows:** 200 ms, then 400 ms… Instant retries from thousands of users finish off a server that is already struggling.
+        - **Be careful with requests that change data.** Repeating a `POST` after a dropped connection may create the record twice if the first one actually reached the server.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: новий масив замість зміненого"
+      en: "Recall: a new array instead of a changed one"
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+    items:
+      - id: replace-not-mutate
+        from: js-04-10-immutable-updates
+        prompt:
+          uk: "Список результатів замінюють новим масивом. Що надрукує код?"
+          en: "The list of results is replaced with a new array. What does the code print?"
+        code: |
+          let results = ["%%lamp%%"];
+          const shownBefore = results;
+          results = [...results, "%%mug%%"];
+          console.log(shownBefore.length, results.length, shownBefore === results);
+        verify:
+          logs: ["1 2 false"]
+        answer:
+          type: choice
+          options:
+            - id: new-array
+              text:
+                uk: "`1 2 false`"
+                en: "`1 2 false`"
+            - id: shared
+              text:
+                uk: "`2 2 true`"
+                en: "`2 2 true`"
+              why:
+                uk: "`[...results, …]` створює **новий** масив. Старий, на який вказує `shownBefore`, не змінюється."
+                en: "`[...results, …]` creates a **new** array. The old one, which `shownBefore` points to, does not change."
+            - id: changed-old
+              text:
+                uk: "`2 2 false`"
+                en: "`2 2 false`"
+              why:
+                uk: "Новий масив не змінює старого: у `shownBefore` і далі один елемент."
+                en: "The new array does not change the old one: `shownBefore` still has one element."
+          correct: [new-array]
+        explanation:
+          uk: "Новий масив — новий об’єкт, а старий лишається таким, яким був. Так і з результатами пошуку: кожна відповідь дає новий список, і стан сторінки треба замінювати цілком лише тією відповіддю, що досі актуальна, — а не дописувати в старий список що попало."
+          en: "A new array is a new object, and the old one stays as it was. Same with search results: every answer gives a new list, and the page’s state should be replaced as a whole only by an answer that is still current — not by appending whatever arrives to the old list."
+
+  - id: fetch-with-retry
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: fetch-with-retry
+    entry: index.js
+    capabilities: { network: lab }
+    title:
+      uk: "fetchWithRetry з обмеженням і паузами"
+      en: "fetchWithRetry with a limit and pauses"
+    instructions:
+      uk: |
+        Допиши `fetchWithRetry(url, { attempts, baseDelayMs })`:
+
+        - якщо відповідь `ok` — поверни її;
+        - збій мережі (`fetch` відхилено) чи статус 5xx — спробуй ще раз, але щонайбільше `attempts` спроб разом;
+        - будь-який інший статус, що не `ok` (4xx), — одразу відхили promise об’єктом `Error` з властивістю `status`, без повтору;
+        - перед кожною наступною спробою зачекай (готова функція `wait(ms)`), і кожна пауза має бути довшою за попередню, починаючи з `baseDelayMs`; після останньої невдалої спроби не чекай, а відхили promise об’єктом `Error`.
+
+        Перевірки підставляють власні відповіді сервера, **рахують запити** й записують, яких пауз просить твій код. Щоб спробувати вручну, розкоментуй три останні рядки коду.
+      en: |
+        Complete `fetchWithRetry(url, { attempts, baseDelayMs })`:
+
+        - if the response is `ok`, return it;
+        - a network error (`fetch` rejected) or a 5xx status — try again, but at most `attempts` attempts in total;
+        - any other status that is not `ok` (4xx) — reject the promise at once with an `Error` that has a `status` property, without retrying;
+        - before each next attempt wait (the ready function `wait(ms)`), and every pause must be longer than the previous one, starting from `baseDelayMs`; after the last failed attempt do not wait — reject the promise with an `Error`.
+
+        The checks put in their own server answers, **count the requests** and record which pauses your code asks for. To try it by hand, uncomment the last three lines of code.
+    testTitles:
+      "returns the response when the first attempt succeeds":
+        uk: "Повертає відповідь, коли перша спроба вдалася"
+        en: "Returns the response when the first attempt succeeds"
+      "retries a 503 and returns the answer of the third attempt":
+        uk: "Повторює після 503 і повертає відповідь третьої спроби"
+        en: "Retries a 503 and returns the answer of the third attempt"
+      "retries after a network error":
+        uk: "Повторює після збою мережі"
+        en: "Retries after a network error"
+      "does not retry a 404 and rejects with its status":
+        uk: "Не повторює 404 і відхиляється з його статусом"
+        en: "Does not retry a 404 and rejects with its status"
+      "gives up after the given number of attempts with an Error":
+        uk: "Здається після заданої кількості спроб з об’єктом Error"
+        en: "Gives up after the given number of attempts with an Error"
+      "waits longer before each next attempt":
+        uk: "Перед кожною наступною спробою чекає довше"
+        en: "Waits longer before each next attempt"
+    hints:
+      nudge:
+        uk: "Цикл по номерах спроб. Усередині — три можливі кінцівки: відповідь `ok`, відповідь, яку не варто повторювати, і збій, який варто. Що робити після кожної?"
+        en: "A loop over attempt numbers. Inside it — three possible endings: an `ok` response, a response not worth retrying, and a failure worth retrying. What happens after each one?"
+      explanation:
+        uk: "Збій мережі видно як відхилення — його ловить `try/catch` навколо `await fetch(...)`. Статус перевіряй окремо: відповідь не `ok` зі статусом від 400 до 499 означає «не повторювати». Паузу, що росте, дає множення: наприклад, будильник, що дзвонить через 5, 10, 15 хвилин, рахує `5 * номер_дзвінка`. А пауза після останньої спроби не потрібна — після циклу лишається тільки кинути помилку."
+        en: "A network error shows up as a rejection — `try/catch` around `await fetch(...)` catches it. Check the status separately: a response that is not `ok` with a status from 400 to 499 means “do not retry”. A growing pause comes from multiplication: for example, an alarm that rings after 5, 10, 15 minutes computes `5 * ring_number`. And no pause is needed after the last attempt — after the loop all that is left is to throw an error."
+    solutionNote:
+      uk: "Цикл робить щонайбільше `attempts` спроб. Відповідь `ok` повертається одразу, 4xx відхиляє promise без повтору, а збій мережі чи 5xx запам’ятовується як причина й веде до паузи `baseDelayMs * attempt` (200, 400, … мс). Після останньої спроби функція здається помилкою з `cause` — тож її можна показати людині, а причину видно в консолі. Варіант, що викликає сам себе з меншою кількістю спроб і подвоєною паузою, теж правильний."
+      en: "The loop makes at most `attempts` attempts. An `ok` response is returned at once, a 4xx rejects the promise without a retry, and a network error or a 5xx is remembered as the cause and leads to a pause of `baseDelayMs * attempt` (200, 400, … ms). After the last attempt the function gives up with an error that has a `cause` — so it can be shown to the person, and the reason is visible in the console. A version that calls itself with one attempt fewer and a doubled pause is also correct."
+    feedback:
+      - when: { test: "returns the response when the first attempt succeeds" }
+        message:
+          uk: "Ця перевірка відповідає `200` з першого разу й очікує саме цю відповідь і рівно один запит."
+          en: "This check answers `200` the first time and expects exactly that response and exactly one request."
+      - when: { test: "retries a 503 and returns the answer of the third attempt" }
+        message:
+          uk: "Ця перевірка відповідає `503`, `503`, `200` і очікує три запити та відповідь `200`. `503` — тимчасовий збій сервера, його варто повторити."
+          en: "This check answers `503`, `503`, `200` and expects three requests and the `200` response. `503` is a temporary server failure worth retrying."
+      - when: { test: "retries after a network error" }
+        message:
+          uk: "Ця перевірка спершу обриває мережу, а потім відповідає `200`, і очікує два запити. Збій мережі видно як відхилення `fetch` — перехопи його й спробуй ще."
+          en: "This check first cuts the network, then answers `200`, and expects two requests. A network error shows up as a rejected `fetch` — catch it and try again."
+      - when: { test: "does not retry a 404 and rejects with its status" }
+        message:
+          uk: "Ця перевірка відповідає `404` і очікує відхилення об’єктом `Error` зі `status` `404` після **одного** запиту: повтор не змінить відповіді."
+          en: "This check answers `404` and expects a rejection with an `Error` whose `status` is `404` after **one** request: a retry would not change the answer."
+      - when: { test: "gives up after the given number of attempts with an Error" }
+        message:
+          uk: "Ця перевірка щоразу відповідає збоєм і очікує рівно `attempts` запитів (3, а потім 2), а тоді відхилення об’єктом `Error`. Не повертай останню невдалу відповідь як успішну."
+          en: "This check fails every time and expects exactly `attempts` requests (3, then 2) followed by a rejection with an `Error`. Do not return the last failed response as if it were fine."
+      - when: { test: "waits longer before each next attempt" }
+        message:
+          uk: "Ця перевірка записує паузи, яких просить код через `wait`, і очікує дві паузи між трьома спробами: першу — не меншу за `baseDelayMs`, другу — довшу за першу."
+          en: "This check records the pauses your code asks for through `wait` and expects two pauses between three attempts: the first at least `baseDelayMs`, the second longer than the first."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` означає, що значення має не той тип, на який розраховує код. Якщо бачиш `… is not a function`, програма зупинилася ще під час завантаження — виправ спершу помилку з картки «Помилка під час виконання»."
+          en: "A `TypeError` means a value has a different type than the code expects. If you see `… is not a function`, the program stopped while loading — fix the error from the card “Error while running” first."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-08
+    body:
+      uk: "У проєкті швидке перемикання фільтрів — класичні перегони: захисти результат номером запиту або скасуванням. А кнопка «Спробувати ще» після збою може використати повтор — для запитів, що лише читають дані."
+      en: "In your project, fast switching between filters is a classic race: protect the result with a request number or by aborting. And a “Try again” button after a failure can use retrying — for requests that only read data."
