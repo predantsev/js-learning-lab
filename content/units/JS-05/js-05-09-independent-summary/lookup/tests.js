@@ -43,10 +43,10 @@ test('pickByIds reads each id only a few times', () => {
     records.push({ title: L.water, get id() { reads += 1; return id; } });
     ids.push('r-' + (299 - i));
   }
-  const picked = scope.pickByIds(records, ids);
-  const count = reads;
-  expect(Array.isArray(picked) && picked.length === 300 && picked[0] === records[299], 'pickByIds found the records').toBe(true);
-  expect(count, 'how many times the 300 ids were read').toBeLessThanOrEqual(1500);
+  scope.pickByIds(records, ids);
+  // Only the amount of work is checked here; the answers are checked by the other tests.
+  expect(reads, 'how many times the 300 ids were read').toBeGreaterThanOrEqual(300);
+  expect(reads, 'how many times the 300 ids were read').toBeLessThanOrEqual(1500);
 });
 
 test('the records list is not changed', () => {
