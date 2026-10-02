@@ -305,7 +305,10 @@ for (const unit of unitIds) {
   if (!has((b) => b.kind === 'prediction')) error(`unit ${unit}`, 'no prediction block in the unit');
   if (!has((b) => b.kind === 'exercise' && b.mode === 'guided')) error(`unit ${unit}`, 'no guided code-writing exercise in the unit');
   if (!has((b) => b.kind === 'exercise' && b.mode === 'debug')) error(`unit ${unit}`, 'no debugging exercise in the unit');
-  if (!has((b) => b.kind === 'exercise' && b.mode === 'independent')) error(`unit ${unit}`, 'no independent (no-hint) exercise in the unit');
+  // A unit whose capstone step is done locally (a checkpoint outside the platform) has its independent
+  // practice there: the learner carries the step out alone and the platform cannot check an exercise for it.
+  const localStep = (all.syllabus.get(unit)?.capstoneStep?.mode ?? 'in-platform') !== 'in-platform';
+  if (!localStep && !has((b) => b.kind === 'exercise' && b.mode === 'independent')) error(`unit ${unit}`, 'no independent (no-hint) exercise in the unit');
   const firstUnit = all.competencies.unitOrder[0].unit;
   const retrieval = blocks.filter((b) => b.kind === 'review').flatMap((b) => b.items ?? []);
   if (unit !== firstUnit && retrieval.length < 2) error(`unit ${unit}`, 'needs at least two retrieval questions about earlier lessons (review blocks)');
