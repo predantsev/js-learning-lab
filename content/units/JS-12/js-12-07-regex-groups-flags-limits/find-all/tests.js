@@ -13,6 +13,7 @@ test('searches only the first 200 characters', () => {
   expect(scope.findAll('x'.repeat(197) + 'c++', 'c++'), 'a match that ends at character 200').toEqual([197]);
   expect(scope.findAll('x'.repeat(198) + 'c++', 'c++'), 'a match that goes past character 200').toEqual([]);
   expect(scope.findAll('x'.repeat(5000) + 'c++', 'c++'), 'a match far past character 200').toEqual([]);
+  expect(scope.findAll('c++' + 'x'.repeat(5000), 'c++'), 'a match at the start of a long text').toEqual([0]);
 });
 
 test('an empty query finds nothing', () => {
