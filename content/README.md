@@ -74,8 +74,9 @@ The validator runs every example, every exercise fixture and every verifiable pr
 13. **Solutions leak through more than hints:** feedback messages, glossary `example.code`, the explanation's own example and code shown in predictions must not equal (or trivially contain) an exercise solution. The glossary is one click away from the exercise.
 14. **No term before its lesson:** a visual caption, panel label or sentence must not use a term that a later lesson defines (check the syllabus `glossary` lists); introduce it briefly with a glossary link instead.
 15. **Authored visual states are data too:** mark as `changed` only what changed in that step; a wrong mark produces a false "changed" sentence in the text version.
-16. **`tryIt` steps leave the example in a sensible state:** after the suggested change nothing prints `NaN`, `undefined` or stale output unless that is the point being taught.
-17. **Ukrainian terminology:** «рядок» means both *string* and *line* — make the meaning unambiguous («текст у лапках», «рядок коду»). Identifiers are «назви» (назва змінної, назва функції), not «імена». A slash is «скісна риска».
+16. **`tryIt` steps leave the example in a sensible state:** each step works when followed literally from the state the previous step left, and after the suggested change nothing prints `NaN`, `undefined` or stale output unless that is the point being taught.
+17. **Words of the interface:** the product is «платформа», the place where code runs is «пісочниця»; learner files are modules («файл», «модуль»), not «скрипт». A variable is «змінна», its identifier is «назва».
+18. **Ukrainian terminology:** «рядок» means both *string* and *line* — make the meaning unambiguous («текст у лапках», «рядок коду»). Identifiers are «назви» (назва змінної, назва функції), not «імена». A slash is «скісна риска».
 
 ## lesson.yaml
 
