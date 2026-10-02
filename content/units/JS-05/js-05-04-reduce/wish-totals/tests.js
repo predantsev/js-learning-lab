@@ -28,8 +28,9 @@ test('countByCategory of an empty list is an empty object', () => {
 });
 
 test('calling countByCategory twice gives the same result', () => {
-  scope.countByCategory(sample());
-  expect(scope.countByCategory(sample()), 'the second call').toEqual(expectedCounts());
+  // Only "the same as last time" is checked here; the right counts are checked above.
+  const first = { ...scope.countByCategory(sample()) };
+  expect(scope.countByCategory(sample()), 'the second call compared with the first').toEqual(first);
 });
 
 test('the items are not changed', () => {
