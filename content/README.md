@@ -80,6 +80,10 @@ The validator runs every example, every exercise fixture and every verifiable pr
 19. **Locale and engine dependence:** `localeCompare` without a locale follows the browser language (Ukrainian letters reorder) — pass a locale or use data that sorts the same everywhere; an inconsistent or boolean comparator gives an engine-defined order — say "in Chrome" when you show it.
 20. **A check that measures work (counts reads, calls or comparisons) is announced in the task**, and new syntax (for example a brace-less `if`) gets one sentence where it first appears.
 21. **Ukrainian terminology:** «рядок» means both *string* and *line* — make the meaning unambiguous («текст у лапках», «рядок коду»). Identifiers are «назви» (назва змінної, назва функції), not «імена». A slash is «скісна риска».
+22. **A crash while the program loads empties `scope`:** every check then fails with "… is not a function" and all feedback shows together. Each feedback must stay true in that case, the `TypeError` rule must cover that message, and a check such as `expect(() => scope.fn(x)).toThrow(TypeError)` must first assert that `scope.fn` is a function, or it passes by mistake.
+23. **Describe Run, Stop and console behaviour only after a timed run in the app.** In a stuck loop the console stays empty until the `LoopBudgetError` card appears (about 2 s), and Stop discards output printed before it.
+24. **An "alternative run" state in an authored visual needs an explicit `changed` list;** otherwise the default diff against the previous state marks it as a change.
+25. **Multi-file predictions cannot be verified by the validator** (`verify` runs one `index.js`). Run them in the sandbox yourself and say so in your hand-back.
 
 ## lesson.yaml
 
@@ -102,7 +106,7 @@ blocks: [ … ]                     # read top to bottom; every example/exercise
 
 ### Block kinds
 
-Every block has a unique `id` (kebab-case) inside the lesson. `title` fields and exercise `testTitles` are plain text (no backticks or other Markdown). All other text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts).
+Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are plain text (no backticks or other Markdown); exercise `testTitles` are inline Markdown (code spans are fine, no block markup). All other text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts).
 
 ```yaml
 - id: keep-what-matters
