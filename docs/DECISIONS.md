@@ -57,7 +57,9 @@ These are reversible engineering choices made within the authorized implementati
 | DEC-10 | Port 7300 by default (`JSLL_PORT` overrides it), bound to `127.0.0.1` and `::1`; application host `js-learning-lab.localhost`, fallback `localhost`; sandbox hosts `jsll-run-N.localhost` with a `127.0.0.1` fallback. | A valid port below 65535 that was free on the maintainer workstation; `*.localhost` needs no hosts-file entry in Chrome. | `tests/e2e/app-hosts.test.mjs`. | The optional shared port registry on the maintainer workstation has not been updated (outside this repository). |
 | DEC-12 | Five in-course runtimes with explicit capability labels: `browser-js`, `browser-react`, `concept-preview` (React Native components rendered through react-native-web, labeled as a preview), `isolated-node` (real Node.js child process under the Node permission model, a guard preload and, on macOS, Seatbelt) and local tasks (`local-web`, `local-native`, `local-node`) that the learner runs outside the platform. | Real code and real output for every stage without presenting a browser preview as a device or a server. | `server-runtime.md`, `node-runtime-ui.md`. | Native device or emulator runs (no native toolchain on the build machine); the isolated Node runner on Linux and Windows. |
 
-DEC-05 (native toolchain), DEC-06 (license), DEC-07 (hosting), DEC-11 (timing) and DEC-13 (capstone packaging beyond the JavaScript steps) remain as proposed above.
+DEC-06 (license): on 2026-10-02 the owner chose an open license under which anyone may take and use the project. Adopted: MIT for the code, the course content and the documentation ([LICENSE](../LICENSE)). The repository tracks no third-party code or assets; dependencies installed by npm keep their own licenses, and no attribution inventory of them was made.
+
+DEC-05 (native toolchain), DEC-07 (hosting), DEC-11 (timing) and DEC-13 (capstone packaging beyond the JavaScript steps) remain as proposed above.
 
 ## Approved professional scope clarification (2026-10-01)
 

@@ -2,7 +2,7 @@
 
 A local-first desktop learning platform: **JavaScript → React → React Native → Node.js**, one continuous course with a chosen capstone, in Ukrainian and English.
 
-**Current status: partial.** The platform foundation (milestone M1) runs locally, and the first JavaScript units are authored and validated. The remaining JavaScript units and the whole React, React Native and Node.js stages are planned in the syllabus but not authored; the application shows them as not published yet. [Current state](docs/STATUS.md) lists exactly what exists, what was measured and what was not. There is no hosted deployment, and no license has been selected: public visibility alone is not a reuse license.
+**Current status: partial.** The platform foundation (milestone M1) runs locally, and the first JavaScript units are authored and validated. The remaining JavaScript units and the whole React, React Native and Node.js stages are planned in the syllabus but not authored; the application shows them as not published yet. [Current state](docs/STATUS.md) lists exactly what exists, what was measured and what was not. There is no hosted deployment.
 
 ## Quick start
 
@@ -83,3 +83,7 @@ Read [AGENTS.md](AGENTS.md). Work uses GitHub Issues and branch → PR → appli
 ## Full-course scope
 
 The program targets independent professional ability to build, debug, test, secure, deliver and maintain web React apps, native apps and Node services. Required TypeScript, web foundations, Git, tooling, SQL, auth, security, testing, delivery and recovery are course skills, not platform account or database requirements. Completion depends on assessed competency evidence, not a short calendar or a fixed lesson count; a year or longer is acceptable. The competency matrix is a specification: a unit counts only when its lessons are authored, validated and reviewed, and the full course is not complete until every stage passes its cumulative gate. Native skips allow continuation but cannot certify native competence.
+
+## License
+
+[MIT](LICENSE). The code, the course content and the documentation may be used, copied, changed and redistributed by anyone, provided the copyright and permission notice is kept. Dependencies installed by `npm install` keep their own licenses.
