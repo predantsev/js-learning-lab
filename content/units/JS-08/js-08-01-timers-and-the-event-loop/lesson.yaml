@@ -1,0 +1,462 @@
+id: js-08-01-timers-and-the-event-loop
+unit: JS-08
+title:
+  uk: "Таймери, callbacks і event loop"
+  en: "Timers, callbacks and the event loop"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Передбачити порядок рядків у консолі для синхронного коду й callbacks із `setTimeout`, зокрема з `setTimeout(fn, 0)`."
+    en: "Predict the console order of synchronous lines and `setTimeout` callbacks, including `setTimeout(fn, 0)`."
+  - uk: "Пояснити, чому довгий синхронний цикл затримує кожен таймер і кожен обробник кліку та «заморожує» сторінку."
+    en: "Explain why a long synchronous loop delays every timer and click handler and freezes the page."
+prerequisites: [js-07-11-capstone-modules-persistence, js-07-01-call-stack-and-errors, js-03-06-higher-order-callbacks]
+subskills:
+  - { family: J-11, skill: "call stack/tasks/microtasks", depth: intro }
+glossary: [event-loop, task-queue, timer, single-threaded]
+selfCheck: [zero-delay, two-timers, countdown]
+
+blocks:
+  - id: later
+    kind: explanation
+    title:
+      uk: "Код, який виконається пізніше"
+      en: "Code that runs later"
+    body:
+      uk: |
+        Досі кожен рядок коду виконувався одразу, згори донизу. Але програмі часто треба зробити щось **пізніше**: сховати повідомлення через три секунди, показати дані, коли вони надійдуть.
+
+        Найпростіший спосіб — [[timer|таймер]], функція `setTimeout`:
+
+        ```js
+        console.log("A");
+        setTimeout(() => {
+          console.log("B");
+        }, 1000);
+        console.log("C");
+        ```
+
+        `setTimeout` отримує дві речі: [[callback]] — функцію, яку треба викликати пізніше, — і затримку в мілісекундах (1000 мс = 1 с). Сам `setTimeout` нічого не чекає: він лише **реєструє** таймер і одразу повертається. Тому в консолі спершу `A` і `C`, а `B` — приблизно через секунду.
+
+        Функцію ми **передаємо**, а не викликаємо. Викличе її пізніше браузер — так само, як [[event-listener|обробник події]], що спрацьовує після кліку.
+      en: |
+        Until now every line of code ran at once, top to bottom. But a program often has to do something **later**: hide a message after three seconds, show data when it arrives.
+
+        The simplest way is a [[timer]], the `setTimeout` function:
+
+        ```js
+        console.log("A");
+        setTimeout(() => {
+          console.log("B");
+        }, 1000);
+        console.log("C");
+        ```
+
+        `setTimeout` takes two things: a [[callback]] — the function to call later — and a delay in milliseconds (1000 ms = 1 s). `setTimeout` itself waits for nothing: it only **registers** the timer and returns at once. So the console shows `A` and `C` first, and `B` about a second later.
+
+        We **pass** the function; we do not call it. The browser calls it later — just like an [[event-listener|event listener]] that runs after a click.
+
+  - id: zero-delay
+    kind: prediction
+    prompt:
+      uk: "Тепер затримка — **0** мілісекунд. Що з’явиться в консолі?"
+      en: "Now the delay is **0** milliseconds. What appears in the console?"
+    code: |
+      console.log("A");
+      setTimeout(() => {
+        console.log("B");
+      }, 0);
+      console.log("C");
+    verify:
+      logs: ["A", "C", "B"]
+    answer:
+      type: choice
+      options:
+        - id: in-order
+          text:
+            uk: "`A`, `B`, `C` — затримки ж немає"
+            en: "`A`, `B`, `C` — there is no delay, after all"
+          why:
+            uk: "0 мс не означає «негайно». Callback таймера не може почати роботу, доки скрипт не виконався до кінця, — навіть із нульовою затримкою."
+            en: "0 ms does not mean “immediately”. A timer callback cannot start while the script is still running — even with a zero delay."
+        - id: after-script
+          text:
+            uk: "`A`, `C`, `B`"
+            en: "`A`, `C`, `B`"
+        - id: skipped
+          text:
+            uk: "`A`, `C` — з нулем callback не викликається"
+            en: "`A`, `C` — with zero the callback is never called"
+          why:
+            uk: "Callback неодмінно виконається, просто пізніше. Нуль — це найменша можлива затримка, а не скасування."
+            en: "The callback will certainly run, just later. Zero is the smallest possible delay, not a cancellation."
+        - id: first
+          text:
+            uk: "`B`, `A`, `C` — таймер із нулем спрацьовує найпершим"
+            en: "`B`, `A`, `C` — a zero timer fires first of all"
+          why:
+            uk: "Таймер не може «вклинитися» навіть перед першим рядком: поки скрипт виконується, жоден callback не починається."
+            en: "A timer cannot squeeze in even before the first line: while the script runs, no callback starts."
+      correct: [after-script]
+    explanation:
+      uk: "Поки скрипт виконується, жоден callback таймера не може почати роботу. `A` і `C` — частина скрипту, тож вони з’являються першими, а `B` — лише після того, як скрипт закінчився. Затримка 0 означає «не раніше ніж через 0 мс», а не «просто зараз»."
+      en: "While the script runs, no timer callback can start. `A` and `C` are part of the script, so they come first, and `B` only after the script has finished. A delay of 0 means “no sooner than in 0 ms”, not “right now”."
+
+  - id: one-at-a-time
+    kind: explanation
+    title:
+      uk: "Один стек і черга задач"
+      en: "One stack and a task queue"
+    body:
+      uk: |
+        Чому так? JavaScript на сторінці [[single-threaded|однопотоковий]]: у нього **один** [[call-stack|стек викликів]], і в кожен момент виконується лише одна справа. Поки в стеку щось є, ніщо інше не почнеться.
+
+        Таймер відлічує час не в JavaScript, а **в самому браузері**. Коли час минув, браузер ставить callback у [[task-queue|чергу задач]] (task queue). Звідти його бере [[event-loop|event loop]] — механізм, що безкінечно повторює одне й те саме:
+
+        1. Чекає, доки стек викликів спорожніє.
+        2. Бере з черги наступну задачу й виконує її до кінця.
+        3. Повертається до кроку 1.
+
+        Сам скрипт сторінки — теж задача. Поки він не закінчився, черга чекає. У ту саму чергу стають і обробники кліків: клік, що стався, поки стек зайнятий, теж чекає своєї черги.
+      en: |
+        Why? JavaScript on a page is [[single-threaded]]: it has **one** [[call-stack]], and only one thing runs at any moment. While something is on the stack, nothing else can start.
+
+        A timer counts time not in JavaScript but **in the browser itself**. When the time is up, the browser puts the callback into the [[task-queue]]. From there it is picked up by the [[event-loop]] — a mechanism that repeats the same thing forever:
+
+        1. Wait until the call stack is empty.
+        2. Take the next task from the queue and run it to the end.
+        3. Go back to step 1.
+
+        The page’s script is a task too. Until it has finished, the queue waits. Click handlers join the same queue: a click that happens while the stack is busy waits for its turn as well.
+
+  - id: busy-loop-steps
+    kind: visual
+    visual: event-loop
+    title:
+      uk: "Цикл зайняв стек: клік і таймер чекають"
+      en: "A loop holds the stack: the click and the timer wait"
+    textEquivalent:
+      uk: "Скрипт — перша задача, у стеку викликів кадр script. Він друкує start. Далі цикл while протягом секунди безперервно перевіряє годинник: Date.now() дає поточний час у мілісекундах. Увесь цей час стек зайнятий. Посеред циклу користувач клікає кнопку-лічильник на сторінці. Клік — це дія людини, а не рядок цього коду: браузер запам’ятовує його й ставить обробник кліку в чергу задач, але виконати його не може, тож сторінка не реагує. Коли цикл закінчився, setTimeout із затримкою 0 мс передає callback браузерові: таймер живе серед Web APIs, поза JavaScript. Скрипт друкує end; за цей час таймер спрацював, і його callback став у чергу задач за обробником кліку. Скрипт завершився, стек порожній, і лише тепер event loop бере задачі з черги по одній: спершу обробник кліку — він оновлює лічильник на сторінці й нічого не друкує, — потім callback таймера, який друкує timer. У консолі: start, end, timer. Висновок: callback ніколи не перериває код, що вже виконується; довгий цикл затримує і таймери, і кліки."
+      en: "The script is the first task; the call stack holds the frame script. It prints start. Then a while loop keeps checking the clock for a whole second: Date.now() gives the current time in milliseconds. All that time the stack is busy. In the middle of the loop the user clicks the counter button on the page. The click is a person’s action, not a line of this code: the browser remembers it and puts the click handler into the task queue, but cannot run it, so the page does not react. When the loop is over, setTimeout with a 0 ms delay hands the callback to the browser: the timer lives among the Web APIs, outside JavaScript. The script prints end; meanwhile the timer has fired, and its callback has joined the task queue behind the click handler. The script is finished, the stack is empty, and only now does the event loop take the tasks one by one: first the click handler — it updates the counter on the page and prints nothing — then the timer callback, which prints timer. The console shows: start, end, timer. The lesson: a callback never interrupts code that is already running; a long loop delays both timers and clicks."
+    spec:
+      file: visuals/busy-loop.js
+      steps:
+        - line: 1
+          caption:
+            uk: "Скрипт — перша задача: у **Call stack** кадр `script`. Ще на схемі є **Web APIs** (частини браузера поза JavaScript, як-от таймери) і дві черги: [[microtask-queue|Microtasks]] (знадобиться для promises, поки порожня) та **Tasks** — черга задач."
+            en: "The script is the first task: the **Call stack** holds the frame `script`. The picture also shows the **Web APIs** (parts of the browser outside JavaScript, such as timers) and two queues: [[microtask-queue|Microtasks]] (needed for promises, empty for now) and **Tasks** — the task queue."
+          stack: ["script"]
+        - line: 1
+          log: "start"
+          caption:
+            uk: "`console.log(\"start\")` виконується одразу: у консолі `start`."
+            en: "`console.log(\"start\")` runs at once: `start` appears in the console."
+          stack: ["script"]
+        - line: 4
+          caption:
+            uk: "Починається цикл: секунду поспіль він перевіряє годинник (`Date.now()` дає поточний час у мілісекундах). Увесь цей час стек зайнятий кадром `script`."
+            en: "The loop starts: for a whole second it keeps checking the clock (`Date.now()` gives the current time in milliseconds). All that time the stack is busy with `script`."
+          stack: ["script"]
+        - line: 4
+          caption:
+            uk: "Посеред циклу ти клікаєш кнопку-лічильник на сторінці. Клік — твоя дія, а не рядок цього коду. Браузер ставить обробник кліку в **Tasks**, але виконати не може: стек зайнятий, тож сторінка не реагує."
+            en: "In the middle of the loop you click the counter button on the page. The click is your action, not a line of this code. The browser puts the click handler into **Tasks** but cannot run it: the stack is busy, so the page does not react."
+          stack: ["script"]
+          tasks: ["click handler"]
+        - line: 8
+          caption:
+            uk: "Цикл нарешті закінчився. `setTimeout(…, 0)` передає callback браузерові: таймер живе у **Web APIs**, а не в JavaScript."
+            en: "The loop is finally over. `setTimeout(…, 0)` hands the callback to the browser: the timer lives in the **Web APIs**, not in JavaScript."
+          stack: ["script"]
+          webApis: ["timer 0 ms"]
+          tasks: ["click handler"]
+        - line: 12
+          log: "end"
+          caption:
+            uk: "У консолі `end`. Тим часом таймер на 0 мс спрацював, і браузер поставив його callback у **Tasks** — **за** обробником кліку, який чекає довше."
+            en: "The console shows `end`. Meanwhile the 0 ms timer has fired, and the browser has put its callback into **Tasks** — **behind** the click handler, which has been waiting longer."
+          stack: ["script"]
+          tasks: ["click handler", "timer callback"]
+        - caption:
+            uk: "Скрипт завершився, стек порожній. Лише тепер event loop бере з черги наступну задачу — ту, що чекає найдовше."
+            en: "The script is done, the stack is empty. Only now does the event loop take the next task from the queue — the one that has waited longest."
+          stack: []
+          tasks: ["click handler", "timer callback"]
+        - caption:
+            uk: "Обробник кліку оновлює лічильник на сторінці; у консоль він нічого не друкує. Клік зі середини циклу спрацював лише через секунду."
+            en: "The click handler updates the counter on the page; it prints nothing to the console. The click from the middle of the loop took effect only a second later."
+          stack: ["click handler"]
+          tasks: ["timer callback"]
+        - line: 9
+          log: "timer"
+          caption:
+            uk: "Тепер callback таймера: у консолі `timer`. Таймер «на 0 мс» чекав і на цикл, і на кінець скрипту, і на клік."
+            en: "Now the timer callback: `timer` appears in the console. The “0 ms” timer waited for the loop, for the end of the script and for the click."
+          stack: ["timer callback"]
+        - caption:
+            uk: "Усе виконано, черги порожні. Callback ніколи не перериває код, що вже виконується, — він чекає порожнього стеку. Тому довгий цикл затримує кожен таймер і кожен клік."
+            en: "Everything has run, the queues are empty. A callback never interrupts code that is already running — it waits for an empty stack. That is why a long loop delays every timer and every click."
+          stack: []
+
+  - id: kitchen
+    kind: analogy
+    body:
+      uk: "Уяви кухню з **одним** кухарем — це JavaScript. Він готує одну страву за раз і не відривається, доки не закінчить. Помічники — браузер — стежать за таймерами й приймають замовлення відвідувачів. Коли таймер продзвенів чи прийшло нове замовлення (клік), помічник чіпляє талончик на планку замовлень — це черга задач. Кухар бере наступний талончик лише тоді, коли доготував поточну страву. Якщо він хвилину місить тісто без перерви (довгий цикл), талончики просто накопичуються."
+      en: "Imagine a kitchen with **one** cook — that is JavaScript. The cook prepares one dish at a time and does not stop until it is done. The helpers — the browser — watch the timers and take orders from guests. When a timer rings or a new order arrives (a click), a helper pins a ticket on the order rail — that is the task queue. The cook takes the next ticket only after finishing the current dish. If the cook kneads dough for a whole minute without a break (a long loop), the tickets simply pile up."
+    limits:
+      uk: "Помічники — це сам браузер, що працює поза JavaScript, а не ще кілька кухарів: твій код ніколи не виконується паралельно з іншим твоїм кодом. І затримка таймера — це мінімальне очікування, а не точний час старту: талончик чекає стільки, скільки треба, доки кухар звільниться."
+      en: "The helpers are the browser itself, working outside JavaScript, not more cooks: your code never runs in parallel with other code of yours. And a timer’s delay is a minimum wait, not an exact start time: a ticket waits as long as it takes for the cook to be free."
+
+  - id: frozen-page
+    kind: example
+    runtime: browser-js
+    dir: frozen-page
+    entry: index.html
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Заморожена сторінка", en: "A frozen page" }
+      clicks: { uk: "Кліків:", en: "Clicks:" }
+      busy: { uk: "Зайняти стек на 1 секунду", en: "Keep the stack busy for 1 second" }
+      timerRan: { uk: "callback таймера виконався через", en: "the timer callback ran after" }
+      loopDone: { uk: "цикл закінчився через", en: "the loop finished after" }
+      ms: { uk: "мс", en: "ms" }
+    title:
+      uk: "Клікни, поки стек зайнятий"
+      en: "Click while the stack is busy"
+    body:
+      uk: |
+        Натисни **Запустити** й відкрий вкладку **Сторінка**. Поклікай лічильник: число росте одразу.
+
+        Друга кнопка реєструє таймер на 0 мс, а потім секунду крутить цикл. Натисни її і **одразу** кілька разів клікни лічильник. Секунду нічого не відбувається, а потім число стрибає на всі кліки разом. У вкладці **Консоль** видно: callback таймера на 0 мс чекав, доки скінчиться цикл.
+      en: |
+        Press **Run** and open the **Page** tab. Click the counter a few times: the number goes up at once.
+
+        The second button registers a 0 ms timer and then runs a loop for a second. Press it and **immediately** click the counter several times. For a second nothing happens, and then the number jumps by all your clicks at once. The **Console** tab shows that the 0 ms timer callback waited until the loop was over.
+    tryIt:
+      uk: |
+        1. Заміни `1000` у циклі на `1500` і повтори: сторінка «замерзає» довше, і таймер чекає довше.
+        2. Перенеси весь виклик `setTimeout(…)` нижче циклу. Callback усе одно виконається лише після того, як обробник другої кнопки закінчиться.
+        3. Цикл довший за 2 секунди платформа зупиняє сама — це захист від нескінченного циклу. Справжній браузер такого захисту не має.
+      en: |
+        1. Change `1000` in the loop to `1500` and repeat: the page freezes longer, and the timer waits longer.
+        2. Move the whole `setTimeout(…)` call below the loop. The callback still runs only after the second button’s handler has finished.
+        3. The platform stops a loop that runs longer than 2 seconds by itself — a guard against infinite loops. A real browser has no such guard.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: callbacks і стек викликів"
+      en: "Recall: callbacks and the call stack"
+    strings:
+      hi: { uk: "привіт", en: "hi" }
+      currency: { uk: "грн", en: "UAH" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+    items:
+      - id: pass-not-call
+        from: js-03-06-higher-order-callbacks
+        prompt:
+          uk: "Що виведе цей код? Уважно подивись на останній рядок."
+          en: "What does this code print? Look closely at the last line."
+        code: |
+          function twice(action) {
+            action();
+            action();
+          }
+
+          function hello() {
+            console.log("%%hi%%");
+          }
+
+          twice(hello());
+        verify:
+          logs: ["%%hi%%"]
+          error: TypeError
+        answer:
+          type: choice
+          options:
+            - id: twice-hi
+              text:
+                uk: "«привіт» двічі"
+                en: "“hi” twice"
+              why:
+                uk: "`hello()` із дужками викликає функцію одразу, ще до `twice`. У `twice` потрапляє не функція, а те, що вона повернула, — `undefined`."
+                en: "`hello()` with brackets calls the function at once, before `twice` even starts. What reaches `twice` is not the function but what it returned — `undefined`."
+            - id: once-then-error
+              text:
+                uk: "«привіт» один раз, а потім `TypeError`"
+                en: "“hi” once, then a `TypeError`"
+            - id: error-only
+              text:
+                uk: "Одразу `TypeError`, без жодного рядка"
+                en: "A `TypeError` at once, with no line printed"
+              why:
+                uk: "Спершу виконується `hello()` — вона встигає надрукувати «привіт». Помилка виникає пізніше, коли `twice` пробує викликати `undefined`."
+                en: "First `hello()` runs — it manages to print “hi”. The error comes later, when `twice` tries to call `undefined`."
+          correct: [once-then-error]
+        explanation:
+          uk: "`twice(hello())` спершу викликає `hello` — у консолі «привіт». `hello` нічого не повертає, тож `twice` отримує `undefined`, і `action()` кидає `TypeError: action is not a function`. Щоб функцію викликав хтось інший — `twice`, таймер чи браузер, — передавай її **без дужок**."
+          en: "`twice(hello())` first calls `hello` — “hi” appears. `hello` returns nothing, so `twice` receives `undefined`, and `action()` throws `TypeError: action is not a function`. To let someone else call a function — `twice`, a timer or the browser — pass it **without brackets**."
+      - id: frames-leave
+        from: js-07-01-call-stack-and-errors
+        prompt:
+          uk: "Розташуй кадри стеку викликів у тому порядку, в якому вони **закінчують роботу й покидають** стек."
+          en: "Put the call stack frames in the order in which they **finish and leave** the stack."
+        code: |
+          function formatPrice(price) {
+            return price + " %%currency%%";
+          }
+
+          function showWish(wish) {
+            console.log(wish.name + ": " + formatPrice(wish.price));
+          }
+
+          showWish({ name: "%%lamp%%", price: 45 });
+        runnable: false
+        answer:
+          type: order
+          items:
+            - { id: format-price, code: "formatPrice" }
+            - { id: console-log, code: "console.log" }
+            - { id: show-wish, code: "showWish" }
+            - id: file-code
+              text: { uk: "код самого файла (script)", en: "the file’s own code (script)" }
+        explanation:
+          uk: "Кадр закінчується лише тоді, коли закінчилися всі виклики, на які він чекає. `formatPrice` повертає текст першою, далі `console.log` друкує рядок, потім завершується `showWish`, і останнім — код файла. Поки хоч один із цих кадрів у стеку, ніщо інше, навіть callback таймера, не почнеться."
+          en: "A frame finishes only when every call it waits for has finished. `formatPrice` returns its text first, then `console.log` prints the line, then `showWish` ends, and last the file’s code. While any of these frames is on the stack, nothing else — not even a timer callback — can start."
+
+  - id: two-timers
+    kind: prediction
+    strings:
+      slow: { uk: "таймер на 100 мс", en: "100 ms timer" }
+      fast: { uk: "таймер на 0 мс", en: "0 ms timer" }
+      script: { uk: "скрипт", en: "script" }
+    prompt:
+      uk: "Таймер на 100 мс зареєстровано **раніше**, ніж таймер на 0 мс. У якому порядку з’являться рядки?"
+      en: "The 100 ms timer is registered **before** the 0 ms timer. In what order do the lines appear?"
+    code: |
+      setTimeout(() => {
+        console.log("%%slow%%");
+      }, 100);
+      setTimeout(() => {
+        console.log("%%fast%%");
+      }, 0);
+      console.log("%%script%%");
+    verify:
+      logs: ["%%script%%", "%%fast%%", "%%slow%%"]
+    answer:
+      type: choice
+      options:
+        - id: written-order
+          text:
+            uk: "100 мс, 0 мс, скрипт — як записано"
+            en: "100 ms, 0 ms, script — as written"
+          why:
+            uk: "Рядок `console.log` у самому скрипті виконується одразу, а callbacks таймерів — лише після того, як скрипт закінчився."
+            en: "The `console.log` line of the script itself runs at once, and the timer callbacks only after the script has finished."
+        - id: registration-order
+          text:
+            uk: "скрипт, 100 мс, 0 мс — таймери в порядку реєстрації"
+            en: "script, 100 ms, 0 ms — the timers in registration order"
+          why:
+            uk: "Callback стає в чергу задач тоді, коли **спливає його час**, а не коли таймер зареєстрували. 0 мс спливає раніше за 100 мс."
+            en: "A callback joins the task queue when **its time is up**, not when the timer was registered. 0 ms is up before 100 ms."
+        - id: by-time
+          text:
+            uk: "скрипт, 0 мс, 100 мс"
+            en: "script, 0 ms, 100 ms"
+        - id: zero-first
+          text:
+            uk: "0 мс, скрипт, 100 мс"
+            en: "0 ms, script, 100 ms"
+          why:
+            uk: "Навіть таймер на 0 мс чекає, поки скрипт закінчиться: callback не перериває код, що виконується."
+            en: "Even a 0 ms timer waits for the script to end: a callback does not interrupt running code."
+      correct: [by-time]
+    explanation:
+      uk: "Спершу скрипт виконується до кінця. Таймери тим часом відлічують у браузері; callback стає в чергу задач, щойно спливає **його** затримка. Затримка 0 мс спливає раніше, ніж 100 мс, тож порядок реєстрації тут не важить."
+      en: "First the script runs to the end. Meanwhile the timers count in the browser; a callback joins the task queue as soon as **its** delay is up. A 0 ms delay is up sooner than 100 ms, so the registration order does not matter here."
+
+  - id: countdown
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: countdown
+    entry: index.html
+    editable: [index.js]
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Зворотний відлік", en: "Countdown" }
+      start: { uk: "Почати відлік", en: "Start the countdown" }
+      clicks: { uk: "Кліків:", en: "Clicks:" }
+    title:
+      uk: "Відлік, що не заморожує сторінку"
+      en: "A countdown that does not freeze the page"
+    instructions:
+      uk: |
+        Допиши функцію `countdown(from)`. Вона має:
+
+        - одразу надрукувати в консоль число `from`;
+        - щосекунди друкувати наступне, на 1 менше;
+        - зупинитися після числа `1`.
+
+        Тобто `countdown(3)` друкує `3`, через секунду `2`, ще через секунду `1` — і більше нічого. Друкуй лише числа, без іншого тексту.
+
+        Сторінка під час відліку має реагувати на кліки, тож **не чекай у циклі**: нехай чекає браузер. Перевір сам: натисни **Почати відлік** і клікай лічильник.
+      en: |
+        Complete the function `countdown(from)`. It must:
+
+        - print the number `from` to the console right away;
+        - every second print the next one, 1 smaller;
+        - stop after the number `1`.
+
+        So `countdown(3)` prints `3`, one second later `2`, another second later `1` — and nothing more. Print only the numbers, with no other text.
+
+        The page must keep reacting to clicks during the countdown, so **do not wait in a loop**: let the browser wait. Check it yourself: press **Start the countdown** and click the counter.
+    testTitles:
+      "prints the start number without waiting":
+        uk: "Перше число з’являється без очікування"
+        en: "The start number appears without waiting"
+      "waits one second before the next number":
+        uk: "Наступне число з’являється рівно через секунду"
+        en: "The next number appears exactly one second later"
+      "counts down to 1 and stops":
+        uk: "Відлік доходить до 1 і зупиняється"
+        en: "The countdown reaches 1 and stops"
+      "works for any start number":
+        uk: "Працює з будь-яким початковим числом"
+        en: "Works for any start number"
+    hints:
+      nudge:
+        uk: "Перше число надрукуй одразу. А як попросити браузер виконати решту роботи через секунду, нічого не чекаючи самому?"
+        en: "Print the first number at once. And how do you ask the browser to do the rest of the work a second later, without waiting yourself?"
+      explanation:
+        uk: "Таймер може запланувати наступний таймер. Наприклад, напис, що блимає тричі: функція показує його і, якщо ще не всі рази, просить `setTimeout` через пів секунди викликати цю саму функцію з лічильником, меншим на 1. Тут так само: callback таймера друкує наступне число й ставить новий таймер — доки є що друкувати. Між тиками стек порожній, тож кліки обробляються одразу."
+        en: "A timer can schedule the next timer. Take a label that blinks three times: the function shows it and, if not all blinks are done, asks `setTimeout` to call that same function half a second later with the counter 1 smaller. Same here: the timer callback prints the next number and sets a new timer — as long as there is something to print. Between ticks the stack is empty, so clicks are handled at once."
+    solutionNote:
+      uk: "Функція друкує число й, якщо воно більше за 1, просить таймер викликати її ж через секунду з числом на 1 менше. Між тиками стек порожній, тож обробник кліку лічильника виконується одразу. Варіант, що одразу реєструє всі таймери на 0, 1000 і 2000 мс, теж правильний."
+      en: "The function prints the number and, if it is greater than 1, asks a timer to call the function itself a second later with the number 1 smaller. Between ticks the stack is empty, so the counter’s click handler runs at once. Registering all timers at once, at 0, 1000 and 2000 ms, is also correct."
+    feedback:
+      - when: { test: "prints the start number without waiting" }
+        message:
+          uk: "Ця перевірка викликає `countdown(3)` і очікує, що без очікування надруковано рівно одне число — `3`. Якщо видно одразу всі числа, наступні виклики відбуваються негайно: перевір, чи ти **передаєш** функцію в `setTimeout`, а не викликаєш її з дужками."
+          en: "This check calls `countdown(3)` and expects exactly one number, `3`, to be printed without waiting. If all the numbers show up at once, the next calls happen immediately: check that you **pass** a function to `setTimeout` instead of calling it with brackets."
+      - when: { test: "waits one second before the next number" }
+        message:
+          uk: "Ця перевірка очікує, що через 999 мс у консолі ще тільки `3`, а через 1000 мс — `3` і `2`. Затримка кожного наступного числа — 1000 мс після попереднього."
+          en: "This check expects only `3` in the console after 999 ms, and `3` and `2` after 1000 ms. Each next number comes 1000 ms after the previous one."
+      - when: { test: "counts down to 1 and stops" }
+        message:
+          uk: "Ця перевірка очікує рівно `3`, `2`, `1` і жодного таймера після `1`. Перевір умову, за якої ставиться наступний таймер: після `1` вже нічого не планується."
+          en: "This check expects exactly `3`, `2`, `1` and no timer left after `1`. Check the condition under which the next timer is set: after `1` nothing more is scheduled."
+      - when: { test: "works for any start number" }
+        message:
+          uk: "Ця перевірка викликає `countdown(5)`. Не прив’язуйся до числа 3 — бери початкове число з параметра `from`."
+          en: "This check calls `countdown(5)`. Do not rely on the number 3 — take the start number from the parameter `from`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-08
+    body:
+      uk: "У проєкті записи скоро надходитимуть «пізніше» — з мережі. Правило те саме: callback виконується лише тоді, коли стек порожній. Тому не чекай у циклі — нехай чекає браузер, а сторінка тим часом реагує на кліки."
+      en: "In your project, records will soon arrive “later” — from the network. The rule is the same: a callback runs only when the stack is empty. So never wait in a loop — let the browser wait while the page keeps reacting to clicks."
