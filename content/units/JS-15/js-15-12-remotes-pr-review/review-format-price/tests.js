@@ -20,7 +20,9 @@ test('the new formatPrice really gives a wrong text for failingInput', () => {
 
 test('the defect comment names the failing case', () => {
   const comment = text(review.defectComment);
-  const namesIt = comment.includes(String(review.failingInput)) || (text(review.expected) !== '' && comment.includes(text(review.expected)));
+  // The correct price may be named with or without the currency ("12.05 UAH" or "12.05").
+  const price = text(review.expected).replace(/\s*UAH$/, '');
+  const namesIt = comment.includes(String(review.failingInput)) || (price !== '' && comment.includes(price));
   expect(namesIt, 'defectComment mentions failingInput or the expected text').toBe(true);
 });
 

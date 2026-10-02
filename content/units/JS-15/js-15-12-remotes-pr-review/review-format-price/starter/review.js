@@ -1,7 +1,7 @@
 // Your review of the pull request. Fill in every field.
 export const review = {
   // An amount in minor units for which the new formatPrice gives a wrong text.
-  failingInput: 157600,
+  failingInput: 157650,
   // The text formatPrice should return for that amount.
   expected: "",
   // For the author: what is wrong and for which input.
