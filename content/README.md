@@ -88,6 +88,9 @@ The validator runs every example, every exercise fixture and every verifiable pr
 27. **Hints and feedback name exactly what the test asserts, identically in both languages** (id vs name, row vs column). Read the Ukrainian and the English side by side against the test.
 28. **Quote an earlier lesson's code verbatim from its file**, never from memory.
 29. **No per-test feedback for failures before the run starts** (a missing import path, a missing extension, a bare specifier): the tests never start, so only the error card is shown and that feedback can never appear.
+30. **Browser facts that were written wrong (measured in Chrome):** an input with only a `placeholder` still gets its accessible name from it — write "named only by its placeholder, there is no label", never "has no name"; real Enter in a field fires a click on the form's submit button, while `user.press('Enter', input)` in tests submits without a click; where Tab goes first depends on where navigation starts (after a click or from the top of the page).
+31. **A zoom claim names a window width or is conditional.** The application switches to one column below 1100 CSS px, so the result panel can get wider when the learner zooms in; "zoom to 200 %" alone is not reproducible.
+32. **`alt` fixtures model the practice the unit teaches** (a visible `<label>`, not `aria-label` alone), and a test must require what the lesson teaches rather than what a helper happens to accept (`screen.nameOf` accepts `aria-label`).
 
 ## lesson.yaml
 
