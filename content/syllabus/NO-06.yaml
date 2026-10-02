@@ -1,0 +1,231 @@
+# Syllabus spine for NO-06. Schema and rules: content/syllabus/README.md. Validate: node scripts/content/validate-syllabus.mjs
+unit: NO-06
+stage: NO
+title: { uk: "Клієнти й сервер разом: інтеграція зі справжнім API", en: "Clients meet the server: integrating with the real API" }
+summary:
+  uk: "Учень під’єднує React-версію проєкту (і нативний компаньйон, якщо є інструменти) до справжнього локального API, тримає сервер джерелом істини, а клієнт — лише кешем, свідомо налаштовує CORS і credentials, ділить версіонований контракт між клієнтом і сервером та наскрізно обробляє офлайн, помилки й повтори."
+  en: "The learner connects the React capstone (and the native companion when tooling exists) to the real local API, keeps the server as the source of truth and the client as a cache, configures CORS and credentials deliberately, shares a versioned contract between client and server, and handles offline, error and retry states end to end."
+competencies: [B-12]
+capstoneStep:
+  mode: local
+  objective:
+    uk: "Під’єднати React-версію проєкту (і нативний компаньйон, якщо є інструменти) до справжнього локального API: замінити фікстури, налаштувати CORS і credentials, спільно використовувати версіоновані контракти й залишити сервер джерелом істини."
+    en: "Connect the React capstone (and the native companion when tooling exists) to the real local API: replace fixtures, handle CORS/credentials, share versioned contracts, keep the server as source of truth."
+  variants:
+    wishlist:
+      uk: "React-список бажань завантажує бажання з GET /items замість фікстур, перемикає acquired через PATCH і після перезапуску сервера показує серверне значення; сума цін бажаних речей (price) рахується зі списку сервера, а не з кешу."
+      en: "The React wishlist loads items from GET /items instead of fixtures, toggles acquired with PATCH and shows the server's value after a restart; the total price of wanted items is computed from the server list, not from the cached copy."
+    planner:
+      uk: "React-планувальник завантажує справи з GET /tasks, позначає done через PATCH і перезавантажує список, тож кількість невиконаних справ із dueDate до заданого дня після перезапуску завжди рахується з даних сервера."
+      en: "The React planner loads tasks from GET /tasks, marks done with PATCH and refetches, so the count of pending tasks due by a given day always comes from server data after a restart."
+    habits:
+      uk: "React-трекер звичок записує сьогоднішнє виконання через POST /habits/:id/completions і перезавантажує дані, тож серія після перезапуску сервера рахується зі списку completions на сервері."
+      en: "The React habit tracker records today's completion with POST /habits/:id/completions and refetches, so the streak shown after a server restart comes from the server's completions list."
+    expenses:
+      uk: "React-трекер витрат створює витрату через POST /expenses і перезавантажує список, тож суми за category в amountMinor після перезапуску беруться зі списку сервера, а не з оптимістичної локальної копії."
+      en: "The React expense tracker creates an expense with POST /expenses and refetches, so per-category totals in amountMinor after a restart come from the server list, never from an optimistic local copy."
+# Retrieval plan: js-16-04-same-origin-cors (CORS) ; re-06-05-cache-invalidation (cache) ; rn-06-02-emulator-device-addressing (addressing) ; re-09-03-api-models-runtime-schemas (schemas)
+lessons:
+  - id: no-06-01-client-server-boundary
+    title: { uk: "Межа клієнт/сервер і власність даних", en: "The client/server boundary and ownership" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Name, for each capstone field and derived value, whether the server owns it or the client only caches it."
+      - "Predict what two clients show after one of them changes a record, before and after a refetch."
+      - "Explain why the client reconciles its cache with the server's response instead of trusting its own copy."
+    subskills:
+      - { family: B-12, skill: "server source of truth vs cache", depth: intro }
+    misconceptions:
+      - "Once the client has loaded the data, its copy is the real data."
+      - "If the server rejects a write, the client can simply keep its local change."
+    prerequisites: [no-04-01-rest-boundaries, re-06-05-cache-invalidation]
+    glossary: [server-source-of-truth, data-ownership]
+    visual: { kind: sequence, concept: "Two clients and the server over time: A and B load the list, A sends PATCH and the server's record changes, B keeps rendering its cached copy until a refetch or invalidation brings the server's value, and a rejected PATCH rolls A's view back to the server's state." }
+    difficultConcept: client-server-boundary
+    analogy: "The server is the bank's ledger and the client's cache is your printed statement: handy to read, but only the ledger decides the balance (limit: a statement can be out of date and the bank can be unreachable, so the client must label stale data and retry rather than treat its copy either as the truth or as worthless)."
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict what two cache-holding clients print for record r-01 after client A sends PATCH and client B has not refetched, against the loopback lab server." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the two in-course Node clients against the loopback server, apply the PATCH, then add invalidation after every mutation and rerun." }
+      - { kind: write, runtime: isolated-node, summary: "Write reconcile(cache, serverList) that returns the server's records and reports which cached entries were stale or deleted." }
+    retrieval:
+      - { concept: "cache invalidation principles", from: re-06-05-cache-invalidation }
+  - id: no-06-02-replace-fixtures-with-api
+    title: { uk: "Замінюємо фікстури на API", en: "Replacing fixtures with the API" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Swap the bundled fixture source for an HTTP data source behind the same interface without changing domain functions or components."
+      - "Read the API base URL from configuration and keep fixtures only for tests and seeding."
+    subskills:
+      - { family: B-12, skill: "local fixture replacement", depth: intro }
+    misconceptions:
+      - "Replacing fixtures with the API means rewriting every component that shows records."
+      - "Server data always has the same shape as the fixtures, so the client needs no validation at the edge."
+    prerequisites: [no-06-01-client-server-boundary, re-06-01-fetch-lifecycle]
+    glossary: [api-base-url, data-source-interface]
+    visual: { kind: diagram, concept: "Components depend on one data-source interface; the step-through moves the arrow from the fixture module to an HTTP module that calls the loopback API, while domain functions and components stay highlighted as unchanged." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict which modules change when listRecords() switches from fixtures to GET /records: components, domain functions, the data-source module or the config." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the client data layer against the fixture source and then against the loopback API through a configurable API_BASE_URL, and compare the outputs." }
+      - { kind: write, runtime: isolated-node, summary: "Write createHttpSource({ baseUrl, fetch }) implementing the same listRecords/createRecord/updateRecord interface as the fixture source and validating each response at the edge." }
+    retrieval:
+      - { concept: "capstone fixtures served over HTTP", from: js-16-11-capstone-web-boundary }
+  - id: no-06-03-cors-credentials-practice
+    title: { uk: "CORS і credentials на практиці", en: "CORS and credentials in practice" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Configure the server's CORS responses for the React dev origin, including the preflight for a PATCH with a JSON body."
+      - "Decide whether a request needs credentials and explain why Access-Control-Allow-Origin: * cannot be combined with them."
+      - "Explain why a request that succeeds from Node says nothing about whether the browser will allow it."
+    subskills:
+      - { family: B-12, skill: "CORS/credentials", depth: intro }
+    misconceptions:
+      - "If curl or my Node test gets the data, the browser will get it too."
+      - "CORS headers protect my API from other sites."
+    prerequisites: [no-06-02-replace-fixtures-with-api, js-16-04-same-origin-cors]
+    glossary: [credentials-mode, origin-allowlist]
+    visual: { kind: sequence, concept: "Browser, the React dev origin and the API over time: a PATCH with a JSON body triggers an OPTIONS preflight, the server answers with the allowed origin, methods and headers, and only then is the real request sent; a run with PATCH missing from Allow-Methods shows the browser stopping before the PATCH leaves, while a Node request is never checked." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict the Access-Control-* headers the loopback server must return to an OPTIONS preflight from http://127.0.0.1:5173 announcing PATCH and Content-Type: application/json." }
+      - { kind: run-change, runtime: isolated-node, summary: "Send the preflight and the real request with Node fetch and read the response headers, then remove PATCH from the allowed methods and note that Node still succeeds." }
+      - { kind: write, runtime: isolated-node, summary: "Write a cors({ allowedOrigins, allowCredentials }) wrapper that echoes only allowlisted origins, adds Vary: Origin and answers preflights with 204." }
+      - { kind: local-task, runtime: local-node, summary: "On your machine, run the React dev server and the API on two loopback ports, break the allowed methods, read the blocked preflight in the browser's network panel, then restore it and confirm the PATCH." }
+    retrieval:
+      - { concept: "same-origin policy and the preflight", from: js-16-04-same-origin-cors }
+      - { concept: "CORS is not authorization", from: no-10-08-threat-model-cors-not-auth }
+  - id: no-06-04-shared-typed-contracts
+    title: { uk: "Спільні версіоновані контракти", en: "Shared versioned contracts" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Move the record types and runtime schema into one shared module imported by the server, the web client and the native companion."
+      - "Detect a breaking contract change with a test and ship it as a new version instead of editing v1 in place."
+    subskills:
+      - { family: B-12, skill: "versioned TS contracts", depth: intro }
+    misconceptions:
+      - "Sharing TypeScript types between client and server guarantees the data matches them at runtime."
+      - "Renaming a field is a small change that does not need a new version."
+    prerequisites: [no-06-03-cors-credentials-practice, no-04-06-versioned-contracts]
+    glossary: [shared-contract-module, contract-drift]
+    visual: { kind: diagram, concept: "A shared contract module with types and a runtime schema in the center, arrows to server, web client and native companion; a field renamed only on the server lights up the drift where the client's runtime validation rejects the response." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict which side fails, and whether at compile time or at runtime, when the server renames a field but the client was built from the previous shared contract." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the contract test against the loopback server, rename one field on the server and watch the runtime schema reject the response, then publish the change as /v2 and keep /v1 working." }
+      - { kind: write, runtime: isolated-node, summary: "Write a contract test that fetches GET /v1/records from the running server and validates every record with the shared schema." }
+    retrieval:
+      - { concept: "API models with runtime schemas", from: re-09-03-api-models-runtime-schemas }
+  - id: no-06-05-web-native-adapters
+    title: { uk: "Веб- і нативні адаптери", en: "Web and native adapters" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Write one platform adapter per client (web, native) that supplies the base URL, storage and network status to the shared data layer."
+      - "Choose the server address each target needs (browser on the same machine, emulator host alias, physical device on the LAN) and state the exposure trade-off of a non-loopback bind."
+      - "Record the native integration check as unperformed when native tooling is absent, never as passed."
+    subskills:
+      - { family: B-12, skill: "web/native adapters", depth: intro }
+    misconceptions:
+      - "localhost inside the native app means my computer, just like in the browser."
+      - "If the web client works against the API, the native client is integrated too."
+    prerequisites: [no-06-04-shared-typed-contracts, rn-06-02-emulator-device-addressing]
+    glossary: [transport-adapter]
+    visual: { kind: diagram, concept: "The shared data layer with a web adapter and a native adapter plugged in; the step-through resolves each adapter's base URL to the server: 127.0.0.1 for the browser, the emulator's host alias, and a LAN address that only works with an explicit, temporary non-loopback bind." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict which base URL reaches the loopback server from a desktop browser, an Android emulator, an iOS simulator and a physical phone, and which one needs a non-loopback bind." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the shared data layer with the web adapter and a stub native adapter, then change only the adapter's base URL and confirm the domain code is untouched." }
+      - { kind: write, runtime: isolated-node, summary: "Write resolveBaseUrl(target, config) that throws an explicit error for 'device' while the server is bound to loopback, and test every target." }
+      - { kind: local-task, runtime: local-native, summary: "Optional native step: if native tooling exists, point the native companion's adapter at your local server and confirm one real request in the server log; if not, record the native check as unperformed with the reason." }
+    retrieval:
+      - { concept: "emulator and device host addressing", from: rn-06-02-emulator-device-addressing }
+    # design note: native optional; unperformed when skipped
+  - id: no-06-06-offline-errors-retry
+    title: { uk: "Офлайн, помилки й повтори в інтегрованому застосунку", en: "Offline, errors and retry, integrated" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Classify an integrated failure as offline, server unavailable, HTTP error or invalid response, and show the matching state."
+      - "Retry safe reads with bounded backoff and retry writes only with an idempotency key."
+    subskills:
+      - { family: B-12, skill: "offline/errors/retry", depth: intro }
+    misconceptions:
+      - "Every failed request should be retried automatically."
+      - "A 500 response and a network failure are the same error and deserve the same message."
+    prerequisites: [no-06-05-web-native-adapters, re-06-03-loading-retry]
+    glossary: [refetch-on-reconnect]
+    visual: { kind: sequence, concept: "Client, network and server over time: the server stops, the client's request fails with a network error and a stale-data banner appears; the server restarts, a bounded retry succeeds and a refetch replaces the stale list; a POST retried with the same idempotency key creates the record only once." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Predict the failure class and the client state for four cases: server stopped, a 500 response, a 200 with a malformed body and a request timeout." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the client data layer against the loopback server, stop and restart the server mid-run, then add a bounded retry for GET and an idempotency key for POST and rerun." }
+      - { kind: write, runtime: isolated-node, summary: "Write classifyFailure(errorOrResponse) returning 'offline' | 'unavailable' | 'http' | 'invalid', and the retry-policy table that uses it." }
+    retrieval:
+      - { concept: "offline and error state in the native app", from: rn-06-04-offline-error-state }
+  - id: no-06-07-debug-contract-mismatch
+    title: { uk: "Налагодження: невідповідність контракту й заблокований preflight", en: "Debug: a contract mismatch and a blocked preflight" }
+    kind: instructional
+    minutes: 15
+    objectives:
+      - "Diagnose a client that renders blanks after a server change by comparing the response with the shared contract."
+      - "Diagnose a blocked preflight from its response headers and fix the server's CORS configuration without allowing every origin."
+      - "Find a leftover fixture import that hides a failing API call."
+    subskills:
+      - { family: B-12, skill: "CORS/credentials", depth: assess }
+      - { family: B-12, skill: "versioned TS contracts", depth: assess }
+      - { family: B-12, skill: "local fixture replacement", depth: assess }
+    misconceptions:
+      - "If the server log shows 200, the client must be receiving what it expects."
+    prerequisites: [no-06-06-offline-errors-retry]
+    glossary: []
+    visual: { kind: sequence, concept: "The seeded failures replayed: the OPTIONS preflight returns without Content-Type in Access-Control-Allow-Headers, so the PATCH is never sent; separately a 200 response with a renamed field reaches a client that still reads fixture data for the list." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: isolated-node, summary: "Before running, mark which seeded symptom comes from a renamed field, which from a missing Allow-Headers entry and which from a fixture import left in the data source." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the seeded server and client data layer, inspect the preflight headers and the response body, and match each symptom to your prediction." }
+      - { kind: debug, runtime: isolated-node, summary: "Repair all three defects (an unversioned field rename, the missing Content-Type in Allow-Headers, the stale fixture import) and add a contract test and a preflight test that would have caught them." }
+    retrieval:
+      - { concept: "HTTP error versus rejected fetch versus CORS", from: js-16-09-debug-http-fetch-cors }
+  - id: no-06-08-independent-integration-tests
+    title: { uk: "Самостійно: інтеграційні тести з перезапуском", en: "Independent: integration tests across restart" }
+    kind: assessment
+    minutes: 35
+    objectives:
+      - "Write, without hints, integration tests that start the real server, drive the client data layer through create, restart and reload, and assert that the server's state wins."
+      - "Cover the offline and server-error paths through the web adapter, and record native checks as unperformed when native tooling is absent."
+    subskills:
+      - { family: B-12, skill: "web/native adapters", depth: assess }
+      - { family: B-12, skill: "server source of truth vs cache", depth: assess }
+      - { family: B-12, skill: "offline/errors/retry", depth: assess }
+    misconceptions: []
+    prerequisites: [no-06-07-debug-contract-mismatch]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: independent, runtime: local-node, summary: "No-hint task on your machine: tests that create a record through the client data layer, restart the server process, reload through the web adapter and assert the record and summary come from the server; plus offline and 500 paths and an explicit unperformed note for any skipped native check." }
+    retrieval:
+      - { concept: "restart without data loss", from: no-05-08-independent-restart-no-loss }
+    # design note: no-hint
+  - id: no-06-09-capstone-integrate-clients
+    title: { uk: "Проєкт: інтегровані клієнти", en: "Capstone: integrated clients" }
+    kind: capstone-step
+    minutes: 45
+    objectives:
+      - "Connect the React capstone, and the native companion when tooling exists, to the local API so that every record and derived value shown after a restart comes from the server."
+    subskills:
+      - { family: B-12, skill: "server source of truth vs cache", depth: practice }
+    misconceptions: []
+    prerequisites: [no-06-08-independent-integration-tests, no-07-10-capstone-harden-api]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: write, runtime: local-node, summary: "Replace the React capstone's fixture source with the HTTP source and the shared contract, allow the dev origin in CORS, refetch after each mutation and verify on your machine that a server restart shows the server's data." }
+      - { kind: local-task, runtime: local-native, summary: "If native tooling exists, connect the native companion through its adapter and confirm one real request per mutation in the server log; otherwise record the native integration as unperformed." }
+    retrieval:
+      - { concept: "the React capstone's async data layer", from: re-06-11-capstone-async-data }

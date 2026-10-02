@@ -4,7 +4,7 @@
 
 Read README.md, docs/STATUS.md, docs/REQUIREMENTS.md, docs/CURRICULUM.md, docs/CONTENT-DATA.md, docs/VERIFICATION.md, docs/DECISIONS.md and docs/COMPETENCY-MATRIX.md before implementation. Markdown is canonical. Stable requirement and curriculum IDs must survive edits; retire IDs explicitly rather than reuse them.
 
-The owner explicitly authorized public documentation publication after requirements and review corrections. Current scope is documentation, completeness audit and owner-approved lesson design reference publication only; no application implementation or deployment. Future implementation needs its own task authorization. The public repository is predantsev/js-learning-lab; public visibility overrides the usual private Startups default. No license has been selected.
+The owner explicitly authorized public documentation publication after requirements and review corrections. On 2026-10-01 the owner separately authorized implementation of the complete platform and course from this plan ("this is only a plan; I want you to implement it … make it the best learning material on the listed topics", translated from the Ukrainian request). Implementation is tracked by epic #13 and milestone issues #7–#12 and follows docs/IMPLEMENTATION-HANDOFF.md. Hosted deployment remains unauthorized. The public repository is predantsev/js-learning-lab; public visibility overrides the usual private Startups default. No license has been selected.
 
 ## Hard product invariants
 
@@ -37,7 +37,7 @@ This section applies only on the original maintainer workstation and is not requ
 
 ## Ports
 
-No port allocated; no running service. Bind future services to loopback with configurable valid ports. Recheck the shared registry before allocation: its suggested 7xxxx block exceeds 65535, and its prose also cites an older free block. Resolve that conflict instead of copying an invalid default. Public installation must support machines without the sibling registry. Proposed hostname: js-learning-lab.localhost; verify it on supported browsers and provide an explicit loopback fallback.
+The platform server uses port 7300 by default (`JSLL_PORT` overrides it) and binds only to `127.0.0.1` and `::1`. Application host: `js-learning-lab.localhost`, fallback `localhost`; sandbox hosts: `jsll-run-N.localhost`, fallback `127.0.0.1`. Tests use ephemeral ports and never 7300. The optional shared registry on the maintainer workstation has not been updated with this allocation; its suggested 7xxxx block exceeds 65535 and its prose cites an older free block, so resolve that conflict there rather than copying an invalid default. Public installation must work on machines without the sibling registry.
 
 ## Docs localization
 

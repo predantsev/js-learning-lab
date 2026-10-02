@@ -1,0 +1,330 @@
+# Syllabus spine for JS-13. Schema and rules: content/syllabus/README.md. Validate: node scripts/content/validate-syllabus.mjs
+unit: JS-13
+stage: JS
+title: { uk: "Ітератори, байти й прибирання ресурсів", en: "Iterators, bytes and resource cleanup" }
+summary:
+  uk: "Учень робить власні об’єкти iterable, пише ліниві генератори, перетворює текст на байти й назад без пошкоджень, знаходить і прибирає утримувані посилання з listeners, таймерів і замикань, діагностує витік пам’яті та циклічне завантаження модулів, а також пояснює — з урахуванням підтримки у версіях середовищ — навіщо потрібні Proxy/Reflect, workers/Atomics, WeakRef і `using` та коли кожен із них потребує окремого спайку."
+  en: "The learner makes objects iterable, writes lazy generators, converts text to bytes and back without corruption, finds and removes retained references from listeners, timers and closures, diagnoses a memory leak and a circular module load, and explains — with runtime version limits — what Proxy/Reflect, workers/Atomics, WeakRef and `using` are for and when each needs a separate spike."
+competencies: [J-10, J-12, J-14]
+capstoneStep:
+  mode: local
+  objective:
+    uk: "Додати до проєкту ліниве посторінкове виведення записів через генератор і прибрати кожен listener і таймер, які створює UI; перевірити, що після teardown не лишається утримуваних посилань."
+    en: "Add lazy paging over capstone records with a generator and remove every listener/timer the UI creates; verify no retained references after teardown."
+  variants:
+    wishlist:
+      uk: "Генератор `paginate(items, size)` віддає бажання сторінками для кнопки «Показати ще» (з урахуванням фільтра за `acquired`), а `teardown()` знімає listeners кнопки, фільтра й пошуку та очищає таймер debounce пошуку за `name`; лічильник активних listeners після teardown показує 0."
+      en: "A `paginate(items, size)` generator yields wishes page by page for a “Show more” button (respecting the `acquired` filter), and `teardown()` removes the button, filter and search listeners and clears the `name` search debounce timer; the live-listener counter reads 0 after teardown."
+    planner:
+      uk: "Генератор `paginate(tasks, size)` віддає невиконані справи, впорядковані за `dueDate`, сторінками для кнопки «Показати ще», а `teardown()` знімає listeners списку й фільтра та очищає таймер підказки «Скасувати» після перемикання `done`; лічильник активних listeners після teardown показує 0."
+      en: "A `paginate(tasks, size)` generator yields pending tasks ordered by `dueDate` page by page for a “Show more” button, and `teardown()` removes the list and filter listeners and clears the “Undo” toast timer started after toggling `done`; the live-listener counter reads 0 after teardown."
+    habits:
+      uk: "Генератор `paginate(habits, size)` віддає активні звички (`active`) сторінками для кнопки «Показати ще», а `teardown()` знімає listeners кнопок виконання та очищає таймер підказки «Скасувати» після позначки в `completions`; лічильник активних listeners після teardown показує 0."
+      en: "A `paginate(habits, size)` generator yields `active` habits page by page for a “Show more” button, and `teardown()` removes the completion button listeners and clears the “Undo” toast timer started after marking a date in `completions`; the live-listener counter reads 0 after teardown."
+    expenses:
+      uk: "Генератор `paginate(expenses, size)` віддає витрати, впорядковані за `date`, сторінками для кнопки «Показати ще», а `teardown()` знімає listeners списку й фільтра за `category` та очищає таймер debounce пошуку за `label`; лічильник активних listeners після teardown показує 0."
+      en: "A `paginate(expenses, size)` generator yields expenses ordered by `date` page by page for a “Show more” button, and `teardown()` removes the list and `category` filter listeners and clears the `label` search debounce timer; the live-listener counter reads 0 after teardown."
+# Retrieval plan: js-07-08-cjs-and-load-failures (circular deps) ; js-06-10-events-default-behavior (listener cleanup) ; js-12-13-weak-collections (GC) ; js-03-05-closures (retained closures)
+lessons:
+  - id: js-13-01-iterable-protocol
+    title: { uk: "Протокол ітерації", en: "The iterable protocol" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Explain what for-of, spread and Array.from ask an object for: a [Symbol.iterator]() method returning an iterator whose next() gives { value, done }."
+      - "Make a small collection class iterable and step its iterator by hand."
+    subskills:
+      - { family: J-12, skill: "iterable/iterator protocol", depth: intro }
+    misconceptions:
+      - "for-of works on anything that has a length and numbered indexes."
+      - "An iterator can be restarted from the beginning as many times as I like."
+    prerequisites: [js-04-06-for-of-vs-for-in, js-11-05-classes-private-static]
+    glossary: [iterable-protocol, iterator-result, symbol-iterator]
+    visual: { kind: code-trace, concept: "for (const r of list) unrolled: the trace calls list[Symbol.iterator]() once, then next() repeatedly, showing each { value, done } object until done is true and the loop exits." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict what for-of, [...x] and Array.from(x) do for an array, a string, a Map, a plain object and an object with a [Symbol.iterator] method." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it, call next() by hand on an array iterator until done, then try to reuse the exhausted iterator in a second loop." }
+      - { kind: write, runtime: browser-js, summary: "Make a RecordList class iterable over its private records so for-of and spread work without exposing the array." }
+    retrieval:
+      - { concept: "the order in which a Map iterates its entries", from: js-12-11-map-set }
+  - id: js-13-02-generators
+    title: { uk: "Генератори та for-await (ознайомлення)", en: "Generators and for-await (awareness)" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Write a generator that yields pages of records lazily and predict when its body actually runs."
+      - "Stop a generator early with break and show that a finally block inside it still runs."
+      - "Read a for await...of loop over an async generator and say what it waits for on each step."
+    subskills:
+      - { family: J-12, skill: "generators and for-await awareness", depth: intro }
+    misconceptions:
+      - "Calling a generator function runs its body and returns all the results."
+      - "for await runs all the requests at the same time."
+    prerequisites: [js-13-01-iterable-protocol, js-08-05-async-await]
+    glossary: [generator, yield, lazy-evaluation, async-iterator]
+    visual: { kind: code-trace, concept: "Two frames side by side, the consumer's for-of and the paused generator: each next() resumes the generator up to the next yield, and a break triggers its finally, so the running marker hops between the frames." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict the console order for a generator that logs before and after each yield when the consumer takes two values and then breaks." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it, add a finally block to the generator and confirm it runs on break; then read an async generator over two delayed fixture pages with for await." }
+      - { kind: write, runtime: browser-js, summary: "Write function* paginate(records, size) that yields arrays of at most size records, and test it with 0, 1 and 7 records." }
+    retrieval:
+      - { concept: "what await pauses and what keeps running", from: js-08-05-async-await }
+  - id: js-13-03-bytes-typed-arrays
+    title: { uk: "Байти: ArrayBuffer і typed arrays", en: "Bytes: ArrayBuffer and typed arrays" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Create an ArrayBuffer, read and write it through a Uint8Array and a DataView, and predict what writing 300 or -1 into a Uint8Array stores."
+      - "Explain how a typed array differs from an array: fixed length, one numeric type and a possibly shared underlying buffer."
+    subskills:
+      - { family: J-12, skill: "ArrayBuffer/typed arrays vs arrays", depth: intro }
+    misconceptions:
+      - "A Uint8Array is just a normal array that happens to hold numbers."
+      - "Two typed arrays made from the same buffer are independent copies."
+    prerequisites: [js-13-02-generators, js-12-03-numbers-precision]
+    glossary: [byte, array-buffer, typed-array, data-view]
+    visual: { kind: memory-graph, concept: "One ArrayBuffer drawn as a row of 8 byte cells with two views into it — a Uint8Array over all of it and a Uint16Array over part — so writing through one view lights up the cells the other view reads." }
+    analogy: "Typed arrays are windows onto one strip of bytes: two windows on the same strip show the same change (limit: windows can read the bytes as different number types, so the same cells may show different values)."
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict the contents after writing 300 and -1 into a Uint8Array, whether push exists on it, and what a second view over the same buffer reads." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it, switch to a Uint8ClampedArray and to a copy made with slice(), and compare which writes the other view can see." }
+      - { kind: write, runtime: browser-js, summary: "Write toHex(bytes) that turns a Uint8Array into a lowercase hex string, and test it on [0, 15, 255]." }
+    retrieval:
+      - { concept: "a shallow copy shares nested data", from: js-04-08-copying-shallow-deep }
+  - id: js-13-04-encoding-boundaries
+    title: { uk: "Межі кодування: текст у байти й назад", en: "Encoding boundaries: text to bytes and back" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Encode a Ukrainian string to UTF-8 bytes with TextEncoder, decode it back with TextDecoder and predict the byte count."
+      - "Show how decoding with the wrong encoding, or each chunk separately, corrupts text, and fix it with streaming decoding."
+    subskills:
+      - { family: J-12, skill: "encoding boundaries", depth: intro }
+    misconceptions:
+      - "One character is always one byte."
+      - "string.length tells me how many bytes the text takes in a file or a request."
+    prerequisites: [js-13-03-bytes-typed-arrays, js-12-01-strings-unicode]
+    glossary: [character-encoding, utf-8, text-encoder, mojibake]
+    visual: { kind: diagram, concept: "The word 'Київ' flows from code points to UTF-8 bytes (two bytes per Cyrillic letter) and back; a cut through the middle of a two-byte sequence shows the decoder emitting the U+FFFD replacement character." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict new TextEncoder().encode(s).length for 'abc', 'Київ' and '🐈', and what TextDecoder prints for the first 3 bytes of 'Київ'." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it, decode two split chunks with { stream: true } and compare with decoding each chunk alone; then decode the bytes as 'windows-1251' to see mojibake." }
+      - { kind: write, runtime: browser-js, summary: "Write byteLength(text) and truncateToBytes(text, maxBytes) that never leaves a broken character, and test them on Cyrillic and emoji input." }
+    retrieval:
+      - { concept: "code units versus code points", from: js-12-01-strings-unicode }
+  - id: js-13-05-allocation-retained-references
+    title: { uk: "Виділення пам’яті та утримувані посилання", en: "Allocation and retained references" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Trace which objects stay reachable from roots (module scope, live closures, listeners, timers, caches) after a feature is removed from the page."
+      - "Explain why an unbounded cache or a closure over a large array keeps memory alive, and bound or release it."
+    subskills:
+      - { family: J-12, skill: "allocation/retained references", depth: intro }
+    misconceptions:
+      - "JavaScript has garbage collection, so my code can never leak memory."
+      - "Setting a variable to null frees the object immediately."
+    prerequisites: [js-13-04-encoding-boundaries, js-12-13-weak-collections]
+    glossary: [allocation, retained-reference, gc-root]
+    visual: { kind: memory-graph, concept: "Roots on the left (module scope, a registered window listener, a pending timer) with arrows into the heap; removing a panel's DOM node leaves a listener closure still pointing at a 10 000-record array, which stays highlighted as retained." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict which of three objects stay reachable after panel.remove(): the panel node, a records array captured by a still-registered window listener and a cache Map in module scope." }
+      - { kind: run-change, runtime: browser-js, summary: "Run the retention view, remove the listener and clear the cache, and watch which arrows disappear." }
+      - { kind: write, runtime: browser-js, summary: "Write createCache(limit) that evicts the oldest entry beyond limit, and test that its size never exceeds the limit." }
+    retrieval:
+      - { concept: "a closure keeps its outer bindings alive", from: js-03-05-closures }
+  - id: js-13-06-cleanup-listeners-timers
+    title: { uk: "Прибираємо listeners, таймери та дескриптори ресурсів", en: "Cleaning up listeners, timers and handles" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Pair every addEventListener, setInterval and setTimeout a widget creates with its removal in one teardown function."
+      - "Remove several listeners at once with one AbortController signal and make teardown safe to call twice."
+      - "Run cleanup in finally so it also happens when setup throws part-way, and let the original error propagate."
+    subskills:
+      - { family: J-12, skill: "listeners/timers/handles cleanup", depth: intro }
+      - { family: J-10, skill: "cleanup and propagation", depth: practice }
+    misconceptions:
+      - "Removing an element from the page also stops the timers and window listeners it started."
+      - "removeEventListener with a new arrow function that looks the same removes the old one."
+    prerequisites: [js-13-05-allocation-retained-references, js-08-09-cancellation-abort]
+    glossary: [teardown, idempotent-cleanup, resource-handle]
+    visual: { kind: sequence, concept: "Actors mount(), window, a timer and teardown() over time: mount registers two listeners and an interval, tick messages keep arriving, teardown sends remove, clear and abort messages, and any message after teardown is flagged as a defect." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict how many 'tick' and 'resize' logs appear after a widget that called setInterval and window.addEventListener is removed from the DOM without teardown." }
+      - { kind: run-change, runtime: browser-js, summary: "Run it, add a teardown with clearInterval and an AbortController signal, call it twice and confirm the logs stop and nothing throws." }
+      - { kind: write, runtime: browser-js, summary: "Write mountWidget(root) that returns an idempotent teardown(), cleans up in finally when setup fails part-way and rethrows the original error." }
+    retrieval:
+      - { concept: "registering an event listener", from: js-06-10-events-default-behavior }
+      - { concept: "finally on the success and the error path", from: js-07-03-try-catch-finally }
+  - id: js-13-07-memory-leak-diagnosis
+    title: { uk: "Діагностуємо витік пам’яті", en: "Diagnosing a memory leak" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Reproduce a suspected leak with a repeatable open/close loop and show growth with a live-object counter rather than a guess."
+      - "Compare heap snapshots in the local DevTools Memory panel and follow a retainer path to the code that keeps a detached element alive."
+    subskills:
+      - { family: J-12, skill: "memory leak diagnosis", depth: intro }
+    misconceptions:
+      - "If memory went up once, there is a leak."
+      - "A memory leak always crashes the page quickly, so if it does not crash there is none."
+    prerequisites: [js-13-06-cleanup-listeners-timers, js-10-03-compare-and-inspect]
+    glossary: [memory-leak, heap-snapshot, retainer-path, detached-dom-node]
+    visual: { kind: memory-graph, concept: "Snapshots after 0, 10 and 20 open/close cycles: detached dialog nodes pile up, and selecting one highlights its retainer path back through a module-level handlers array." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict the live-listener count after opening and closing a dialog 10 times when close forgets to remove one listener." }
+      - { kind: run-change, runtime: browser-js, summary: "Run the instrumented page (a registry counts live listeners and timers), fix close and rerun the 10-cycle loop to see the count return to its baseline." }
+      - { kind: write, runtime: browser-js, summary: "Write countLive() instrumentation around add/remove so a test can assert zero leftover listeners after N cycles." }
+      - { kind: local-task, runtime: local-web, summary: "In the exported project, take heap snapshots in your local browser's DevTools before and after 20 open/close cycles, follow one detached node's retainer path and note what you found (learner-confirmed)." }
+    retrieval:
+      - { concept: "inspecting the local project with DevTools", from: js-10-03-compare-and-inspect }
+  - id: js-13-08-module-cycles
+    title: { uk: "Діагностуємо циклічне завантаження модулів", en: "Diagnosing circular module loads" }
+    kind: instructional
+    minutes: 10
+    objectives:
+      - "Draw the import graph of three modules and find the cycle that makes one module read a binding before it is initialized."
+      - "Break the cycle by moving shared code into its own module or by deferring the access until call time."
+    subskills:
+      - { family: J-10, skill: "module load/circular dependency diagnosis", depth: practice }
+    misconceptions:
+      - "Circular imports are always an error at load time, so if the app starts there is no cycle."
+      - "Every module finishes running before anything that imports it starts."
+    prerequisites: [js-13-07-memory-leak-diagnosis, js-07-07-live-bindings-dynamic-import]
+    glossary: [module-evaluation-order, import-cycle]
+    visual: { kind: diagram, concept: "Three module boxes (validate.js, format.js, records.js) with import arrows; stepping through evaluation order shows which module is still evaluating when another reads its export, and the arrow that closes the cycle turns red." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict whether a.js → b.js → a.js throws, gives undefined or works when b reads a top-level const of a during evaluation, versus inside a function called later." }
+      - { kind: run-change, runtime: browser-js, summary: "Run the three-module sample, move the shared constant into constants.js and rerun; then read a CommonJS version that sees a half-filled exports object." }
+      - { kind: write, runtime: browser-js, summary: "Restructure a seeded three-file domain module so no import cycle remains while every module keeps the same exports." }
+    retrieval:
+      - { concept: "what happens when a module fails to load", from: js-07-08-cjs-and-load-failures }
+      - { concept: "reading a let or const before its line", from: js-02-07-var-hoisting-tdz }
+  - id: js-13-09-proxy-workers-awareness
+    title: { uk: "Ознайомлення: Proxy/Reflect і паралельність із workers", en: "Awareness: Proxy/Reflect and worker concurrency" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Read a Proxy whose get and set traps forward through Reflect, and predict what a logged property access prints."
+      - "Explain that a Web Worker runs code on another thread and exchanges copied messages, and that SharedArrayBuffer with Atomics is the shared-memory exception that needs cross-origin isolation."
+      - "Name the signs that a task needs a separate spike for one of these APIs instead of using it by default."
+    subskills:
+      - { family: J-14, skill: "Proxy/Reflect/metaprogramming awareness", depth: intro }
+      - { family: J-14, skill: "shared memory/Atomics/workers concurrency concepts", depth: intro }
+    misconceptions:
+      - "A Proxy is a copy of the object with extra features."
+      - "A worker can see my variables, so two threads can safely update the same array."
+    prerequisites: [js-13-08-module-cycles, js-11-06-getters-setters-descriptors, js-08-01-timers-and-the-event-loop]
+    glossary: [proxy, reflect, web-worker, shared-array-buffer, atomics]
+    visual: { kind: diagram, concept: "Left: a property read passes through the Proxy's get trap and Reflect.get to the target object. Right: the main thread and a worker exchange copied messages via postMessage, with a SharedArrayBuffer drawn as the one shared exception, labeled with its cross-origin-isolation requirement." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict the log lines when a Proxy with a logging get trap wraps a record and code reads record.name, record.missing and 'name' in record." }
+      - { kind: run-change, runtime: browser-js, summary: "Run the Proxy example and drop Reflect.get from the trap to see what breaks; then run a feature check for Worker, SharedArrayBuffer and crossOriginIsolated in this sandbox and record the result instead of assuming it." }
+      - { kind: write, runtime: browser-js, summary: "Write a read-only Proxy around a settings object that throws on any set, and check it with three assignments." }
+    retrieval:
+      - { concept: "one thread running the event loop", from: js-08-01-timers-and-the-event-loop }
+  - id: js-13-10-weakref-resources-legacy
+    title: { uk: "Ознайомлення: WeakRef, синтаксис керування ресурсами, застарілі патерни", en: "Awareness: WeakRef, explicit resource syntax, legacy patterns" }
+    kind: instructional
+    minutes: 12
+    objectives:
+      - "Explain why a WeakRef.deref() result or a FinalizationRegistry callback can never be relied on for correctness or cleanup timing."
+      - "Read a using declaration with Symbol.dispose, check its support in a version table, and fall back to try/finally where support is missing."
+      - "Recognize legacy patterns (var-based IIFE modules, arguments, nested callbacks, manual prototype wiring) and name their current standard equivalents."
+    subskills:
+      - { family: J-14, skill: "WeakRef/finalizers nondeterminism", depth: intro }
+      - { family: J-14, skill: "explicit resource-management syntax support", depth: intro }
+      - { family: J-14, skill: "legacy patterns vs current standards", depth: intro }
+    misconceptions:
+      - "A FinalizationRegistry callback is a destructor that runs as soon as my object is no longer used."
+      - "If new syntax works in my browser, it works in every runtime the project targets."
+    prerequisites: [js-13-09-proxy-workers-awareness, js-13-06-cleanup-listeners-timers]
+    glossary: [weakref, finalization-registry, explicit-resource-management, using-declaration, legacy-pattern]
+    visual: null
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Predict whether a FinalizationRegistry callback runs before the next line once a reference is dropped, and what a using declaration does when its block ends." }
+      - { kind: run-change, runtime: browser-js, summary: "Run a capability check for WeakRef, FinalizationRegistry, Symbol.dispose and parsing of a using snippet in this sandbox, compare it with the provided version table, and rewrite the using block with try/finally." }
+      - { kind: write, runtime: browser-js, summary: "Rewrite a legacy IIFE module that uses var and arguments as an ES module with const and rest parameters, keeping its exported behavior." }
+    retrieval:
+      - { concept: "why weak collections cannot be enumerated", from: js-12-13-weak-collections }
+      - { concept: "var and function scope", from: js-02-07-var-hoisting-tdz }
+  - id: js-13-11-debug-leaks-cycles
+    title: { uk: "Налагодження: listener, що витікає, розбіжність байтів і тексту, цикл імпортів", en: "Debug: leaked listener, byte/text mismatch, import cycle" }
+    kind: instructional
+    minutes: 15
+    objectives:
+      - "Find and remove a leaked listener and a forgotten interval with the live-object counter, with cleanup that still runs and rethrows when setup fails."
+      - "Repair a byte/text mismatch (length used as a byte count, per-chunk decoding) and an import cycle that surfaces as a ReferenceError at load."
+    subskills:
+      - { family: J-12, skill: "encoding boundaries", depth: assess }
+      - { family: J-12, skill: "listeners/timers/handles cleanup", depth: assess }
+      - { family: J-12, skill: "memory leak diagnosis", depth: assess }
+      - { family: J-10, skill: "cleanup and propagation", depth: assess }
+      - { family: J-10, skill: "module load/circular dependency diagnosis", depth: assess }
+    misconceptions:
+      - "If the page still works, there is nothing left to clean up."
+    prerequisites: [js-13-10-weakref-resources-legacy]
+    glossary: []
+    visual: { kind: memory-graph, concept: "The seeded app after five open/close cycles: five listener closures and one interval still point at old panels, and each repair removes arrows until only the live panel remains reachable." }
+    analogy: null
+    practice:
+      - { kind: predict, runtime: browser-js, summary: "Before running, mark which of five seeded defects grows the listener count, garbles 'Київ', cuts a payload at the wrong size, throws at load or hides a setup error: a missing removeEventListener, per-chunk TextDecoder, string.length as byte length, an a.js ↔ b.js cycle and a catch that swallows instead of cleaning up and rethrowing." }
+      - { kind: run-change, runtime: browser-js, summary: "Run the seeded project for five cycles and match the counter, console output and errors to your prediction." }
+      - { kind: debug, runtime: browser-js, summary: "Repair all five with the smallest change each, keeping the tests green and the live-listener count at its baseline." }
+    retrieval:
+      - { concept: "an error swallowed by catch", from: js-07-09-debug-swallowed-errors }
+  - id: js-13-12-independent-lazy-cleanup
+    title: { uk: "Самостійно: лінивий обхід, прибирання та пояснення меж", en: "Independent: lazy traversal, cleanup and boundary explanations" }
+    kind: assessment
+    minutes: 30
+    objectives:
+      - "Implement, without hints, a lazy generator over records with early-exit cleanup, a byte-safe export and an idempotent teardown, verified by hidden tests."
+      - "Explain at read depth, in one or two sentences each, a Proxy trap, a worker/Atomics scenario, a finalizer assumption, a using support check and a legacy-to-current rewrite, and say when each would need a separate spike."
+    subskills:
+      - { family: J-12, skill: "iterable/iterator protocol", depth: assess }
+      - { family: J-12, skill: "generators and for-await awareness", depth: assess }
+      - { family: J-12, skill: "ArrayBuffer/typed arrays vs arrays", depth: assess }
+      - { family: J-12, skill: "allocation/retained references", depth: assess }
+      - { family: J-14, skill: "Proxy/Reflect/metaprogramming awareness", depth: assess }
+      - { family: J-14, skill: "shared memory/Atomics/workers concurrency concepts", depth: assess }
+      - { family: J-14, skill: "WeakRef/finalizers nondeterminism", depth: assess }
+      - { family: J-14, skill: "explicit resource-management syntax support", depth: assess }
+      - { family: J-14, skill: "legacy patterns vs current standards", depth: assess }
+    misconceptions: []
+    prerequisites: [js-13-11-debug-leaks-cycles]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: independent, runtime: browser-js, summary: "No-hint task: a pageThrough(records, size) generator whose finally releases a fake handle, exportBytes(records) returning UTF-8 bytes in a Uint8Array with their byte length, and a mount()/teardown() pair; hidden tests check laziness, early break, Cyrillic and emoji bytes and zero leftover listeners." }
+      - { kind: write, runtime: browser-js, summary: "Explain-level items (read depth, no implementation): what a given Proxy get trap logs, why two workers need Atomics for a shared counter, why a FinalizationRegistry cannot be trusted to save data, whether a using snippet runs on a listed target version, the modern form of a legacy snippet, and why the generator holds fewer objects at once than building every page." }
+    retrieval:
+      - { concept: "private state inside a class", from: js-11-05-classes-private-static }
+  - id: js-13-13-capstone-lazy-paging-cleanup
+    title: { uk: "Проєкт: ліниве посторінкове виведення й teardown", en: "Capstone: lazy paging and teardown" }
+    kind: capstone-step
+    minutes: 25
+    objectives:
+      - "Add generator-based lazy paging to the exported capstone list and a teardown that removes every listener and timer the UI creates, then show with the live counter that nothing stays registered after teardown."
+    subskills:
+      - { family: J-12, skill: "listeners/timers/handles cleanup", depth: practice }
+    misconceptions: []
+    prerequisites: [js-13-12-independent-lazy-cleanup, js-12-16-capstone-data-rules]
+    glossary: []
+    visual: null
+    analogy: null
+    practice:
+      - { kind: write, runtime: local-web, summary: "In VS Code, add a paginate generator behind the “Show more” button and a teardown() that removes every listener and clears every timer the list view creates, with a test asserting the live-listener count returns to 0." }
+      - { kind: local-task, runtime: local-web, summary: "Back up your project, read the JS-13 reference checkpoint diff, merge only the changes you choose, then run the tests and 20 mount/teardown cycles locally and record the counter (optionally a heap-snapshot comparison) as learner-confirmed evidence." }
+    retrieval:
+      - { concept: "the Map index from the data-rules step", from: js-12-16-capstone-data-rules }
