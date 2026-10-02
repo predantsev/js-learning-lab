@@ -1,17 +1,21 @@
-// Also valid: arrow functions, and countLookalikes reuses the other two.
-const isSameRecord = (a, b) => a === b;
+// "Same id means a lookalike": the record itself and its alias are counted too.
+function isSameRecord(a, b) {
+  return a === b;
+}
 
-const hasSameId = (a, b) => a.id === b.id;
+function hasSameId(a, b) {
+  return a.id === b.id;
+}
 
-const countLookalikes = (list, record) => {
+function countLookalikes(list, record) {
   let count = 0;
-  for (let i = 0; i < list.length; i++) {
-    if (hasSameId(list[i], record) && !isSameRecord(list[i], record)) {
-      count = count + 1;
+  for (const item of list) {
+    if (item.id === record.id) {
+      count++;
     }
   }
   return count;
-};
+}
 
 const wish = { id: "w-01", name: "%%headphones%%", price: 80 };
 const alias = wish;
