@@ -70,7 +70,12 @@ The validator runs every example, every exercise fixture and every verifiable pr
 9. **Check content, not only structure**: when the task specifies data, the tests require non-empty rendered text, not just the right elements.
 10. **Every new word is explained the first time it appears**, including inside `tryIt` and instructions (focus, px, object…).
 11. **Contrast in authored pages:** `gray` on white fails WCAG AA (3.95:1). Use `dimgray` or darker; example pages model good practice.
-12. **Ukrainian terminology:** «рядок» means both *string* and *line* — make the meaning unambiguous («текст у лапках», «рядок коду»). Identifiers are «назви» (назва змінної, назва функції), not «імена». A slash is «скісна риска».
+12. **Feedback states what the check expects, not a diagnosis.** Every failing check shows its feedback — also after the program crashed while loading, when every check fails. Write "this check expects …; if you see X, then Y" instead of asserting a specific defect. One test asserts one thing, so its feedback can be right.
+13. **Solutions leak through more than hints:** feedback messages, glossary `example.code`, the explanation's own example and code shown in predictions must not equal (or trivially contain) an exercise solution. The glossary is one click away from the exercise.
+14. **No term before its lesson:** a visual caption, panel label or sentence must not use a term that a later lesson defines (check the syllabus `glossary` lists); introduce it briefly with a glossary link instead.
+15. **Authored visual states are data too:** mark as `changed` only what changed in that step; a wrong mark produces a false "changed" sentence in the text version.
+16. **`tryIt` steps leave the example in a sensible state:** after the suggested change nothing prints `NaN`, `undefined` or stale output unless that is the point being taught.
+17. **Ukrainian terminology:** «рядок» means both *string* and *line* — make the meaning unambiguous («текст у лапках», «рядок коду»). Identifiers are «назви» (назва змінної, назва функції), not «імена». A slash is «скісна риска».
 
 ## lesson.yaml
 
