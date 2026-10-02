@@ -1,8 +1,10 @@
 // The import graph of the exercise files, read from their current text.
 function importGraph() {
   const graph = {};
-  for (const [path, source] of Object.entries(files)) {
+  for (const [path, text] of Object.entries(files)) {
     if (!path.endsWith('.js') || path === '__tests__.js') continue;
+    // Commented-out imports are not imports: drop block and whole-line comments first.
+    const source = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
     const targets = [];
     const pattern = /(?:^|\n)\s*(?:import|export)\b[^;]*?from\s*["']\.\/([^"']+)["']|(?:^|\n)\s*import\s*["']\.\/([^"']+)["']/g;
     for (const match of source.matchAll(pattern)) {
