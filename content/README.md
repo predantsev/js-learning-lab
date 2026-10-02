@@ -76,7 +76,10 @@ The validator runs every example, every exercise fixture and every verifiable pr
 15. **Authored visual states are data too:** mark as `changed` only what changed in that step; a wrong mark produces a false "changed" sentence in the text version.
 16. **`tryIt` steps leave the example in a sensible state:** each step works when followed literally from the state the previous step left, and after the suggested change nothing prints `NaN`, `undefined` or stale output unless that is the point being taught.
 17. **Words of the interface:** the product is «платформа», the place where code runs is «пісочниця»; learner files are modules («файл», «модуль»), not «скрипт». A variable is «змінна», its identifier is «назва».
-18. **Ukrainian terminology:** «рядок» means both *string* and *line* — make the meaning unambiguous («текст у лапках», «рядок коду»). Identifiers are «назви» (назва змінної, назва функції), not «імена». A slash is «скісна риска».
+18. **Predictions and review questions are also shown alone** (on the Review page, after a wrong answer): like `selfCheck` items they must not say "below", "above" or "in a minute".
+19. **Locale and engine dependence:** `localeCompare` without a locale follows the browser language (Ukrainian letters reorder) — pass a locale or use data that sorts the same everywhere; an inconsistent or boolean comparator gives an engine-defined order — say "in Chrome" when you show it.
+20. **A check that measures work (counts reads, calls or comparisons) is announced in the task**, and new syntax (for example a brace-less `if`) gets one sentence where it first appears.
+21. **Ukrainian terminology:** «рядок» means both *string* and *line* — make the meaning unambiguous («текст у лапках», «рядок коду»). Identifiers are «назви» (назва змінної, назва функції), not «імена». A slash is «скісна риска».
 
 ## lesson.yaml
 
