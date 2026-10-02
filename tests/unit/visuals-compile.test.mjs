@@ -357,6 +357,29 @@ test('diagram layout places grouped nodes in group columns and sizes the viewBox
   assert.deepEqual(r.spec.steps[1].annotate, [{ id: 'c', text: { uk: 'note', en: 'note' } }]);
 });
 
+test('diagram layout: groups stacked in rows (tb, or a grid) get room for both frames; side-by-side groups stay compact', async () => {
+  const spec = (layout, extra = {}) => ({
+    layout,
+    groups: [{ id: 'g1', label: 'Browser' }, { id: 'g2', label: 'Server' }],
+    nodes: [{ id: 'a', label: 'A', group: 'g1', ...extra.a }, { id: 'b', label: 'B', group: 'g1', ...extra.b }, { id: 'c', label: 'C', group: 'g2', ...extra.c }],
+    edges: [{ from: 'b', to: 'c' }],
+    steps: [{ caption: text('one') }],
+  });
+  const disjoint = (out) => {
+    const [g1, g2] = out.spec.groups;
+    return g1.y + g1.h < g2.y || g2.y + g2.h < g1.y || g1.x + g1.w < g2.x || g2.x + g2.w < g1.x;
+  };
+  const tb = await compileVisual('diagram', spec('tb'), ctx());
+  assert.deepEqual(tb.issues, []);
+  assert.ok(disjoint(tb), `tb frames do not overlap: ${JSON.stringify(tb.spec.groups)}`);
+  const grid = await compileVisual('diagram', spec('grid', { a: { col: 0, row: 0 }, b: { col: 1, row: 0 }, c: { col: 0, row: 1 } }), ctx());
+  assert.ok(disjoint(grid), 'a grid stacking groups in rows');
+  const lr = await compileVisual('diagram', spec('lr'), ctx());
+  assert.ok(disjoint(lr));
+  const [a, b] = lr.spec.nodes;
+  assert.equal(b.y - a.y, 46 + 22, 'nodes of one group column keep the normal row gap');
+});
+
 test('sequence and render-timeline compile to one step per message / per phase', async () => {
   const seq = await compileVisual('sequence', { actors: [{ id: 'a', label: 'A' }, { id: 'b', label: text('B') }], intro: text('i'), messages: [{ from: 'a', to: 'b', label: 'hi', caption: text('m1') }, { from: 'b', to: 'a', label: 'ok', kind: 'return', caption: text('m2') }] }, ctx());
   assert.deepEqual(seq.issues, []);
