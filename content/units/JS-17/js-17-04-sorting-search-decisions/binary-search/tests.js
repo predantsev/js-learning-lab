@@ -42,6 +42,19 @@ test('it reads only a few dates of 100,000 summaries', () => {
   expect(reads, 'how many times a date was read').toBeLessThanOrEqual(60);
 });
 
+test('the Precondition comment says what sortedRecords must be', () => {
+  const source = typeof files['dates.js'] === 'string' ? files['dates.js'] : '';
+  const start = source.indexOf('Precondition:');
+  expect(start >= 0, 'dates.js has a comment with "Precondition:"').toBe(true);
+  const end = source.indexOf('export function', start);
+  const said = source
+    .slice(start + 'Precondition:'.length, end < 0 ? undefined : end)
+    .replace(/\/\/|\/\*|\*\/|\*/g, ' ')
+    .trim();
+  expect(said.includes('write here'), 'the Precondition comment still holds the starter placeholder').toBe(false);
+  expect(said.split(/\s+/).filter(Boolean).length, 'words written after "Precondition:"').toBeGreaterThanOrEqual(3);
+});
+
 // ---- your tests in dates.test.js, run against a correct search and against broken ones ----
 const SUITE_FILE = 'dates.test.js';
 const moduleUrl = (code) => URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
