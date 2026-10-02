@@ -423,6 +423,31 @@ test("spies and throws", () => { const s = spy((x) => x * 2); s(4); expect(s).to
     assert.equal(r.exit.code, 1);
   });
 
+  test('localized example strings reach the checks as a read-only L (test mode only)', async () => {
+    const r = await testRun({
+      entry: 'index.js',
+      files: { 'index.js': 'console.log("L in learner code:", typeof globalThis.L);\nexport const label = "Настільна лампа";' },
+      strings: { lamp: 'Настільна лампа', count_2: '2 items' },
+      tests: {
+        path: 'l.test.js',
+        source: `import { label } from "./index.js";
+test("L holds the strings", () => { expect(L).toEqual({ lamp: "Настільна лампа", count_2: "2 items" }); expect(label).toBe(L.lamp); });
+test("L cannot be replaced or changed", () => { expect(() => { globalThis.L = {}; }).toThrow(TypeError); expect(() => { L.lamp = "x"; }).toThrow(TypeError); });`,
+      },
+    });
+    assert.deepEqual(r.tests.results.map((x) => [x.name, x.status, x.message]), [['L holds the strings', 'pass', undefined], ['L cannot be replaced or changed', 'pass', undefined]]);
+    // The harness defines L before the entry runs (as in the browser runner, where checks and the
+    // program share one page); a plain run has no L at all.
+    const plain = await run({ files: { 'index.js': 'console.log(typeof globalThis.L);' }, strings: { lamp: 'x' } });
+    assert.equal(plain.stdout, 'undefined\n');
+    for (const strings of [[], { 'bad key': 'x' }, { _x: 'x' }, { a: 1 }]) {
+      const bad = await api(ctx, 'POST', '/api/node/run', { files: { 'a.js': '' }, entry: 'a.js', strings });
+      assert.equal(bad.status, 400, JSON.stringify(strings));
+    }
+    const big = await api(ctx, 'POST', '/api/node/run', { files: { 'a.js': '' }, entry: 'a.js', strings: { a: 'x'.repeat(40 * 1024) } });
+    assert.equal(big.status, 413);
+  });
+
   test('a real loopback HTTP server is exercised with listen() and request()', async () => {
     const r = await testRun({
       capabilities: { network: 'loopback' },

@@ -68,6 +68,9 @@ function report(payload) {
 // ---------- configuration (argv[2]) — removed before learner code sees process.argv ----------
 const config = parse(process.argv[2]);
 const workspace = config.workspace;
+// Localized example text of the exercise in the learner's language (%%key%% placeholders), as `L`
+// in the browser runner.
+const strings = Object.freeze({ ...(config.strings ?? {}) });
 const entryFile = config.entry ? path.join(workspace, config.entry) : null;
 process.argv.splice(1, 2, entryFile ?? path.join(workspace, config.tests));
 
@@ -227,6 +230,7 @@ const api = {
   activeResources,
   tmp,
   loadError: () => loadFailure,
+  L: strings,
   AssertionError,
 };
 for (const [name, value] of Object.entries(api)) Object.defineProperty(globalThis, name, { value, writable: false, configurable: false, enumerable: false });
