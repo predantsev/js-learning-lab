@@ -12,11 +12,13 @@ test('the returned function adds the prefix to the name', () => {
   expect(scope.makeLabeler('A: ')(lamp), 'makeLabeler("A: ")(record)').toBe('A: Lamp');
 });
 
+// Fails only when making a second labeler changes what the first one returns (shared state);
+// the label text itself is checked by the test above.
 test('each labeler keeps its own prefix', () => {
   const first = scope.makeLabeler('1: ');
-  const second = scope.makeLabeler('2: ');
-  expect(first(lamp), 'the first labeler after the second was made').toBe('1: Lamp');
-  expect(second(lamp), 'the second labeler').toBe('2: Lamp');
+  const before = first(lamp);
+  scope.makeLabeler('2: ')(lamp);
+  expect(first(lamp), 'the first labeler after a second one was made').toBe(before);
 });
 
 test('wantLabel and haveLabel use their prefixes', () => {

@@ -3,6 +3,6 @@ var count = 3;
 console.log("%%after%%", count);
 
 if (count > 2) {
-  var message = "%%many%%";
+  var label = "%%many%%";
 }
-console.log(message);
+console.log(label);
