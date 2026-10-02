@@ -20,11 +20,11 @@ after(async () => {
   await fs.rm(distDir, { recursive: true, force: true });
 });
 
-/** Open the first fixture example, type `code` into its editor, run it and wait for the result. */
-async function runInExample(code, { lang = 'uk' } = {}) {
-  const session = await openApp(browser, lab, { hash: `#/lesson/${L1}/1` });
+/** Open a fixture block (the first example by default), type `code` into its editor, run it and wait for the result. */
+async function runInExample(code, { lang = 'uk', block = 'basics-example', pageNo = 1 } = {}) {
+  const session = await openApp(browser, lab, { hash: `#/lesson/${L1}/${pageNo}` });
   const { page } = session;
-  await page.locator('#block-basics-example').waitFor();
+  await page.locator(`#block-${block}`).waitFor();
   // The interface language is a saved preference shared by the tests of this file: set it every time.
   await page.locator(`.lang-switch .lang-option[lang="${lang}"]`).click();
   await page.locator(`.lang-switch .lang-option[lang="${lang}"][aria-pressed="true"]`).waitFor();
@@ -62,5 +62,28 @@ test('the error card and the console show the cause chain of an error, with loca
     assert.deepEqual((await line.locator('.cv-cause').allInnerTexts()).map((s) => s.trim()), [`${t(lang, 'err.causedBy')} TypeError: x is undefined`]);
     assert.deepEqual(problems, []);
     await context.close();
+  }
+});
+
+test('a missing export or default export gets its own guidance naming the module and the export, not JSON.parse', async () => {
+  // The fixture exercise: index.js (editable) imports from the read-only label.js, which exports `label`.
+  const cases = [
+    ['import { lable } from "./label.js";\nconsole.log(lable, 3);\n', 'err.guide.missingExport', 'lable'],
+    ['import label from "./label.js";\nconsole.log(label, 3);\n', 'err.guide.missingDefault', 'default'],
+  ];
+  for (const lang of ['uk', 'en']) {
+    for (const [code, key, name] of cases) {
+      const { page, problems, context } = await runInExample(code, { lang, block: 'basics-exercise', pageNo: 2 });
+      const card = page.locator('.error-card');
+      await card.waitFor();
+      assert.equal((await card.locator('.error-guide').innerText()).trim(), t(lang, key, { module: 'label.js', export: name }));
+      assert.notEqual((await card.locator('.error-guide').innerText()).trim(), t(lang, 'err.guide.SyntaxError'));
+      const message = `The requested module 'label.js' does not provide an export named '${name}'`;
+      assert.equal((await card.locator('.error-original pre').innerText()).trim(), `SyntaxError: ${message}`);
+      // A link error has no stack frames, so the page-error filter cannot tell it came from the
+      // sandbox frame (as in app-node-runtime): exactly this learner error is expected.
+      assert.deepEqual(problems.filter((p) => p !== `pageerror: ${message}`), []);
+      await context.close();
+    }
   }
 });

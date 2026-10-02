@@ -250,6 +250,8 @@ export const en: Dict = {
   'err.guide.TypeError': 'TypeError: a value was not of the type the code expected. Most often something that is not a function was called, or a property of undefined or null was read.',
   'err.guide.RangeError': 'RangeError: a value went outside the allowed range. “Maximum call stack size exceeded” means recursion without a stop condition.',
   'err.guide.SyntaxError': 'SyntaxError while running: most often JSON.parse received invalid text.',
+  'err.guide.missingExport': 'The module {module} does not export the name {export}, so no file of the program ran: imports are checked before the first line of code runs. Check that the name in import { … } is spelled exactly as in {module}, with the same capital and small letters, and that its declaration in {module} has the word export in front of it.',
+  'err.guide.missingDefault': 'The module {module} has no default export (export default), and an import without curly braces asks for exactly that, so no file of the program ran. Either import a named export in curly braces — import { name } from … — or add export default to {module}.',
   'err.guide.LoopBudgetError': 'The loop ran longer than {ms} ms, so it was stopped. Check the loop’s end condition: does the thing it depends on ever change?',
   'err.guide.unhandled': 'A promise was rejected and nothing handled it. Add .catch(...) or wrap the await in try/catch.',
   'err.guide.generic': 'The program stopped because of an error. Read the message: it names the error type, explains it and points to the place in the code.',

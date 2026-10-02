@@ -69,9 +69,22 @@ export function ConsoleView({ entries, errors }: { entries: ConsoleEntry[]; erro
   );
 }
 
+/**
+ * A module-linking error of the browser runner: an import asks a module for an export it does not
+ * have (`default` for an import without curly braces). The program never ran, so this is not a
+ * runtime SyntaxError such as JSON.parse throws.
+ */
+export function moduleLinkError(error: RunError): { module: string; export: string } | null {
+  if (error.kind) return null;
+  const m = /^The requested module '([^']+)' does not provide an export named '([^']+)'$/.exec(error.message ?? '');
+  return m ? { module: m[1], export: m[2] } : null;
+}
+
 export function guidanceKey(error: RunError): Key {
   const node = nodeGuidanceKey(error);
   if (node) return node;
+  const link = moduleLinkError(error);
+  if (link) return link.export === 'default' ? 'err.guide.missingDefault' : 'err.guide.missingExport';
   if (error.kind === 'syntax') return 'err.guide.syntax';
   if (error.kind === 'import' || error.kind === 'project') return 'err.guide.import';
   if (error.phase === 'unhandled-rejection') return 'err.guide.unhandled';
@@ -88,10 +101,11 @@ export function feedbackForError(block: WsBlock, error: RunError): L10n | null {
 export function ErrorCard({ error, title, feedback = null, lang = 'uk' }: { error: RunError; title: string; feedback?: L10n | null; lang?: Lang }) {
   const t = useT();
   const where = error.file && error.line ? t('ws.atLine', { file: error.file, line: error.line }) : error.file ?? null;
+  const link = moduleLinkError(error);
   return (
     <div className="error-card" role="alert">
       <div className="error-card-title"><Icon name="warn" /> {title}{where && <span className="error-where">{where}</span>}</div>
-      <p className="error-guide">{t(guidanceKey(error), { ms: error.loopBudgetMs ?? 2000 })}</p>
+      <p className="error-guide">{t(guidanceKey(error), { ms: error.loopBudgetMs ?? 2000, module: link?.module ?? '', export: link?.export ?? '' })}</p>
       {feedback && <Html html={feedback[lang]} lang={lang} className="prose test-feedback" />}
       <div className="error-original">
         <span className="label">{t('err.original')}</span>
