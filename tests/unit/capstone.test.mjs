@@ -15,7 +15,7 @@ import {
   START_BASE, changedPaths, coveredByBase, currentStep, filesProblem, missingBefore, newFileProblem, passCounts, pathProblem, starterChanges, starterCovers, startingReference, unifiedDiff,
 } from '../../shared/capstone.js';
 import { MANIFEST_PATH, buildProjectExport, placeGenerated, relativeUrl, sha256Hex } from '../../shared/project-export.js';
-import { api, startTestServer } from './helpers.mjs';
+import { api, rawRequest, startTestServer } from './helpers.mjs';
 
 const sha = (text) => createHash('sha256').update(text, 'utf8').digest('hex');
 let tmp;
@@ -164,6 +164,14 @@ test('the generated serve.mjs serves only the project folder on loopback and exp
     assert.equal(page.status, 200);
     assert.equal(await page.text(), workspace.files['index.html']);
     assert.equal((await fetch(`http://127.0.0.1:${port}/data/exported-storage.json`)).headers.get('content-type'), 'application/json; charset=utf-8');
+    // DNS rebinding (security review #7): another site's name resolved to 127.0.0.1 gets nothing.
+    const withHost = (host) => rawRequest(port, { path: '/data/exported-storage.json', headers: { host } });
+    for (const host of [`evil.example:${port}`, `attacker.localhost:${port}`, `127.0.0.1:${port + 1}`]) {
+      const res = await withHost(host);
+      assert.equal(res.status, 421, host);
+      assert.doesNotMatch(res.text, /jsll-storage/, host);
+    }
+    assert.equal((await withHost(`localhost:${port}`)).status, 200);
     // A second server on the same port explains how to choose another one.
     const busy = startServe(dir, ['--port', String(port)]);
     assert.equal(await busy.exited, 1);
