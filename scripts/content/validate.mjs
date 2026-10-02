@@ -1,19 +1,25 @@
 // Content validator: static contract checks plus real execution of every example, exercise fixture
-// and verifiable prediction through the same sandbox the learner uses (headless Chrome).
+// and verifiable prediction through the same runtime the learner uses: the browser sandbox (headless
+// Chrome) for browser runtimes, the local isolated Node executor (POST /api/node/run) for
+// `isolated-node` blocks.
 //
 //   node scripts/content/validate.mjs                 all content
 //   node scripts/content/validate.mjs --unit JS-05    one unit (repeatable, comma-separated)
 //   node scripts/content/validate.mjs --lesson js-05-03-filter
 //   node scripts/content/validate.mjs --static        skip execution
 //   node scripts/content/validate.mjs --release       also require complete coverage (no missing lessons)
+//                                                     and real execution of every isolated-node block
 //   node scripts/content/validate.mjs --json out.json machine-readable report
 //   node scripts/content/validate.mjs --capstone wishlist   capstone steps of one capstone only
 // Capstone steps (content/capstones) are selected with their unit (--unit) or step lesson (--lesson).
+// When this machine cannot run the isolated Node executor, its blocks are reported as UNVERIFIED
+// (a note, or an error with --release) — never as passed.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { ROOT } from '../../server/config.mjs';
 import { consoleLines, localizeFiles, localizeText, runInputForBlock } from '../../shared/exercise.js';
+import { NODE_RUN_PATH, isLearnerSyntaxError, nodeRunRequest, parseUncaughtError, readNdjson, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
 import { unitOfLesson } from '../../shared/content-schema.js';
 import { buildContent, exerciseFileSets } from './lib.mjs';
 
@@ -39,7 +45,7 @@ for (const issue of issues) {
 }
 
 const lessons = [...all.lessons.entries()].filter(([id]) => selected(id));
-let executed = { examples: 0, fixtures: 0, predictions: 0, nodeSkipped: 0, capstoneRuns: 0 };
+let executed = { examples: 0, fixtures: 0, predictions: 0, nodeRuns: 0, nodeUnverified: 0, capstoneRuns: 0 };
 const onlyCapstones = new Set(values('--capstone'));
 const capstoneSteps = Object.entries(all.capstoneBuild?.capstones ?? {})
   .filter(([id]) => onlyCapstones.size === 0 || onlyCapstones.has(id))
@@ -55,18 +61,110 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
   const { startServer } = await import('../../server/app.mjs');
   const { chromium } = await import('playwright-core');
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-validate-'));
-  const server = await startServer({ port: 0, dataDir, quiet: true });
-  let browser;
-  try {
-    browser = await chromium.launch({ channel: 'chrome', headless: true });
-  } catch (e) {
-    console.error(`Cannot launch Google Chrome for fixture execution: ${String(e.message).split('\n')[0]}`);
-    process.exit(2);
+  const runtimeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-validate-runtime-'));
+  const server = await startServer({ port: 0, dataDir, runtimeDir, quiet: true });
+  // Chrome starts on the first browser run, so isolated-node content validates without it.
+  let browser = null;
+  let page = null;
+  const browserPage = async () => {
+    if (page) return page;
+    try {
+      browser = await chromium.launch({ channel: 'chrome', headless: true });
+    } catch (e) {
+      console.error(`Cannot launch Google Chrome for fixture execution: ${String(e.message).split('\n')[0]}`);
+      process.exit(2);
+    }
+    page = await browser.newPage();
+    await page.goto(`http://js-learning-lab.localhost:${server.port}/harness.html`);
+    await page.waitForFunction(() => document.documentElement.dataset.harness === 'ready');
+    return page;
+  };
+  const run = async (input) => (await browserPage()).evaluate((i) => window.jsll.runProject(i), input);
+
+  // ---- isolated-node blocks: the real executor through its HTTP API, as the learner's UI uses it ----
+  const nodeFeature = server.api.features.isolatedNode ?? { available: false, reason: 'the Node executor module (server/api/node-run.mjs) is not loaded' };
+  const runNode = async (body) => {
+    executed.nodeRuns += 1;
+    const response = await fetch(`http://localhost:${server.port}${NODE_RUN_PATH}`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-jsll-token': server.store.meta.token }, body: JSON.stringify(body) });
+    if (!(response.headers.get('content-type') ?? '').startsWith('application/x-ndjson')) {
+      const data = await response.json().catch(() => ({}));
+      return { failure: `the executor refused the run: HTTP ${response.status} ${data.error ?? ''} ${data.message ?? ''}`.trim() };
+    }
+    const r = { start: null, stdout: '', stderr: '', tests: null, exit: null };
+    await readNdjson(response.body, (event) => {
+      if (event.type === 'start') r.start = event;
+      else if (event.type === 'stdout') r.stdout += event.data;
+      else if (event.type === 'stderr') r.stderr += event.data;
+      else if (event.type === 'tests') r.tests = event;
+      else if (event.type === 'exit') r.exit = event;
+    });
+    if (!r.exit) return { ...r, failure: 'the run ended without an exit event (connection lost)' };
+    const ended = { timeout: `reached its ${body.timeoutMs ?? 10_000} ms time limit (examples and checks must finish on their own)`, 'output-limit': 'printed more than the output limit', 'workspace-limit': 'wrote more files than the workspace limit', crashed: `crashed (${r.exit.signal ?? 'signal'})`, 'spawn-failed': `could not start Node (${r.exit.error ?? ''})` }[r.exit.reason];
+    return ended ? { ...r, failure: `the run ${ended}` } : r;
+  };
+  const nodeUnverified = (where) => {
+    executed.nodeUnverified += 1;
+    const message = `UNVERIFIED: the isolated Node executor is not available on this machine, so this isolated-node block was not executed (${nodeFeature.reason})`;
+    if (release) error(where, message);
+    else notes.push({ where, message });
+  };
+  async function validateNodeBlock(where, block, assets, langs) {
+    if (!nodeFeature.available) return nodeUnverified(where);
+    if (block.kind === 'example') {
+      for (const lang of langs) {
+        const r = await runNode(nodeRunRequest(block, localizeFiles(assets.files, block, lang), { mode: 'run', lang }));
+        if (r.failure) {
+          error(where, `example (${lang}): ${r.failure}`);
+          continue;
+        }
+        const thrown = parseUncaughtError(r.stderr, r.start?.cwd);
+        const failed = r.exit.code !== 0;
+        const what = thrown ? `throws ${thrown.name}: ${thrown.message}` : `exits with code ${r.exit.code}`;
+        if (failed && block.expectError !== true) error(where, `example (${lang}) ${what} (set expectError: true if the error is the point)`);
+        else if (!failed && block.expectError === true) error(where, `example (${lang}) declares expectError but runs without an error`);
+      }
+      return undefined;
+    }
+    if (assets.tests === null) return undefined;
+    const compiledBlock = { ...block, tests: assets.tests };
+    const titled = new Set(Object.keys(block.testTitles ?? {}));
+    for (const lang of langs) for (const [name, rawFiles] of Object.entries(exerciseFileSets(assets))) {
+      const shouldPass = name === 'solution' || name.startsWith('alt');
+      const r = await runNode(nodeRunRequest(compiledBlock, localizeFiles(rawFiles, block, lang), { mode: 'test', lang }));
+      if (r.failure && !r.tests) {
+        error(where, `${name} (${lang}): ${r.failure}`);
+        continue;
+      }
+      const outcome = testsOutcome(r.tests, workspaceShortener(r.start?.cwd));
+      if (outcome.harnessError) {
+        // As for browser fixtures: a starter or a deliberately wrong fixture may fail to compile or
+        // to link (that counts as failing); a passing fixture may not, and no fixture may stop the
+        // checks in another way (time limit, crash, an error in tests.js).
+        const harness = outcome.harnessError;
+        const compileLike = isLearnerSyntaxError(harness) || (harness.name === 'SyntaxError' && /does not provide an export named/.test(harness.message)) || harness.code === 'ERR_MODULE_NOT_FOUND';
+        if (shouldPass || !compileLike || r.failure) error(where, `${name} (${lang}): ${r.failure ?? `tests could not start: ${harness.name}: ${harness.message}`}`);
+        continue;
+      }
+      if (r.failure) {
+        error(where, `${name} (${lang}): ${r.failure}`);
+        continue;
+      }
+      const tests = outcome.results;
+      const failed = tests.filter((t) => t.status !== 'pass');
+      if (name === 'solution') {
+        if (tests.length === 0) error(where, 'tests.js defines no tests');
+        for (const t of tests) if (!titled.has(t.name)) error(where, `test "${t.name}" has no bilingual title in testTitles`);
+        for (const t of titled) if (!tests.some((x) => x.name === t)) error(where, `testTitles names "${t}" but tests.js has no such test`);
+        for (const rule of block.feedback ?? []) if (rule.when?.test && !tests.some((x) => x.name === rule.when.test)) error(where, `feedback refers to unknown test "${rule.when.test}"`);
+        const thrown = outcome.errors[0];
+        if (thrown && block.expectError !== true) error(where, `solution throws ${thrown.name}: ${thrown.message}`);
+      }
+      if (shouldPass && failed.length > 0) error(where, `${name} (${lang}) must pass every test, but fails: ${failed.map((t) => `"${t.name}" (${t.message})`).join('; ')}`);
+      if (!shouldPass && failed.length === 0 && !(name === 'starter' && block.starterPasses === true)) error(where, `${name} (${lang}) passes every test — ${name === 'starter' ? 'the exercise asks for nothing (or set starterPasses: true with a reason)' : 'a deliberately wrong fixture must fail at least one test'}`);
+    }
+    return undefined;
   }
-  const page = await browser.newPage();
-  await page.goto(`http://js-learning-lab.localhost:${server.port}/harness.html`);
-  await page.waitForFunction(() => document.documentElement.dataset.harness === 'ready');
-  const run = (input) => page.evaluate((i) => window.jsll.runProject(i), input);
+
   const describeFailure = (r) => {
     if (r.status === 'compile-error') return `does not compile: ${r.compileErrors.map((e) => `${e.file}:${e.line ?? '?'} ${e.message}`).join('; ')}`;
     if (r.status !== 'done') return `run ended with status "${r.status}"`;
@@ -106,12 +204,11 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
       }
       if (block.kind !== 'example' && block.kind !== 'exercise') continue;
       if (!assets) continue;
+      const langs = block.strings ? ['uk', 'en'] : ['uk'];
       if (block.runtime === 'isolated-node') {
-        executed.nodeSkipped += 1;
-        notes.push({ where, message: 'isolated-node fixtures are validated by scripts/content/validate-node.mjs' });
+        await validateNodeBlock(where, block, assets, langs);
         continue;
       }
-      const langs = block.strings ? ['uk', 'en'] : ['uk'];
       if (block.kind === 'example') {
         for (const lang of langs) {
           executed.examples += 1;
@@ -187,9 +284,10 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
       }
     }
   }
-  await browser.close();
+  await browser?.close();
   await server.close();
   await fs.rm(dataDir, { recursive: true, force: true });
+  await fs.rm(runtimeDir, { recursive: true, force: true });
 }
 
 // ---- unit-level teaching-loop coverage (REQ-005, REQ-007) for fully selected units ----
@@ -229,9 +327,12 @@ if (release) {
 }
 
 await fs.rm(tmpOut, { recursive: true, force: true });
-const report = { ok: errors.length === 0, lessons: lessons.length, capstoneSteps: capstoneSteps.length, executed, errors, notes, contentVersion: index.contentVersion };
+const report = { ok: errors.length === 0, verified: executed.nodeUnverified === 0, lessons: lessons.length, capstoneSteps: capstoneSteps.length, executed, errors, notes, contentVersion: index.contentVersion };
 if (jsonOut) await fs.writeFile(jsonOut, JSON.stringify(report, null, 2));
 for (const e of errors) console.error(`✖ ${e.where} — ${e.message}`);
 for (const n of notes) console.error(`· ${n.where} — ${n.message}`);
-console.log(`${errors.length === 0 ? 'CONTENT VALID' : 'CONTENT INVALID'}: ${lessons.length} lesson(s), ${executed.examples} example run(s), ${executed.fixtures} exercise fixture run(s), ${executed.predictions} verified prediction(s), ${capstoneSteps.length} capstone step variant(s) with ${executed.capstoneRuns} capstone run(s), ${errors.length} error(s)`);
+const nodeSummary = `${executed.nodeRuns} isolated-node run(s)${executed.nodeUnverified > 0 ? ` (${executed.nodeUnverified} isolated-node block(s) UNVERIFIED: executor unavailable)` : ''}`;
+// Blocks that could not be executed are never reported as valid (a note now; an error with --release).
+const verdict = errors.length > 0 ? 'CONTENT INVALID' : executed.nodeUnverified > 0 ? 'CONTENT UNVERIFIED' : 'CONTENT VALID';
+console.log(`${verdict}: ${lessons.length} lesson(s), ${executed.examples} example run(s), ${executed.fixtures} exercise fixture run(s), ${executed.predictions} verified prediction(s), ${nodeSummary}, ${capstoneSteps.length} capstone step variant(s) with ${executed.capstoneRuns} capstone run(s), ${errors.length} error(s)`);
 process.exit(errors.length === 0 ? 0 : 1);

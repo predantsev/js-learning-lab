@@ -40,6 +40,34 @@ describe('availability', () => {
     assert.match(runner.feature.reason, /never run without isolation/);
     await assert.rejects(runner.start(validateRunRequest({ files: { 'a.js': '' }, entry: 'a.js' }), () => {}), (error) => error.status === 501);
   });
+
+  test('execution can be turned off (JSLL_NODE_RUNNER=off or a server override): reported as unavailable, nothing runs', async () => {
+    const before = process.env.JSLL_NODE_RUNNER;
+    process.env.JSLL_NODE_RUNNER = 'off';
+    let off;
+    try {
+      off = await startTestServer();
+    } finally {
+      if (before === undefined) delete process.env.JSLL_NODE_RUNNER;
+      else process.env.JSLL_NODE_RUNNER = before;
+    }
+    const overridden = await startTestServer({ nodeRunner: { support: { ...support, permissionFlag: null } } });
+    try {
+      const a = (await api(off, 'GET', '/api/bootstrap')).json.features.isolatedNode;
+      assert.deepEqual([a.available, a.reason], [false, 'Isolated Node.js execution is turned off for this installation (JSLL_NODE_RUNNER=off).']);
+      const b = (await api(overridden, 'GET', '/api/bootstrap')).json.features.isolatedNode;
+      assert.equal(b.available, false);
+      assert.match(b.reason, /has no permission model/);
+      for (const server of [off, overridden]) {
+        const r = await api(server, 'POST', '/api/node/run', { files: { 'a.js': 'console.log(1)' }, entry: 'a.js' });
+        assert.equal(r.status, 501);
+        assert.equal(r.json.error, 'isolation-unavailable');
+      }
+    } finally {
+      await off.close();
+      await overridden.close();
+    }
+  });
 });
 
 describe('real execution', () => {
@@ -493,6 +521,28 @@ test("tmp() is inside the exercise", async () => { expect(tmp("data/a.json").sta
       },
     });
     assert.deepEqual(r.tests.results.map((x) => [x.name, x.status, x.message]), [['baseline is empty', 'pass', undefined], ['an open server is visible', 'pass', undefined], ['tmp() is inside the exercise', 'pass', undefined]]);
+  });
+
+  test('an error thrown by a request handler fails the running test at once; errors while loading are marked "load"', async () => {
+    const r = await testRun({
+      capabilities: { network: 'loopback' },
+      entry: 'index.js',
+      files: {
+        'index.js': 'setTimeout(() => { throw new RangeError("while loading"); }, 0);\n',
+        'app.js': 'import http from "node:http";\nexport const createApp = () => http.createServer((req, res) => { res.end(String(item)); });\n',
+      },
+      tests: {
+        path: 'handler.test.js',
+        source: `import { createApp } from "./app.js";
+test("the handler throws", async () => { const base = await listen(createApp()); await request(base + "/"); });
+test("the next test still runs", () => { expect(1).toBe(1); });`,
+      },
+    });
+    const [first, second] = r.tests.results;
+    assert.deepEqual([first.status, first.errorName, second.status], ['fail', 'ReferenceError', 'pass'], JSON.stringify(r.tests));
+    assert.match(first.message, /uncaught error during the test: ReferenceError: item is not defined/);
+    assert.ok(first.ms < 2000, `failed at once, not at the 4 s test timeout (${first.ms} ms)`);
+    assert.deepEqual(r.tests.errors.map((e) => [e.name, e.message, e.phase]), [['RangeError', 'while loading', 'load']]);
   });
 
   test('a hanging test fails at its own timeout while the others still run', async () => {

@@ -30,6 +30,8 @@ export async function createApp(overrides = {}) {
     config,
     store,
     state,
+    /** Programmatic options of the caller (tests), for modules that accept them (e.g. nodeRunner). */
+    overrides,
     /** Register an API route: handler(ctx) → value (sent as JSON) or handles `ctx.res` itself and returns undefined. */
     route(method, routePath, handler) {
       routes.push({ method, path: routePath, handler });

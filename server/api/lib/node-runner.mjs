@@ -220,7 +220,11 @@ function validateStrings(value, limits) {
   return Object.fromEntries(entries);
 }
 
-export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits = LIMITS, support = detectNodeSupport(), nodeBinary = realpathSync(process.execPath) } = {}) {
+/**
+ * `disabled` (a reason) turns execution off without probing: the feature reports unavailable with
+ * that reason and every run answers 501. Turning execution off never weakens isolation.
+ */
+export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits = LIMITS, support = detectNodeSupport(), nodeBinary = realpathSync(process.execPath), disabled = null } = {}) {
   const runsDir = path.join(runtimeDir, 'node-runs');
   await fs.mkdir(runsDir, { recursive: true });
   const runsRoot = realpathSync(runsDir);
@@ -313,7 +317,9 @@ export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits 
 
   // ---- availability: prove isolation on this machine instead of trusting flag names ----
   const feature = { available: false, node: process.version, flags: [], typescript: support.typescript, osSandbox: { kind: null, active: false }, limits: { ...limits } };
-  if (!support.permissionFlag || !support.fsFlags) {
+  if (disabled) {
+    feature.reason = String(disabled);
+  } else if (!support.permissionFlag || !support.fsFlags) {
     feature.reason = `Node ${process.version} has no permission model (--permission / --allow-fs-read). Code is never run without isolation.`;
   } else {
     const baseSpec = { mode: 'run', entry: null, tests: null, args: [], network: 'none', workers: false, files: [] };

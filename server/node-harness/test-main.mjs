@@ -131,6 +131,7 @@ const tests = [];
 const listened = new Set();
 const uncaught = [];
 let current = null; // the running test record
+let testsStarted = false; // uncaught errors before the first test happened while the program loaded
 let currentTimers = 0;
 let baseline = [];
 
@@ -235,17 +236,24 @@ const api = {
 };
 for (const [name, value] of Object.entries(api)) Object.defineProperty(globalThis, name, { value, writable: false, configurable: false, enumerable: false });
 
+// An uncaught error during a test fails that test at once (a request handler that throws would
+// otherwise leave the test waiting for an answer until its timeout). Outside a test it is listed
+// with its phase: "load" (before the first test: while the program loaded) or "idle".
+function onUncaught(d) {
+  if (current) {
+    current.uncaught = current.uncaught ?? d;
+    current.interrupt?.();
+  } else uncaught.push({ ...d, phase: testsStarted ? 'idle' : 'load' });
+}
 process.on('uncaughtException', (error) => {
   const d = describeError(error);
   process.stderr.write(`Uncaught ${d.stack || `${d.name}: ${d.message}`}\n`);
-  if (current) current.uncaught = current.uncaught ?? d;
-  else uncaught.push(d);
+  onUncaught(d);
 });
 process.on('unhandledRejection', (reason) => {
   const d = describeError(reason);
   process.stderr.write(`Unhandled promise rejection: ${d.stack || `${d.name}: ${d.message}`}\n`);
-  if (current) current.uncaught = current.uncaught ?? d;
-  else uncaught.push(d);
+  onUncaught(d);
 });
 
 const settle = async () => {
@@ -288,6 +296,7 @@ async function main() {
   }
   if (tests.length === 0) return { results: [], harnessError: { name: 'HarnessError', message: 'The check file did not register any tests (call test(name, fn)).' }, loadError: loadFailure, errors: uncaught };
   const results = [];
+  testsStarted = true;
   for (const t of tests) {
     const started = now();
     current = { name: t.name };
@@ -299,6 +308,9 @@ async function main() {
         Promise.resolve().then(() => t.fn()),
         new Promise((_, reject) => {
           timer = nativeSetTimeout(() => reject(new AssertionError(`test timed out after ${t.timeoutMs} ms`, {})), t.timeoutMs);
+        }),
+        new Promise((resolve) => {
+          current.interrupt = resolve;
         }),
       ]);
       if (current.uncaught) throw Object.assign(new Error(`uncaught error during the test: ${current.uncaught.name}: ${current.uncaught.message}`), { name: current.uncaught.name, stack: current.uncaught.stack });

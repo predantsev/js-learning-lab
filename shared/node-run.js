@@ -209,7 +209,12 @@ export function isLearnerSyntaxError(error) {
   return Boolean(error) && error.name === 'SyntaxError' && typeof error.file === 'string' && error.file !== TESTS_PATH && !/does not provide an export named/.test(error.message ?? '');
 }
 
-/** The `tests` event of a check run, with exercise-relative paths. */
+/**
+ * The `tests` event of a check run, with exercise-relative paths. `errors` lists every error outside
+ * the checks in the order the learner should read them: uncaught errors while the program loaded,
+ * then the entry's own import error, then later uncaught errors. Errors of the loading phase carry
+ * `atLoad: true` (the browser runner marks errors before its `loaded` event the same way).
+ */
 export function testsOutcome(event, shorten = (t) => t) {
   const results = (event?.results ?? []).map((r) => ({
     name: String(r.name),
@@ -220,6 +225,7 @@ export function testsOutcome(event, shorten = (t) => t) {
     ...(Number.isFinite(r.ms) ? { ms: r.ms } : {}),
   }));
   const loadError = harnessErrorView(event?.loadError, shorten, 'load');
-  const errors = (event?.errors ?? []).map((e) => harnessErrorView(e, shorten, 'uncaught'));
+  const uncaught = (event?.errors ?? []).map((e) => ({ ...harnessErrorView(e, shorten, e.phase === 'load' ? 'load' : 'uncaught'), ...(e.phase === 'load' ? { atLoad: true } : {}) }));
+  const errors = [...uncaught.filter((e) => e.atLoad), ...(loadError ? [{ ...loadError, atLoad: true }] : []), ...uncaught.filter((e) => !e.atLoad)];
   return { results, harnessError: harnessErrorView(event?.harnessError, shorten, 'harness'), loadError, errors };
 }
