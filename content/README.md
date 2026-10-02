@@ -84,6 +84,10 @@ The validator runs every example, every exercise fixture and every verifiable pr
 23. **Describe Run, Stop and console behaviour only after a timed run in the app.** In a stuck loop the console stays empty until the `LoopBudgetError` card appears (about 2 s), and Stop discards output printed before it.
 24. **An "alternative run" state in an authored visual needs an explicit `changed` list;** otherwise the default diff against the previous state marks it as a change.
 25. **Multi-file predictions cannot be verified by the validator** (`verify` runs one `index.js`). Run them in the sandbox yourself and say so in your hand-back.
+26. **Check `code-trace` captions against the compiled trace** (`dist/content/lessons/<id>.json`): a caption must not describe panel state the trace does not show (an "empty" stack that still holds the file's frame, a variable that is no longer in scope).
+27. **Hints and feedback name exactly what the test asserts, identically in both languages** (id vs name, row vs column). Read the Ukrainian and the English side by side against the test.
+28. **Quote an earlier lesson's code verbatim from its file**, never from memory.
+29. **No per-test feedback for failures before the run starts** (a missing import path, a missing extension, a bare specifier): the tests never start, so only the error card is shown and that feedback can never appear.
 
 ## lesson.yaml
 
