@@ -19,7 +19,7 @@ Storage holds `{ "schemaVersion": 1, "plants": [...] }` under `jsll.plants.v1`.
 ## Index choice
 
 `waterPlants` builds a `Set` of the ids once instead of scanning the id list for every plant.
-З 500 id, медіана з 5 запусків: 2000 рослин — scan 1.0 ms, Set 0.1 ms; 20000 рослин — scan 7.2 ms, Set 0.4 ms.
+З 500 id, медіана з 5 запусків: 2000 рослин — scan 0.8 ms, Set 0.1 ms; 20000 рослин — scan 8.6 ms, Set 0.7 ms.
 The scan grows with plants × ids, the Set only with plants + ids.
 
 ## Tests
