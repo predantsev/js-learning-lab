@@ -1,20 +1,23 @@
-// The comparator never handles null: a subtraction treats it like 0, and for text it is
-// compared as the word "null" (or subtracted when it comes first), so it never goes last.
+// record.field reads a property literally named "field" (undefined), not the field whose name
+// is in the parameter: the search crashes on undefined.toLowerCase() and the filter keeps nothing.
 function searchByText(records, field, query) {
   const needle = query.toLowerCase();
-  return records.filter((record) => record[field].toLowerCase().includes(needle));
+  return records.filter((record) => record.field.toLowerCase().includes(needle));
 }
 
 function filterByStatus(records, field, value) {
-  return records.filter((record) => record[field] === value);
+  return records.filter((record) => record.field === value);
 }
 
 function sortBy(records, field) {
   return records.toSorted((a, b) => {
-    if (typeof a[field] === "string") {
-      return a[field].localeCompare(b[field]);
-    }
-    return a[field] - b[field];
+    const x = a[field];
+    const y = b[field];
+    if (x === y) return 0;
+    if (x === null) return 1;
+    if (y === null) return -1;
+    if (typeof x === "number") return x - y;
+    return x.localeCompare(y);
   });
 }
 

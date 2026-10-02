@@ -30,13 +30,14 @@ test('items with equal prices keep their order', () => {
   expect(ids(list.toSorted(scope.byPriceAsc)), 'ids sorted by price').toEqual(['b', 'a', 'c']);
 });
 
-test('two items without a price keep their order', () => {
-  const list = [
-    { id: 'x', name: L.tickets, price: null },
-    { id: 'y', name: L.bicycle, price: 240 },
-    { id: 'z', name: L.lamp, price: null },
-  ];
-  expect(ids(list.toSorted(scope.byPriceAsc)), 'ids sorted by price').toEqual(['y', 'x', 'z']);
+// The comparator is called directly: with an inconsistent answer for two nulls the sort order is
+// engine-defined (Chrome happens to keep it), so only the comparator's own answer is portable.
+// NaN counts as "equal" because sort itself treats NaN as 0 (for example Infinity - Infinity).
+test('byPriceAsc treats two items without a price as equal', () => {
+  const x = { id: 'x', name: L.tickets, price: null };
+  const z = { id: 'z', name: L.lamp, price: null };
+  const equal = (r) => typeof r === 'number' && (r === 0 || Number.isNaN(r));
+  expect(equal(scope.byPriceAsc(x, z)) && equal(scope.byPriceAsc(z, x)), 'byPriceAsc(no price, no price) in both orders gives 0').toBe(true);
 });
 
 test('byNameAsc sorts names alphabetically', () => {

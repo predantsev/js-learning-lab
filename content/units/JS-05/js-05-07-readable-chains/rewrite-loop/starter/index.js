@@ -1,53 +1,53 @@
-const items = [
-  { id: "w-01", name: "%%headphones%%", price: 80, acquired: false },
-  { id: "w-02", name: "%%lamp%%", price: 45, acquired: false },
-  { id: "w-03", name: "%%bicycle%%", price: 240, acquired: false },
-  { id: "w-04", name: "%%book%%", price: 25, acquired: true },
-  { id: "w-05", name: "%%tickets%%", price: null, acquired: false },
+const tasks = [
+  { id: "t-01", title: "%%water%%", dueDate: "2026-03-02", done: false },
+  { id: "t-02", title: "%%books%%", dueDate: "2026-03-01", done: false },
+  { id: "t-03", title: "%%grandma%%", dueDate: null, done: false },
+  { id: "t-04", title: "%%internet%%", dueDate: "2026-02-27", done: true },
+  { id: "t-05", title: "%%dentist%%", dueDate: "2026-03-10", done: false },
 ];
 
 // The old version: one long loop does everything.
-function wantedLabelsLoop(list, query) {
+function pendingLabelsLoop(list, query) {
   const found = [];
-  for (const item of list) {
-    const name = item.name.toLowerCase();
-    if (!item.acquired && name.includes(query.toLowerCase())) {
-      found.push(item);
+  for (const task of list) {
+    const title = task.title.toLowerCase();
+    if (!task.done && title.includes(query.toLowerCase())) {
+      found.push(task);
     }
   }
   found.sort((a, b) => {
-    if (a.price === b.price) return 0;
-    if (a.price === null) return 1;
-    if (b.price === null) return -1;
-    return a.price - b.price;
+    if (a.dueDate === b.dueDate) return 0;
+    if (a.dueDate === null) return 1;
+    if (b.dueDate === null) return -1;
+    return a.dueDate.localeCompare(b.dueDate);
   });
   const labels = [];
-  for (const item of found) {
-    labels.push(item.name + ": " + (item.price ?? "%%noPrice%%"));
+  for (const task of found) {
+    labels.push(task.title + " · " + (task.dueDate ?? "%%noDate%%"));
   }
   return labels;
 }
 
 // The new version: small named steps joined in a chain.
-const isWanted = (item) => {
+const isPending = (task) => {
   // your code here
 };
 
-const matchesQuery = (item, query) => {
+const matchesQuery = (task, query) => {
   // your code here
 };
 
-const byPriceAsc = (a, b) => {
+const byDueDate = (a, b) => {
   // your code here
 };
 
-const toLabel = (item) => {
+const toLabel = (task) => {
   // your code here
 };
 
-function wantedLabels(list, query) {
-  // your code here: filter, filter, toSorted, map
+function pendingLabels(list, query) {
+  // your code here: a chain of the steps above
 }
 
-console.log(wantedLabelsLoop(items, ""));
-console.log(wantedLabels(items, ""));
+console.log(pendingLabelsLoop(tasks, ""));
+console.log(pendingLabels(tasks, ""));
