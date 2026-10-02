@@ -165,6 +165,30 @@ test('an infinite loop ends at the time limit with a localized explanation; Stop
   }
 });
 
+test('an output flood is cut at the output limit with a localized explanation; the console keeps the latest lines', async () => {
+  const lab = await Lab.start({ distDir });
+  try {
+    const { page, problems, context } = await openNode(lab, 1);
+    const flood = "let i = 0;\nfor (;;) console.log(`line ${i++} ${'x'.repeat(60)}`);\n";
+    await replaceEditor(page, flood);
+    await runButton(page).click();
+    await page.locator('.ws-status.ws-status-auto-stopped').waitFor({ timeout: 15_000 });
+    assert.equal(await statusText(page), t('uk', 'ws.node.outputLimit', { kb: 200 }));
+    const lines = await consoleLines(page);
+    assert.ok(lines.length > 100 && lines.length <= 1000, `the console holds the latest lines, at most 1000 (${lines.length})`);
+    assert.match(lines.at(-2), /^line \d+ x{60}$/, 'real output up to the cut');
+    assert.equal(await editorText(page), flood);
+    await replaceEditor(page, "console.log('calm again');\n");
+    await runButton(page).click();
+    await waitStatus(page, t('uk', 'ws.finished'));
+    assert.deepEqual(await consoleLines(page), ['calm again']);
+    assert.deepEqual(problems, []);
+    await context.close();
+  } finally {
+    await lab.dispose();
+  }
+});
+
 const SOLUTION = `import http from 'node:http';
 import { items } from './items.js';
 
