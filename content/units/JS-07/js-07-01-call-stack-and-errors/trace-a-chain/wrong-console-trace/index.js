@@ -1,4 +1,4 @@
-// console.trace() works in the browser's DevTools, but the platform's console does not show it.
+// console.trace() prints a trace, but the check reads only console.log output.
 
 function formatAmount(amountMinor) {
   console.trace();

@@ -1,8 +1,68 @@
 # Current project state
 
-## Implementation in progress (2026-10-01)
+## Implementation state (2026-10-02): partial
 
-The owner authorized implementation of the platform and the complete course on 2026-10-01. Work is tracked by epic [#13](https://github.com/predantsev/js-learning-lab/issues/13) with milestone issues #7 (M1 platform), #8 (M2 JavaScript), #9 (M3 React), #10 (M4 React Native), #11 (M5 Node.js) and #12 (M6 release verification). Until each milestone section below records its own evidence, every milestone is **in progress / unverified**. The baseline description that follows remains the pre-implementation record.
+The owner authorized implementation of the platform and the complete course on 2026-10-01. Work is tracked by epic [#13](https://github.com/predantsev/js-learning-lab/issues/13) with milestone issues #7 (M1 platform), #8 (M2 JavaScript), #9 (M3 React), #10 (M4 React Native), #11 (M5 Node.js) and #12 (M6 release verification). **The product is partial: the platform foundation runs, and 85 of 528 planned lessons are authored.** The sections after this one remain the pre-implementation record.
+
+| Milestone | State | What exists |
+|---|---|---|
+| M1 platform (#7) | Implemented for the measured environment; open items below | Local server, learner store, sandboxed runners, lesson and project workspaces, export, backup, content pipeline and validators |
+| M2 JavaScript (#8) | Partial: 7 of 18 units complete | JS-01…JS-07 complete with capstone steps (83 lessons); JS-08 has 2 of 13 lessons; JS-09…JS-18 and CP-JS not authored |
+| M3 React (#9) | Not started | Lesson-level syllabus only (107 lessons planned) |
+| M4 React Native (#10) | Not started | Lesson-level syllabus only (95 lessons planned) |
+| M5 Node.js (#11) | Not started | Lesson-level syllabus only (122 lessons planned); the Node runtime itself is implemented and tested with fixture lessons |
+| M6 release (#12) | Not started | `python3 scripts/validate_competencies.py --release` reports the release as not ready, as it must |
+
+### M1 platform
+
+Adopted decisions and their rationale are in [DECISIONS.md](DECISIONS.md) ("Adopted during M1 implementation"); measured evidence is indexed in [evidence/M1](evidence/M1/README.md). In short: a zero-dependency Node.js server on loopback (port 7300), a React and TypeScript application, learner data as JSON files under `.learner-data/`, learner code in an opaque-origin sandboxed frame on a separate host, a real Node.js child-process runner for Node lessons, three visual styles, Ukrainian and English everywhere, hints and solutions revealed only on request, bookmarks, skip and revisit, delayed review, glossary, eight kinds of step-through visuals including a tracer for the learner's own code, a project workspace with snapshots and capstone switching, export to a folder or zip, and full-profile backup and restore.
+
+Checks run on the implementation branch on 2026-10-02 (macOS 26 arm64, Google Chrome 154, Node.js 25.2.1):
+
+| Command | Observed result |
+|---|---|
+| `npm run typecheck` | exit 0 |
+| `npm test` | 157 tests, 157 pass, 0 fail |
+| `npm run test:e2e` | 135 tests; 135 pass in 3 of 4 consecutive full runs. One run failed 1 test ("a lost connection to the server is explained…"), which then passed 3 of 3 times alone. See the flaky-test note below |
+| `npm run content:validate` | CONTENT VALID: 85 lessons, 147 example runs, 1044 exercise fixture runs, 222 verified predictions, 28 capstone step variants with 112 capstone runs, 0 errors |
+| `npm run content:smoke` | SMOKE OK: 85 lessons, 488 page views, 0 problems |
+| `node scripts/content/validate-syllabus.mjs` | OK: 528 lessons in 56 unit files, no errors |
+| `python3 scripts/validate_competencies.py` | SPECIFICATION PASS (60 competencies, 56 units, 38 requirements, 19 cases) |
+| clean clone → `npm ci` → `npm start` | builds and serves; index 200 on both hosts, API without token 401 (same machine only) |
+
+Open M1 items, none hidden:
+
+- **Security, owner decision needed.** The independent review ([security-review.md](evidence/M1/security-review.md)) fixed one critical defect (a Node run with loopback networking could reach the platform API and read the learner store) and four medium ones, each with a regression test. Two high findings stay open by design: the API token is served with the page, so any process on the computer that can open a loopback connection can read it; and the protection of the platform port from learner Node code is a guard inside the same process, not an operating-system barrier. The proposed fix (a one-time launch address exchanged for an HttpOnly cookie) changes how the application is opened and is therefore left to the owner.
+- **Checks are self-assessment.** Deliberate learner code can forge a passing check in both runners; evidence badges are not proof against cheating.
+- **Environment.** Only macOS with Google Chrome was run. Windows, Linux, Firefox, Safari, screen readers and a run with the network disconnected are unverified. The Node runner has no operating-system isolation layer outside macOS.
+- **Not performed.** Opening and running an exported project in VS Code (V-06), any native device or emulator run (V-07: no native toolchain on the build machine), V-14 offline run, a clean clone on a second machine (V-13).
+- **Known runner limits that lessons describe honestly:** Stop discards console output printed before it; a literal dynamic import of a missing file fails before the run starts; the console is output-only. In the browser runner `console.trace` output is shown but is not part of what checks read, while the Node runner includes it.
+- **Flaky end-to-end tests under machine load.** Three tests have failed intermittently in full runs while passing alone: "a lost connection to the server is explained…" and "busy…" in `app-node-runtime.test.mjs`, and a rare "application shell did not render" page error. The causes are unconfirmed; the build machine was under heavy unrelated load (load average 20–50) during these runs.
+- **Local registry.** The optional shared port registry on the maintainer workstation was not updated with port 7300 (outside this repository).
+
+### M2 JavaScript
+
+| Unit | Lessons authored / planned | Independent review | Capstone step ×4 |
+|---|---|---|---|
+| JS-01 First code and a first page | 10 / 10 | merged | yes |
+| JS-02 Names, comparisons and branching | 12 / 12 | merged | yes |
+| JS-03 Functions, scope and closures | 11 / 11 | merged | yes |
+| JS-04 Arrays, objects, loops and references | 13 / 13 | merged | yes |
+| JS-05 Transforming lists | 10 / 10 | merged | yes |
+| JS-06 Forms, layout, the DOM and events | 16 / 16 | merged | yes |
+| JS-07 Errors, modules and saved data | 11 / 11 | merged | yes |
+| JS-08 Asynchronous code | 2 / 13 | not reviewed | no |
+| JS-09…JS-18, CP-JS export | 0 | — | — |
+
+Every authored lesson is bilingual and passes the content validator, which executes every example, every exercise fixture (starter, solution, alternative and deliberately wrong solutions) and every verified prediction in a real browser, and the smoke test, which opens every lesson page in both languages. Each of JS-01…JS-07 was then reviewed by an independent reviewer who had not written it; the recurring defects became the 32 rules in the [authoring guide](../content/README.md). Seven competency families (J-01, J-02, J-03, J-05, W-01, W-02, W-03) have every subskill assessed in those units and are recorded as authored and implemented in [competencies.json](competencies.json); no family is recorded as verified.
+
+What this does not establish: all authoring and review was done by AI agents. No human teacher, no native-speaker editor and no real learner has read the lessons; the Ukrainian was judged natural by the reviewers but has not had a human linguistic review. Reviewer notes list remaining unverified items per unit (screen-reader behaviour, DevTools panels, some claims about Chrome outside the sandbox). JS-06 coverage gaps noted by its reviewer: tables and images are practised less deeply than the syllabus depth states.
+
+### Next steps
+
+1. Owner decisions: the launch-address security change, the license (DEC-06), and whether later runs continue with JS-08…JS-18 before React.
+2. Author JS-08 (11 lessons left; measured sandbox facts for timers, promises and `fetch` are in the authoring guide), then JS-09, JS-15 and JS-10 so that the CP-JS export checkpoint becomes reachable.
+3. Human review of a sample of lessons in both languages before more content is produced at scale.
 
 ## Documentation baseline
 
