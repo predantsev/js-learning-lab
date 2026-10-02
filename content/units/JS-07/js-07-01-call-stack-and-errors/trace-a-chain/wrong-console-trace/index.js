@@ -1,4 +1,4 @@
-// console.trace() works in the browser's DevTools, but the course console does not show it.
+// console.trace() works in the browser's DevTools, but the platform's console does not show it.
 
 function formatAmount(amountMinor) {
   console.trace();
