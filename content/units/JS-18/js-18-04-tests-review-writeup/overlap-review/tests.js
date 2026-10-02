@@ -108,7 +108,8 @@ test('the mock explanation says what the stand-in replaced', async () => {
 
 test('the decision is request-changes', async () => {
   const { decision } = await loadReview();
-  expect(decision, 'decision').toBe('request-changes');
+  // A boolean comparison: a failure message must not print the expected decision.
+  expect(decision === 'request-changes', `decision (${JSON.stringify(decision ?? null)}) follows the evidence`).toBe(true);
 });
 
 test('the write-up records the decision with its evidence', async () => {
