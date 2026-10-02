@@ -1,0 +1,323 @@
+id: js-14-09-debug-type-errors
+unit: JS-14
+title:
+  uk: "Налагодження: помилки з null і union та неперевірений cast"
+  en: "Debug: null/union errors and an unchecked cast"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знайти чотири закладені дефекти (читання з можливого `null`, необроблений варіант union, `any`, що ховає описку в полі, приведення розібраного JSON) за діагностиками `tsc` і запуском на зіпсованих даних."
+    en: "Diagnose four seeded defects (a nullable read, an unhandled union member, an `any` hiding a misspelled field, a cast on parsed JSON) from `tsc` diagnostics and a failing run on malformed data."
+  - uk: "Виправити кожен дефект звуженням або перевіркою, зберігши правильну поведінку й жодного разу не заглушивши `tsc` через `!` чи `as`."
+    en: "Repair each defect with narrowing or validation, keeping correct behavior and never silencing `tsc` with `!` or `as`."
+prerequisites: [js-14-08-compile-time-vs-runtime]
+subskills:
+  - { family: P-03, skill: "unions/narrowing/discriminants", depth: assess }
+  - { family: P-03, skill: "nullability/strict checks", depth: assess }
+  - { family: P-03, skill: "unknown vs any", depth: assess }
+glossary: []
+selfCheck: [predict-who-reports, four-defects]
+
+blocks:
+  - id: two-sources-of-truth
+    kind: explanation
+    title:
+      uk: "Два джерела підказок"
+      en: "Two sources of clues"
+    body:
+      uk: |
+        Модуль справ у цьому уроці має чотири дефекти. Шукатимеш їх двома інструментами, і кожен бачить своє:
+
+        - **`tsc`** бачить код. Він знайде читання з можливого `null` і функцію, яка для якогось варіанта нічого не повертає, — але лише там, де типи чесні.
+        - **Запуск на зіпсованих даних** бачить значення. Він покаже, де тип стверджував одне, а насправді прийшло інше: там, де `any` чи `as` вимкнули `tsc`.
+
+        Правило виправлення одне: діагностика — не ворог, а вказівка. Заглушити її через `!`, `as` чи `as any` — означає перенести помилку з терміналу в програму. Виправлення — це перевірка, яку розуміють і `tsc`, і JavaScript.
+      en: |
+        The task module in this lesson has four defects. You will look for them with two tools, and each sees its own part:
+
+        - **`tsc`** sees code. It finds a read from a possible `null` and a function that returns nothing for some member — but only where the types are honest.
+        - **A run on malformed data** sees values. It shows where a type claimed one thing and something else really arrived: where `any` or `as` switched `tsc` off.
+
+        There is one rule for repairs: a diagnostic is not an enemy but a pointer. Silencing it with `!`, `as` or `as any` moves the error from the terminal into the program. A repair is a check that both `tsc` and JavaScript understand.
+
+  - id: predict-who-reports
+    kind: prediction
+    prompt:
+      uk: "Ось чотири закладені рядки з `tasks.ts`. Про які з них повідомить `tsc` у строгому режимі? (Решта проявиться лише під час виконання.)"
+      en: "Here are the four seeded spots from `tasks.ts`. Which of them does `tsc` report in strict mode? (The rest show up only at runtime.)"
+    code: |
+      // A
+      export function dueMonth(task: Task): string {
+        return task.dueDate.slice(0, 7); // dueDate: string | null
+      }
+
+      // B
+      export function priorityRank(priority: Priority): number {
+        switch (priority) {
+          case "high":
+            return 0;
+          case "normal":
+            return 1;
+        }
+      }
+
+      // C
+      export function taskLabel(task: Task): string {
+        const loose = task as any;
+        return `${loose.titel} (${loose.priority})`;
+      }
+
+      // D
+      export function loadTasks(text: string): Task[] {
+        return JSON.parse(text) as Task[];
+      }
+    lang: ts
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - { id: a, text: { uk: "A — читання `dueDate`", en: "A — the `dueDate` read" } }
+        - { id: b, text: { uk: "B — `switch` без `\"low\"`", en: "B — the `switch` without `\"low\"`" } }
+        - id: c
+          text: { uk: "C — описка `titel`", en: "C — the typo `titel`" }
+          why:
+            uk: "Після `as any` перевірки немає: `loose.titel` — допустимий вираз типу `any`. Описку видно лише під час виконання: `undefined` замість назви."
+            en: "After `as any` there is no checking: `loose.titel` is an allowed expression of type `any`. The typo shows only at runtime: `undefined` instead of the title."
+        - id: d
+          text: { uk: "D — `as Task[]` на розібраному JSON", en: "D — `as Task[]` on parsed JSON" }
+          why:
+            uk: "`as` — твердження, і `tsc` йому вірить. Що в тексті є записи з `title: 42` чи `priority: \"urgent\"`, стане видно лише на зіпсованих даних."
+            en: "`as` is a claim, and `tsc` believes it. That the text has records with `title: 42` or `priority: \"urgent\"` becomes visible only on malformed data."
+      correct: [a, b]
+    explanation:
+      uk: "Під час підготовки уроку `tsc` 7 повідомив саме два: `TS18047: 'task.dueDate' is possibly 'null'` для A і `TS2366: Function lacks ending return statement and return type does not include 'undefined'` для B. C і D компілюються без помилок — саме там, де код вимкнув перевірку."
+      en: "When the lesson was prepared, `tsc` 7 reported exactly two: `TS18047: 'task.dueDate' is possibly 'null'` for A and `TS2366: Function lacks ending return statement and return type does not include 'undefined'` for B. C and D compile without errors — exactly where the code switched checking off."
+
+  - id: replay
+    kind: visual
+    visual: code-trace
+    title:
+      uk: "Оголошений тип проти справжнього значення"
+      en: "The declared type versus the real value"
+    textEquivalent:
+      uk: "Трасування відтворює дефекти A і D у JavaScript, що лишається після прибирання типів. loadTasks повертає результат JSON.parse без перевірки — у TypeScript-версії він «приведений» до Task[]. Цикл бере першу справу: її dueDate — текст, і dueMonth повертає «2026-03». Друга справа для tsc теж Task, а її dueDate за типом може бути null — і під час виконання справді null. Читання .slice з null кидає TypeError: Cannot read properties of null (reading 'slice'). tsc попереджав про цей рядок (TS18047), але приведення в loadTasks не попереджало ні про що."
+      en: "The trace replays defects A and D in the JavaScript that remains after the types are removed. loadTasks returns the result of JSON.parse without a check — in the TypeScript version it is “asserted” to be Task[]. The loop takes the first task: its dueDate is text, and dueMonth returns \"2026-03\". The second task is a Task for tsc too, and by its type its dueDate may be null — and at runtime it really is null. Reading .slice from null throws TypeError: Cannot read properties of null (reading 'slice'). tsc warned about that line (TS18047), but the assertion in loadTasks warned about nothing."
+    spec:
+      file: visuals/replay.js
+      captions:
+        - at: { line: 2, kind: return }
+          text:
+            uk: "`loadTasks` повертає результат `JSON.parse` як є. У TypeScript-версії тут `as Task[]` — твердження, від якого після компіляції не лишилося нічого."
+            en: "`loadTasks` returns the result of `JSON.parse` as it is. In the TypeScript version there is `as Task[]` here — a claim nothing of which remains after compiling."
+        - at: { line: 5, kind: call, hit: 1 }
+          text:
+            uk: "Перша справа. Оголошений тип — `Task`, справжнє значення — об’єкт з `dueDate: \"2026-03-02\"`. Тип і значення збігаються."
+            en: "The first task. The declared type is `Task`, the real value an object with `dueDate: \"2026-03-02\"`. Type and value agree."
+        - at: { line: 6, kind: return, hit: 1 }
+          text:
+            uk: "`dueMonth` повертає `\"2026-03\"` — на правильних даних дефект не видно."
+            en: "`dueMonth` returns `\"2026-03\"` — on good data the defect does not show."
+        - at: { line: 5, kind: call, hit: 2 }
+          text:
+            uk: "Друга справа. Для `tsc` це теж `Task`, а `dueDate` за типом — `string | null`. Справжнє значення — саме `null`."
+            en: "The second task. To `tsc` it is a `Task` too, and by type its `dueDate` is `string | null`. The real value is exactly `null`."
+        - at: { line: 6, kind: throw }
+          text:
+            uk: "`null.slice` кидає `TypeError`. Про цей рядок `tsc` попереджав (`TS18047`); виправлення — перевірка `null`, а не `!`."
+            en: "`null.slice` throws a `TypeError`. `tsc` warned about this line (`TS18047`); the repair is a `null` check, not `!`."
+
+  - id: recall-stack
+    kind: review
+    title:
+      uk: "Згадай: стек викликів"
+      en: "Recall: the call stack"
+    items:
+      - id: deepest-frame
+        from: js-07-01-call-stack-and-errors
+        prompt:
+          uk: "Картка помилки показує стек: `at dueMonth (tasks.ts:39:23)`, `at index.ts:10:39`. Де помилка сталася насправді, і з якого рядка до неї дійшли?"
+          en: "The error card shows the stack: `at dueMonth (tasks.ts:39:23)`, `at index.ts:10:39`. Where did the error really happen, and from which line was it reached?"
+        answer:
+          type: choice
+          options:
+            - id: top
+              text:
+                uk: "Сталася в `tasks.ts`, рядок 39 (у `dueMonth`); її викликав рядок 10 `index.ts`"
+                en: "It happened in `tasks.ts`, line 39 (in `dueMonth`); line 10 of `index.ts` called it"
+            - id: bottom
+              text:
+                uk: "Сталася в `index.ts`, рядок 10; `tasks.ts` лише передав її далі"
+                en: "It happened in `index.ts`, line 10; `tasks.ts` only passed it on"
+              why:
+                uk: "Верхній рядок стека — найглибший виклик, де помилку кинуто. Нижчі рядки — ті, хто туди привів."
+                en: "The top line of the stack is the deepest call, where the error was thrown. The lower lines are those that led there."
+          correct: [top]
+        explanation:
+          uk: "Верхній кадр — місце, нижні — шлях до нього. Для дефектів з `null` це рядок, який треба захистити перевіркою; для дефектів з `as` справжня причина часто вище за стеком — там, де неперевірені дані потрапили в програму."
+          en: "The top frame is the place, the lower ones the path to it. For `null` defects it is the line that needs a check; for `as` defects the real cause is often further up the stack — where unchecked data entered the program."
+
+  - id: four-defects
+    kind: exercise
+    mode: debug
+    runtime: browser-js
+    dir: four-defects
+    entry: index.ts
+    editable: [tasks.ts]
+    strings:
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      noDate: { uk: "без дати", en: "no date" }
+    title:
+      uk: "Чотири дефекти модуля справ"
+      en: "Four defects of the task module"
+    instructions:
+      uk: |
+        `index.ts` завантажує три збережені справи, третя з яких зіпсована, і виводить для кожної мітку, місяць і ранг. Програма падає, а до падіння встигає вивести `undefined` замість назви.
+
+        У `tasks.ts` чотири дефекти — по одному в `dueMonth`, `priorityRank`, `taskLabel` і `loadTasks`. Що має робити кожна функція, написано в коментарі над нею. Виправ усі чотири:
+
+        - жодного `!`, `as` чи `any` у виправленнях;
+        - `validateTask` уже готова — користуйся нею;
+        - `index.ts` змінювати не можна.
+
+        Перевірки викликають кожну функцію окремо, зокрема з `null`, з усіма пріоритетами й зі зіпсованими записами.
+      en: |
+        `index.ts` loads three stored tasks, the third of them damaged, and prints a label, a month and a rank for each. The program crashes, and before the crash it prints `undefined` instead of a title.
+
+        `tasks.ts` has four defects — one each in `dueMonth`, `priorityRank`, `taskLabel` and `loadTasks`. What each function must do is written in the comment above it. Fix all four:
+
+        - no `!`, `as` or `any` in the repairs;
+        - `validateTask` is ready — use it;
+        - `index.ts` cannot be changed.
+
+        The checks call each function separately, including with `null`, with every priority and with damaged records.
+    testTitles:
+      "dueMonth gives the year and month, and the no-date text for null":
+        uk: "`dueMonth` дає рік і місяць, а для `null` — «без дати»"
+        en: "`dueMonth` gives the year and month, and “no date” for `null`"
+      "priorityRank gives 0, 1 and 2 for high, normal and low":
+        uk: "`priorityRank` дає 0, 1 і 2 для `high`, `normal` і `low`"
+        en: "`priorityRank` gives 0, 1 and 2 for `high`, `normal` and `low`"
+      "taskLabel shows the title and the priority":
+        uk: "`taskLabel` показує назву й пріоритет"
+        en: "`taskLabel` shows the title and the priority"
+      "loadTasks keeps only valid tasks":
+        uk: "`loadTasks` лишає тільки правильні справи"
+        en: "`loadTasks` keeps only valid tasks"
+      "loadTasks gives an empty list for broken JSON or a non-array":
+        uk: "`loadTasks` дає порожній список для зламаного JSON чи не-масиву"
+        en: "`loadTasks` gives an empty list for broken JSON or a non-array"
+      "the program prints two task lines":
+        uk: "Програма виводить два рядки справ"
+        en: "The program prints two task lines"
+    hints:
+      nudge:
+        uk: "Два дефекти покаже `tsc` у твоїй теці `ts-lab` (або передбачення вище). Два інші сховані там, де код сам вимкнув перевірку: знайди в `tasks.ts` усі `as`."
+        en: "`tsc` in your `ts-lab` folder shows two defects (or the prediction above). The other two hide where the code itself switched checking off: find every `as` in `tasks.ts`."
+      explanation:
+        uk: "Для `null` — перевірка перед читанням, як у уроці про строгі перевірки. Для `switch` — пропущений `case` і гілка `default` з `never`, щоб наступний пропуск став помилкою компіляції. Для `as any` — прибери його: тоді `tsc` сам покаже, як насправді називається поле. Для `as Task[]` — `unknown`, `try … catch`, `Array.isArray` і `validateTask` для кожного елемента, як у минулому уроці; `null` від `validateTask` означає «пропусти цей запис»."
+        en: "For `null` — a check before the read, as in the lesson on strict checks. For the `switch` — the missing `case` and a `default` branch with `never`, so the next omission becomes a compile error. For `as any` — remove it: then `tsc` itself shows what the field is really called. For `as Task[]` — `unknown`, `try … catch`, `Array.isArray` and `validateTask` for each element, as in the last lesson; `null` from `validateTask` means “skip this record”."
+    solutionNote:
+      uk: "Два дефекти `tsc` бачив (A і B), два — ні, бо `as any` і `as Task[]` вимкнули перевірку саме там. Після виправлення в модулі не лишилося жодного твердження без перевірки: `null` відсіяно, усі варіанти `Priority` оброблено з `never`, поле читається під справжньою назвою, а дані зі сховища проходять через `validateTask`. Варіант з `!` проходить `tsc`, але падає на справі без дати; варіант з `default: return 1` проходить `tsc`, але дає `low` неправильний ранг."
+      en: "`tsc` saw two defects (A and B) and not the other two, because `as any` and `as Task[]` switched checking off exactly there. After the repair the module has no claim without a check: `null` is filtered out, every member of `Priority` is handled with `never`, the field is read by its real name, and stored data passes through `validateTask`. A version with `!` passes `tsc` but crashes on a task without a date; a version with `default: return 1` passes `tsc` but gives `low` the wrong rank."
+    feedback:
+      - when: { test: "dueMonth gives the year and month, and the no-date text for null" }
+        message:
+          uk: "Ця перевірка викликає `dueMonth` зі справою, у якої `dueDate` — `null`, і чекає «без дати». `!` перевірки не додає — потрібна справжня перевірка `null`."
+          en: "This check calls `dueMonth` with a task whose `dueDate` is `null` and expects “no date”. `!` adds no check — a real `null` check is needed."
+      - when: { test: "priorityRank gives 0, 1 and 2 for high, normal and low" }
+        message:
+          uk: "Ця перевірка чекає `[0, 1, 2]` для `high`, `normal`, `low`. Кожен пріоритет потребує свого `case`; `default` з числом сховає наступний пропущений варіант."
+          en: "This check expects `[0, 1, 2]` for `high`, `normal`, `low`. Each priority needs its own `case`; a `default` with a number hides the next missing member."
+      - when: { test: "taskLabel shows the title and the priority" }
+        message:
+          uk: "Ця перевірка чекає назву справи й пріоритет у дужках. Якщо замість назви `undefined`, поле прочитано під неправильною назвою; без `as any` `tsc` показав би це."
+          en: "This check expects the task’s title and the priority in brackets. If there is `undefined` instead of the title, the field is read under a wrong name; without `as any`, `tsc` would show it."
+      - when: { test: "loadTasks keeps only valid tasks" }
+        message:
+          uk: "Ця перевірка передає п’ять записів, серед них з `title: 7`, `priority: \"urgent\"` і `null`, і чекає лише `t-05` і `t-06`. Кожен запис має пройти через `validateTask`."
+          en: "This check passes five records, among them ones with `title: 7`, `priority: \"urgent\"` and `null`, and expects only `t-05` and `t-06`. Every record must go through `validateTask`."
+      - when: { test: "loadTasks gives an empty list for broken JSON or a non-array" }
+        message:
+          uk: "Ця перевірка чекає `[]` без винятку для обірваного JSON і для одного об’єкта замість масиву."
+          en: "This check expects `[]` without an exception for cut-off JSON and for a single object instead of an array."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` під час завантаження означає, що програма ще падає на одній зі справ: прочитай верхній рядок стека в картці. Тоді всі перевірки показують «… is not a function» або схожі повідомлення, доки причину не виправлено."
+          en: "A `TypeError` while loading means the program still crashes on one of the tasks: read the top line of the stack in the card. Until the cause is fixed, every check then shows “… is not a function” or similar messages."
+      - when: { error: Error }
+        message:
+          uk: "`Error: Unknown priority: …` — спрацювала гілка `never` на справі з невідомим пріоритетом. Під час виконання так буває, лише якщо неперевірений запис потрапив у програму: перевір `loadTasks`."
+          en: "`Error: Unknown priority: …` — the `never` branch fired on a task with an unknown priority. At runtime that happens only when an unchecked record got into the program: check `loadTasks`."
+    limits:
+      uk: "Пісочниця прибирає типи й виконує JavaScript, що лишився. Діагностики `TS18047` і `TS2366` показує лише `tsc` у твоїй теці `ts-lab`."
+      en: "The sandbox removes the types and runs the JavaScript that remains. Only `tsc` in your `ts-lab` folder shows the `TS18047` and `TS2366` diagnostics."
+
+  - id: check-defects
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Дефекти очима tsc"
+      en: "The defects through tsc’s eyes"
+    intro:
+      uk: "Працюєш у теці `ts-lab`. Результати записано з TypeScript 7.0.2 у macOS."
+      en: "You work in the `ts-lab` folder. The results were recorded with TypeScript 7.0.2 on macOS."
+    tools:
+      - { name: "TypeScript", version: "7.x", note: { uk: "у теці `ts-lab`", en: "in the `ts-lab` folder" } }
+    steps:
+      - text:
+          uk: "Створи в `src/l09/` файли `index.ts` і `tasks.ts` з **початковим** кодом вправи «Чотири дефекти модуля справ» і перевір."
+          en: "Create `index.ts` and `tasks.ts` in `src/l09/` with the **starting** code of the exercise “Four defects of the task module” and check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Дві помилки: `src/l09/tasks.ts:39:10 - error TS18047: 'task.dueDate' is possibly 'null'.` і `src/l09/tasks.ts:43:51 - error TS2366: Function lacks ending return statement and return type does not include 'undefined'.` Порівняй зі своїм передбаченням: `as any` і `as Task[]` `tsc` не помітив."
+          en: "Two errors: `src/l09/tasks.ts:39:10 - error TS18047: 'task.dueDate' is possibly 'null'.` and `src/l09/tasks.ts:43:51 - error TS2366: Function lacks ending return statement and return type does not include 'undefined'.` Compare with your prediction: `tsc` did not notice `as any` and `as Task[]`."
+      - text:
+          uk: "У `taskLabel` прибери рядок `const loose = task as any;` і заміни `loose` на `task`."
+          en: "In `taskLabel` remove the line `const loose = task as any;` and replace `loose` with `task`."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Третя помилка з’явилася: `tsc` тепер бачить, що поля `titel` у `Task` немає (`TS2551 … Did you mean 'title'?`). Прибравши `any`, ти повернув перевірку."
+          en: "A third error appeared: `tsc` now sees that `Task` has no field `titel` (`TS2551 … Did you mean 'title'?`). By removing `any` you got the check back."
+      - text:
+          uk: "Заміни обидва файли своїм розв’язком і перевір."
+          en: "Replace both files with your solution and check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Нічого не виведено."
+          en: "Nothing is printed."
+      - text:
+          uk: "Запусти розв’язок напряму (Node.js 22.18+)."
+          en: "Run the solution directly (Node.js 22.18+)."
+        command: "node src/l09/index.ts"
+        expect:
+          uk: "Два рядки — справи `t-01` і `t-03`; зіпсований запис `t-09` відкинуто без жодної помилки."
+          en: "Two lines — tasks `t-01` and `t-03`; the damaged record `t-09` is dropped without any error."
+    verify:
+      - id: two-reported
+        text:
+          uk: "`tsc` повідомив про `dueMonth` і `priorityRank`, а дефекти за `as` і `as any` знайшов лише запуск."
+          en: "`tsc` reported `dueMonth` and `priorityRank`, while only the run found the defects behind `as` and `as any`."
+      - id: clean
+        text:
+          uk: "Мій розв’язок без `!`, `as` і `any` перевіряється без помилок."
+          en: "My solution without `!`, `as` and `any` checks without errors."
+    troubleshooting:
+      - problem:
+          uk: "Номери рядків у помилках інші, ніж тут"
+          en: "The line numbers in the errors differ from the ones here"
+        fix:
+          uk: "Номери залежать від того, як відформатовано файл. Орієнтуйся на код помилки й підкреслений вираз."
+          en: "The numbers depend on how the file is formatted. Go by the error code and the underlined expression."
+    recovery:
+      uk: "Початковий код вправи показує кнопка «Почати спочатку», а твій код повертає «Повернути мій код»."
+      en: "The “Start over” button shows the exercise’s starting code, and “Restore my code” brings yours back."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-14
+    body:
+      uk: "Коли переводитимеш доменний модуль проєкту на TypeScript, `tsc` покаже частину проблем одразу. Решту шукай там, де код вимикає перевірку: кожен `as`, `!` і `any` у проєкті — кандидат на заміну справжньою перевіркою, а збережені дані перевір на зіпсованих записах, як у цій вправі."
+      en: "When you convert your project’s domain module to TypeScript, `tsc` shows part of the problems right away. Look for the rest where code switches checking off: every `as`, `!` and `any` in the project is a candidate for a real check, and test the stored data with damaged records, as in this exercise."

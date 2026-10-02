@@ -1,0 +1,347 @@
+id: js-14-08-compile-time-vs-runtime
+unit: JS-14
+title:
+  uk: "Типи під час компіляції проти перевірки під час виконання"
+  en: "Compile-time types vs runtime validation"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Показати контрприкладом, що приведення типу (`as Wish`) пропускає зіпсовані збережені дані без жодної перевірки."
+    en: "Show with a counterexample that a type assertion (`as Wish`) lets malformed stored data through unchecked."
+  - uk: "Реалізувати перевірку під час виконання, що перетворює `unknown` на типізоване значення або помилки полів, і назвати, які гарантії дає `tsc`, а які — перевірка."
+    en: "Implement a runtime validator that turns `unknown` input into a typed value or field errors, and say which guarantees come from `tsc` and which from the validator."
+prerequisites: [js-14-07-modules-type-imports, js-14-06-unknown-vs-any]
+subskills:
+  - { family: P-03, skill: "runtime validation distinction", depth: intro }
+glossary: [type-assertion, type-erasure, runtime-validation]
+selfCheck: [predict-cast-sum, stored-wishes]
+
+blocks:
+  - id: two-moments
+    kind: explanation
+    title:
+      uk: "Два моменти: компіляція і виконання"
+      en: "Two moments: compiling and running"
+    body:
+      uk: |
+        `tsc` працює **до запуску** й бачить лише код. Тексту в `localStorage`, відповіді сервера чи файлу він не бачить ніколи: їх ще немає. Після перевірки `tsc` прибирає всі типи — це [[type-erasure|стирання типів]], — і програма виконується без жодного з них.
+
+        Тому для даних ззовні є лише два чесні варіанти:
+
+        - [[type-assertion|приведення типу]] `JSON.parse(text) as Wish[]` — ти **стверджуєш**, що там бажання. `tsc` вірить, як і з `!`, і нічого не перевіряє, а після компіляції `as` зникає;
+        - [[runtime-validation|перевірка під час виконання]] — код, який дивиться на кожне поле справжнього значення й повертає або типізований запис, або помилки.
+
+        `tsc` гарантує, що **код** узгоджений із типами. Що **дані** відповідають типам, гарантує лише перевірка.
+      en: |
+        `tsc` works **before running** and sees only code. It never sees the text in `localStorage`, a server response or a file: they do not exist yet. After checking, `tsc` removes all types — this is [[type-erasure|type erasure]] — and the program runs without any of them.
+
+        So for outside data there are only two honest options:
+
+        - a [[type-assertion|type assertion]] `JSON.parse(text) as Wish[]` — you **claim** there are wishes in it. `tsc` believes you, as with `!`, and checks nothing, and after compiling `as` disappears;
+        - [[runtime-validation|runtime validation]] — code that looks at every field of the real value and returns either a typed record or errors.
+
+        `tsc` guarantees that the **code** agrees with the types. Only validation guarantees that the **data** matches them.
+
+  - id: predict-cast-sum
+    kind: prediction
+    prompt:
+      uk: "`tsc` пропускає цей файл без жодної помилки. Що виведе програма під час виконання?"
+      en: "`tsc` lets this file through without a single error. What does the program print at runtime?"
+    code: |
+      interface Wish {
+        readonly id: string;
+        name: string;
+        price: number | null;
+      }
+
+      const text = '[{"id":"w-01","name":"Headphones","price":"80"},{"id":"w-02","name":"Desk lamp","price":45}]';
+
+      const wishes = JSON.parse(text) as Wish[];
+      const total = wishes.reduce((sum, wish) => sum + (wish.price ?? 0), 0);
+      console.log(total);
+    lang: ts
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: joined
+          code: "08045"
+        - id: converted
+          code: "125"
+          why:
+            uk: "`as Wish[]` нічого не перетворює: `\"80\"` лишається текстом. А `0 + \"80\"` склеює в `\"080\"`, і далі кожне число дописується в кінець тексту."
+            en: "`as Wish[]` converts nothing: `\"80\"` stays text. And `0 + \"80\"` joins into `\"080\"`, and every next number is appended to the text."
+        - id: thrown
+          code: "TypeError"
+          why:
+            uk: "`as` нічого не перевіряє під час виконання — після компіляції його немає. Тож помилки не буде: буде тихий неправильний результат."
+            en: "`as` checks nothing at runtime — after compiling it is gone. So there is no error: there is a quiet wrong result."
+        - id: compile-error
+          code: "nothing: tsc stops it"
+          why:
+            uk: "`tsc` не бачить вмісту тексту — лише те, що `text` має тип `string`. Приведення `as Wish[]` змусило його повірити, що там бажання."
+            en: "`tsc` does not see the contents of the text — only that `text` has the type `string`. The assertion `as Wish[]` made it believe there are wishes in it."
+      correct: [joined]
+    explanation:
+      uk: "Під час підготовки уроку `tsc` 7 не повідомив жодної помилки, а запуск вивів `08045`. Для `tsc` `wish.price` — `number | null`, тож `sum + …` — додавання чисел. Насправді там текст, і `+` склеює. Ні `as`, ні тип `Wish` цього не помітили — вони існують лише до запуску."
+      en: "When the lesson was prepared, `tsc` 7 reported no error, and running it printed `08045`. To `tsc`, `wish.price` is `number | null`, so `sum + …` adds numbers. In reality it is text, and `+` joins. Neither `as` nor the type `Wish` noticed — they exist only before running."
+
+  - id: two-lanes
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Ті самі збережені дані — дві доріжки"
+      en: "The same stored data — two lanes"
+    textEquivalent:
+      uk: "Схема має дві доріжки для того самого збереженого JSON, у якому ціна записана текстом «80». Ліва доріжка — приведення: JSON.parse(text) as Wish[]. tsc перевіряє лише код, приймає твердження й стирає типи, тож запис без жодної перевірки доходить до підсумку, і сума виходить текстом «08045». Права доріжка — значення типу unknown проходить через validateItem. Ця перевірка працює під час виконання, бачить, що price — не число, і зупиняє запис з помилкою поля price. Висновок: типи дають гарантії про код, а про дані — лише перевірка під час виконання."
+      en: "The diagram has two lanes for the same stored JSON, where the price is written as the text \"80\". The left lane is an assertion: JSON.parse(text) as Wish[]. tsc checks only the code, accepts the claim and erases the types, so the record reaches the total without any check, and the sum comes out as the text \"08045\". The right lane passes the value of type unknown through validateItem. That check runs at runtime, sees that price is not a number and stops the record with a price field error. The conclusion: types give guarantees about code, and only runtime validation gives them about data."
+    spec:
+      layout: grid
+      nodes:
+        - { id: json, label: "{ price: \"80\" }", w: 150, col: 0, row: 0 }
+        - { id: cast, label: "as Wish[]", w: 130, col: 0, row: 1 }
+        - { id: sum, label: { uk: "сума \"08045\"", en: "total \"08045\"" }, w: 130, col: 0, row: 2 }
+        - { id: unknown, label: ": unknown", w: 130, col: 1, row: 1 }
+        - { id: validate, label: "validateItem", w: 130, col: 1, row: 2 }
+        - { id: stopped, label: { uk: "помилка: price", en: "error: price" }, w: 130, col: 1, row: 3, shape: note }
+      edges:
+        - { id: json-cast, from: json, to: cast, label: { uk: "твердження", en: "a claim" } }
+        - { id: cast-sum, from: cast, to: sum, label: { uk: "без перевірки", en: "unchecked" } }
+        - { id: json-unknown, from: json, to: unknown }
+        - { id: unknown-validate, from: unknown, to: validate }
+        - { id: validate-stopped, from: validate, to: stopped, label: { uk: "зупинено", en: "stopped" } }
+      steps:
+        - caption:
+            uk: "У сховищі лежить JSON, де ціну записано текстом `\"80\"`. Для `tsc` це просто `string`: вмісту він не бачить."
+            en: "Storage holds JSON where the price is written as the text `\"80\"`. To `tsc` this is just a `string`: it does not see the contents."
+          highlight: [json]
+        - caption:
+            uk: "Ліва доріжка: `as Wish[]`. `tsc` приймає твердження, перевіряє решту коду й стирає типи — і `as` разом з ними."
+            en: "The left lane: `as Wish[]`. `tsc` accepts the claim, checks the rest of the code and erases the types — `as` along with them."
+          highlight: [json, json-cast, cast]
+          dim: [unknown, validate, stopped, json-unknown, unknown-validate, validate-stopped]
+        - caption:
+            uk: "Під час виконання запис доходить до підсумку неперевіреним: `0 + \"80\"` склеює текст, і виходить `\"08045\"`. Помилки немає — є тихий неправильний результат."
+            en: "At runtime the record reaches the total unchecked: `0 + \"80\"` joins text, and the result is `\"08045\"`. There is no error — there is a quiet wrong result."
+          highlight: [cast, cast-sum, sum]
+          dim: [unknown, validate, stopped, json-unknown, unknown-validate, validate-stopped]
+        - caption:
+            uk: "Права доріжка: значення має тип `unknown`, тож `tsc` не дає ним користуватися без перевірки. `validateItem` — звичайний код, і він працює саме під час виконання."
+            en: "The right lane: the value has the type `unknown`, so `tsc` does not allow using it without a check. `validateItem` is ordinary code, and it runs exactly at runtime."
+          highlight: [json, json-unknown, unknown, unknown-validate, validate]
+          dim: [cast, sum, json-cast, cast-sum, stopped]
+        - caption:
+            uk: "`validateItem` бачить, що `price` — не число, і повертає помилку поля `price`. Запис зупинено до того, як він зіпсував підсумок."
+            en: "`validateItem` sees that `price` is not a number and returns a `price` field error. The record is stopped before it spoils the total."
+          highlight: [validate, validate-stopped, stopped]
+          dim: [cast, sum, json-cast, cast-sum]
+
+  - id: cast-or-check
+    kind: example
+    runtime: browser-js
+    dir: cast-or-check
+    entry: index.ts
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bike: { uk: "Велосипед", en: "Bicycle" }
+      home: { uk: "Дім", en: "Home" }
+    title:
+      uk: "Приведення чи перевірка — запис за записом"
+      en: "Assertion or validation — record by record"
+    body:
+      uk: |
+        Три збережені записи, два з них зіпсовані: ціна текстом і `acquired: "no"`. Модуль `wish.ts` містить готову `validateItem(input: unknown)`: вона дивиться на кожне поле й повертає `{ ok: true, value }` або `{ ok: false, errors }`.
+
+        Запусти й порівняй доріжки: приведення дає одне неправильне число, перевірка — відповідь для кожного запису.
+      en: |
+        Three stored records, two of them damaged: a price as text and `acquired: "no"`. The module `wish.ts` holds a ready `validateItem(input: unknown)`: it looks at every field and returns `{ ok: true, value }` or `{ ok: false, errors }`.
+
+        Run it and compare the lanes: the assertion gives one wrong number, the validation an answer for every record.
+    tryIt:
+      uk: |
+        1. Запусти: `as Wish[] → 08045240`, а далі для трьох записів по черзі `rejected: price`, `ok: w-02`, `rejected: acquired`.
+        2. Відкрий `wish.ts` і подивись, як `validateItem` перевіряє `price`: `null` дозволено, а інакше — лише ціле невід’ємне число. Ніде немає `as`: кожне звуження — справжня перевірка.
+        3. Виправ у `stored` ціну першого запису на число `80` і запусти: перевірка тепер приймає перший запис (`ok: w-01`), а сума приведення — `365`, знову число. Третій запис досі зіпсований, але `acquired` у сумі не бере участі: приведенню просто пощастило, перевірки як не було, так і нема.
+      en: |
+        1. Run it: `as Wish[] → 08045240`, then for the three records in turn `rejected: price`, `ok: w-02`, `rejected: acquired`.
+        2. Open `wish.ts` and see how `validateItem` checks `price`: `null` is allowed, otherwise only a whole non-negative number. There is no `as` anywhere: every narrowing is a real check.
+        3. In `stored`, change the first record’s price to the number `80` and run: validation now accepts the first record (`ok: w-01`), and the assertion total is `365`, a number again. The third record is still damaged, but `acquired` takes no part in the sum: the assertion just got lucky — there is still no check at all.
+    limits:
+      uk: "Пісочниця прибирає типи (разом з `as`) і виконує JavaScript, що лишився. Що `tsc` цей файл пропускає, перевірено з TypeScript 7.0.2."
+      en: "The sandbox removes the types (`as` included) and runs the JavaScript that remains. That `tsc` lets this file through was checked with TypeScript 7.0.2."
+
+  - id: recall-persist
+    kind: review
+    title:
+      uk: "Згадай: перевірка збережених даних"
+      en: "Recall: checking stored data"
+    items:
+      - id: load-check
+        from: js-07-05-persist-reload
+        prompt:
+          uk: "Програма читає список зі сховища: `JSON.parse(localStorage.getItem(\"jsll.planner.v1\"))`. Що з цього має врахувати код завантаження?"
+          en: "A program reads a list from storage: `JSON.parse(localStorage.getItem(\"jsll.planner.v1\"))`. Which of these must the loading code take into account?"
+        answer:
+          type: multi
+          options:
+            - { id: missing, text: { uk: "Ключа може не бути — тоді `getItem` повертає `null`", en: "The key may be missing — then `getItem` returns `null`" } }
+            - { id: broken, text: { uk: "Текст може бути не JSON — тоді `JSON.parse` кидає `SyntaxError`", en: "The text may not be JSON — then `JSON.parse` throws a `SyntaxError`" } }
+            - { id: shape, text: { uk: "JSON може мати іншу форму — стару версію або поле іншого типу", en: "The JSON may have another shape — an old version or a field of another type" } }
+            - id: never
+              text: { uk: "Нічого: дані записала сама програма, тож вони правильні", en: "Nothing: the program itself wrote the data, so it is correct" }
+              why:
+                uk: "Сховище переживає оновлення програми, а користувач може змінити його в DevTools. Те, що колись записала програма, — не обов’язково те, що вона прочитає зараз."
+                en: "Storage outlives updates of the program, and the user can change it in DevTools. What the program once wrote is not necessarily what it reads now."
+          correct: [missing, broken, shape]
+        explanation:
+          uk: "Усі три — дані, які `tsc` не бачить. Тип `Task` описує, якими дані **мають** бути, а код завантаження перевіряє, якими вони **є**."
+          en: "All three are data `tsc` does not see. The type `Task` describes what the data **should** be, and the loading code checks what it **is**."
+
+  - id: stored-wishes
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: stored-wishes
+    entry: index.ts
+    editable: [index.ts]
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+    title:
+      uk: "parseStoredWishes без жодного as"
+      en: "parseStoredWishes without a single as"
+    instructions:
+      uk: |
+        Зараз `parseStoredWishes` вірить тексту на слово: `JSON.parse(text) as Wish[]`. Перепиши її так, щоб вона **перевіряла** дані й повертала `ParseResult`:
+
+        - текст — не JSON → `{ ok: false, errors: ["invalid-json"] }` (функція не кидає помилку);
+        - JSON — не масив → `{ ok: false, errors: ["not-an-array"] }`;
+        - кожен елемент перевір готовою `validateItem` з `wish.ts`; для кожного поля з помилкою додай `"<індекс>.<поле>"`, наприклад `"1.price"`, у порядку записів;
+        - якщо помилок немає → `{ ok: true, value: [...] }` з перевіреними записами.
+
+        Без жодного `as`. Модуль `wish.ts` змінювати не можна.
+      en: |
+        Right now `parseStoredWishes` takes the text at its word: `JSON.parse(text) as Wish[]`. Rewrite it so that it **checks** the data and returns a `ParseResult`:
+
+        - the text is not JSON → `{ ok: false, errors: ["invalid-json"] }` (the function does not throw);
+        - the JSON is not an array → `{ ok: false, errors: ["not-an-array"] }`;
+        - check every element with the ready `validateItem` from `wish.ts`; for every field with an error add `"<index>.<field>"`, for example `"1.price"`, in the order of the records;
+        - if there are no errors → `{ ok: true, value: [...] }` with the checked records.
+
+        Without a single `as`. The module `wish.ts` cannot be changed.
+    testTitles:
+      "valid stored text gives ok with every wish":
+        uk: "Правильний збережений текст дає `ok` з усіма бажаннями"
+        en: "Valid stored text gives `ok` with every wish"
+      "text that is not JSON gives the invalid-json error instead of throwing":
+        uk: "Текст, що не є JSON, дає помилку `invalid-json`, а не кидає її"
+        en: "Text that is not JSON gives the `invalid-json` error instead of throwing"
+      "JSON that is not an array gives the not-an-array error":
+        uk: "JSON, що не є масивом, дає помилку `not-an-array`"
+        en: "JSON that is not an array gives the `not-an-array` error"
+      "a record with a wrong field gives index.field errors":
+        uk: "Запис із неправильним полем дає помилки `індекс.поле`"
+        en: "A record with a wrong field gives `index.field` errors"
+      "a null record gives the index.record error":
+        uk: "Запис `null` дає помилку `індекс.record`"
+        en: "A `null` record gives the `index.record` error"
+      "the program prints the good result and the price error":
+        uk: "Програма виводить добрий результат і помилку ціни"
+        en: "The program prints the good result and the price error"
+    hints:
+      nudge:
+        uk: "Розклади задачу на три перевірки в порядку, в якому може зламатися збережений текст: чи це JSON? чи це масив? чи правильний кожен запис?"
+        en: "Split the task into three checks in the order a stored text can break: is it JSON? is it an array? is every record right?"
+      explanation:
+        uk: "`JSON.parse` огорни в `try … catch` і запиши результат у змінну типу `unknown`. `Array.isArray` звужує `unknown` до масиву. Далі для кожного елемента виклич `validateItem` і звуж результат через `result.ok`: у гілці успіху бери `result.value`, у гілці невдачі — ключі `result.errors`. Індекс елемента дає другий параметр callback-а у `forEach` чи `map`, як у `[\"a\", \"b\"].forEach((letter, index) => …)`."
+        en: "Wrap `JSON.parse` in `try … catch` and store the result in a variable of type `unknown`. `Array.isArray` narrows `unknown` to an array. Then call `validateItem` for each element and narrow the result with `result.ok`: in the success branch take `result.value`, in the failure branch the keys of `result.errors`. The element’s index is the callback’s second parameter in `forEach` or `map`, as in `[\"a\", \"b\"].forEach((letter, index) => …)`."
+    solutionNote:
+      uk: "Тепер кожна гарантія має джерело. `tsc` гарантує, що код не прочитає поле, не звузивши тип, і що `value` — масив `Wish`. Що в цьому масиві справді бажання, гарантує лише код: `try … catch`, `Array.isArray` і `validateItem`. Версія з `try … catch` і `as Wish[]` компілюється так само без помилок — але пропускає текстову ціну."
+      en: "Now every guarantee has a source. `tsc` guarantees that the code reads no field without narrowing the type and that `value` is an array of `Wish`. Only the code guarantees that the array really holds wishes: `try … catch`, `Array.isArray` and `validateItem`. A version with `try … catch` and `as Wish[]` compiles without errors just the same — but lets the text price through."
+    feedback:
+      - when: { test: "text that is not JSON gives the invalid-json error instead of throwing" }
+        message:
+          uk: "Ця перевірка передає обірваний JSON і чекає `{ ok: false, errors: [\"invalid-json\"] }` без винятку. `JSON.parse` на такому тексті кидає `SyntaxError` — перехопи його через `try … catch`."
+          en: "This check passes a cut-off JSON and expects `{ ok: false, errors: [\"invalid-json\"] }` without an exception. `JSON.parse` throws a `SyntaxError` on such text — catch it with `try … catch`."
+      - when: { test: "a record with a wrong field gives index.field errors" }
+        message:
+          uk: "Ця перевірка передає масив, у якому другий запис має ціну текстом і `acquired: \"yes\"`, і чекає `[\"1.price\", \"1.acquired\"]`. Якщо результат `ok: true`, записи не проходять через `validateItem` — `as` їх не перевіряє."
+          en: "This check passes an array whose second record has a text price and `acquired: \"yes\"`, and expects `[\"1.price\", \"1.acquired\"]`. If the result is `ok: true`, the records do not go through `validateItem` — `as` does not check them."
+      - when: { test: "JSON that is not an array gives the not-an-array error" }
+        message:
+          uk: "Ця перевірка передає один об’єкт і число `42` і чекає `{ ok: false, errors: [\"not-an-array\"] }`. Перевір розібране значення через `Array.isArray`."
+          en: "This check passes a single object and the number `42` and expects `{ ok: false, errors: [\"not-an-array\"] }`. Check the parsed value with `Array.isArray`."
+    limits:
+      uk: "Пісочниця прибирає типи (разом з `as`) і виконує JavaScript, що лишився. Що в розв’язку немає `as`, перевіряєш ти; типи перевіряє `tsc` у твоїй теці `ts-lab`."
+      en: "The sandbox removes the types (`as` included) and runs the JavaScript that remains. You check that the solution has no `as`; `tsc` in your `ts-lab` folder checks the types."
+
+  - id: check-guarantees
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Що бачить tsc, а що — перевірка"
+      en: "What tsc sees, and what validation sees"
+    intro:
+      uk: "Працюєш у теці `ts-lab`. Результати записано з TypeScript 7.0.2 у macOS."
+      en: "You work in the `ts-lab` folder. The results were recorded with TypeScript 7.0.2 on macOS."
+    tools:
+      - { name: "TypeScript", version: "7.x", note: { uk: "у теці `ts-lab`", en: "in the `ts-lab` folder" } }
+      - { name: "Node.js", version: "22.18+", note: { uk: "для останнього кроку: запуск `.ts` без збірки", en: "for the last step: running `.ts` without a build" } }
+    steps:
+      - text:
+          uk: "Створи в `src/l08/` два файли з вправи: `wish.ts` і свій `index.ts`. Перевір."
+          en: "Create two files from the exercise in `src/l08/`: `wish.ts` and your `index.ts`. Check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Нічого не виведено."
+          en: "Nothing is printed."
+      - text:
+          uk: "Тимчасово заміни тіло `parseStoredWishes` початковим: `return { ok: true, value: JSON.parse(text) as Wish[] };`."
+          en: "Temporarily replace the body of `parseStoredWishes` with the original one: `return { ok: true, value: JSON.parse(text) as Wish[] };`."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Теж нічого не виведено. Для `tsc` обидві версії однаково правильні: різниця між ними — лише в даних, яких він не бачить."
+          en: "Nothing is printed either. To `tsc` both versions are equally correct: the difference between them is only in data it does not see."
+      - text:
+          uk: "Запусти цей файл напряму через Node.js. Node.js 22.18 і новіші самі прибирають типи з `.ts` — так само, як пісочниця: без перевірки."
+          en: "Run this file directly with Node.js. Node.js 22.18 and newer remove types from `.ts` by themselves — just like the sandbox: without checking."
+        command: "node src/l08/index.ts"
+        expect:
+          uk: "Другий рядок — `{\"ok\":true,\"value\":[{… \"price\":\"80\" …}]}`: текстова ціна пройшла. Поверни свою версію й запусти знову: `{\"ok\":false,\"errors\":[\"0.price\"]}`."
+          en: "The second line is `{\"ok\":true,\"value\":[{… \"price\":\"80\" …}]}`: the text price got through. Put your version back and run again: `{\"ok\":false,\"errors\":[\"0.price\"]}`."
+    verify:
+      - id: same-for-tsc
+        text:
+          uk: "`tsc` пропустив і версію з `as`, і версію з перевіркою."
+          en: "`tsc` let through both the version with `as` and the version with validation."
+      - id: data-differs
+        text:
+          uk: "Під час виконання лише версія з перевіркою відхилила ціну `\"80\"`."
+          en: "At runtime only the version with validation rejected the price `\"80\"`."
+    troubleshooting:
+      - problem:
+          uk: "`node src/l08/index.ts` пише `Unknown file extension \".ts\"` або `ERR_UNKNOWN_FILE_EXTENSION`"
+          en: "`node src/l08/index.ts` says `Unknown file extension \".ts\"` or `ERR_UNKNOWN_FILE_EXTENSION`"
+        fix:
+          uk: "Твоя версія Node.js старша за 22.18 і сама типів не прибирає. Спробуй `node --experimental-strip-types src/l08/index.ts` або пропусти цей крок: його результат той самий, що у вправі в пісочниці."
+          en: "Your Node.js is older than 22.18 and does not remove types by itself. Try `node --experimental-strip-types src/l08/index.ts`, or skip this step: its result is the same as in the exercise in the sandbox."
+      - problem:
+          uk: "`SyntaxError: Cannot use import statement outside a module`"
+          en: "`SyntaxError: Cannot use import statement outside a module`"
+        fix:
+          uk: "У `package.json` теки `ts-lab` бракує `\"type\": \"module\"`. Виконай `npm pkg set type=module` з першого уроку."
+          en: "The `package.json` of `ts-lab` lacks `\"type\": \"module\"`. Run `npm pkg set type=module` from the first lesson."
+    recovery:
+      uk: "Розв’язок вправи збережено в платформі; `wish.ts` можна скопіювати з неї будь-коли."
+      en: "The exercise solution is saved in the platform; `wish.ts` can be copied from it at any time."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-14
+    body:
+      uk: "У кроці проєкту `storage/` читатиме свій ключ як `unknown` і пропускатиме кожен запис через `validate…(input: unknown)` твого домену — а не через `as`. Для трекера витрат це, наприклад, перевірка, що `amountMinor` — додатне ціле число, а для звичок — що `completions` — відсортовані унікальні дати."
+      en: "In the project step `storage/` reads its key as `unknown` and passes every record through your domain’s `validate…(input: unknown)` — not through `as`. For the expense tracker that means, for example, checking that `amountMinor` is a positive integer, and for habits that `completions` are sorted unique dates."
