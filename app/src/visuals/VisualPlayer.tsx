@@ -3,7 +3,7 @@
 import { useId, type ReactNode } from 'react';
 import { useStepEngine, usePrefersReducedMotion, type StepEngine } from './engine';
 import type { VisualLabels } from './labels';
-import type { Lang, VisualKind, VisualSpec } from './types';
+import type { CompiledVisualSpec, Lang, VisualKind, VisualSpec } from './types';
 import { CodeTrace } from './players/CodeTrace';
 import { MemoryGraph } from './players/MemoryGraph';
 import { Pipeline } from './players/Pipeline';
@@ -15,12 +15,24 @@ import { RenderTimeline } from './players/RenderTimeline';
 
 export type PlayerProps<S extends VisualSpec = VisualSpec> = { spec: S; index: number; tick: number; lang: Lang; labels: VisualLabels; reducedMotion: boolean };
 
-/** SVG pictures scale down with the column, but never below 85 % of their natural size: beyond that the panel scrolls so text stays readable. */
-export const svgStyle = (width: number) => ({ maxWidth: '100%', height: 'auto', minWidth: Math.round(width * 0.85) });
+/**
+ * Legible minimum for SVG pictures. They are drawn at their natural width when the column allows
+ * it and otherwise scale down to the available width, but never below 75 %: there the 13 px labels
+ * render at ~9.8 px and the smallest 11 px labels at ~8.3 px. Only a picture whose 75 % is still
+ * wider than the panel makes the panel scroll horizontally. In the lesson column (about 345 px
+ * inside the player) this fits pictures up to ~460 px natural width — see content/VISUALS.md.
+ */
+export const MIN_SVG_SCALE = 0.75;
+export const svgStyle = (width: number) => ({ maxWidth: '100%', height: 'auto', minWidth: Math.round(width * MIN_SVG_SCALE) });
+
+/** The spec to render in `lang`: a block with strings is compiled once per language (content/VISUALS.md). */
+export function specForLang(spec: CompiledVisualSpec, lang: Lang): VisualSpec {
+  return 'byLang' in spec ? spec.byLang[lang] ?? spec.byLang.uk : spec;
+}
 
 export type VisualPlayerProps = {
   visual: VisualKind;
-  spec: VisualSpec;
+  spec: CompiledVisualSpec;
   lang: Lang;
   labels: VisualLabels;
   reducedMotion?: boolean;
@@ -63,7 +75,8 @@ export function Controls({ engine, labels }: { engine: StepEngine; labels: Visua
   );
 }
 
-export function VisualPlayer({ visual, spec, lang, labels, reducedMotion, onStep, initialStep = 0, title }: VisualPlayerProps) {
+export function VisualPlayer({ visual, spec: compiled, lang, labels, reducedMotion, onStep, initialStep = 0, title }: VisualPlayerProps) {
+  const spec = specForLang(compiled, lang);
   const total = spec.steps.length;
   const engine = useStepEngine({ total, initialStep, onStep });
   const osReduced = usePrefersReducedMotion();

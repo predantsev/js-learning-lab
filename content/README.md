@@ -47,7 +47,7 @@ The validator runs every example, every exercise fixture and every verifiable pr
 8. **Review blocks never sit alone at the top of a lesson**: retrieval comes after the lesson's own first explanation.
 9. **Retrieval.** From the second unit on, a unit contains `review` blocks with at least two questions about earlier lessons (one recent, one distant), asked without restating the answer. Use the syllabus `retrieval` entries.
 9. **Difficult concepts get a `visual` block and an `analogy` block with its `limits`** (where the analogy breaks). Mandatory for scope/closure, reference identity/mutation, event loop/async, render/state snapshot, effect/cleanup, client/server and native/web boundaries.
-10. **Honest runtimes.** `browser-js` and `browser-react` are real. `concept-preview` (React Native through react-native-web, or any simulation) must carry `limits`. Native-device and real-server evidence comes from `local-task` blocks, confirmed by the learner.
+10. **Honest runtimes.** `browser-js` and `browser-react` are real. `isolated-node` is real Node.js running as a separate process on the learner's computer (see [isolated-node](#isolated-node-real-nodejs)). `concept-preview` (React Native through react-native-web, or any simulation) must carry `limits`. Native-device evidence and work with the learner's own local project (terminal, VS Code, `npm`) come from `local-task` blocks, confirmed by the learner.
 11. **Capstone thread.** Every instructional lesson ends with a `transfer` block pointing at the unit's capstone step (`capstoneStep: <UNIT>`). The step itself is the unit's `capstone-step` lesson.
 
 ## Language rules
@@ -74,8 +74,16 @@ The validator runs every example, every exercise fixture and every verifiable pr
 13. **Solutions leak through more than hints:** feedback messages, glossary `example.code`, the explanation's own example and code shown in predictions must not equal (or trivially contain) an exercise solution. The glossary is one click away from the exercise.
 14. **No term before its lesson:** a visual caption, panel label or sentence must not use a term that a later lesson defines (check the syllabus `glossary` lists); introduce it briefly with a glossary link instead.
 15. **Authored visual states are data too:** mark as `changed` only what changed in that step; a wrong mark produces a false "changed" sentence in the text version.
-16. **`tryIt` steps leave the example in a sensible state:** after the suggested change nothing prints `NaN`, `undefined` or stale output unless that is the point being taught.
-17. **Ukrainian terminology:** «рядок» means both *string* and *line* — make the meaning unambiguous («текст у лапках», «рядок коду»). Identifiers are «назви» (назва змінної, назва функції), not «імена». A slash is «скісна риска».
+16. **`tryIt` steps leave the example in a sensible state:** each step works when followed literally from the state the previous step left, and after the suggested change nothing prints `NaN`, `undefined` or stale output unless that is the point being taught.
+17. **Words of the interface:** the product is «платформа», the place where code runs is «пісочниця»; learner files are modules («файл», «модуль»), not «скрипт». A variable is «змінна», its identifier is «назва».
+18. **Predictions and review questions are also shown alone** (on the Review page, after a wrong answer): like `selfCheck` items they must not say "below", "above" or "in a minute".
+19. **Locale and engine dependence:** `localeCompare` without a locale follows the browser language (Ukrainian letters reorder) — pass a locale or use data that sorts the same everywhere; an inconsistent or boolean comparator gives an engine-defined order — say "in Chrome" when you show it.
+20. **A check that measures work (counts reads, calls or comparisons) is announced in the task**, and new syntax (for example a brace-less `if`) gets one sentence where it first appears.
+21. **Ukrainian terminology:** «рядок» means both *string* and *line* — make the meaning unambiguous («текст у лапках», «рядок коду»). Identifiers are «назви» (назва змінної, назва функції), not «імена». A slash is «скісна риска».
+22. **A crash while the program loads empties `scope`:** every check then fails with "… is not a function" and all feedback shows together. Each feedback must stay true in that case, the `TypeError` rule must cover that message, and a check such as `expect(() => scope.fn(x)).toThrow(TypeError)` must first assert that `scope.fn` is a function, or it passes by mistake.
+23. **Describe Run, Stop and console behaviour only after a timed run in the app.** In a stuck loop the console stays empty until the `LoopBudgetError` card appears (about 2 s), and Stop discards output printed before it.
+24. **An "alternative run" state in an authored visual needs an explicit `changed` list;** otherwise the default diff against the previous state marks it as a change.
+25. **Multi-file predictions cannot be verified by the validator** (`verify` runs one `index.js`). Run them in the sandbox yourself and say so in your hand-back.
 
 ## lesson.yaml
 
@@ -98,7 +106,7 @@ blocks: [ … ]                     # read top to bottom; every example/exercise
 
 ### Block kinds
 
-Every block has a unique `id` (kebab-case) inside the lesson. `title` fields and exercise `testTitles` are plain text (no backticks or other Markdown). All other text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts).
+Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are plain text (no backticks or other Markdown); exercise `testTitles` are inline Markdown (code spans are fine, no block markup). All other text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts).
 
 ```yaml
 - id: keep-what-matters
@@ -170,6 +178,8 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields and
                                   #   test); { error: SyntaxError } also matches code that does not compile
   preview: false                  # optional, as for examples
   capabilities: { network: lab }  # optional: none (default) | lab; also loopBudgetMs, testTimeoutMs
+                                  #   (isolated-node: network none | loopback, workers, timeoutMs, testTimeoutMs)
+  limits: { uk, en }              # optional (required for concept-preview): what this runtime cannot show
   starterPasses: true             # only for rare exercises where the starter is already correct by design
 
 - id: recall
@@ -208,7 +218,7 @@ Commands in `local-task` blocks must be commands you actually ran; record the to
 | `browser-js` | Real browser JavaScript as native ES modules, with a real DOM | Imports need the file extension (`./util.js`), as in the browser. `.ts` files run after type removal. `localStorage` is an isolated per-exercise store. `fetch("./data/items.json")` reads project files; `fetch("/lab/…")` reaches the lab HTTP fixtures when `capabilities.network: lab`. `alert` shows in the console; `confirm`/`prompt` are unavailable (build the UI in the page). A loop running longer than 2 s is stopped. |
 | `browser-react` | Real React 19 (`react`, `react-dom/client`) | JSX only in `.jsx`/`.tsx`. Imports resolve like Vite (`./App`). Default page has `<div id="root">`. |
 | `concept-preview` | React Native components through `react-native-web` | Always add `limits`: no native rendering, device APIs or performance. |
-| `isolated-node` | Real Node.js in an isolated child process | For Node-stage practice: real `node:http` on loopback, `node:fs` in a scratch folder, `node:sqlite`, streams. |
+| `isolated-node` | Real Node.js in an isolated child process on the learner's computer | For Node-stage practice: real `node:http` on loopback, `node:fs` in the exercise folder, `node:sqlite`, streams. No page, no npm packages. See [isolated-node](#isolated-node-real-nodejs). |
 
 ### Pages, images and links (`browser-js` with an `.html` entry)
 
@@ -217,7 +227,7 @@ Commands in `local-task` blocks must be commands you actually ran; record the to
 
 ## tests.js
 
-Tests run after the learner's program finished loading (top-level `await` included). They are ES modules in the same sandbox: import learner modules by path (`import { total } from './cart.js'`).
+Tests run after the learner's program finished loading (top-level `await` included). They are ES modules in the same sandbox: import learner modules by path (`import { total } from './cart.js'`). This section describes the browser runtimes; `isolated-node` checks have their own helpers ([Check helpers](#check-helpers-node-harness)).
 
 ```js
 test('keeps only items at or under the limit', () => {
@@ -246,9 +256,164 @@ test('keeps only items at or under the limit', () => {
 
 Write failure-proof tests: check observable behavior, cover the boundary cases the lesson teaches, and make each test name a sentence a learner can act on (it is translated in `testTitles`).
 
+## isolated-node (real Node.js)
+
+`runtime: isolated-node` runs the learner's files as a real Node.js process on their computer, started by the local platform server (API and security model: [SERVER-API.md](../docs/platform/SERVER-API.md)). The learner gets the same workspace as in the browser runtimes — Run, Check, Stop, console, checks with titles and authored feedback, hints, drafts, progress — but no Page tab: the result is what the program prints and what the checks observe. The workspace says that this is real Node.js (with its version) and lists the limits below in its "Limits of the Node.js runtime" disclosure, under the block's own `limits` (optional for this runtime).
+
+**What happens on Run.** The files (with `%%key%%` text in the lesson language) are copied into a fresh temporary folder — the process's working directory, `process.cwd()` — and `node <entry>` runs there. stdout and stderr stream into the console as they are printed (stderr in red; paths inside the folder are shown relative, `index.js:3:7`). An uncaught error also gets the usual error card with localized guidance next to the original message. The folder is deleted after the run.
+
+**What happens on Check.** The harness imports the entry first (its output is what `logs()` returns), then `tests.js`, then runs the tests one after another. If the program throws while loading, the learner sees that error once with "fix this error first" instead of the feedback of every failing check.
+
+### File layout
+
+```
+<example-dir>/index.js                        the entry: what `node index.js` runs
+<exercise-dir>/starter/index.js               the entry; may be a read-only driver …
+<exercise-dir>/starter/app.js                 … while the learner edits app.js (editable: [app.js])
+<exercise-dir>/starter/items.js               read-only data
+<exercise-dir>/solution/app.js, alt/app.js, wrong[-name]/app.js
+<exercise-dir>/tests.js                       checks, run by the Node harness
+```
+
+- Every `.js` file is an ES module: the platform writes `package.json` `{ "type": "module" }` unless the starter has its own. Import exercise files by relative path **with the extension** (`./app.js`) and built-in modules with `node:` (`node:fs`, `node:http`). There are **no npm packages**: a bare `import express from "express"` fails with an explanation. `.ts` files run through Node's type stripping where the installed Node supports it (`.tsx` never).
+- `tests.js` imports learner modules like any module: `import { createApp } from './app.js';`. Its path in the run is `__tests__.js`, next to the learner files.
+
+### Capabilities
+
+```yaml
+capabilities:
+  network: loopback    # none (default) | loopback: this computer only (127.0.0.1, ::1, localhost)
+  workers: true        # worker threads (default false)
+  timeoutMs: 5000      # wall clock of the whole run or check, 100–60000 (default 10000)
+  testTimeoutMs: 3000  # each check, 50–30000 (default 4000)
+```
+
+They are sent to the executor as they are; the validator rejects other keys and values. With `network: loopback` a server must listen on an explicit loopback address (`server.listen(3000, '127.0.0.1')`); `listen(3000)` is refused with that advice, because it would accept connections from the local network.
+
+### Check helpers (Node harness)
+
+Globals (read-only): `test(name, fn, { timeoutMs }?)`; `expect(value, hint?)` with the same matchers and failure messages as the browser runner (no DOM matchers); `spy`, `sleep`, `waitFor`; `logs({ stream }?)` — printed lines so far (`stream: 'stdout'` or `'stderr'` for one stream); `listen(server, host = '127.0.0.1')` — starts an `http.Server`/`net.Server` on a free loopback port and returns `http://127.0.0.1:<port>`, closed after the last test (needs `network: loopback`); `request(url, { method, headers, body, signal })` — one HTTP request without connection pooling → `{ status, statusText, headers, text, json }` (an object `body` is sent as JSON); `tmp(name)` — an absolute path under `.tmp/` in the exercise folder, parent folders created; `activeResources()` — open handles created by learner code, for leak lessons (a closed handle disappears one event-loop turn after its close callback: `await waitFor(() => activeResources().length === 0)`); `loadError()` — the entry's import error or `null`; `L` — the block's `strings` in the learner's language.
+
+Not available in Node checks (browser only): `scope`, `scopeOf`, `screen`, `user`, `rerun`, `mockFetch`, `storage`, `files`, `rawLogs`, `alerts`, `settle`. An uncaught error while a check runs fails that check at once (`uncaught error during the test: …`).
+
+### Limits and what is not isolated
+
+| Limit | Value | When it is reached |
+|---|---|---|
+| Time | `timeoutMs`, default 10 s (max 60 s), for a run and for a whole check run | the process is stopped; "ran longer than N s" |
+| Each check | `testTimeoutMs`, default 4 s | that check fails, the next runs |
+| Output | 200 KB of stdout + stderr | the process is stopped, the output is cut off |
+| Memory | 256 MB JavaScript heap (Buffers are not capped) | Node aborts the program |
+| Files | 200 files, 2 MB sent; 64 MB / 5000 entries written in the folder | refused / stopped |
+| Concurrent runs | 2 at a time per platform server (all tabs together) | "two Node.js programs are already running" |
+| File system | read and write only inside the exercise folder | `ERR_ACCESS_DENIED`, explained to the learner |
+| Processes | no child processes, no native addons, no inspector; worker threads only with `workers: true` | `ERR_ACCESS_DENIED` |
+| Network | per `capabilities.network` | `ERR_JSLL_POLICY` with the reason |
+
+Isolation is Node's permission model plus a platform guard and, on macOS, an operating-system sandbox (Seatbelt). Node itself calls its permission model a seat belt for honest code, not a sandbox against malicious code. The permission model does **not** cover `node:sqlite` database paths, a worker started with its own `execArgv`, or signals to other processes; the platform guard covers them (it stops honest mistakes; deliberate code can get around it) and, on macOS, Seatbelt does too. Linux and Windows have no operating-system layer. Write exercises for honest learners and never present the runtime as a security boundary.
+
+### Authoring rules
+
+1. **Examples finish on their own.** The validator requires exit code 0 within the time limit (a non-zero exit only with `expectError: true`). A server example starts on a free port, sends its own requests and closes the server, as below — a server that listens until Stop fails validation.
+2. **The entry is imported before the checks**, so it must be safe to import and must end: no endless servers or timers, and every network wait has a timeout (`AbortSignal.timeout(2000)`), so that a broken handler cannot hold the check until the time limit.
+3. **All checks of one run share `timeoutMs`.** A fixture whose checks each hang for the 4 s per-check limit can exceed the 10 s run limit; the validator reports that as an error. Prefer wrong fixtures that answer wrongly over ones that never answer.
+4. **Localized text** works as in the browser runtimes: `%%key%%` in the files, `strings` on the block, `L.key` in the checks. Keep the keys' total under 32 KB.
+5. **Validation.** `node scripts/content/validate.mjs` runs every example (in both languages when the block has `strings`) and every fixture (starter, solution, `alt*`, `wrong*`) through the real executor with the browser runtimes' pass/fail rules. On a machine where the executor is unavailable (no Node permission model, or `JSLL_NODE_RUNNER=off`) the blocks are reported as **UNVERIFIED** — a note, and the summary says `CONTENT UNVERIFIED`; with `--release` it is an error.
+
+### Complete small example
+
+The fixture lesson `tests/fixtures/content/units/NO-01/no-01-01-fixture-node/` is the reference (validate it with `JSLL_CONTENT_ROOT=tests/fixtures/content node scripts/content/validate.mjs --lesson no-01-01-fixture-node`). Its exercise, shortened to the essentials:
+
+```yaml
+- id: node-items-server
+  kind: exercise
+  mode: guided
+  runtime: isolated-node
+  dir: node-items-server
+  entry: index.js
+  editable: [app.js]
+  capabilities: { network: loopback }
+  strings:
+    lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+    plant: { uk: "Кімнатна рослина", en: "House plant" }
+  title: { uk: "Сервер зі списком речей", en: "A server with a list of items" }
+  instructions: { uk: "…", en: "Finish createApp in app.js: GET /items answers 200 with the list as JSON; any other address answers 404." }
+  testTitles:
+    "GET /items answers 200 with the items as JSON": { uk: "…", en: "…" }
+    "an unknown address answers 404": { uk: "…", en: "…" }
+  hints: { nudge: { uk: "…", en: "…" }, explanation: { uk: "…", en: "…" } }
+  solutionNote: { uk: "…", en: "…" }
+  feedback:
+    - when: { test: "an unknown address answers 404" }
+      message: { uk: "…", en: "An address other than /items must get status 404. Check request.url." }
+```
+
+```js
+// starter/items.js (read-only)
+export const items = [{ id: 1, name: '%%lamp%%' }, { id: 2, name: '%%plant%%' }];
+
+// starter/index.js (read-only entry): starts the server, sends two requests, stops it.
+import { createApp } from './app.js';
+const server = createApp();
+await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+const base = `http://127.0.0.1:${server.address().port}`;
+try {
+  for (const route of ['/items', '/missing']) {
+    const response = await fetch(base + route, { signal: AbortSignal.timeout(2000) });
+    console.log(`GET ${route} → ${response.status} ${await response.text()}`);
+  }
+} finally {
+  server.closeAllConnections();
+  server.close();
+}
+
+// solution/app.js (the starter answers 'TODO' everywhere)
+import http from 'node:http';
+import { items } from './items.js';
+export function createApp() {
+  return http.createServer((request, response) => {
+    if (request.method === 'GET' && request.url === '/items') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(items));
+      return;
+    }
+    response.writeHead(404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: 'not found' }));
+  });
+}
+
+// tests.js
+import { createApp } from './app.js';
+test('GET /items answers 200 with the items as JSON', async () => {
+  const response = await request(`${await listen(createApp())}/items`);
+  expect(response.status, 'status of GET /items').toBe(200);
+  expect(response.json, 'body of GET /items').toEqual([{ id: 1, name: L.lamp }, { id: 2, name: L.plant }]);
+});
+test('an unknown address answers 404', async () => {
+  const response = await request(`${await listen(createApp())}/missing`);
+  expect(response.status, 'status of GET /missing').toBe(404);
+});
+```
+
+The same lesson's example (`node-notes`) writes `notes.txt` in the exercise folder, reads it back and prints `process.version` — output only real Node.js can produce.
+
 ## Lab HTTP fixtures (`capabilities.network: lab`)
 
 Real loopback HTTP served by the platform, synthetic in-memory data: `GET /lab/ping`, `/lab/echo`, `/lab/status/<code>`, `/lab/delay/<ms>`, `/lab/flaky?key=K&fail=2`, `/lab/search?q=…` (shorter queries answer slower — stale-response race), collections `/lab/<wishlist|planner|habits|expenses>/items[/<id>]` (GET/POST/PUT/PATCH/DELETE, `?lang=uk|en`, `?delay=ms`, `?status=503`, `?flaky=N&key=K`), CORS cases `/lab/cors/open|closed|preflight|credentials`, `POST /lab/reset`.
+
+Measured while authoring JS-08 (real sandbox, Chrome):
+
+- `/lab/echo` reports `origin: "null"` because the sandbox has an opaque origin. `/lab/flaky` counters live for the whole server lifetime: use a unique key per run. `/lab/search` waits about 300 ms.
+- A URL outside the lab is rejected with `TypeError: Failed to fetch (blocked by the sandbox network policy)` and a console note that the network is disabled. Do not present that as "offline"; simulate offline with `mockFetch({ networkError: true })`.
+
+## Timers, promises and `fetch` in the browser sandbox (measured)
+
+- **Timing limits:** a run waits only for timers of 1500 ms or less and settles at 3000 ms; a loop running longer than 2 s is stopped with `LoopBudgetError`. Keep every delay whose output is checked below those limits.
+- **Order of a click and a timer:** in Chrome a click made during a long task is handled before a timer callback that was queued earlier. Never claim the opposite.
+- **Fake clock in tests:** replacing `window.setTimeout` inside a test works, and so does `rerun()` under it. The fake must skip non-function callbacks, or the typical mistake `setTimeout(fn(), ms)` crashes the test instead of failing it. Flush promise callbacks with `sleep(0)`.
+- **Project files through `fetch`:** `./data/x.json` answers 200 `application/json`, a missing file answers 404 "Not Found". They are served inside the sandbox, so they never appear in the DevTools Network panel. A prediction runs only `index.js`, so a prediction that fetches a project file needs `runnable: false`.
+- **Abort:** an aborted request rejects with a `DOMException` named `AbortError`; `AbortSignal.timeout` gives `TimeoutError`. `mockFetch` honours the signal; to inspect it, pass a handler function and read `init.signal`.
+- **Rejections:** an awaited rejection at top level is reported as a runtime error with the reason's name (so `verify.error` works); a fire-and-forget rejection is reported as an unhandled rejection. A solution that triggers either fails validation, and event-loop visuals must finish without any rejection.
 
 ## Before you report a unit as done
 

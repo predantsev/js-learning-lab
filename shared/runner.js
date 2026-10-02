@@ -177,7 +177,9 @@ export function prepareRun(input) {
         labOrigins: [sandboxOrigin],
       },
     },
-    meta: { network: options.network, heartbeatMs: options.heartbeatMs, unresponsiveAfterMs: options.unresponsiveAfterMs, readyTimeoutMs: options.readyTimeoutMs },
+    // inlineModules: source of every inline <script type="module"> by its virtual path, so a
+    // step-through can show the code of steps that run there.
+    meta: { network: options.network, heartbeatMs: options.heartbeatMs, unresponsiveAfterMs: options.unresponsiveAfterMs, readyTimeoutMs: options.readyTimeoutMs, inlineModules },
   };
 }
 

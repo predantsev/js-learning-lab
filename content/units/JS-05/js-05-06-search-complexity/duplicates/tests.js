@@ -44,8 +44,8 @@ test('lookup version reads each id only a few times', () => {
     const id = 'h-' + i;
     list.push({ name: L.walk, get id() { reads += 1; return id; } });
   }
-  const result = scope.hasDuplicateIdsLookup(list);
-  const count = reads;
-  expect(result, 'hasDuplicateIdsLookup(300 different ids)').toBe(false);
-  expect(count, 'how many times the 300 ids were read').toBeLessThanOrEqual(1500);
+  scope.hasDuplicateIdsLookup(list);
+  // Only the amount of work is checked here; the answers are checked by the tests above.
+  expect(reads, 'how many times the 300 ids were read').toBeGreaterThanOrEqual(300);
+  expect(reads, 'how many times the 300 ids were read').toBeLessThanOrEqual(1500);
 });

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { svgStyle, type PlayerProps } from '../VisualPlayer';
 import type { SequenceSpec } from '../types';
 
@@ -16,17 +17,28 @@ export function wrap(text: string, maxChars: number): string[] {
   return lines.length ? lines : [''];
 }
 
-const ACTOR_W = 150;
 const ACTOR_H = 40;
 const GAP = 40;
 const LINE_H = 15;
 const ROW_PAD = 14;
+/**
+ * Actor boxes: labels wrap to at most two lines, preferably of 14 characters (20 when a label needs
+ * more room), and the box is as wide as the longest line of any actor in either language
+ * (96–150 px). Three actors with short labels stay within ~450 px; see content/VISUALS.md.
+ */
+export function actorLayout(spec: SequenceSpec): { width: number; chars: number } {
+  const labels = spec.actors.flatMap((a) => Object.values(a.label));
+  const chars = labels.every((l) => wrap(l, 14).length <= 2) ? 14 : 20;
+  const longest = Math.max(4, ...labels.flatMap((l) => wrap(l, chars).map((line) => line.length)));
+  return { width: Math.min(150, Math.max(96, Math.ceil(longest * 6.6) + 22)), chars };
+}
 
 export function Sequence({ spec, index, tick, labels, lang }: PlayerProps<SequenceSpec>) {
   const step = spec.steps[index];
   const visibleCount = step.message + 1;
   const previousVisible = index > 0 ? spec.steps[index - 1].message + 1 : 0;
   const text = (loc: Record<string, string> | null) => (loc ? loc[lang] : '');
+  const { width: ACTOR_W, chars: ACTOR_LINE } = useMemo(() => actorLayout(spec), [spec]);
   const actorX = new Map(spec.actors.map((a, i) => [a.id, 20 + i * (ACTOR_W + GAP) + ACTOR_W / 2]));
   const width = 40 + spec.actors.length * ACTOR_W + (spec.actors.length - 1) * GAP;
 
@@ -58,7 +70,7 @@ export function Sequence({ spec, index, tick, labels, lang }: PlayerProps<Sequen
           </defs>
           {spec.actors.map((a) => {
             const x = actorX.get(a.id) ?? 0;
-            const lines = wrap(text(a.label), 20);
+            const lines = wrap(text(a.label), ACTOR_LINE);
             return (
               <g key={a.id} className="viz-actor">
                 <line x1={x} y1={ACTOR_H} x2={x} y2={height - 10} className="viz-lifeline" />

@@ -7,12 +7,12 @@ const expenses = [
   { id: "e-06", label: "%%lunch%%", amountMinor: 21050, category: "food" },
 ];
 
-// The accumulator is an object: one counter per category.
-const counts = expenses.reduce((acc, expense) => {
-  acc[expense.category] = (acc[expense.category] ?? 0) + 1;
+// The accumulator is an object: one total (in kopiykas) per category.
+const totals = expenses.reduce((acc, expense) => {
+  acc[expense.category] = (acc[expense.category] ?? 0) + expense.amountMinor;
   console.log(acc);
   return acc;
 }, {});
 
-console.log(counts);
+console.log(totals);
 console.log(expenses[0]);

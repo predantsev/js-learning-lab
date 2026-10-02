@@ -1,5 +1,7 @@
 // Code panel with a small JavaScript/JSX tokenizer (syntax tokens from tokens.css) and a current line.
-import { useEffect, useRef, type ReactNode } from 'react';
+// Long lines first make the font smaller (down to a legible minimum, visuals.css .viz-code), then
+// wrap under their own line number: the panel never scrolls sideways, so identifiers stay as written.
+import { type CSSProperties, useEffect, useMemo, useRef, type ReactNode } from 'react';
 
 type Token = { cls: string | null; text: string };
 
@@ -69,13 +71,14 @@ export type CodeViewProps = {
 
 export function CodeView({ code, currentLine, context = [], label, currentLabel, file = null, maxLines = 14, flashKey = 0, children }: CodeViewProps) {
   const lines = tokenize(code);
+  const longest = useMemo(() => Math.max(1, ...code.replace(/\n$/, '').split('\n').map((l) => l.replace(/\t/g, '  ').length)), [code]);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!ref.current || currentLine === null) return;
     const el = ref.current.querySelector<HTMLElement>(`[data-line="${currentLine}"]`);
     if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   }, [currentLine]);
-  const style = { maxHeight: `calc(${maxLines} * 1.55em + 0.6rem)` };
+  const style = { maxHeight: `calc(${maxLines} * 1.55em + 0.6rem)`, '--viz-code-chars': longest } as CSSProperties;
   return (
     <section className="viz-panel viz-code-panel" aria-label={label}>
       <header className="viz-panel-head"><span>{label}</span>{file ? <code className="viz-file">{file}</code> : null}{children}</header>

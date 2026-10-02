@@ -18,11 +18,24 @@ test('hasSameId compares ids', () => {
   expect(scope.hasSameId(wish, make('w-02')), 'a record with another id').toBe(false);
 });
 
-test('neither function changes the records', () => {
+test('countLookalikes counts separate records with the same id', () => {
+  const wish = make('w-01');
+  expect(scope.countLookalikes([make('w-01'), make('w-02'), make('w-01')], wish), 'two lookalikes and one other wish').toBe(2);
+  expect(scope.countLookalikes([], wish), 'an empty list').toBe(0);
+});
+
+test('countLookalikes skips the record itself under any name', () => {
+  const wish = make('w-01');
+  const alias = wish;
+  expect(scope.countLookalikes([wish, alias, make('w-01')], wish), 'the record, its alias and one lookalike').toBe(1);
+});
+
+test('the functions do not change the records', () => {
   const a = make('w-01');
   const b = make('w-02');
   scope.isSameRecord(a, b);
   scope.hasSameId(a, b);
-  expect(a, 'the first record after both calls').toEqual(make('w-01'));
-  expect(b, 'the second record after both calls').toEqual(make('w-02'));
+  scope.countLookalikes([a, b], a);
+  expect(a, 'the first record after the calls').toEqual(make('w-01'));
+  expect(b, 'the second record after the calls').toEqual(make('w-02'));
 });

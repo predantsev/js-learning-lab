@@ -1,4 +1,5 @@
-// The comparator never handles null: numbers treat it like 0, text crashes on it.
+// The comparator never handles null: a subtraction treats it like 0, and for text it is
+// compared as the word "null" (or subtracted when it comes first), so it never goes last.
 function searchByText(records, field, query) {
   const needle = query.toLowerCase();
   return records.filter((record) => record[field].toLowerCase().includes(needle));
