@@ -1,38 +1,39 @@
-// Checks of capstone step JS-08, wishlist variant: the starting wishes arrive from data/wishes.json
+// Checks of capstone step JS-08, planner variant: the starting tasks arrive from data/tasks.json
 // through fetch (loadFixtures in data/fixtures.js); the page shows a loading state, an error with a
-// retry button and an empty list; only the latest start changes the page; and saved wishes still
+// retry button and an empty list; only the latest start changes the page; and saved tasks still
 // win over the starting ones. The checks run one after another on the same page and start with an
 // empty storage. Most of them replace fetch with answers of their own and call start(storage) of
 // ui/page.js directly, so that two starts can overlap.
-const KEY = 'jsll.wishlist.v1';
-const BACKUP = 'jsll.wishlist.v1.backup';
+const KEY = 'jsll.planner.v1';
+const BACKUP = 'jsll.planner.v1.backup';
 const PAGE = './ui/page.js';
 const DATA = './data/fixtures.js';
-const FILE = 'data/wishes.json';
-const LIST = '#items';
-const NAME_FIELD = 'name';
+const FILE = 'data/tasks.json';
+const LIST = '#tasks';
+const NAME_FIELD = 'title';
 
 const fixtures = () => [
-  { id: 'w-01', name: L.fixture1Name, price: 80, acquired: false, category: L.techCategory },
-  { id: 'w-02', name: L.fixture2Name, price: 45, acquired: false, category: L.homeCategory },
-  { id: 'w-03', name: L.fixture3Name, price: 240, acquired: false, category: L.sportCategory },
-  { id: 'w-04', name: L.fixture4Name, price: 25, acquired: true, category: L.booksCategory },
-  { id: 'w-05', name: L.fixture5Name, price: null, acquired: false, category: null },
-  { id: 'w-06', name: L.fixture6Name, price: 18, acquired: true, category: L.homeCategory },
+  { id: 't-01', title: L.fixture1Name, dueDate: '2026-03-02', done: false, priority: 'normal' },
+  { id: 't-02', title: L.fixture2Name, dueDate: '2026-03-01', done: false, priority: 'high' },
+  { id: 't-03', title: L.fixture3Name, dueDate: null, done: false, priority: 'low' },
+  { id: 't-04', title: L.fixture4Name, dueDate: '2026-02-27', done: true, priority: 'high' },
+  { id: 't-05', title: L.fixture5Name, dueDate: '2026-03-10', done: false, priority: 'normal' },
+  { id: 't-06', title: L.fixture6Name, dueDate: '2026-03-05', done: true, priority: 'low' },
 ];
 // Another valid list: what a different file (or the saved data of an earlier session) holds.
 const sample = () => [
-  { id: 'w-02', name: L.fixture2Name, price: 50, acquired: true, category: L.homeCategory },
-  { id: 'w-7', name: L.newName, price: 30, acquired: false, category: null },
-  { id: 'w-8', name: L.fixture5Name, price: null, acquired: false, category: null },
+  { id: 't-02', title: L.fixture2Name, dueDate: '2026-03-01', done: true, priority: 'high' },
+  { id: 't-7', title: L.newName, dueDate: null, done: false, priority: 'normal' },
+  { id: 't-8', title: L.fixture5Name, dueDate: '2026-03-10', done: false, priority: 'low' },
 ];
-const sampleIds = ['w-02', 'w-7', 'w-8'];
-// A record that the record check rejects: it has no name.
-const damagedRecord = () => ({ id: 'w-09', price: 10, acquired: false, category: null });
+const sampleIds = ['t-02', 't-7', 't-8'];
+// A record that the record check rejects: it has no title.
+const damagedRecord = () => ({ id: 't-09', dueDate: null, done: false, priority: 'low' });
 /** Fills the form with a valid draft named `name` and submits it. */
 async function addThroughForm(name) {
   await setValue(field(L.nameLabel), name);
-  await setValue(field(L.valueLabel), '30');
+  await setValue(field(L.valueLabel), '2026-03-01');
+  await setValue(field(L.priorityFieldLabel), 'high');
   await user.submit(form());
 }
 
@@ -181,17 +182,17 @@ test('the script runs without errors', () => {
   expect(error === null ? null : `${error.name}: ${error.message}`, 'an error while the page was loading').toBeNull();
 });
 
-test('with nothing saved the six starting wishes arrive', async () => {
+test('with nothing saved the six starting tasks arrive', async () => {
   await loadOver();
   expect(cardIds(), 'the data-id of the cards on a first start with nothing saved').toEqual(fixtures().map((record) => record.id));
-  expect(shows(L.loadingMessage), `"${L.loadingMessage}" on the page once the wishes are there`).toBe(false);
+  expect(shows(L.loadingMessage), `"${L.loadingMessage}" on the page once the tasks are there`).toBe(false);
   expect(showsAnError() || shows(L.loadErrorMessage), 'an error message on a first start').toBe(false);
 });
 
-test('loadFixtures returns the checked wishes of the file', async () => {
+test('loadFixtures returns the checked tasks of the file', async () => {
   const { loadFixtures } = await moduleWith(DATA, ['loadFixtures']);
   expect(await outcome(() => loadFixtures(new AbortController().signal)), `loadFixtures(signal) with the project file ${FILE}`).toEqual({ value: fixtures() });
-  for (const [answer, what] of [[{ status: 404, body: 'Not found' }, 'status 404'], [fileAnswer([...sample(), damagedRecord()]), 'a wish without a name']]) {
+  for (const [answer, what] of [[{ status: 404, body: 'Not found' }, 'status 404'], [fileAnswer([...sample(), damagedRecord()]), 'a task without a title']]) {
     const server = serve(answer);
     try {
       const result = await outcome(() => loadFixtures(new AbortController().signal));
@@ -202,7 +203,7 @@ test('loadFixtures returns the checked wishes of the file', async () => {
   }
 });
 
-test('while the starting wishes load the page says so', async () => {
+test('while the starting tasks load the page says so', async () => {
   const server = serve(fileAnswer(fixtures(), 400));
   try {
     await startPage(null);
@@ -217,7 +218,7 @@ test('while the starting wishes load the page says so', async () => {
   }
 });
 
-test('the starting wishes are the ones the file answers', async () => {
+test('the starting tasks are the ones the file answers', async () => {
   const server = serve(fileAnswer(sample()));
   try {
     await startPage(null);
@@ -263,7 +264,7 @@ test('a damaged file shows the damaged-data message', async () => {
     [{ status: 200, body: '{"schemaVersion": 1, "records": [', headers: { 'content-type': 'application/json' } }, 'broken JSON'],
     [{ status: 200, body: { schemaVersion: 2, records: fixtures() } }, 'schemaVersion 2'],
     [{ status: 200, body: null }, 'null'],
-    [fileAnswer([...sample(), damagedRecord()]), 'a wish without a name'],
+    [fileAnswer([...sample(), damagedRecord()]), 'a task without a title'],
   ];
   for (const [answer, what] of cases) {
     const server = serve(answer);
@@ -278,7 +279,7 @@ test('a damaged file shows the damaged-data message', async () => {
   }
 });
 
-test('the retry button loads the wishes again', async () => {
+test('the retry button loads the tasks again', async () => {
   const server = serve({ status: 404, body: 'Not found' }, fileAnswer(fixtures(), 300));
   try {
     await startPage(null);
@@ -288,7 +289,7 @@ test('the retry button loads the wishes again', async () => {
     expect(shows(L.loadingMessage), `"${L.loadingMessage}" after a click on "${L.retryLoadLabel}"`).toBe(true);
     expect(retryButton(), `a visible, enabled "${L.retryLoadLabel}" button while the new answer is on its way`).toBeNull();
     expect(await until(() => cards().length === 6), 'six cards after the second answer').toBe(true);
-    expect(showsAnError(), 'an error message after the second answer brought the wishes').toBe(false);
+    expect(showsAnError(), 'an error message after the second answer brought the tasks').toBe(false);
     expect(server.requests.length, 'the number of requests: the first one and one after the click').toBe(2);
   } finally {
     await server.finish();
@@ -315,9 +316,9 @@ test('the form saves only when the list is ready', async () => {
   try {
     await startPage(null);
     await sleep(60);
-    expect(canSave(), 'the Save button can be pressed while the starting wishes load').toBe(false);
+    expect(canSave(), 'the Save button can be pressed while the starting tasks load').toBe(false);
     await loadOver();
-    expect(canSave(), 'the Save button can be pressed after the starting wishes arrived').toBe(true);
+    expect(canSave(), 'the Save button can be pressed after the starting tasks arrived').toBe(true);
   } finally {
     await server.finish();
   }
@@ -331,7 +332,7 @@ test('the form saves only when the list is ready', async () => {
   }
   await startPage(saved(sample()));
   await sleep(60);
-  expect(canSave(), 'the Save button can be pressed after a start with saved wishes').toBe(true);
+  expect(canSave(), 'the Save button can be pressed after a start with saved tasks').toBe(true);
 });
 
 test('only the latest start changes the page', async () => {
@@ -352,43 +353,43 @@ test('only the latest start changes the page', async () => {
   }
 });
 
-test('saved wishes win and need no request', async () => {
+test('saved tasks win and need no request', async () => {
   const server = serve(fileAnswer(fixtures()));
   try {
     await startPage(saved(sample()));
     await sleep(150);
     expect(cardIds(), `the data-id of the cards with ${sampleIds.join(', ')} saved`).toEqual(sampleIds);
-    expect(server.requests.length, 'the number of requests for the starting wishes when valid wishes are saved').toBe(0);
-    expect(shows(L.loadingMessage) || showsAnError(), 'a loading or error message with valid wishes saved').toBe(false);
+    expect(server.requests.length, 'the number of requests for the starting tasks when valid tasks are saved').toBe(0);
+    expect(shows(L.loadingMessage) || showsAnError(), 'a loading or error message with valid tasks saved').toBe(false);
   } finally {
     await server.finish();
   }
 });
 
-test('damaged saved data shows its message and loads the starting wishes', async () => {
+test('damaged saved data shows its message and loads the starting tasks', async () => {
   const server = serve(fileAnswer(fixtures(), 100));
   try {
     await startPage('{bad');
     await loadOver();
     expect(shows(L.loadErrorMessage), `"${L.loadErrorMessage}" with the text {bad saved`).toBe(true);
     expect(cardIds(), 'the data-id of the cards with {bad saved').toEqual(fixtures().map((record) => record.id));
-    expect(server.requests.length, 'the number of requests for the starting wishes with {bad saved').toBe(1);
+    expect(server.requests.length, 'the number of requests for the starting tasks with {bad saved').toBe(1);
     expect(storage.getItem(BACKUP), `the text under "${BACKUP}"`).toBe('{bad');
   } finally {
     await server.finish();
   }
 });
 
-test('a wish added after loading is saved with a new id', async () => {
+test('a task added after loading is saved with a new id', async () => {
   const server = serve(fileAnswer(fixtures()));
   try {
     await startPage(null);
     await loadOver();
     await addThroughForm(L.newName);
     const value = savedValue();
-    expect(value?.schemaVersion, `schemaVersion in the JSON under "${KEY}" after adding a wish`).toBe(1);
+    expect(value?.schemaVersion, `schemaVersion in the JSON under "${KEY}" after adding a task`).toBe(1);
     const ids = Array.isArray(value?.records) ? value.records.map((record) => record.id) : [];
-    expect(ids.length, 'the number of saved records after adding a wish to the six starting ones').toBe(7);
+    expect(ids.length, 'the number of saved records after adding a task to the six starting ones').toBe(7);
     expect(new Set(ids).size, `different ids among the saved ids ${JSON.stringify(ids)}`).toBe(7);
     expect(value.records.some((record) => record[NAME_FIELD] === L.newName), `a saved record named "${L.newName}"`).toBe(true);
   } finally {
