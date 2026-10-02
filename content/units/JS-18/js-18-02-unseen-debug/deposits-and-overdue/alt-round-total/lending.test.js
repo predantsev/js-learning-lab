@@ -5,12 +5,12 @@ import { LOANS, TODAY } from "./loans.js";
 // Your tests go here: one for each defect you repair, on the boundary where it appears.
 
 test("deposits that drift as fractions still sum to exact kopiykas", () => {
-  // 0.7 + 0.1 is 0.7999999999999999 as a fraction: the sum must still be 80 kopiykas.
+  // 4 + 0.1 is 4.1, but 4.1 * 100 is 409.99999999999994: the sum must still be 410 kopiykas.
   const loans = [
-    { id: "T-1", tool: "a", depositUah: 0.7, dueDate: "2026-03-12", returnedOn: null },
+    { id: "T-1", tool: "a", depositUah: 4, dueDate: "2026-03-12", returnedOn: null },
     { id: "T-2", tool: "b", depositUah: 0.1, dueDate: "2026-03-12", returnedOn: null },
   ];
-  expect(heldDepositsMinor(loans)).toBe(80);
+  expect(heldDepositsMinor(loans)).toBe(410);
   expect(heldDepositsMinor(LOANS)).toBe(57830);
 });
 
