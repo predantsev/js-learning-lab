@@ -91,6 +91,13 @@ test('an infinite loop is stopped by the loop budget and the frame stays usable'
   assert.deepEqual(logs(r), ['start']);
 });
 
+test('an infinite loop that prints on every iteration is still stopped by the loop budget', async () => {
+  const r = await run({ files: { 'index.js': 'let i = 0;\nwhile (true) { console.log("tick", i++); }\n' }, options: { loopBudgetMs: 400 } });
+  assert.equal(r.status, 'done');
+  assert.equal(r.errors[0].name, 'LoopBudgetError');
+  assert.ok(systemCodes(r).includes('console-limit'));
+});
+
 test('a synchronous runaway DOM loop cannot freeze the platform page; stop and rerun recover', async () => {
   const ticksBefore = await page.evaluate(() => { window.__ticks = 0; window.__timer = setInterval(() => { window.__ticks += 1; }, 20); return 0; });
   const started = Date.now();

@@ -15,11 +15,11 @@ test('keeps a price of 0', () => {
   expect(scope.formatPrice(0), 'formatPrice(0)').toBe(L.pricePrefix + '0');
 });
 
+// Only the printing is checked here: the returned values are checked by the tests above.
 test('returns the label instead of printing it', () => {
   const before = logs().length;
-  const result = scope.formatPrice(10);
+  scope.formatPrice(10);
   expect(logs().length - before, 'lines printed by formatPrice(10)').toBe(0);
-  expect(result, 'formatPrice(10)').toBe(L.pricePrefix + '10');
 });
 
 test('the page script prints both labels', () => {

@@ -88,7 +88,12 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
             const r = await run({ files: { 'index.js': localizeText(item.code, block, lang) }, entry: 'index.js', runtime: 'browser-js', options: {} });
             const failure = describeFailure(r);
             const expectErrors = item.verify.error ?? null;
-            if (failure) error(where, `prediction code ${failure}`);
+            // Code that does not even compile can be the point of a prediction: nothing is printed
+            // and the "error" is a SyntaxError (verify: { logs: [], error: SyntaxError }).
+            const syntaxFailure = r.status === 'compile-error' && r.compileErrors.some((e) => e.kind === 'syntax');
+            if (syntaxFailure && expectErrors === 'SyntaxError') {
+              if (expected.length > 0) error(where, `prediction "${item.id ?? block.id}" (${lang}): the code does not compile, so it prints nothing, but verify.logs lists ${JSON.stringify(expected)}`);
+            } else if (failure) error(where, `prediction code ${failure}${syntaxFailure ? ' (if the syntax error is the point, set verify: { logs: [], error: SyntaxError })' : ''}`);
             else {
               const lines = consoleLines(r.console);
               if (JSON.stringify(lines) !== JSON.stringify(expected)) error(where, `prediction "${item.id ?? block.id}" (${lang}): real output ${JSON.stringify(lines)} differs from verify.logs ${JSON.stringify(expected)}`);
