@@ -1,0 +1,366 @@
+id: js-17-11-debug-quadratic-work
+unit: JS-17
+title:
+  uk: "Налагодження: випадкова квадратична робота та втрачений інваріант"
+  en: "Debug: accidental quadratic work and a lost invariant"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Без підказок знайти випадковий квадратичний крок і необмежену рекурсію в повільному, іноді аварійному перетворенні — за кількістю операцій, профілем і breakpoints."
+    en: "Find, without hints, an accidental quadratic step and an unbounded recursion in a slow, sometimes-crashing transform, using operation counts, a profile and breakpoints."
+  - uk: "Відновити втрачений інваріант, додати тест того рівня, що впіймав би дефект, і пояснити, чому наявний тест із заглушкою проходив."
+    en: "Repair a lost invariant, add the test at the level that would have caught it, and explain why the existing mocked test kept passing."
+prerequisites: [ js-17-10-accessible-website-audit, js-09-06-debugger-breakpoints ]
+subskills:
+  - { family: J-13, skill: "Big-O time/space", depth: assess }
+  - { family: J-13, skill: "bounded recursion", depth: assess }
+  - { family: J-13, skill: "invariants and boundary cases", depth: assess }
+  - { family: P-04, skill: "unit/integration/user/E2E purposes", depth: assess }
+  - { family: P-04, skill: "mocks vs actual evidence", depth: assess }
+  - { family: P-04, skill: "breakpoints/source maps", depth: assess }
+glossary: []
+selfCheck: [ predict-fastest, which-level, repair-report ]
+
+blocks:
+  - id: three-symptoms
+    kind: explanation
+    title:
+      uk: "Три симптоми — три різні інструменти"
+      en: "Three symptoms, three different tools"
+    body:
+      uk: |
+        Скарги на звіт звичок звучать по-різному: «на трьох роках даних гальмує», «іноді падає», «серія днів інколи нуль». За ними можуть стояти три різні дефекти, і кожен знаходять своїм інструментом з цього розділу:
+
+        | Симптом | Інструмент | Що шукати |
+        |---|---|---|
+        | повільно на великих даних | лічильник операцій на трьох розмірах, профіль | крок, чиї операції ростуть учетверо, коли дані подвоюються |
+        | іноді падає | повідомлення про помилку, breakpoint | `RangeError` і стек викликів, що росте без кінця |
+        | неправильний результат | `assertInvariant`, тест без заглушки | місце, де дані перестали бути відсортованими |
+
+        Порядок такий самий, як завжди: спершу відтворити й виміряти, потім змінити одне, потім довести тестом.
+      en: |
+        The complaints about the habit report sound different: “it lags on three years of data”, “it sometimes crashes”, “the streak is sometimes zero”. Behind them there may be three different defects, and each is found with its own tool from this unit:
+
+        | Symptom | Tool | What to look for |
+        |---|---|---|
+        | slow on big data | an operation counter at three sizes, a profile | the step whose operations grow fourfold when the data doubles |
+        | sometimes crashes | the error message, a breakpoint | a `RangeError` and a call stack that grows without end |
+        | wrong result | `assertInvariant`, a test without a stub | the place where the data stopped being sorted |
+
+        The order is the same as always: first reproduce and measure, then change one thing, then prove it with a test.
+
+  - id: predict-fastest
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Перетворення планувальника робить три кроки: сортує справи за датою, для кожної справи шукає проєкт через `find` серед 50 проєктів і перевіряє через `some`, чи є справа у списку заблокованих — а заблокована кожна десята. Який крок виросте **найбільше**, коли справ стане вдвічі більше?"
+      en: "A planner transform makes three steps: it sorts the tasks by date, for every task finds its project with `find` among 50 projects, and checks with `some` whether the task is in the blocked list — and every tenth task is blocked. Which step grows **the most** when there are twice as many tasks?"
+    answer:
+      type: choice
+      options:
+        - id: blocked
+          text:
+            uk: "Перевірка `some` у списку заблокованих — приблизно вчетверо"
+            en: "The `some` check in the blocked list — about fourfold"
+        - id: sort
+          text:
+            uk: "Сортування — воно найскладніше"
+            en: "The sorting — it is the most complex"
+          why:
+            uk: "Сортування росте як `n log n`: удвічі більше даних — трохи більше ніж удвічі більше порівнянь. Складний на вигляд код не обов’язково росте найшвидше."
+            en: "Sorting grows as `n log n`: twice the data — slightly more than twice the comparisons. Code that looks complex does not necessarily grow fastest."
+        - id: project
+          text:
+            uk: "Пошук проєкту через `find` — він лінійний усередині циклу"
+            en: "The project lookup with `find` — it is linear inside a loop"
+          why:
+            uk: "`find` справді в циклі, але проєктів завжди 50: на кожну справу — до 50 порівнянь. Справ удвічі більше — порівнянь удвічі більше, не вчетверо."
+            en: "`find` is indeed inside a loop, but there are always 50 projects: up to 50 comparisons per task. Twice the tasks means twice the comparisons, not four times."
+        - id: same
+          text:
+            uk: "Усі три — однаково, удвічі"
+            en: "All three the same, twofold"
+          why:
+            uk: "Список заблокованих росте разом зі справами: удвічі більше справ — удвічі довший список, по якому `some` іде для **кожної** з удвічі більшої кількості справ."
+            en: "The blocked list grows with the tasks: twice the tasks — a list twice as long, which `some` walks for **each** of twice as many tasks."
+      correct: [ blocked ]
+    explanation:
+      uk: "Квадратична робота ховається там, де всередині циклу по `n` записах іде прохід по чомусь, що **теж росте з `n`**. Пошук серед сталих 50 проєктів — лінійний за `n`; пошук у списку заблокованих, який росте разом зі справами, — квадратичний. Лічильник у прикладі нижче показує це числами."
+      en: "Quadratic work hides where, inside a loop over `n` records, there is a pass over something that **also grows with `n`**. Searching among a fixed 50 projects is linear in `n`; searching a blocked list that grows with the tasks is quadratic. The counter in the example below shows it in numbers."
+
+  - id: find-the-growth
+    kind: example
+    runtime: browser-js
+    dir: find-the-growth
+    entry: index.js
+    strings:
+      project: { uk: "Проєкт", en: "Project" }
+      sortLabel: { uk: "сортування:", en: "sort:" }
+      projectLabel: { uk: "пошук проєкту:", en: "project lookup:" }
+      blockedLabel: { uk: "заблоковані:", en: "blocked:" }
+    title:
+      uk: "Лічильник на трьох розмірах"
+      en: "A counter at three sizes"
+    body:
+      uk: |
+        Програма запускає перетворення на 1 000, 2 000 і 4 000 справ і рахує операції кожного кроку окремо. Запусти й порівняй, у скільки разів зростає кожне число між сусідніми рядками.
+      en: |
+        The program runs the transform on 1,000, 2,000 and 4,000 tasks and counts the operations of each step separately. Run it and compare how many times each number grows between neighbouring lines.
+    tryIt:
+      uk: |
+        1. Поділи кожне число другого рядка на число першого. Де вийшло близько 2, а де близько 4?
+        2. Запиши профіль запуску (Performance → запис → **Запустити** → стоп) і подивись, чи збігається функція з найбільшим Self time з тим, що показав лічильник.
+        3. Постав `debugger;` першим рядком у колбеку `some` і відкрий DevTools перед запуском. Коли виконання зупиниться, подивись у **Scope** на `id` і `task.id`, а в **Call Stack** — на ланцюжок викликів, і зроби кілька кроків (F10). Довго не затримуйся: за 3 секунди паузи платформа попереджає, що код не відповідає, а приблизно за 11 — зупиняє його, як ти бачив у JS-09. Прибери `debugger;`, коли подивишся.
+        4. Заміни `blockedIds.some(…)` на `Set`, збудований один раз перед `map`, і запусти: який стовпець тепер росте вдвічі?
+      en: |
+        1. Divide every number of the second line by the number of the first. Where did you get about 2, and where about 4?
+        2. Record a profile of a run (Performance → record → **Run** → stop) and check whether the function with the largest Self time matches what the counter showed.
+        3. Put `debugger;` as the first line of the `some` callback and open DevTools before running. When execution pauses, look at `id` and `task.id` in **Scope** and at the chain of calls in **Call Stack**, and take a few steps (F10). Do not linger: after 3 seconds of pause the platform warns that the code is not responding, and after about 11 it stops it, as you saw in JS-09. Remove `debugger;` once you have looked.
+        4. Replace `blockedIds.some(…)` with a `Set` built once before `map`, and run: which column grows twofold now?
+
+  - id: seeded-trace
+    kind: visual
+    visual: code-trace
+    title:
+      uk: "Три дефекти покроково"
+      en: "Three defects step by step"
+    textEquivalent:
+      uk: "Перший шматок рахує, скільки порівнянь робить includes для кожного дня: для «02-27» — одне, для «02-28» — три, бо цього дня немає й треба переглянути всі три відмітки, далі ще два й три. Разом 9 порівнянь на 4 дні й 3 відмітки — добуток розмірів, а не їхня сума. Другий шматок дописує старішу імпортовану дату «02-25» у кінець, і перевірка відсортованості every повертає false на останній парі: інваріант втрачено саме там, де дату додають у кінець. Третій шматок рахує глибину категорії, яка є власним батьком: кожен виклик depthOf кладе на стек викликів новий кадр із тим самим id і глибиною на одиницю більшою, і кінця немає — покрокове виконання обрізане, а справжній запуск закінчився б RangeError."
+      en: "The first part counts how many comparisons includes makes for every day: one for “02-27”, three for “02-28”, because that day is missing and all three completions must be checked, then two and three more. 9 comparisons in total for 4 days and 3 completions — the product of the sizes, not their sum. The second part appends the older imported date “02-25” at the end, and the sortedness check every returns false on the last pair: the invariant is lost exactly where a date is added at the end. The third part computes the depth of a category that is its own parent: every depthOf call puts a new frame on the call stack with the same id and a depth one higher, and there is no end — the step-through is cut off, while a real run would end with a RangeError."
+    spec:
+      file: visuals/seeded.js
+      steps: captioned
+      maxSteps: 100
+      allowTruncated: true
+      captions:
+        - at: { line: 5, hit: 1 }
+          text:
+            uk: "День `02-27`: перша ж відмітка збігається — одне порівняння."
+            en: "Day `02-27`: the very first completion matches — one comparison."
+        - at: { line: 5, hit: 4 }
+          text:
+            uk: "День `02-28`: його немає серед відміток, тож `includes` переглядає всі три. `reads` — `3` і зараз стане `4`."
+            en: "Day `02-28`: it is not among the completions, so `includes` checks all three. `reads` is `3` and is about to become `4`."
+        - at: { line: 14 }
+          text:
+            uk: "`reads` — `9` для 4 днів і 3 відміток: на кожен день — прохід відмітками. Для трьох років це ~1 000 × ~700."
+            en: "`reads` is `9` for 4 days and 3 completions: a pass over the completions for every day. For three years that is ~1,000 × ~700."
+        - at: { line: 19 }
+          text:
+            uk: "Злиття дописало старішу `02-25` у кінець: `sorted` — `false`. Саме тут втрачено інваріант, і серія днів, що йде від кінця списку, рахуватиме неправильно."
+            en: "The merge appended the older `02-25` at the end: `sorted` is `false`. This is where the invariant is lost, and the streak, which walks from the end of the list, will count wrongly."
+        - at: { line: 24, hit: 1 }
+          text:
+            uk: "Категорія `home` — власний батько. Перший виклик `depthOf`: один кадр."
+            en: "The category `home` is its own parent. The first `depthOf` call: one frame."
+        - at: { line: 24, hit: 2 }
+          text:
+            uk: "Знову `home`, `depth` — `2`: у стеку викликів уже два кадри з тим самим `id`. Базовий випадок (`parentId === null`) не настане ніколи."
+            en: "`home` again, `depth` is `2`: the call stack already holds two frames with the same `id`. The base case (`parentId === null`) never comes."
+        - at: { line: 24, hit: 12 }
+          text:
+            uk: "`depth` — `12`, і стек далі росте. Покрокове виконання тут обрізано; справжній запуск дійшов би до межі стеку й упав із `RangeError`."
+            en: "`depth` is `12`, and the stack keeps growing. The step-through is cut off here; a real run would reach the stack’s limit and fail with a `RangeError`."
+
+  - id: which-level
+    kind: prediction
+    prompt:
+      uk: "У звіті звичок тест «серія з трьох днів» підставляє замість сховища заглушку, яка повертає вже відсортовані дати, — і проходить. А в справжньому застосунку дати спершу зливаються з імпортованим файлом. Тест якого рівня впіймав би дефект злиття найдешевше?"
+      en: "In the habit report, the test “a streak of three days” replaces the storage with a stub that returns already sorted dates — and passes. In the real app the dates are first merged with an imported file. A test at which level would catch the merge defect most cheaply?"
+    answer:
+      type: choice
+      options:
+        - id: integration
+          text:
+            uk: "Інтеграційний: справжня `mergeCompletions` разом зі справжнім `buildHabitReport`, без заглушки"
+            en: "An integration test: the real `mergeCompletions` together with the real `buildHabitReport`, without a stub"
+        - id: more-mocks
+          text:
+            uk: "Ще один модульний тест із заглушкою, яка повертає інші відсортовані дати"
+            en: "One more unit test with a stub that returns other sorted dates"
+          why:
+            uk: "Заглушка знову обходить злиття: тест перевірить лише те, що відсортовані дані дають правильну серію, — а це й так правда."
+            en: "The stub bypasses the merge again: the test only checks that sorted data gives the right streak — which is already true."
+        - id: e2e
+          text:
+            uk: "End-to-end тест, що відкриває сторінку й імпортує файл через інтерфейс"
+            en: "An end-to-end test that opens the page and imports a file through the interface"
+          why:
+            uk: "Він теж упіймав би дефект, але він повільніший і крихкіший. Дефект живе на стику двох функцій — і перевірити цей стик можна без сторінки."
+            en: "It would catch the defect too, but it is slower and more fragile. The defect lives at the joint of two functions — and that joint can be checked without the page."
+      correct: [ integration ]
+    explanation:
+      uk: "Заглушка доводить лише те, що код працює з **такими** даними, які повертає заглушка. Дефект був у даних, яких заглушка ніколи не повертала, — у результаті злиття. Інтеграційний тест бере справжні функції там, де вони стикаються, і падає на старій версії: саме це й доводить, що він перевіряє справжню поведінку."
+      en: "A stub proves only that the code works with **the kind** of data the stub returns. The defect was in data the stub never returned — the result of the merge. An integration test takes the real functions where they meet and fails on the old version: that is exactly what proves it checks the real behavior."
+
+  - id: recall-mocks
+    kind: review
+    title:
+      uk: "Пригадай: що може й чого не може заглушка"
+      en: "Recall: what a mock can and cannot show"
+    items:
+      - id: mock-proves
+        from: js-09-05-mocks-vs-real
+        prompt:
+          uk: "Тест підмінює `fetch` через `mockFetch`, який відповідає 200 і списком із двох бажань, і перевіряє, що сторінка показує два рядки. Що цей тест **доводить**?"
+          en: "A test replaces `fetch` with `mockFetch`, which answers 200 with a list of two wishes, and checks that the page shows two rows. What does this test **prove**?"
+        answer:
+          type: choice
+          options:
+            - id: page-handles
+              text:
+                uk: "Що сторінка правильно показує таку відповідь, — але не що справжній сервер так відповідає"
+                en: "That the page shows such an answer correctly — but not that the real server answers like that"
+            - id: server-ok
+              text:
+                uk: "Що сервер повертає два бажання"
+                en: "That the server returns two wishes"
+              why:
+                uk: "До сервера тест не звертався: відповідь вигадала заглушка."
+                en: "The test never reached the server: the stub made the answer up."
+            - id: everything
+              text:
+                uk: "Що завантаження бажань працює повністю, від сервера до сторінки"
+                en: "That loading wishes works completely, from the server to the page"
+              why:
+                uk: "Частину «від сервера» замінено заглушкою, тож про неї тест нічого не каже."
+                en: "The “from the server” part was replaced by a stub, so the test says nothing about it."
+          correct: [ page-handles ]
+        explanation:
+          uk: "Заглушка робить тест швидким і передбачуваним, але відрізає справжню частину системи. Те, що відрізано, треба перевірити іншим тестом — на справжніх даних чи справжньому стику функцій."
+          en: "A stub makes a test fast and predictable, but cuts off a real part of the system. What is cut off has to be checked by another test — on real data or at the real joint of functions."
+
+  - id: repair-report
+    kind: exercise
+    mode: debug
+    runtime: browser-js
+    dir: repair-report
+    entry: index.js
+    editable: [ report.js, report.test.js ]
+    strings:
+      health: { uk: "Здоров’я", en: "Health" }
+      sport: { uk: "Спорт", en: "Sport" }
+      mind: { uk: "Розум", en: "Mind" }
+      reading: { uk: "Читання", en: "Reading" }
+      imported: { uk: "Імпортована", en: "Imported" }
+      habit: { uk: "Звичка", en: "Habit" }
+      cycle: { uk: "Категорія вже траплялася на шляху, у даних цикл:", en: "This category already appeared on the path, the data has a cycle:" }
+      tooDeep: { uk: "Категорія надто глибока:", en: "The category is too deep:" }
+      daysLabel: { uk: "Днів", en: "Days" }
+      readsLabel: { uk: "читань відміток", en: "completion reads" }
+      mergedLabel: { uk: "Злиті відмітки:", en: "Merged completions:" }
+      tStreakStub: { uk: "серія з трьох днів (заглушка сховища)", en: "a streak of three days (storage stub)" }
+      tStreakMerged: { uk: "серія після справжнього злиття", en: "the streak after a real merge" }
+      mStreak: { uk: "серія днів", en: "the streak" }
+      mMerged: { uk: "злиті відмітки", en: "the merged completions" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rSameFields: { uk: "(вміст однаковий, але це два різні об’єкти)", en: "(same content, but two different objects)" }
+      rNeedsFunction: { uk: "toThrow чекає функцію: напиши expect(() => …)", en: "toThrow needs a function: write expect(() => …)" }
+      rDidNotThrow: { uk: "функція не кинула помилку", en: "the function did not throw" }
+      rOtherError: { uk: "очікувалася помилка", en: "expected an error of type" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Звіт, що гальмує, падає й рахує не те"
+      en: "A report that lags, crashes and counts wrong"
+    instructions:
+      uk: |
+        Звіт звичок має три скарги: на великих даних він гальмує, на найбільшому розмірі звіт однієї звички падає з помилкою, а серія днів після імпорту буває неправильною. Тест у `report.test.js` проходить.
+
+        Знайди й виправ усі три дефекти в `report.js` — вимірюванням, профілем, breakpoints, а не здогадками — і додай у `report.test.js` тест **без заглушки**, який падає на старому коді й проходить на виправленому. Поведінка звіту на правильних даних не змінюється.
+
+        Перевірка рахує, скільки разів `completionRate` читає відмітки звички за 1 000 днів, і запускає твої тести на початковому `report.js`. Категорія, що є власним предком, має зупиняти звіт помилкою `Error` з її `id`, а не переповненням стеку.
+      en: |
+        The habit report has three complaints: it lags on big data, the report of one habit fails with an error at the largest size, and the streak is sometimes wrong after an import. The test in `report.test.js` passes.
+
+        Find and fix all three defects in `report.js` — by measuring, profiling and breakpoints, not by guessing — and add a test **without a stub** to `report.test.js` that fails on the old code and passes on the fixed one. The report’s behavior on correct data does not change.
+
+        The check counts how many times `completionRate` reads a habit’s completions over 1,000 days, and runs your tests against the original `report.js`. A category that is its own ancestor must stop the report with an `Error` naming its `id`, not with a stack overflow.
+    testTitles:
+      "completionRate gives the same rates as before":
+        uk: "`completionRate` дає ті самі частки, що й раніше"
+        en: "`completionRate` gives the same rates as before"
+      "completionRate reads each completion only a few times":
+        uk: "`completionRate` читає кожну відмітку лише кілька разів"
+        en: "`completionRate` reads each completion only a few times"
+      "categoryPath builds the path from the root":
+        uk: "`categoryPath` будує шлях від кореня"
+        en: "`categoryPath` builds the path from the root"
+      "a category that is its own parent stops with an Error naming it":
+        uk: "Категорія — власний батько: `Error` з її `id`"
+        en: "A category that is its own parent stops with an `Error` naming it"
+      "a longer cycle is caught too":
+        uk: "Довший цикл теж зупиняється"
+        en: "A longer cycle is caught too"
+      "mergeCompletions keeps every date once, sorted, without changing its inputs":
+        uk: "`mergeCompletions` лишає кожну дату один раз, відсортовано, не змінюючи входів"
+        en: "`mergeCompletions` keeps every date once, sorted, without changing its inputs"
+      "the streak of merged completions counts the days in a row":
+        uk: "Серія після злиття рахує дні поспіль"
+        en: "The streak of merged completions counts the days in a row"
+      "your tests pass with a fixed report":
+        uk: "Твої тести проходять із виправленим звітом"
+        en: "Your tests pass with a fixed report"
+      "one of your tests fails on the original report":
+        uk: "Хоча б один твій тест падає на початковому звіті"
+        en: "One of your tests fails on the original report"
+    hints:
+      nudge:
+        uk: "Почни з консолі: що росте між рядками 100, 400 і 1 600 днів, де саме з’являється помилка і що надруковано в рядку злитих відміток?"
+        en: "Start with the console: what grows between the lines of 100, 400 and 1,600 days, where exactly does the error appear, and what is printed in the line of merged completions?"
+      explanation:
+        uk: "Кожен симптом веде до свого інструменту з цього розділу. Число, що росте вчетверо, коли дані подвоюються, — ознака проходу всередині проходу: подумай, що можна зібрати один раз, щоб кожна перевірка стала одним кроком. Падіння з `RangeError` — це стек викликів без дна: подивись на ланцюжок викликів у DevTools і згадай запобіжник, що відрізняє цикл від глибини. Неправильна серія — втрачений інваріант: знайди, де дані перестають бути відсортованими. А тест-заглушка проходив, бо віддавав уже правильні дані — твій тест має пройти справжнім шляхом."
+        en: "Every symptom leads to its own tool from this unit. A number that grows fourfold when the data doubles is the sign of a pass inside a pass: think what could be built once so that every check becomes one step. A crash with a `RangeError` is a call stack without a bottom: look at the chain of calls in DevTools and recall the safeguard that tells a cycle from depth. A wrong streak is a lost invariant: find where the data stops being sorted. And the stub test passed because it handed over data that was already right — your test has to go the real way."
+    solutionNote:
+      uk: "Три дефекти й три виправлення. `completions.includes(day)` для кожного дня — O(днів × відміток); `Set` відміток, збудований один раз, робить кожну перевірку одним кроком. Рекурсія вгору батьками не мала запобіжника від циклу; `Set` пройдених `id` зупиняє її з `Error`, що називає категорію. Злиття дописувало імпортовані дати в кінець і втрачало інваріант «відсортовано й без повторів», на який спирається серія; `Set` і сортування його відновлюють. Тест із заглушкою проходив, бо заглушка повертала вже відсортовані дати: він перевіряв лише серію, а не злиття. Тест без заглушки впирається у справжній стик і падає на старому коді."
+      en: "Three defects and three fixes. `completions.includes(day)` for every day is O(days × completions); a `Set` of the completions built once makes every check one step. The recursion up the parents had no safeguard against a cycle; a `Set` of visited `id`s stops it with an `Error` that names the category. The merge appended imported dates at the end and lost the invariant “sorted and without repeats” that the streak relies on; a `Set` and sorting restore it. The stub test passed because the stub returned dates that were already sorted: it checked only the streak, not the merge. A test without a stub hits the real joint and fails on the old code."
+    feedback:
+      - when: { test: "completionRate gives the same rates as before" }
+        message:
+          uk: "Ця перевірка порівнює `completionRate` для трьох синтетичних звичок за 30 днів із тим, що давала початкова версія, і чекає `0` для порожнього діапазону днів."
+          en: "This check compares `completionRate` for three synthetic habits over 30 days with what the original version gave, and expects `0` for an empty range of days."
+      - when: { test: "completionRate reads each completion only a few times" }
+        message:
+          uk: "Ця перевірка рахує читання масиву відміток за 1 000 днів і чекає не більше трьох читань на відмітку. Якщо читань у сотні разів більше, для кожного дня досі йде прохід усіма відмітками."
+          en: "This check counts reads of the completions array over 1,000 days and expects at most three reads per completion. If there are hundreds of times more reads, every day still makes a pass over all completions."
+      - when: { test: "categoryPath builds the path from the root" }
+        message:
+          uk: "Ця перевірка чекає для `c-sport` шлях «Здоров’я › Спорт», а для `c-mind` — лише «Розум». Порядок назв — від кореня до категорії, розділювач — « › »."
+          en: "This check expects the path “Health › Sport” for `c-sport`, and just “Mind” for `c-mind`. The names go from the root to the category, separated by “ › ”."
+      - when: { test: "a category that is its own parent stops with an Error naming it" }
+        message:
+          uk: "Ця перевірка викликає `categoryPath(\"c-imported\")` — категорію, що є власним батьком, — і чекає саме `Error` (не `RangeError`) з `c-imported` у повідомленні. `RangeError` означає, що стек викликів досі переповнюється або цикл ловить межа глибини, а не перевірка вже пройдених `id`."
+          en: "This check calls `categoryPath(\"c-imported\")` — a category that is its own parent — and expects exactly an `Error` (not a `RangeError`) with `c-imported` in the message. A `RangeError` means the call stack still overflows or the cycle is caught by a depth limit rather than by a check of already visited `id`s."
+      - when: { test: "a longer cycle is caught too" }
+        message:
+          uk: "Ця перевірка дає дві категорії, що є батьками одна одній, і чекає `Error`. Перевірка «батько дорівнює собі» такий цикл не помітить: запам’ятовуй усі `id` на шляху."
+          en: "This check passes two categories that are each other’s parents and expects an `Error`. A check “the parent equals itself” does not notice such a cycle: remember every `id` on the path."
+      - when: { test: "mergeCompletions keeps every date once, sorted, without changing its inputs" }
+        message:
+          uk: "Ця перевірка зливає три місцеві дати з двома імпортованими (одна повторюється, одна старіша) і чекає чотири дати за зростанням, а обидва вхідні масиви — незмінними."
+          en: "This check merges three local dates with two imported ones (one repeated, one older) and expects four dates in ascending order, with both input arrays unchanged."
+      - when: { test: "the streak of merged completions counts the days in a row" }
+        message:
+          uk: "Ця перевірка зливає відмітки з імпортованими старішими датами й чекає серію `3`, що закінчується `2026-03-01`. Серія йде від кінця списку, тож злиті дати мають бути відсортовані."
+          en: "This check merges completions with older imported dates and expects a streak of `3` ending on `2026-03-01`. The streak walks from the end of the list, so the merged dates must be sorted."
+      - when: { test: "your tests pass with a fixed report" }
+        message:
+          uk: "Ця перевірка запускає твої тести з виправленим `report.js` і чекає щонайменше два тести, усі зелені. Якщо твій новий тест падає тут, у ньому хибне очікування — подивись на рядок у консолі."
+          en: "This check runs your tests with a fixed `report.js` and expects at least two tests, all green. If your new test fails here, it has a wrong expectation — look at its line in the console."
+      - when: { test: "one of your tests fails on the original report" }
+        message:
+          uk: "Ця перевірка запускає твої тести на початковому `report.js` і чекає, що хоча б один упаде. Якщо всі проходять, новий тест знову обходить злиття — наприклад, теж через заглушку з уже відсортованими датами. Злий справжні місцеві й імпортовані відмітки через `mergeCompletions`."
+          en: "This check runs your tests against the original `report.js` and expects at least one to fail. If all of them pass, the new test bypasses the merge again — for example, through a stub with already sorted dates as well. Merge real local and imported completions with `mergeCompletions`."
+      - when: { error: RangeError }
+        message:
+          uk: "`RangeError: Maximum call stack size exceeded` — рекурсія без дна. Подивись у стеку помилки, яка функція повторюється, і на дані, які вона отримує."
+          en: "`RangeError: Maximum call stack size exceeded` is a recursion without a bottom. Look at which function repeats in the error’s stack, and at the data it receives."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-17
+    body:
+      uk: "У кроці проєкту ти знайдеш одне квадратичне перетворення свого застосунку так само: лічильник на трьох розмірах синтетичних даних, профіль, а потім заміна індексом — і тест без заглушки, що порівнює старий і новий результат."
+      en: "In the project step you will find one quadratic transform of your app the same way: a counter at three sizes of synthetic data, a profile, then a replacement with an index — and a test without a stub that compares the old and the new result."
