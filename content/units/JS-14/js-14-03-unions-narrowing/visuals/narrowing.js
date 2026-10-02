@@ -1,16 +1,16 @@
-function describeResult(result) {
+function savedName(result) {
   if (result.ok) {
-    return "saved: " + result.value.name;
+    return result.value.name;
   }
-  return "fix: " + Object.keys(result.errors).join(", ");
+  return null;
 }
 
 function careless(result) {
-  return "saved: " + result.value.name;
+  return result.value.name;
 }
 
 const good = { ok: true, value: { name: "%%lamp%%", price: 45 } };
 const bad = { ok: false, errors: { price: "negative" } };
-console.log(describeResult(good));
-console.log(describeResult(bad));
+console.log(savedName(good));
+console.log(savedName(bad));
 console.log(careless(bad));
