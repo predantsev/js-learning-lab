@@ -62,8 +62,23 @@ test('after a delete the focus moves to the next Delete button', async () => {
   expect(next, 'the Delete button of the card after the deleted one').toHaveFocus();
 });
 
+test('deleting the last expense moves the focus to the Delete button before it', async () => {
+  const list = cards();
+  expect(list.length >= 2, 'at least two cards to delete from').toBe(true);
+  const previousId = list.at(-2).dataset.id;
+  const button = deleteButtonOf(list.at(-1));
+  button.focus();
+  await user.press('Enter', button);
+  const previous = screen.$(`#expenses li[data-id="${previousId}"] button`);
+  expect(previous, 'the Delete button of the card before the deleted last one').toHaveFocus();
+});
+
 test('the amount field has a label', () => {
-  expect(screen.nameOf(screen.$('#amount')), 'the accessible name of the amount field').toBeTruthy();
+  const field = screen.$('#amount');
+  expect(field, 'the amount field #amount').toBeTruthy();
+  // A visible <label> connected by for/id or by wrapping; a placeholder or aria-label alone does not count.
+  const labelText = [...field.labels].filter((label) => label.getClientRects().length > 0).map((label) => label.textContent.trim()).join(' ');
+  expect(labelText, 'the text of the visible <label> connected to #amount').toBeTruthy();
 });
 
 test('an expense over the budget gets the warning background', async () => {
