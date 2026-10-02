@@ -35,10 +35,12 @@ document.querySelector("#lookup-form").addEventListener("submit", (event) => {
   document.querySelector("#status").textContent = parcel === null ? `${code}: %%notFound%%` : `${code}: %%waitingFor%% ${parcel.recipient}`;
 });
 
-// The day's deliveries: 10,000 parcels arrive at once.
+// The day's deliveries: 10,000 parcels arrive at once, with codes that no earlier day used.
+let nextDay = 0;
 document.querySelector("#load-day").addEventListener("click", () => {
   const start = performance.now();
-  for (const parcel of makeParcels(10000)) locker.arrive(parcel);
+  for (const parcel of makeParcels(10000, 2000 + nextDay * 10000)) locker.arrive(parcel);
+  nextDay = nextDay + 1;
   render();
   const ms = performance.now() - start;
   document.querySelector("#status").textContent = `%%loaded%% ${locker.waitingCount()} · ${ms.toFixed(0)} ms`;
