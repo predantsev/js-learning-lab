@@ -1,4 +1,4 @@
-// A planner list: TASK_COUNT synthetic tasks over 60 due dates, in PROJECT_COUNT projects.
+// A planner list: TASK_COUNT synthetic tasks over 30 due dates, in PROJECT_COUNT projects.
 const TASK_COUNT = 5000;
 const PROJECT_COUNT = 2000;
 
