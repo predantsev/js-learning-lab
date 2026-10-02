@@ -59,6 +59,22 @@ test('requests without the local token are refused', async () => {
   }
 });
 
+test('static paths: traversal, encoded traversal, NUL and malformed encoding never leave the served folder', async () => {
+  // Malformed percent-encoding used to throw inside serveStatic (500 + a server log line).
+  const appCases = ['/../package.json', '/%2e%2e/package.json', '/%2e%2e%2fpackage.json', '/..%5cpackage.json', '/content/..%2f..%2fpackage.json', '/%00', '/assets/%E0%A4%A', '/content/%'];
+  for (const route of appCases) {
+    const res = await rawRequest(port, { path: route, headers: { host: appHost() } });
+    assert.equal(res.status, 404, route);
+    assert.doesNotMatch(res.text, /"name": "js-learning-lab"/, route);
+  }
+  // On a sandbox host a path normalized out of /sandbox/ is redirected to the app; nothing is read.
+  for (const route of ['/sandbox/..%2f..%2fpackage.json', '/sandbox/%2e%2e/%2e%2e/package.json', '/sandbox/%']) {
+    const res = await rawRequest(port, { path: route, headers: { host: `jsll-run-1.localhost:${port}` } });
+    assert.ok([302, 404].includes(res.status), `${route} → ${res.status}`);
+    assert.doesNotMatch(res.text, /"name": "js-learning-lab"/, route);
+  }
+});
+
 test('the server listens on loopback only', async (t) => {
   const lan = Object.values(os.networkInterfaces()).flat().find((i) => i && i.family === 'IPv4' && !i.internal);
   if (!lan) return t.skip('no non-loopback IPv4 interface on this machine');
