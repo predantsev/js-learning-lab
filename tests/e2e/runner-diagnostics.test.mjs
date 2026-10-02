@@ -92,3 +92,31 @@ test('a missing export names the project file, in the error card and wherever le
   assert.deepEqual(lines, ["SyntaxError The requested module 'records.js' does not provide an export named 'isvalid'", "TypeError Failed to resolve module specifier 'missing.js'"]);
   for (const line of lines) assert.doesNotMatch(line, INTERNAL);
 });
+
+test('console.trace reaches the console with its arguments and project-path stack; checks read it from rawLogs, not logs', async () => {
+  const r = await run({
+    files: {
+      'index.js': 'function formatAmount(n) {\n  console.trace();\n  console.trace("amount", n);\n  return n + " UAH";\n}\nfunction formatRow(e) {\n  return e.label + ": " + formatAmount(e.amount);\n}\nconsole.log(formatRow({ label: "Lunch", amount: 210 }));\n',
+    },
+    tests: {
+      path: '__tests__.js',
+      source: [
+        'test("printed text is what log printed", () => { expect(logs()).toEqual(["Lunch: 210 UAH"]); });',
+        'test("traces are in rawLogs with their stack", () => {',
+        '  const traces = rawLogs().filter((c) => c.level === "trace");',
+        '  expect(traces.map((c) => c.args)).toEqual([[], ["amount", 210]]);',
+        '  expect(traces[0].stack).toBe("at formatAmount (index.js:2:11)\\nat formatRow (index.js:7:27)\\nat index.js:9:13");',
+        '});',
+      ].join('\n'),
+    },
+  });
+  assert.equal(r.status, 'done');
+  assert.deepEqual(r.tests.map((t) => [t.name, t.status, t.message ?? '']), [['printed text is what log printed', 'pass', ''], ['traces are in rawLogs with their stack', 'pass', '']]);
+  const traces = r.console.filter((e) => e.level === 'trace');
+  assert.equal(traces.length, 2);
+  assert.deepEqual(traces[0].args, []);
+  assert.deepEqual(traces[1].args.map((a) => a.v), ['amount', 210]);
+  assert.equal(traces[0].stack, 'at formatAmount (index.js:2:11)\nat formatRow (index.js:7:27)\nat index.js:9:13');
+  assert.equal(traces[1].stack, 'at formatAmount (index.js:3:11)\nat formatRow (index.js:7:27)\nat index.js:9:13');
+  assert.deepEqual(r.console.filter((e) => e.level !== 'system').map((e) => e.level), ['trace', 'trace', 'log'], 'in the order the program printed them');
+});

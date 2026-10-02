@@ -187,11 +187,11 @@
     queue = [];
     post('console', { entries });
   }
-  function emitConsole(level, args) {
+  function emitConsole(level, args, extra = null) {
     if (!run) return;
     if (consoleSuppressed) return;
     const limit = run.options.consoleLimit;
-    const entry = { level, args: args.map((a) => serialize(a)), at: Math.round(performance.now()) };
+    const entry = { level, args: args.map((a) => serialize(a)), at: Math.round(performance.now()), ...extra };
     consoleCount += 1;
     consoleBytes += JSON.stringify(entry).length;
     if (consoleCount > limit.entries || consoleBytes > limit.bytes) {
@@ -210,10 +210,10 @@
   // While a test re-evaluates the entry module (rerun), its output goes to that rerun only: not to
   // the learner's console and not to logs().
   let rerunSink = null;
-  const record = (level, args, shownLevel = level) => {
-    if (rerunSink) { rerunSink.push({ level, args }); return; }
-    captured.push({ level, args });
-    emitConsole(shownLevel, args);
+  const record = (level, args, shownLevel = level, extra = null) => {
+    if (rerunSink) { rerunSink.push({ level, args, ...extra }); return; }
+    captured.push({ level, args, ...extra });
+    emitConsole(shownLevel, args, extra);
   };
   for (const level of ['log', 'info', 'warn', 'error', 'debug', 'table', 'dir']) {
     const original = console[level].bind(console);
@@ -224,6 +224,17 @@
       record(level, args, level === 'dir' || level === 'debug' ? 'log' : level);
     };
   }
+  // console.trace(...args): the arguments (shown after the label "console.trace") and the stack of the call in
+  // project paths, as a "trace" entry. It reaches the learner's console and rawLogs(), not logs():
+  // checks that read printed text read what the program printed with log, info, warn and error.
+  const originalTrace = console.trace.bind(console);
+  console.trace = (...args) => {
+    if (!consoleSuppressed) originalTrace(...args);
+    let stack = '';
+    try { stack = cleanStack(new Error().stack || '').split('\n').slice(1).map((line) => line.trim()).join('\n'); } catch (e) { stack = ''; }
+    record('trace', args, 'trace', { stack });
+  };
+  const printed = (c) => c.level !== 'alert' && c.level !== 'trace';
   const originalAssert = console.assert.bind(console);
   console.assert = (condition, ...args) => {
     originalAssert(condition, ...args);
@@ -684,8 +695,8 @@
       rerunScope = null;
     }
     return {
-      logs: sink.filter((c) => c.level !== 'alert').map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
-      rawLogs: sink.map((c) => ({ level: c.level, args: c.args })),
+      logs: sink.filter(printed).map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
+      rawLogs: sink.map((c) => ({ level: c.level, args: c.args, ...(c.stack !== undefined ? { stack: c.stack } : {}) })),
       alerts: sink.filter((c) => c.level === 'alert').map((c) => String(c.args[0])),
       scope: fresh,
       error,
@@ -701,8 +712,8 @@
       test: (name, fn) => { tests.push({ name, fn }); },
       expect, spy, sleep, settle, waitFor, user, screen, mockFetch, scope, rerun,
       scopeOf: (file) => scopes.get(file) || {},
-      logs: () => captured.filter((c) => c.level !== 'alert').map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
-      rawLogs: () => captured.map((c) => ({ level: c.level, args: c.args })),
+      logs: () => captured.filter(printed).map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
+      rawLogs: () => captured.map((c) => ({ level: c.level, args: c.args, ...(c.stack !== undefined ? { stack: c.stack } : {}) })),
       alerts: () => captured.filter((c) => c.level === 'alert').map((c) => String(c.args[0])),
       loadError: () => loadErrors[0] || null,
       storage: window.localStorage,

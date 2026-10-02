@@ -59,7 +59,7 @@ export function ConsoleView({ entries, errors }: { entries: ConsoleEntry[]; erro
     <ol className="console" aria-label={t('ws.console')}>
       {entries.map((entry, i) => entry.level === 'system'
         ? <li key={i} className="console-line console-system"><Icon name="info" size={14} /><span>{t(`sys.${entry.code}` as Key, { detail: entry.detail ?? '' })}</span></li>
-        : <li key={i} className={`console-line console-${entry.level}`}>{entry.level === 'alert' && <span className="console-tag">{t('sys.alert')}</span>}{entry.args.map((a, j) => <span key={j} className="console-arg"><Value v={a} /></span>)}</li>)}
+        : <li key={i} className={`console-line console-${entry.level}`}>{entry.level === 'alert' && <span className="console-tag">{t('sys.alert')}</span>}{entry.level === 'trace' && <span className="console-tag" lang="en">console.trace</span>}{entry.args.map((a, j) => <span key={j} className="console-arg"><Value v={a} /></span>)}{entry.level === 'trace' && entry.stack && <span className="console-stack" lang="en">{entry.stack}</span>}</li>)}
     </ol>
   );
 }
