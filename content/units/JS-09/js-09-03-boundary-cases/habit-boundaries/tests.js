@@ -25,8 +25,8 @@ async function runSuite(swaps = {}, options = {}) {
 
 const failing = (results) => results.filter((result) => !result.passed).map((result) => `${result.name} — ${result.message}`);
 
-async function expectSuitePasses(options = {}) {
-  const results = await runSuite({}, options);
+async function expectSuitePasses(swaps = {}) {
+  const results = await runSuite(swaps);
   expect(results.length, `number of tests in ${SUITE_FILE}`).toBeGreaterThan(0);
   expect(failing(results), 'your tests that fail with the correct code').toEqual([]);
 }
