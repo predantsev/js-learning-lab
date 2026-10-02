@@ -353,6 +353,37 @@ test('wide pictures: diagram, sequence and memory-graph scale down to the lesson
   await narrow.page.close();
 });
 
+test('memory-graph boxes and code panels follow their content within the column: identifiers stay whole, holes are shown', async () => {
+  const { page, problems } = await open('only=sparse-reminders&lang=en&width=420');
+  const read = () => page.evaluate(() => {
+    const code = document.querySelector('.viz-code');
+    const panel = document.querySelector('.viz-svg-panel');
+    const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const boxes = [...document.querySelectorAll('.viz-binding')].map((g) => ({ text: g.querySelector('text').textContent, full: g.querySelector('title')?.textContent ?? null, textW: g.querySelector('text').getComputedTextLength(), boxW: Number(g.querySelector('rect').getAttribute('width')) }));
+    return { codeScrolls: code.scrollWidth > code.clientWidth + 1, codeFont: parseFloat(getComputedStyle(code).fontSize), minFont: rootPx * 0.72, panelScrolls: panel.scrollWidth > panel.clientWidth + 1, boxes, svgText: document.querySelector('.viz-svg').textContent };
+  });
+  const first = await read();
+  assert.equal(first.codeScrolls, false, 'long code lines shrink, then wrap: no sideways scrolling');
+  assert.ok(first.codeFont >= first.minFont - 0.01, `code font ${first.codeFont}px is not below the legible minimum ${first.minFont}px`);
+  assert.equal(first.panelScrolls, false, 'the picture fits the 420 px column');
+  for (const box of first.boxes) assert.ok(box.textW + 8 <= box.boxW, `"${box.text}" fits its box (${box.textW.toFixed(0)} of ${box.boxW} px)`);
+  assert.equal(first.boxes[0].text, 'scheduledReminders → #r1');
+  assert.match(first.boxes[1].text, /^remindersWithoutHoles = .*…$/, 'the identifier stays whole; only the value is shortened');
+  assert.equal(first.boxes[1].full, 'remindersWithoutHoles = uninitialized (TDZ)', 'the full text stays available');
+  assert.match(first.svgText, /1: <empty>/, 'the hole of the sparse array');
+  await page.locator('.viz [data-action="next"]').first().click();
+  const second = await read();
+  assert.equal(second.boxes[1].text, 'remindersWithoutHoles → #r2');
+  assert.equal(second.panelScrolls, false);
+  assert.deepEqual(problems, []);
+  await page.close();
+  // Short code keeps the normal code size.
+  const wide = await open('only=code-trace&lang=en&width=760');
+  const sizes = await wide.page.evaluate(() => ({ code: parseFloat(getComputedStyle(document.querySelector('.viz-code')).fontSize), normal: parseFloat(getComputedStyle(document.querySelector('.viz')).getPropertyValue('--viz-code-size')) * parseFloat(getComputedStyle(document.documentElement).fontSize) }));
+  assert.ok(Math.abs(sizes.code - sizes.normal) < 0.01, `short code is not shrunk (${sizes.code}px vs ${sizes.normal}px)`);
+  await wide.page.close();
+});
+
 test('step through my code: the lesson workspace traces the learner code and shows it in the code-trace player', async () => {
   const distDir = await buildFixtureDist();
   const lab = await Lab.start({ distDir });

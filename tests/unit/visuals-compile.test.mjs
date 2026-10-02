@@ -151,6 +151,17 @@ test('memory-graph from a trace derives bindings and heap per captioned step', a
   assert.deepEqual(r.spec.steps[1].changed, ['b']);
 });
 
+test('memory-graph: { empty: true } marks a hole of a sparse array, exactly as a real trace shows it', async () => {
+  const r = await compileVisual('memory-graph', { states: [{ caption: text('a'), bindings: [{ name: 'list', kind: 'const', value: { ref: 'a' } }], heap: { a: { kind: 'array', items: [1, { empty: true }, 3] } } }] }, ctx());
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  assert.deepEqual(r.spec.steps[0].heap.a, { t: 'array', length: 3, items: [{ t: 'number', v: 1 }, { t: 'empty' }, { t: 'number', v: 3 }], more: 0 });
+  const { runTraced } = await import('../../shared/visuals/exec-node.js');
+  const { trace } = await runTraced('const list = [1, , 3];\n', { file: 'a.js' });
+  const real = Object.values(trace.steps.at(-1).heap).find((h) => h.t === 'array');
+  assert.deepEqual(real.items, r.spec.steps[0].heap.a.items, 'authored and traced holes look the same');
+  assert.equal(real.length, 3);
+});
+
 test('memory-graph authored states diff into "changed" when not given', async () => {
   const r = await compileVisual('memory-graph', { states: [
     { caption: text('a'), bindings: [{ name: 'x', value: { ref: 'o' } }], heap: { o: { kind: 'object', props: { n: 1 } } } },

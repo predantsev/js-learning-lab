@@ -43,6 +43,12 @@ test('memory-graph: heap ids, refs and inline objects', () => {
   assert.ok(paths(issues).includes('spec.states[0].heap.o.kind'));
   assert.ok(paths(issues).includes('spec.states[0].changed'));
   assert.ok(paths(validateVisualSpec('memory-graph', { from: 'trace', file: 'a.js', captions: [{ at: { line: 1 }, text }] })).length === 0);
+  // { empty: true } is a hole of a sparse array: only among array items.
+  const sparse = (heap, value = { ref: 'a' }) => validateVisualSpec('memory-graph', { states: [{ caption: text, bindings: [{ name: 'x', value }], heap }] });
+  assert.deepEqual(sparse({ a: { kind: 'array', items: ['w', { empty: true }, 's'] } }), []);
+  assert.ok(paths(sparse({ a: { kind: 'array', items: [] } }, { empty: true })).includes('spec.states[0].bindings[0].value'), 'not a binding value');
+  assert.ok(paths(sparse({ a: { kind: 'object', props: { k: { empty: true } } } })).includes('spec.states[0].heap.a.props.k'), 'not an object property');
+  assert.ok(paths(sparse({ a: { kind: 'set', items: [{ empty: true }] } })).includes('spec.states[0].heap.a.items[0]'), 'not a set item');
 });
 
 test('pipeline: ops, function sources, perItem needs summary, reduce needs initial', () => {
