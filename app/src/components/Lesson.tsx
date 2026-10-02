@@ -1,5 +1,6 @@
 // Lesson screen: explanation and practice side by side, step by step, resumable (REQ-004, REQ-011).
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ApiError } from '../lib/api';
 import { ContentError, loadLesson } from '../lib/content';
 import { type Key, pick } from '../lib/i18n';
 import type { Doc } from '../lib/persist';
@@ -39,8 +40,9 @@ function SelfCheck({ lesson, drafts, onClose }: { lesson: Lesson; drafts: Doc<Dr
           <p className="ws-note">{t('skip.selfCheckIntro')}</p>
           {items.map((block) => block.kind === 'exercise' ? (
             <div key={block.id} className="selfcheck-exercise">
-              <ExerciseCard lesson={lesson} block={block} showHints={false} />
-              <Workspace lesson={lesson} block={block} drafts={drafts} lang={lang} recordProgress={false} onChecked={(ok) => setResults((r) => ({ ...r, [block.id]: ok }))} />
+              {/* A separate DOM id and draft entry: the self-check never overwrites the lesson draft. */}
+              <ExerciseCard lesson={lesson} block={block} showHints={false} domId={`selfcheck-${block.id}`} />
+              <Workspace lesson={lesson} block={block} drafts={drafts} lang={lang} recordProgress={false} draftKey={`selfcheck:${block.id}`} onChecked={(ok) => setResults((r) => ({ ...r, [block.id]: ok }))} />
             </div>
           ) : block.kind === 'prediction' ? (
             <div key={block.id} className="block block-prediction"><QuestionView question={block as Question} lang={lang} answered={false} idPrefix={`sc-${block.id}`} onAnswer={(ok) => setResults((r) => ({ ...r, [block.id]: r[block.id] ?? ok }))} /></div>
@@ -169,6 +171,7 @@ export function LessonView({ id, page, block }: { id: string; page: number; bloc
   const lang = useLang();
   const [loaded, setLoaded] = useState<{ lesson: Lesson; drafts: Doc<DraftsDoc> } | null>(null);
   const [error, setError] = useState<ContentError | Error | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const ref = app().byId.get(id);
 
   useEffect(() => {
@@ -176,24 +179,35 @@ export function LessonView({ id, page, block }: { id: string; page: number; bloc
     setLoaded(null);
     setError(null);
     if (ref && !ref.lesson.authored) return undefined;
-    Promise.all([loadLesson(id), loadDrafts(id)]).then(
-      ([lesson, drafts]) => { if (!cancelled) setLoaded({ lesson, drafts }); },
-      (e) => { if (!cancelled) setError(e); },
-    );
+    // Both requests run together, but the lesson's own state decides the message: a missing or
+    // damaged lesson is reported as such even when the drafts request failed as well.
+    void Promise.allSettled([loadLesson(id), loadDrafts(id)]).then(([lesson, drafts]) => {
+      if (cancelled) return;
+      if (lesson.status === 'rejected') setError(lesson.reason);
+      else if (drafts.status === 'rejected') setError(drafts.reason);
+      else setLoaded({ lesson: lesson.value, drafts: drafts.value });
+    });
     return () => { cancelled = true; };
-  }, [id, ref]);
+  }, [id, ref, attempt]);
 
   if (ref && !ref.lesson.authored) {
     return <div className="state-card"><h1>{pick(ref.lesson.title, lang)}</h1><p>{t('lesson.notAuthoredBody')}</p><a className="btn" href="#/course">{t('lesson.toCourse')}</a></div>;
   }
   if (error) {
     const missing = error instanceof ContentError && error.code === 'missing';
+    const message = missing ? t('lesson.missingBody')
+      : error instanceof ContentError && error.code === 'corrupt' ? t('error.contentCorrupt')
+      : error instanceof ApiError && error.code === 'corrupt' ? t('error.storeCorrupt', { doc: String(error.body.file ?? '') })
+      : t('error.serverUnreachable');
     return (
       <div className="state-card" role="alert">
         <h1>{missing ? t('lesson.missingTitle') : t('error.title')}</h1>
-        <p>{missing ? t('lesson.missingBody') : error instanceof ContentError && error.code === 'corrupt' ? t('error.contentCorrupt') : t('error.serverUnreachable')}</p>
+        <p>{message}</p>
         <details><summary>{t('error.details')}</summary><pre>{error.message}</pre></details>
-        <a className="btn" href="#/course">{t('lesson.toCourse')}</a>
+        <div className="state-actions">
+          {!missing && <button type="button" className="btn btn-primary" onClick={() => setAttempt((n) => n + 1)}>{t('error.retry')}</button>}
+          <a className="btn" href="#/course">{t('lesson.toCourse')}</a>
+        </div>
       </div>
     );
   }

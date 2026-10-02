@@ -1,8 +1,8 @@
 // Lesson blocks (explanation column). Every block can be bookmarked and shown in the other
 // language in place, without changing the global language or any learner state (REQ-016, REQ-020).
-import { type ComponentType, type ReactNode, Suspense, lazy, useId, useMemo, useRef, useState } from 'react';
+import { type ComponentType, type ReactNode, Suspense, lazy, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { consoleLines, localizeText } from '@shared/exercise.js';
-import { prepareRun, runToCompletion, sandboxOriginFor } from '@shared/runner.js';
+import { fallBackToIpSandbox, prepareRun, runToCompletion, sandboxOriginFor } from '@shared/runner.js';
 import { boot } from '../lib/api';
 import { type Key, pick } from '../lib/i18n';
 import { confirmLocalTaskItem, isAnswerCorrect, recordAnswer, recordHint, recordReview, skipLocalTask } from '../lib/progress';
@@ -39,6 +39,7 @@ export function useBlockLang(lessonId: string, blockId: string): Lang {
 
 function BlockToolbar({ lessonId, blockId, label, lang }: { lessonId: string; blockId: string; label: string; lang: Lang }) {
   const t = useT();
+  const global = useLang();
   const bookmarked = useStore(app().bookmarks.store, (b) => b.items.some((i) => i.lessonId === lessonId && i.blockId === blockId));
   const toggleBookmark = () => {
     app().bookmarks.update((b) => (bookmarked ? { items: b.items.filter((i) => !(i.lessonId === lessonId && i.blockId === blockId)) } : { items: [...b.items, { id: `${Date.now().toString(36)}-${blockId}`, lessonId, blockId, createdAt: new Date().toISOString() }] }));
@@ -48,7 +49,7 @@ function BlockToolbar({ lessonId, blockId, label, lang }: { lessonId: string; bl
     <div className="block-toolbar">
       <span className="block-label">{label}</span>
       <div className="block-actions">
-        <button type="button" className="block-action" aria-pressed={lang === 'en'} onClick={() => toggleBlockLang(blockKey(lessonId, blockId), lang)} aria-label={t(lang === 'uk' ? 'lang.blockToEn' : 'lang.blockToUk')} title={t('lang.blockHint')}>
+        <button type="button" className="block-action" aria-pressed={lang === 'en'} onClick={() => toggleBlockLang(blockKey(lessonId, blockId), lang, global)} aria-label={t(lang === 'uk' ? 'lang.blockToEn' : 'lang.blockToUk')} title={t('lang.blockHint')}>
           <Icon name="lang" size={14} /><span aria-hidden="true">{lang === 'uk' ? 'EN' : 'UA'}</span>
         </button>
         <button type="button" className="block-action" aria-pressed={bookmarked} onClick={toggleBookmark} aria-label={t(bookmarked ? 'block.unbookmark' : 'block.bookmark')}>
@@ -59,9 +60,9 @@ function BlockToolbar({ lessonId, blockId, label, lang }: { lessonId: string; bl
   );
 }
 
-function BlockFrame({ lessonId, block, label, className, children, lang }: { lessonId: string; block: { id: string }; label: string; className: string; children: ReactNode; lang: Lang }) {
+function BlockFrame({ lessonId, block, label, className, children, lang, domId }: { lessonId: string; block: { id: string }; label: string; className: string; children: ReactNode; lang: Lang; domId?: string }) {
   return (
-    <section className={`block ${className}`} id={`block-${block.id}`} data-block={block.id} lang={lang} tabIndex={-1} aria-label={label}>
+    <section className={`block ${className}`} id={domId ?? `block-${block.id}`} data-block={block.id} lang={lang} tabIndex={-1} aria-label={label}>
       <BlockToolbar lessonId={lessonId} blockId={block.id} label={label} lang={lang} />
       {children}
     </section>
@@ -134,23 +135,40 @@ export function QuestionView({ question, lang, answered, onAnswer, idPrefix }: Q
   const [result, setResult] = useState<null | boolean>(null);
   const [output, setOutput] = useState<{ lines: string[]; error: string | null } | null>(null);
   const hiddenHost = useRef<HTMLDivElement>(null);
+  const answerRef = useRef<HTMLFieldSetElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+  // The control the learner used disappears (submit → result, retry → answer): keep keyboard focus
+  // inside the question instead of losing it to the page body (REQ-031).
+  const moveFocus = useRef<'result' | 'answer' | null>(null);
   const done = result !== null;
   const canSubmit = a.type === 'text' ? text.trim() !== '' : a.type === 'order' ? true : picked.length > 0;
+  useEffect(() => {
+    const target = moveFocus.current === 'result' ? resultRef.current : moveFocus.current === 'answer' ? answerRef.current?.querySelector<HTMLElement>('input, button') : null;
+    moveFocus.current = null;
+    target?.focus();
+  }, [result]);
 
   const submit = () => {
     const given = a.type === 'text' ? text : a.type === 'order' ? order : picked;
     const correct = isAnswerCorrect(question, given, lang);
+    moveFocus.current = 'result';
     setResult(correct);
     onAnswer(correct);
     announce(t(correct ? 'q.correct' : 'q.incorrect'));
   };
   const runCode = async () => {
     if (!question.code || !hiddenHost.current) return;
-    const sandboxOrigin = sandboxOriginFor(boot.port);
-    const prepared = prepareRun({ files: { 'index.js': question.code[lang] }, entry: 'index.js', runtime: 'browser-js', sandboxOrigin, lang });
-    if ('errors' in prepared) { setOutput({ lines: [], error: prepared.errors[0].message }); return; }
-    const r = (await runToCompletion({ container: hiddenHost.current, sandboxOrigin, prepared, timeoutMs: 8000 })) as { console: ConsoleEntry[]; errors: { name: string; message: string }[] };
-    setOutput({ lines: consoleLines(r.console), error: r.errors[0] ? `${r.errors[0].name}: ${r.errors[0].message}` : null });
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const sandboxOrigin = sandboxOriginFor(boot.port);
+      const prepared = prepareRun({ files: { 'index.js': question.code[lang] }, entry: 'index.js', runtime: 'browser-js', sandboxOrigin, lang });
+      if ('errors' in prepared) { setOutput({ lines: [], error: prepared.errors[0].message }); return; }
+      const r = (await runToCompletion({ container: hiddenHost.current, sandboxOrigin, prepared, timeoutMs: 8000 })) as { status: string; console: ConsoleEntry[]; errors: { name: string; message: string }[] };
+      // A *.localhost sandbox host this browser cannot load: retry once on the IP host.
+      if (r.status === 'failed:sandbox-unreachable' && fallBackToIpSandbox(sandboxOrigin)) continue;
+      if (r.status.startsWith('failed')) { setOutput({ lines: [], error: t('ws.sandboxUnreachable') }); return; }
+      setOutput({ lines: consoleLines(r.console), error: r.errors[0] ? `${r.errors[0].name}: ${r.errors[0].message}` : null });
+      return;
+    }
   };
   const move = (index: number, delta: number) => setOrder((o) => { const next = [...o]; const j = index + delta; if (j < 0 || j >= next.length) return o; [next[index], next[j]] = [next[j], next[index]]; return next; });
   const optionById = (id: string) => (a.type === 'order' ? a.items : a.type === 'text' ? [] : a.options).find((o) => o.id === id);
@@ -160,7 +178,7 @@ export function QuestionView({ question, lang, answered, onAnswer, idPrefix }: Q
     <div className="question">
       <Html html={question.prompt[lang]} lang={lang} className="prose question-prompt" />
       {question.codeHtml && <pre className="code"><code dangerouslySetInnerHTML={{ __html: question.codeHtml[lang] }} /></pre>}
-      <fieldset className="question-answer" disabled={done}>
+      <fieldset ref={answerRef} className="question-answer" disabled={done}>
         <legend className="sr-only">{t('q.yourAnswer')}</legend>
         {(a.type === 'choice' || a.type === 'multi') && (
           <>
@@ -197,14 +215,14 @@ export function QuestionView({ question, lang, answered, onAnswer, idPrefix }: Q
           {!canSubmit && !answered && <span className="question-hint">{t('q.choose')}</span>}
         </div>
       ) : (
-        <div className={`question-result ${result ? 'result-ok' : 'result-no'}`} role="status">
+        <div ref={resultRef} tabIndex={-1} className={`question-result ${result ? 'result-ok' : 'result-no'}`} role="status">
           <p className="result-title"><Icon name={result ? 'check' : 'info'} /> {t(result ? 'q.correct' : 'q.incorrect')}</p>
           {a.type === 'text' && !result && <p>{t('q.correctAnswer')}: <code>{a.accept[lang][0]}</code></p>}
           {a.type === 'order' && !result && <div><span className="label">{t('q.correctAnswer')}</span><ol className="order-correct">{a.items.map((i) => <li key={i.id}>{optionLabel(i.id)}</li>)}</ol></div>}
           <Html html={question.explanation[lang]} lang={lang} className="prose" />
           <div className="question-actions">
             {question.code && question.runnable !== false && <button type="button" className="btn" onClick={() => void runCode()}><Icon name="play" /> {t('q.run')}</button>}
-            {!result && <button type="button" className="btn btn-quiet" onClick={() => { setResult(null); setPicked([]); setText(''); }}>{t('q.tryAgain')}</button>}
+            {!result && <button type="button" className="btn btn-quiet" onClick={() => { moveFocus.current = 'answer'; setResult(null); setPicked([]); setText(''); }}>{t('q.tryAgain')}</button>}
           </div>
           {output && <div className="real-output"><span className="label">{t('q.realOutput')}</span><pre lang="en">{[...output.lines, ...(output.error ? [output.error] : [])].join('\n') || '—'}</pre></div>}
         </div>
@@ -312,12 +330,12 @@ function Hints({ lesson, block, lang }: { lesson: Lesson; block: ExerciseBlock; 
   );
 }
 
-function ExerciseCard({ lesson, block, showHints = true }: { lesson: Lesson; block: ExerciseBlock; showHints?: boolean }) {
+function ExerciseCard({ lesson, block, showHints = true, domId }: { lesson: Lesson; block: ExerciseBlock; showHints?: boolean; domId?: string }) {
   const t = useT();
   const lang = useBlockLang(lesson.id, block.id);
   const label = block.assessment ? t('block.exercise.assessment') : block.mode === 'debug' ? t('block.exercise.debug') : block.mode === 'independent' ? t('block.exercise.independent') : t('block.exercise');
   return (
-    <BlockFrame lessonId={lesson.id} block={block} label={label} className="block-task" lang={lang}>
+    <BlockFrame lessonId={lesson.id} block={block} label={label} className="block-task" lang={lang} domId={domId}>
       <h3 className="block-subtitle"><Icon name="pencil" /> {block.title[lang]}</h3>
       <Html html={block.instructions[lang]} lang={lang} className="prose" />
       {showHints && <Hints lesson={lesson} block={block} lang={lang} />}

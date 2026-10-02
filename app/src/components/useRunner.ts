@@ -2,7 +2,7 @@
 // stop that always works, automatic stop after a declared unresponsive timeout (REQ-022).
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runInputForBlock } from '@shared/exercise.js';
-import { SandboxRun, prepareRun, sandboxOriginFor } from '@shared/runner.js';
+import { SandboxRun, fallBackToIpSandbox, prepareRun, sandboxOriginFor } from '@shared/runner.js';
 import { traceBabelPlugin } from '@shared/visuals/tracer.js';
 import { boot } from '../lib/api';
 import type { ConsoleEntry, ExampleBlock, ExerciseBlock, Lang, RunError, TestResult } from '../lib/types';
@@ -68,7 +68,7 @@ export function useRunner() {
   }, [teardown]);
 
   const start = useCallback(
-    (options: StartOptions) => {
+    function launch(options: StartOptions) {
       teardown();
       errorsRef.current = [];
       const sandboxOrigin = sandboxOriginFor(boot.port);
@@ -130,6 +130,11 @@ export function useRunner() {
               break;
             case 'failed':
               teardown();
+              // A *.localhost sandbox host this browser cannot load: retry once on the IP host.
+              if (event.code === 'sandbox-unreachable' && fallBackToIpSandbox(sandboxOrigin)) {
+                launch(options);
+                break;
+              }
               setState((s) => ({ ...s, status: 'failed', failure: event.code as string, live: false }));
               break;
             case 'done':
