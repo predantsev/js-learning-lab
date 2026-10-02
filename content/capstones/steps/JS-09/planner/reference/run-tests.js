@@ -6,7 +6,8 @@ import { run } from "./tests/testing.js";
 const results = await run();
 
 // Under Node.js a failed test makes the command fail (exit code 1), so `npm test` and other tools
-// can see it. A browser has no `process`, so the page skips this part.
-if (typeof process !== "undefined" && results.some((result) => !result.passed)) {
-  process.exitCode = 1;
+// can see it. In a browser globalThis.process is undefined, so the page skips this part.
+const nodeProcess = globalThis.process; // Node.js has it, a browser does not
+if (nodeProcess !== undefined && results.some((result) => !result.passed)) {
+  nodeProcess.exitCode = 1;
 }
