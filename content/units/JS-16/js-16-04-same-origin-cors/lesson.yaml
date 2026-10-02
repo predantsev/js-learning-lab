@@ -1,0 +1,555 @@
+id: js-16-04-same-origin-cors
+unit: JS-16
+title:
+  uk: "Same-origin, CORS і preflight"
+  en: "Same-origin, CORS and preflight"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Пояснити same-origin policy як правило браузера про читання відповідей і за заголовками `Access-Control-Allow-*` передбачити, чи може скрипт прочитати відповідь з іншого origin."
+    en: "Explain the same-origin policy as a browser rule about reading responses, and predict from the `Access-Control-Allow-*` headers whether a script can read a cross-origin response."
+  - uk: "Передбачити, коли браузер надсилає preflight `OPTIONS` (метод, власний заголовок, JSON як Content-Type), і що додатково потребує `credentials: \"include\"`."
+    en: "Predict when the browser sends an `OPTIONS` preflight (method, custom header, JSON content type) and what `credentials: \"include\"` additionally requires."
+  - uk: "Пояснити, чому помилка CORS з’являється в консолі, хоча сервер міг отримати й обробити запит."
+    en: "Explain why a CORS error appears in the console even though the server may have received and processed the request."
+prerequisites: [js-16-03-cookies-storage-origins, js-16-02-http-methods-status-headers]
+subskills:
+  - { family: W-04, skill: "same-origin/CORS/preflight/credentials", depth: intro }
+glossary: [same-origin-policy, cors, preflight-request, credentialed-request]
+selfCheck: [predict-cors, diagnose]
+
+blocks:
+  - id: read-not-send
+    kind: explanation
+    title:
+      uk: "Надіслати можна куди завгодно, прочитати — ні"
+      en: "You may send anywhere, but not read anything"
+    body:
+      uk: |
+        Скрипт сторінки `http://127.0.0.1:5173` може надіслати запит на будь-яку адресу. Але прочитати **відповідь** з іншого [[origin]] браузер дозволяє не завжди — це [[same-origin-policy|same-origin policy]].
+
+        Навіщо? Браузер додає до запитів cookie. Без цього правила будь-яка відкрита тобою сторінка могла б тихо запитати твою пошту чи банк — із твоїми cookie — і прочитати відповідь.
+
+        Сервер може послабити правило: це [[cors|CORS]]. Він додає до відповіді заголовок
+
+        ```text
+        Access-Control-Allow-Origin: http://127.0.0.1:5173
+        ```
+
+        (або `*` — «будь-кому»), і браузер віддає тіло скрипту. Немає заголовка — запит **уже пройшов**, сервер **уже відповів**, але скрипт отримує лише `TypeError: Failed to fetch`, без статусу й тіла. Деталі браузер пише червоним у консоль DevTools — скрипту їх не видно.
+
+        Тож CORS захищає людину в браузері, а не сервер: `curl` чи інший сервер правил браузера не виконують.
+      en: |
+        A script of the page `http://127.0.0.1:5173` may send a request to any address. But the browser does not always let it read the **response** from another [[origin]] — that is the [[same-origin-policy]].
+
+        Why? The browser adds cookies to requests. Without this rule any page you open could quietly ask for your mail or your bank — with your cookies — and read the answer.
+
+        A server can relax the rule: that is [[cors|CORS]]. It adds the header
+
+        ```text
+        Access-Control-Allow-Origin: http://127.0.0.1:5173
+        ```
+
+        (or `*` — “anyone”) to the response, and the browser hands the body to the script. No header — the request **has already gone**, the server **has already answered**, but the script gets only `TypeError: Failed to fetch`, with no status and no body. The browser writes the details in red in the DevTools console — the script cannot see them.
+
+        So CORS protects the person in the browser, not the server: `curl` or another server does not follow the browser’s rules at all.
+
+  - id: reception-desk
+    kind: analogy
+    body:
+      uk: "Уяви рецепцію між двома будівлями. Твій скрипт може передати записку в офіс іншої будівлі, але відповідь рецепціоніст (браузер) віддасть лише тоді, коли на ній стоїть печатка того офісу з назвою твоєї будівлі (`Access-Control-Allow-Origin`). Для незвичних записок — інший метод, власний заголовок, JSON — рецепціоніст спершу телефонує в офіс і питає, чи такі приймають (preflight)."
+      en: "Picture a reception desk between two buildings. Your script may pass a note to an office in another building, but the receptionist (the browser) hands back the reply only if it carries that office’s stamp naming your building (`Access-Control-Allow-Origin`). For unusual notes — another method, a custom header, JSON — the receptionist first phones the office to ask whether it accepts such notes (preflight)."
+    limits:
+      uk: "Рецепція захищає того, хто читає в браузері, а не офіс: звичайна записка доходить і може бути виконана, навіть якщо відповідь тобі не віддадуть. А клієнти поза браузером, як-от `curl` чи інший сервер, рецепцію просто обходять — тому сервер мусить сам перевіряти, хто й що просить."
+      en: "The desk protects the reader in the browser, not the office: an ordinary note still arrives and may be acted on even if the reply is never handed to you. And clients outside the browser, such as `curl` or another server, simply walk past the desk — so the server must check for itself who is asking for what."
+
+  - id: preflight-rules
+    kind: explanation
+    title:
+      uk: "Коли браузер спершу питає: preflight"
+      en: "When the browser asks first: preflight"
+    body:
+      uk: |
+        **Простий** запит браузер надсилає одразу: `GET`, `HEAD` чи `POST` без власних заголовків і з Content-Type лише `text/plain` чи даними форми.
+
+        Будь-що інше — `PUT`, `PATCH`, `DELETE`, власний заголовок на кшталт `X-Request-Id`, `Content-Type: application/json` — спершу отримує [[preflight-request|preflight]]: запит `OPTIONS`, яким браузер питає, чи такий запит дозволено. Сервер має відповісти:
+
+        ```text
+        Access-Control-Allow-Origin: http://127.0.0.1:5173
+        Access-Control-Allow-Methods: GET, POST, PUT
+        Access-Control-Allow-Headers: content-type, x-request-id
+        ```
+
+        Якщо відповідь на `OPTIONS` чогось не дозволяє, сам запит **не надсилається** зовсім.
+
+        [[credentialed-request|Запит із `credentials: "include"`]] (із cookie) суворіший: `*` уже не підходить — потрібні точний origin і `Access-Control-Allow-Credentials: true`.
+
+        А `mode: "no-cors"` нічого не «лагодить»: браузер дає порожню відповідь зі статусом `0`, тіло якої прочитати не можна.
+      en: |
+        The browser sends a **simple** request straight away: `GET`, `HEAD` or `POST` with no custom headers and a Content-Type of only `text/plain` or form data.
+
+        Anything else — `PUT`, `PATCH`, `DELETE`, a custom header such as `X-Request-Id`, `Content-Type: application/json` — first gets a [[preflight-request|preflight]]: an `OPTIONS` request in which the browser asks whether such a request is allowed. The server has to answer:
+
+        ```text
+        Access-Control-Allow-Origin: http://127.0.0.1:5173
+        Access-Control-Allow-Methods: GET, POST, PUT
+        Access-Control-Allow-Headers: content-type, x-request-id
+        ```
+
+        If the answer to `OPTIONS` does not allow something, the request itself is **not sent** at all.
+
+        A [[credentialed-request|request with `credentials: "include"`]] (with cookies) is stricter: `*` no longer works — it needs the exact origin and `Access-Control-Allow-Credentials: true`.
+
+        And `mode: "no-cors"` “fixes” nothing: the browser gives an empty response with status `0` whose body cannot be read.
+
+  - id: cors-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Три запити до сервера на іншому origin"
+      en: "Three requests to a server on another origin"
+    textEquivalent:
+      uk: "Сторінка на http://127.0.0.1:5173 через браузер звертається до сервера фікстур на http://127.0.0.1:8080. Перший запит — простий GET /wishes.json. Браузер надсилає його одразу із заголовком Origin; сервер відповідає 200 із Access-Control-Allow-Origin: http://127.0.0.1:5173, і браузер віддає скрипту тіло. Другий запит — POST із Content-Type: application/json. Це не простий запит, тож браузер спершу надсилає OPTIONS /wishes.json із заголовками Access-Control-Request-Method: POST і Access-Control-Request-Headers: content-type. Сервер відповідає 204 і дозволяє цей метод і заголовок. Лише тоді браузер надсилає сам POST, сервер відповідає 201, і скрипт читає відповідь. Третій запит — знову простий GET, але до сервера, який не додає Access-Control-Allow-Origin. Сервер отримує запит, записує його в журнал і відповідає 200 зі списком. Браузер бачить, що дозволу немає, і не віддає тіла: fetch у скрипті відхиляється з TypeError: Failed to fetch, а в консолі DevTools з’являється червоне повідомлення про CORS. Сервер відповідав щоразу; вирішував браузер."
+      en: "A page at http://127.0.0.1:5173 reaches, through the browser, a fixture server at http://127.0.0.1:8080. The first request is a simple GET /wishes.json. The browser sends it at once with an Origin header; the server answers 200 with Access-Control-Allow-Origin: http://127.0.0.1:5173, and the browser hands the body to the script. The second request is a POST with Content-Type: application/json. It is not a simple request, so the browser first sends OPTIONS /wishes.json with the headers Access-Control-Request-Method: POST and Access-Control-Request-Headers: content-type. The server answers 204 and allows that method and header. Only then does the browser send the POST itself, the server answers 201, and the script reads the response. The third request is a simple GET again, but to a server that adds no Access-Control-Allow-Origin. The server receives the request, writes it to its log and answers 200 with the list. The browser sees there is no permission and withholds the body: fetch in the script rejects with TypeError: Failed to fetch, and a red CORS message appears in the DevTools console. The server answered every time; the browser decided."
+    spec:
+      actors:
+        - { id: page, label: { uk: "Сторінка :5173", en: "Page :5173" } }
+        - { id: browser, label: { uk: "Браузер", en: "Browser" } }
+        - { id: server, label: { uk: "Сервер :8080", en: "Server :8080" } }
+      intro:
+        uk: "Сторінка на `127.0.0.1:5173`, сервер фікстур на `127.0.0.1:8080` — різні origins. Між ними браузер."
+        en: "The page on `127.0.0.1:5173` and the fixture server on `127.0.0.1:8080` are different origins. The browser sits between them."
+      messages:
+        - from: page
+          to: browser
+          label: "fetch(GET /wishes.json)"
+          caption:
+            uk: "Простий `GET`: жодних власних заголовків."
+            en: "A simple `GET`: no custom headers."
+        - from: browser
+          to: server
+          label: "GET /wishes.json"
+          kind: async
+          note: { uk: "Origin: http://127.0.0.1:5173", en: "Origin: http://127.0.0.1:5173" }
+          caption:
+            uk: "Браузер надсилає його одразу й сам додає заголовок `Origin` — від кого запит."
+            en: "The browser sends it at once and adds the `Origin` header itself — who the request is from."
+        - from: server
+          to: browser
+          label: "200 OK"
+          kind: return
+          note: { uk: "Access-Control-Allow-Origin: http://127.0.0.1:5173", en: "Access-Control-Allow-Origin: http://127.0.0.1:5173" }
+          caption:
+            uk: "Сервер дозволяє саме цей origin."
+            en: "The server allows exactly this origin."
+        - from: browser
+          to: page
+          label: "Response 200"
+          kind: return
+          caption:
+            uk: "Дозвіл є — скрипт отримує відповідь і може читати тіло."
+            en: "Permission is there — the script gets the response and can read the body."
+        - from: page
+          to: browser
+          label: "fetch(POST, application/json)"
+          caption:
+            uk: "`POST` із `Content-Type: application/json` — уже не простий запит."
+            en: "A `POST` with `Content-Type: application/json` is no longer a simple request."
+        - from: browser
+          to: server
+          label: "OPTIONS /wishes.json"
+          kind: async
+          note: { uk: "Access-Control-Request-Method: POST · …-Headers: content-type", en: "Access-Control-Request-Method: POST · …-Headers: content-type" }
+          caption:
+            uk: "Preflight: браузер спершу питає, чи можна такий метод і заголовок. Сам `POST` поки чекає."
+            en: "Preflight: the browser first asks whether this method and header are allowed. The `POST` itself waits."
+        - from: server
+          to: browser
+          label: "204 No Content"
+          kind: return
+          note: { uk: "Allow-Methods: GET, POST · Allow-Headers: content-type", en: "Allow-Methods: GET, POST · Allow-Headers: content-type" }
+          caption:
+            uk: "Сервер дозволяє. Якби не дозволив, `POST` не пішов би взагалі."
+            en: "The server allows it. Had it not, the `POST` would never be sent."
+        - from: browser
+          to: server
+          label: "POST /wishes.json"
+          kind: async
+          caption:
+            uk: "Лише тепер браузер надсилає сам запит."
+            en: "Only now does the browser send the request itself."
+        - from: server
+          to: page
+          label: "201 Created"
+          kind: return
+          caption:
+            uk: "Відповідь із дозволом доходить до скрипту."
+            en: "The response, with permission, reaches the script."
+        - from: browser
+          to: server
+          label: "GET /wishes.json"
+          kind: async
+          note: { uk: "до сервера без налаштованого CORS", en: "to a server with no CORS setup" }
+          caption:
+            uk: "Знову простий `GET`, але цей сервер не додає `Access-Control-Allow-Origin`."
+            en: "A simple `GET` again, but this server adds no `Access-Control-Allow-Origin`."
+        - from: server
+          to: browser
+          label: "200 OK [list]"
+          kind: return
+          note: { uk: "у журналі сервера: GET /wishes.json 200", en: "server log: GET /wishes.json 200" }
+          caption:
+            uk: "Сервер **отримав** запит, записав його в журнал і **відповів** списком."
+            en: "The server **received** the request, logged it and **answered** with the list."
+        - from: browser
+          to: page
+          label: "TypeError: Failed to fetch"
+          kind: return
+          note: { uk: "консоль: blocked by CORS policy", en: "console: blocked by CORS policy" }
+          caption:
+            uk: "Дозволу немає — браузер не віддає тіла. Скрипт бачить лише відхилений `fetch`, а пояснення — тільки в консолі DevTools."
+            en: "No permission — the browser withholds the body. The script sees only a rejected `fetch`; the explanation is in the DevTools console only."
+
+  - id: predict-cors
+    kind: prediction
+    prompt:
+      uk: "Сторінка `http://localhost:5173` звертається до `http://localhost:8080`. Сервер на `OPTIONS` відповідає `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, POST` і `Access-Control-Allow-Headers: content-type`, а на інші запити — `Access-Control-Allow-Origin: *`. Які твердження правдиві? Обери всі."
+      en: "The page `http://localhost:5173` sends requests to `http://localhost:8080`. The server answers `OPTIONS` with `Access-Control-Allow-Origin: *`, `Access-Control-Allow-Methods: GET, POST` and `Access-Control-Allow-Headers: content-type`, and other requests with `Access-Control-Allow-Origin: *`. Which statements are true? Choose all that are."
+    code: |
+      const api = "http://localhost:8080/items";
+      await fetch(api);                                                // 1
+      await fetch(api, { headers: { "X-Request-Id": "r-17" } });       // 2
+      await fetch(api, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); // 3
+      await fetch(api, { credentials: "include" });                    // 4
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: one-ok
+          text:
+            uk: "1: без preflight, скрипт читає відповідь"
+            en: "1: no preflight, the script reads the response"
+        - id: two-blocked
+          text:
+            uk: "2: браузер надсилає preflight, і запит блокується"
+            en: "2: the browser sends a preflight, and the request is blocked"
+        - id: three-no-preflight
+          text:
+            uk: "3: `POST` — простий метод, тож preflight не потрібен"
+            en: "3: `POST` is a simple method, so no preflight is needed"
+          why:
+            uk: "Метод простий, але `Content-Type: application/json` — ні. Такий `POST` спершу отримує preflight; тут сервер дозволяє `POST` і `content-type`, тож він пройде."
+            en: "The method is simple, but `Content-Type: application/json` is not. Such a `POST` first gets a preflight; here the server allows `POST` and `content-type`, so it goes through."
+        - id: three-ok
+          text:
+            uk: "3: після preflight скрипт читає відповідь"
+            en: "3: after the preflight the script reads the response"
+        - id: four-ok
+          text:
+            uk: "4: `*` дозволяє всім, тож і запит із cookie прочитається"
+            en: "4: `*` allows everyone, so the request with cookies is readable too"
+          why:
+            uk: "Для запиту з `credentials: \"include\"` зірочка не підходить: потрібні точний origin і `Access-Control-Allow-Credentials: true`."
+            en: "For a request with `credentials: \"include\"` the asterisk does not work: it needs the exact origin and `Access-Control-Allow-Credentials: true`."
+        - id: server-saw-none
+          text:
+            uk: "Якщо запит заблоковано, сервер його не отримав"
+            en: "If a request is blocked, the server never received it"
+          why:
+            uk: "Простий запит (як 4) доходить до сервера, і той відповідає; браузер лише не віддає відповідь скрипту. Не надсилається тільки запит, чий preflight не пройшов (як 2) — тоді в журналі сервера буде лише `OPTIONS`."
+            en: "A simple request (like 4) reaches the server, and it answers; the browser only withholds the response from the script. Only a request whose preflight failed (like 2) is never sent — then the server log shows just `OPTIONS`."
+        - id: no-cors
+          text:
+            uk: "Додати `mode: \"no-cors\"` до 4 — і відповідь можна прочитати"
+            en: "Add `mode: \"no-cors\"` to 4 and the response becomes readable"
+          why:
+            uk: "`no-cors` дає «непрозору» відповідь: статус `0`, тіло порожнє. Помилки немає, але й даних теж. Виправляють CORS на сервері."
+            en: "`no-cors` gives an “opaque” response: status `0` and an empty body. There is no error, but no data either. CORS is fixed on the server."
+      correct: [one-ok, two-blocked, three-ok]
+    explanation:
+      uk: "1 — простий запит із дозволом `*`. 2 — власний заголовок `X-Request-Id` вимагає preflight, а сервер дозволяє лише `content-type`, тож сам запит не піде. 3 — JSON вимагає preflight, і сервер дозволяє і `POST`, і `content-type`. 4 — простий запит із cookie: сервер його отримає й відповість, але `*` не годиться для `credentials: \"include\"`, тож скрипт отримає `TypeError`. Перевір усе це на справжніх запитах у прикладі нижче."
+      en: "1 — a simple request with the `*` permission. 2 — the custom header `X-Request-Id` requires a preflight, and the server allows only `content-type`, so the request itself never goes. 3 — JSON requires a preflight, and the server allows both `POST` and `content-type`. 4 — a simple request with cookies: the server receives it and answers, but `*` does not do for `credentials: \"include\"`, so the script gets a `TypeError`. Check all of this with real requests in the example that follows."
+
+  - id: cors-lab
+    kind: example
+    runtime: browser-js
+    dir: cors-lab
+    entry: index.js
+    capabilities: { network: lab }
+    strings:
+      readable: { uk: "читається", en: "readable" }
+      blocked: { uk: "заблоковано", en: "blocked" }
+      model: { uk: "модель:", en: "model:" }
+      real: { uk: "насправді:", en: "real:" }
+    title:
+      uk: "Модель правил CORS і справжні запити"
+      en: "A model of the CORS rules and real requests"
+    body:
+      uk: |
+        `corsDecision(request, response)` — спрощена модель правил браузера: за запитом і заголовками відповіді вона каже, чи буде preflight і чи прочитає скрипт відповідь. Поруч — справжні запити до навчальних адрес `/lab/cors/…`, кожна з якими відповідає власним набором заголовків (`RECORDED`).
+
+        Сторінка пісочниці не має власного origin, тож браузер надсилає `Origin: null` — тому в моделі origin — `"null"`. Відкрий DevTools → **Console** браузера: для кожного заблокованого запиту там є червоне пояснення, якого скрипт не бачить.
+      en: |
+        `corsDecision(request, response)` is a simplified model of the browser’s rules: from the request and the response headers it says whether there will be a preflight and whether the script can read the response. Next to it are real requests to the lab addresses `/lab/cors/…`, each of which answers with its own set of headers (`RECORDED`).
+
+        The sandbox page has no origin of its own, so the browser sends `Origin: null` — which is why the model’s origin is `"null"`. Open DevTools → the browser’s **Console**: for every blocked request it has a red explanation the script cannot see.
+    tryIt:
+      uk: |
+        1. У третьому випадку заміни `"X-Request-Id": "r-17"` на `Accept: "application/json"`: `Accept` — простий заголовок, preflight зникає, і відповідь читається.
+        2. У четвертому випадку заміни `"POST"` на `"PUT"`: preflight є, але сервер дозволяє лише `GET, POST` — обидва стовпчики кажуть «заблоковано».
+        3. У `RECORDED.open` пропиши `"access-control-allow-origin": "null"` і `"access-control-allow-credentials": "true"`: модель тепер каже, що п’ятий запит читається, а справжній досі заблоковано. Модель вірить заголовкам, які ти їй дав; справжні заголовки надсилає сервер. CORS налаштовують на сервері, а не в коді сторінки.
+      en: |
+        1. In the third case replace `"X-Request-Id": "r-17"` with `Accept: "application/json"`: `Accept` is a simple header, the preflight disappears and the response is readable.
+        2. In the fourth case replace `"POST"` with `"PUT"`: there is a preflight, but the server allows only `GET, POST` — both columns say “blocked”.
+        3. In `RECORDED.open` write `"access-control-allow-origin": "null"` and `"access-control-allow-credentials": "true"`: the model now says the fifth request is readable, while the real one is still blocked. The model believes the headers you gave it; the real headers are sent by the server. CORS is set up on the server, not in the page’s code.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: відхилений fetch"
+      en: "Recall: a rejected fetch"
+    items:
+      - id: rejected-looks
+        from: js-08-07-failures-loading-error
+        prompt:
+          uk: "Сервер вимкнено, і `fetch` до нього не отримує жодної відповіді. Що отримує код?"
+          en: "The server is switched off, and `fetch` to it gets no answer at all. What does the code get?"
+        answer:
+          type: choice
+          options:
+            - id: rejects
+              text: { uk: "Відхилений promise: `TypeError: Failed to fetch`", en: "A rejected promise: `TypeError: Failed to fetch`" }
+            - id: status-zero
+              text: { uk: "Response зі статусом `503`", en: "A Response with status `503`" }
+              why:
+                uk: "Статус може надіслати лише сервер, який відповів. Тут відповіді немає, тож немає й Response."
+                en: "A status can only be sent by a server that answered. There is no answer here, so there is no Response either."
+            - id: null-body
+              text: { uk: "Response з `ok: false` і порожнім тілом", en: "A Response with `ok: false` and an empty body" }
+              why:
+                uk: "Response з `ok: false` — це відповідь сервера з помилкою. Коли відповіді немає зовсім, `fetch` відхиляється."
+                en: "A Response with `ok: false` is a server answer with an error. When there is no answer at all, `fetch` rejects."
+          correct: [rejects]
+        explanation:
+          uk: "Без відповіді `fetch` відхиляється з `TypeError: Failed to fetch`. Блок CORS скрипт бачить **так само**, хоча сервер відповів, — тому розрізнити їх можна лише в DevTools: у консолі й на панелі Network."
+          en: "With no answer, `fetch` rejects with `TypeError: Failed to fetch`. A CORS block looks **exactly the same** to the script, although the server did answer — so the two can only be told apart in DevTools: in the console and the Network panel."
+
+  - id: two-servers
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Справжній блок CORS на двох локальних серверах"
+      en: "A real CORS block on two local servers"
+    intro:
+      uk: "Сторінка працюватиме на порту 5173, файл фікстур — на порту 8080. Ти побачиш блок CORS у DevTools і той самий запит у журналі сервера, а потім дозволиш лише origin сторінки. Працюєш у `~/js-course/web-lab` з попереднього уроку (тека `page` і встановлений esbuild). Знадобляться Google Chrome і два вікна терміналу. Команди однакові в macOS, Linux і Windows PowerShell; перевірено в macOS із Node.js v25.2.1 і esbuild 0.28.2."
+      en: "The page will run on port 5173 and a fixture file on port 8080. You will see a CORS block in DevTools and the same request in the server’s log, and then allow only the page’s origin. You work in `~/js-course/web-lab` from the previous lesson (the `page` folder and the installed esbuild). You need Google Chrome and two terminal windows. The commands are the same on macOS, Linux and Windows PowerShell; checked on macOS with Node.js v25.2.1 and esbuild 0.28.2."
+    tools:
+      - { name: "Node.js", version: "22 or newer" }
+      - { name: "esbuild", version: "0.28 (from the previous lesson)", note: { uk: "його сервер друкує кожен запит у термінал", en: "its server prints every request to the terminal" } }
+      - { name: "Google Chrome", version: "current desktop version" }
+    steps:
+      - text:
+          uk: |
+            У теці `web-lab` створи теку `fixtures` і в ній файл `wishes.json`:
+
+            ```json
+            [
+              { "id": "w-01", "name": "Headphones", "price": 80, "acquired": false, "category": "Tech" },
+              { "id": "w-02", "name": "Desk lamp", "price": 45, "acquired": false, "category": "Home" }
+            ]
+            ```
+          en: |
+            In the `web-lab` folder create the folder `fixtures` with the file `wishes.json` in it:
+
+            ```json
+            [
+              { "id": "w-01", "name": "Headphones", "price": 80, "acquired": false, "category": "Tech" },
+              { "id": "w-02", "name": "Desk lamp", "price": 45, "acquired": false, "category": "Home" }
+            ]
+            ```
+      - text:
+          uk: "У **першому** вікні терміналу запусти сторінку на порту 5173 і не закривай вікно."
+          en: "In the **first** terminal window start the page on port 5173 and leave the window open."
+        command: "cd ~/js-course/web-lab\nnpx esbuild --servedir=page --serve=127.0.0.1:5173"
+        expect:
+          uk: "` > Local: http://127.0.0.1:5173/`"
+          en: "` > Local: http://127.0.0.1:5173/`"
+      - text:
+          uk: "У **другому** вікні запусти сервер фікстур на порту 8080 — поки без жодних дозволів CORS."
+          en: "In the **second** window start the fixture server on port 8080 — without any CORS permission for now."
+        command: "cd ~/js-course/web-lab\nnpx esbuild --servedir=fixtures --serve=127.0.0.1:8080"
+        expect:
+          uk: "` > Local: http://127.0.0.1:8080/`"
+          en: "` > Local: http://127.0.0.1:8080/`"
+      - text:
+          uk: "Відкрий у Chrome `http://127.0.0.1:5173/`, DevTools → **Console**, і запитай фікстуру з іншого origin:"
+          en: "Open `http://127.0.0.1:5173/` in Chrome, DevTools → **Console**, and ask for the fixture from another origin:"
+        command: "await fetch(\"http://127.0.0.1:8080/wishes.json\").then((r) => r.json())"
+        expect:
+          uk: |
+            Червоним:
+
+            ```text
+            Access to fetch at 'http://127.0.0.1:8080/wishes.json' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+            ```
+
+            а також рядок із `net::ERR_FAILED` і `Uncaught TypeError: Failed to fetch`. У другому вікні терміналу тим часом з’явився рядок на кшталт `127.0.0.1:58818 - "GET /wishes.json" 200 [0ms]`: сервер запит отримав і відповів `200`.
+          en: |
+            In red:
+
+            ```text
+            Access to fetch at 'http://127.0.0.1:8080/wishes.json' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.
+            ```
+
+            plus a line with `net::ERR_FAILED` and `Uncaught TypeError: Failed to fetch`. Meanwhile a line like `127.0.0.1:58818 - "GET /wishes.json" 200 [0ms]` appeared in the second terminal window: the server received the request and answered `200`.
+      - text:
+          uk: "Відкрий панель **Network** і повтори той самий рядок коду в Console. Клацни новий рядок `wishes.json` і подивись вкладку **Headers**."
+          en: "Open the **Network** panel and repeat the same line of code in the Console. Click the new `wishes.json` row and look at the **Headers** tab."
+        expect:
+          uk: "У стовпчику Status — `CORS error`, хоча сервер відповів `200`. У Request Headers є `Origin: http://127.0.0.1:5173`: цей заголовок браузер додав сам."
+          en: "The Status column says `CORS error`, although the server answered `200`. The Request Headers include `Origin: http://127.0.0.1:5173`: the browser added that header itself."
+      - text:
+          uk: "У другому вікні зупини сервер (Ctrl + C) і запусти його знову, цього разу з дозволом лише для origin сторінки:"
+          en: "In the second window stop the server (Ctrl + C) and start it again, this time with a permission for the page’s origin only:"
+        command: "npx esbuild --servedir=fixtures --serve=127.0.0.1:8080 --cors-origin=http://127.0.0.1:5173"
+        expect:
+          uk: "` > Local: http://127.0.0.1:8080/`"
+          en: "` > Local: http://127.0.0.1:8080/`"
+      - text:
+          uk: "Повтори в Console той самий запит."
+          en: "Repeat the same request in the Console."
+        command: "await fetch(\"http://127.0.0.1:8080/wishes.json\").then((r) => r.json())"
+        expect:
+          uk: "Масив із двох бажань. На панелі Network у відповіді тепер є `Access-Control-Allow-Origin: http://127.0.0.1:5173`."
+          en: "An array of two wishes. In the Network panel the response now has `Access-Control-Allow-Origin: http://127.0.0.1:5173`."
+      - text:
+          uk: "Тепер запит, що потребує preflight: `POST` із JSON."
+          en: "Now a request that needs a preflight: a `POST` with JSON."
+        command: "await fetch(\"http://127.0.0.1:8080/wishes.json\", { method: \"POST\", headers: { \"Content-Type\": \"application/json\" }, body: \"{}\" })"
+        expect:
+          uk: "Червоне `… Response to preflight request doesn't pass access control check: It does not have HTTP ok status.` У журналі сервера — лише `\"OPTIONS /wishes.json\" 404`: сервер фікстур не відповідає на preflight, тож сам `POST` браузер так і не надіслав. Зупини обидва сервери (Ctrl + C)."
+          en: "In red: `… Response to preflight request doesn't pass access control check: It does not have HTTP ok status.` The server log shows only `\"OPTIONS /wishes.json\" 404`: the fixture server does not answer preflights, so the browser never sent the `POST` itself. Stop both servers (Ctrl + C)."
+    verify:
+      - id: blocked-but-logged
+        text:
+          uk: "Я бачив блок CORS у Console і водночас рядок `GET /wishes.json` 200 у журналі сервера."
+          en: "I saw the CORS block in the Console and, at the same time, the line `GET /wishes.json` 200 in the server log."
+      - id: allowed-origin
+        text:
+          uk: "Після `--cors-origin=http://127.0.0.1:5173` той самий запит повернув масив, а у відповіді з’явився `Access-Control-Allow-Origin`."
+          en: "After `--cors-origin=http://127.0.0.1:5173` the same request returned the array, and `Access-Control-Allow-Origin` appeared in the response."
+      - id: preflight-only
+        text:
+          uk: "Для `POST` із JSON у журналі сервера був лише `OPTIONS`, без самого `POST`."
+          en: "For the `POST` with JSON the server log had only `OPTIONS`, without the `POST` itself."
+    troubleshooting:
+      - problem:
+          uk: "Запит одразу повертає масив, без жодного блоку"
+          en: "The request returns the array at once, without any block"
+        fix:
+          uk: "Перевір адресу вкладки: сторінка має бути на `http://127.0.0.1:5173`, а не на `:8080`. Якщо відкрити сторінку на тому самому origin, що й фікстуру, CORS не потрібен."
+          en: "Check the tab’s address: the page must be at `http://127.0.0.1:5173`, not on `:8080`. If the page is opened on the same origin as the fixture, CORS is not needed."
+      - problem:
+          uk: "Після `--cors-origin` блок лишився"
+          en: "The block remains after `--cors-origin`"
+        fix:
+          uk: "Origin має збігатися посимвольно: `http://127.0.0.1:5173` без `/` у кінці. Сторінка на `localhost:5173` — інший origin, і цей дозвіл її не стосується."
+          en: "The origin must match character for character: `http://127.0.0.1:5173` without a trailing `/`. A page on `localhost:5173` is another origin, and this permission does not cover it."
+      - problem:
+          uk: "Chrome просить ввести `allow pasting`"
+          en: "Chrome asks you to type `allow pasting`"
+        fix:
+          uk: "Введи `allow pasting` і Enter — так само, як у попередньому уроці. Вставляй лише код, який розумієш."
+          en: "Type `allow pasting` and press Enter — the same as in the previous lesson. Paste only code you understand."
+      - problem:
+          uk: "`✘ [ERROR] listen tcp4 127.0.0.1:8080: bind: address already in use`"
+          en: "`✘ [ERROR] listen tcp4 127.0.0.1:8080: bind: address already in use`"
+        fix:
+          uk: "Порт 8080 зайнятий іншою програмою. Візьми, наприклад, 8090 і заміни порт у всіх наступних кроках і в адресі запиту."
+          en: "Port 8080 is used by another program. Take, for example, 8090 and use it in all the following steps and in the request address."
+    recovery:
+      uk: "Сервери лише віддають файли з тек `page` і `fixtures` і нічого не змінюють. Якщо заплутався, зупини обидва (Ctrl + C) і почни з кроку запуску першого сервера."
+      en: "The servers only hand out the files from the `page` and `fixtures` folders and change nothing. If you get lost, stop both (Ctrl + C) and start again from the step that starts the first server."
+
+  - id: diagnose
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: diagnose
+    entry: index.js
+    editable: [index.js]
+    title:
+      uk: "Діагноз двох заблокованих запитів"
+      en: "A diagnosis of two blocked requests"
+    instructions:
+      uk: |
+        У коментарях файла — записи двох запитів, що не вдалися: код, текст консолі, журнал сервера й заголовки відповіді. Заповни для кожного об’єкт у `diagnoses`:
+
+        - `pageOrigin` і `targetOrigin` — два origins текстом;
+        - `preflightNeeded` — чи мусив браузер спершу надіслати `OPTIONS`;
+        - `missingHeader` — заголовок відповіді, через відсутність якого скрипт не отримав відповіді;
+        - `requestReachedServer` — чи отримав сервер сам `GET` або `POST`, а не лише `OPTIONS`;
+        - `fixedIn` — `"client"` чи `"server"`: де має бути виправлення.
+      en: |
+        The file’s comments hold the records of two failed requests: the code, the console text, the server log and the response headers. Fill in an object in `diagnoses` for each:
+
+        - `pageOrigin` and `targetOrigin` — the two origins as text;
+        - `preflightNeeded` — whether the browser had to send `OPTIONS` first;
+        - `missingHeader` — the response header whose absence kept the response from the script;
+        - `requestReachedServer` — whether the server received the `GET` or `POST` itself, not only `OPTIONS`;
+        - `fixedIn` — `"client"` or `"server"`: where the fix belongs.
+    testTitles:
+      "names the page origin and the target origin of both cases":
+        uk: "Називає origin сторінки й origin сервера в обох випадках"
+        en: "Names the page origin and the target origin of both cases"
+      "says which request needed a preflight":
+        uk: "Каже, якому запиту був потрібен preflight"
+        en: "Says which request needed a preflight"
+      "names the missing response header of each case":
+        uk: "Називає відсутній заголовок відповіді в кожному випадку"
+        en: "Names the missing response header of each case"
+      "reads from the server log whether the request itself arrived":
+        uk: "За журналом сервера каже, чи дійшов сам запит"
+        en: "Reads from the server log whether the request itself arrived"
+      "puts the fix where CORS is decided":
+        uk: "Виправляє там, де вирішується CORS"
+        en: "Puts the fix where CORS is decided"
+    hints:
+      nudge:
+        uk: "Читай кожен запис у тому порядку, у якому все відбувалося: що надіслав код, що побачив сервер (журнал), що він відповів (заголовки) і що про це сказав браузер (консоль)."
+        en: "Read each record in the order things happened: what the code sent, what the server saw (the log), what it answered (the headers) and what the browser said about it (the console)."
+      explanation:
+        uk: "Origin — це схема, хост і порт, без шляху й без `/` у кінці. Preflight потрібен, коли запит не простий: інший метод, власний заголовок чи JSON як Content-Type. Журнал сервера — найчесніший свідок: якщо там є `GET` чи `POST`, запит дійшов, хоч би що писав браузер; якщо лише `OPTIONS` — браузер зупинився на preflight. Назву відсутнього заголовка підказує текст консолі. А дозволи CORS надсилає лише сервер."
+        en: "An origin is the scheme, host and port, with no path and no trailing `/`. A preflight is needed when the request is not simple: another method, a custom header or JSON as the Content-Type. The server log is the most honest witness: if it has a `GET` or `POST`, the request arrived, whatever the browser says; if it has only `OPTIONS`, the browser stopped at the preflight. The console text gives away the name of the missing header. And CORS permissions are sent only by the server."
+    solutionNote:
+      uk: "У випадку `habits` простий `GET` дійшов до сервера, і той відповів `200`, але без `Access-Control-Allow-Origin` — тому скрипт отримав `TypeError`. У випадку `expenses` JSON вимагав preflight; відповідь на `OPTIONS` не дозволила заголовок `content-type`, тож сам `POST` не надіслано. В обох випадках виправляють сервер: код сторінки не може дати собі дозвіл."
+      en: "In the `habits` case the simple `GET` reached the server, which answered `200` but without `Access-Control-Allow-Origin` — so the script got a `TypeError`. In the `expenses` case JSON required a preflight; the answer to `OPTIONS` did not allow the `content-type` header, so the `POST` itself was never sent. In both cases the server is what gets fixed: the page’s code cannot give itself permission."
+    feedback:
+      - when: { test: "names the page origin and the target origin of both cases" }
+        message:
+          uk: "Ця перевірка очікує origins у вигляді `http://хост:порт` — без шляху й без `/` у кінці: однаковий origin сторінки в обох випадках і різні origins серверів."
+          en: "This check expects origins in the form `http://host:port` — without a path and without a trailing `/`: the same page origin in both cases and different server origins."
+      - when: { test: "says which request needed a preflight" }
+        message:
+          uk: "Ця перевірка очікує `preflightNeeded: false` для простого `GET` і `true` для `POST` із `Content-Type: application/json`."
+          en: "This check expects `preflightNeeded: false` for the simple `GET` and `true` for the `POST` with `Content-Type: application/json`."
+      - when: { test: "names the missing response header of each case" }
+        message:
+          uk: "Ця перевірка очікує назву заголовка відповіді (великі чи малі літери — не важливо), якої бракувало в кожному випадку; текст консолі називає її прямо."
+          en: "This check expects the name of the response header (capitals or not, it does not matter) that was missing in each case; the console text names it directly."
+      - when: { test: "reads from the server log whether the request itself arrived" }
+        message:
+          uk: "Ця перевірка очікує, що `requestReachedServer` збігається з журналом сервера: `GET` у журналі — `true`, лише `OPTIONS` — `false`. Блок у браузері не означає, що сервер нічого не отримав."
+          en: "This check expects `requestReachedServer` to match the server log: a `GET` in the log means `true`, only `OPTIONS` means `false`. A block in the browser does not mean the server received nothing."
+      - when: { test: "puts the fix where CORS is decided" }
+        message:
+          uk: "Ця перевірка очікує `fixedIn: \"server\"` в обох випадках: дозволи `Access-Control-Allow-*` надсилає сервер, і код сторінки не може їх собі додати."
+          en: "This check expects `fixedIn: \"server\"` in both cases: the `Access-Control-Allow-*` permissions are sent by the server, and the page’s code cannot add them for itself."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-16
+    body:
+      uk: "У кроці проєкту фікстури віддаватиме локальний сервер. Тримай сторінку й фікстури на одному origin — тоді CORS не потрібен; а якщо побачиш у консолі `blocked by CORS policy`, ти вже знаєш: сервер відповів, і лагодити треба його заголовки, а не код запиту."
+      en: "In the project step a local server will serve the fixtures. Keep the page and the fixtures on one origin — then CORS is not needed; and if you see `blocked by CORS policy` in the console, you already know: the server answered, and its headers are what needs fixing, not the request code."
