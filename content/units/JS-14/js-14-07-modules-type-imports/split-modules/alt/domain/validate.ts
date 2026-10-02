@@ -1,5 +1,5 @@
 // Checks of the planner domain: isPriority and validateTitle.
-import { type Priority } from "./types.ts";
+import type { Priority } from "./types.ts";
 
 const PRIORITIES: readonly string[] = ["low", "normal", "high"];
 
