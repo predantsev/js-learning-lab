@@ -4,8 +4,10 @@ const category = "%%homeGarden%%";
 async function inspect(label, url) {
   const echo = await (await fetch(url)).json();
   console.log(label);
-  console.log("  sent:", url.pathname + url.search + url.hash);
-  console.log("  server received:", JSON.stringify(echo.query));
+  // The browser sends only the path and the query; the fragment stays with the page.
+  console.log("  %%sentLabel%%", url.pathname + url.search);
+  console.log("  %%keptLabel%%", url.hash);
+  console.log("  %%receivedLabel%%", JSON.stringify(echo.query));
 }
 
 // 1. The value glued into the address as plain text.
