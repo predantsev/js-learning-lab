@@ -28,7 +28,12 @@ export const LIMITS = Object.freeze({
   stdinBytes: 1024 * 1024,
   args: 64,
   argBytes: 4096,
+  // Localized example strings for checks (`L` in the harness). They travel in the harness
+  // configuration argument, so they stay far below Linux's 128 KiB limit for one argument.
+  stringKeys: 500,
+  stringsBytes: 32 * 1024,
 });
+const STRING_KEY = /^[a-zA-Z][a-zA-Z0-9_]*$/;
 
 const TS_FILE = /\.(ts|mts|cts)$/;
 const live = new Set(); // child processes of every runner in this server process
@@ -197,10 +202,29 @@ export function validateRunRequest(body, limits = LIMITS) {
   if (network !== 'none' && network !== 'loopback') throw new HttpError(400, 'bad-request', '"capabilities.network" must be "none" or "loopback".');
   const workers = caps.workers ?? false;
   if (typeof workers !== 'boolean') throw new HttpError(400, 'bad-request', '"capabilities.workers" must be a boolean.');
-  return { mode, files, entry, tests, stdin, args, timeoutMs, network, workers };
+  return { mode, files, entry, tests, stdin, args, timeoutMs, network, workers, strings: validateStrings(body.strings, limits) };
 }
 
-export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits = LIMITS, support = detectNodeSupport(), nodeBinary = realpathSync(process.execPath) } = {}) {
+/** Localized example strings (`{ key: text }`) that test mode exposes to checks as `L`. */
+function validateStrings(value, limits) {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) throw new HttpError(400, 'bad-request', '"strings" must be an object of { key: text }.');
+  const entries = Object.entries(value);
+  if (entries.length > limits.stringKeys) throw new HttpError(400, 'bad-request', `"strings" may have at most ${limits.stringKeys} keys.`);
+  let bytes = 0;
+  for (const [key, text] of entries) {
+    if (!STRING_KEY.test(key) || typeof text !== 'string') throw new HttpError(400, 'bad-request', `"strings" keys use letters, digits and underscores (starting with a letter) and values are text: ${JSON.stringify(key)}.`);
+    bytes += Buffer.byteLength(key) + Buffer.byteLength(text);
+  }
+  if (bytes > limits.stringsBytes) throw new HttpError(413, 'too-large', `"strings" total ${bytes} bytes; the limit is ${limits.stringsBytes}.`);
+  return Object.fromEntries(entries);
+}
+
+/**
+ * `disabled` (a reason) turns execution off without probing: the feature reports unavailable with
+ * that reason and every run answers 501. Turning execution off never weakens isolation.
+ */
+export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits = LIMITS, support = detectNodeSupport(), nodeBinary = realpathSync(process.execPath), disabled = null } = {}) {
   const runsDir = path.join(runtimeDir, 'node-runs');
   await fs.mkdir(runsDir, { recursive: true });
   const runsRoot = realpathSync(runsDir);
@@ -230,7 +254,7 @@ export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits 
     let main;
     if (script !== null) main = [script];
     else if (spec.mode === 'test') {
-      main = [path.join(HARNESS_DIR, 'test-main.mjs'), JSON.stringify({ workspace, entry: spec.entry, tests: spec.tests.path, testTimeoutMs: spec.tests.timeoutMs }), ...spec.args];
+      main = [path.join(HARNESS_DIR, 'test-main.mjs'), JSON.stringify({ workspace, entry: spec.entry, tests: spec.tests.path, testTimeoutMs: spec.tests.timeoutMs, strings: spec.strings ?? {} }), ...spec.args];
     } else main = [path.join(workspace, ...spec.entry.split('/')), ...spec.args];
     const nodeArgs = [...flags, ...main];
     if (profile) return { command: SANDBOX_EXEC, args: ['-p', profile, nodeBinary, ...nodeArgs], flags };
@@ -293,7 +317,9 @@ export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits 
 
   // ---- availability: prove isolation on this machine instead of trusting flag names ----
   const feature = { available: false, node: process.version, flags: [], typescript: support.typescript, osSandbox: { kind: null, active: false }, limits: { ...limits } };
-  if (!support.permissionFlag || !support.fsFlags) {
+  if (disabled) {
+    feature.reason = String(disabled);
+  } else if (!support.permissionFlag || !support.fsFlags) {
     feature.reason = `Node ${process.version} has no permission model (--permission / --allow-fs-read). Code is never run without isolation.`;
   } else {
     const baseSpec = { mode: 'run', entry: null, tests: null, args: [], network: 'none', workers: false, files: [] };

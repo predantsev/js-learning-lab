@@ -171,7 +171,7 @@
       i: steps.length,
       line, col, endLine, kind,
       file: inst ? inst.file : (top ? top.scope.file : ''),
-      frames: frames.map((f) => ({ id: f.id, name: f.name, line: f.line, scope: f.current ? f.current.id : null })),
+      frames: frames.map((f) => ({ id: f.id, name: f.name, line: f.line, scope: f.current ? f.current.id : null, kind: f.scope && f.scope.kind === 'module' ? 'module' : 'function', file: (f.current || f.scope || {}).file || '' })),
       frameId: top ? top.id : null,
       scope: inst ? inst.id : null,
       scopes,
@@ -202,10 +202,26 @@
       if (frame) frame.current = inst;
       return inst;
     },
-    /** Remember the scope a function value was created in (closure link shown in the heap). */
-    fn(value, inst) {
-      if (typeof value === 'function' && inst) fnScopes.set(value, inst);
+    /**
+     * Remember the scope a function value was created in (closure link shown in the heap). `name`
+     * is the name the engine infers from the position (`const f = () => …`); wrapping the
+     * expression in this call defeats that inference, so it is restored here.
+     */
+    fn(value, inst, name) {
+      if (typeof value === 'function') {
+        if (inst) fnScopes.set(value, inst);
+        if (name && value.name === '') {
+          try { Object.defineProperty(value, 'name', { value: name, configurable: true }); } catch { /* frozen: keep it */ }
+        }
+      }
       return value;
+    },
+    /** The frame starts evaluating an expression on `line` that has no step of its own (a return value, an iterated collection). No step. */
+    pos(frame, line, inst) {
+      if (frame) {
+        frame.line = line;
+        if (inst) frame.current = inst;
+      }
     },
     /** Enter a function (or the module itself): pushes a call-stack frame and its function scope. */
     call(def, parent) {

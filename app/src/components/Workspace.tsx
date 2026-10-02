@@ -1,6 +1,6 @@
 // Practice pane: editor + real result (page, console, checks, storage) for an example or exercise.
 // Learner files are never overwritten by feedback, hints or the solution (REQ-018, REQ-019).
-import { type KeyboardEvent, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { type KeyboardEvent, Suspense, lazy, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { localizeFiles } from '@shared/exercise.js';
 import type { Doc } from '../lib/persist';
 import { type Key } from '../lib/i18n';
@@ -9,13 +9,18 @@ import { useStore } from '../lib/store';
 import type { ConsoleEntry, ConsoleValue, DraftsDoc, ExampleBlock, ExerciseBlock, L10n, Lang, Lesson, RunError, TestResult } from '../lib/types';
 import { app, useT } from '../state/app';
 import { CodeEditor, type EditorIssue } from './CodeEditor';
+import { NodeRuntimeNote } from './NodeRuntime';
 import { Html, Icon, announce } from './ui';
+import { type NodeRunState, nodeFeature, nodeGuidanceKey, useNodeRunner } from './useNodeRunner';
 import { AUTO_STOP_AFTER_MS, type RunState, useRunner } from './useRunner';
 
 type WsBlock = ExampleBlock | ExerciseBlock;
-type Tab = 'preview' | 'console' | 'tests' | 'storage';
+type Tab = 'preview' | 'console' | 'tests' | 'storage' | 'steps';
+// "Step through": the learner's code in the code-trace player (loaded with the visual players).
+const TracePanel = lazy(() => import('./TracePanel'));
 
-const hasPreview = (block: WsBlock): boolean => block.preview ?? (block.entry.endsWith('.html') || block.runtime === 'browser-react' || block.runtime === 'concept-preview');
+// A Node.js program has no page: its result is the console and the checks.
+const hasPreview = (block: WsBlock): boolean => block.runtime !== 'isolated-node' && (block.preview ?? (block.entry.endsWith('.html') || block.runtime === 'browser-react' || block.runtime === 'concept-preview'));
 
 function Value({ v, nested = false }: { v: ConsoleValue; nested?: boolean }) {
   switch (v.t) {
@@ -59,6 +64,8 @@ export function ConsoleView({ entries, errors }: { entries: ConsoleEntry[]; erro
 }
 
 export function guidanceKey(error: RunError): Key {
+  const node = nodeGuidanceKey(error);
+  if (node) return node;
   if (error.kind === 'syntax') return 'err.guide.syntax';
   if (error.kind === 'import' || error.kind === 'project') return 'err.guide.import';
   if (error.phase === 'unhandled-rejection') return 'err.guide.unhandled';
@@ -91,11 +98,16 @@ export function ErrorCard({ error, title, feedback = null, lang = 'uk' }: { erro
   );
 }
 
-function TestsView({ block, state, lang }: { block: ExerciseBlock; state: RunState; lang: Lang }) {
+/**
+ * `quiet`: the program failed while loading, so the checks could not test it meaningfully — the
+ * rows stay listed, their authored feedback is not shown. `note` replaces the empty-state text when
+ * a run ended without results (for example at the Node time limit).
+ */
+function TestsView({ block, state, lang, quiet = false, note = null }: { block: ExerciseBlock; state: RunState; lang: Lang; quiet?: boolean; note?: string | null }) {
   const t = useT();
   if (state.status === 'compile-error') return <>{state.compileErrors.slice(0, 1).map((e, i) => <ErrorCard key={i} error={e} title={t('ws.compileError')} feedback={feedbackForError(block, e)} lang={lang} />)}<p className="ws-empty">{t('ws.notRunByError')}</p></>;
   if (state.harnessError) return <><p className="ws-note">{t('ws.harnessError')}</p><ErrorCard error={state.harnessError} title={t('ws.runtimeError')} /></>;
-  if (!state.tests) return <p className="ws-empty">{state.status === 'checking' ? t('ws.checking') : t('ws.previewEmpty')}</p>;
+  if (!state.tests) return <p className="ws-empty">{state.status === 'checking' ? t('ws.checking') : note ?? t('ws.previewEmpty')}</p>;
   const passed = state.tests.filter((x) => x.status === 'pass').length;
   const all = passed === state.tests.length && state.tests.length > 0;
   // Feedback for a failed test: the rule naming the test, otherwise a rule naming the error the test
@@ -115,7 +127,7 @@ function TestsView({ block, state, lang }: { block: ExerciseBlock; state: RunSta
       <p className={all ? 'tests-summary tests-ok' : 'tests-summary'}>{all ? <><Icon name="check" /> {t('ws.passedAll')}</> : t('ws.passedSome', { passed, total: state.tests.length })}</p>
       <ul className="test-list">
         {state.tests.map((test) => {
-          const fb = test.status === 'fail' ? feedbackFor(test) : null;
+          const fb = test.status === 'fail' && !quiet ? feedbackFor(test) : null;
           return (
             <li key={test.name} className={`test test-${test.status}`}>
               <span className="test-mark" aria-hidden="true">{test.status === 'pass' ? '✓' : '✕'}</span>
@@ -172,10 +184,19 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   const [tab, setTab] = useState<Tab>(hasPreview(block) ? 'preview' : 'console');
   const [shownPage, setShownPage] = useState<string | null>(null);
   const [undo, setUndo] = useState<{ files: Record<string, string>; lang?: Lang } | null>(null);
-  const runner = useRunner();
+  // Both hooks are always called (rules of hooks); the block's runtime picks the one in use.
+  const browserRunner = useRunner();
+  const nodeRunner = useNodeRunner();
+  const isNode = block.runtime === 'isolated-node';
+  const runner = isNode ? nodeRunner : browserRunner;
+  // Without proven isolation nothing runs; the drafts stay editable and saved (REQ-021).
+  const nodeOff = isNode && !nodeFeature().available;
+  const tracer = useRunner();
+  const [tracedFiles, setTracedFiles] = useState<Record<string, string> | null>(null);
   const runButton = useRef<HTMLButtonElement>(null);
   const frameHost = useRef<HTMLDivElement>(null);
   const hiddenHost = useRef<HTMLDivElement>(null);
+  const traceHost = useRef<HTMLDivElement>(null);
   const editable = block.kind === 'exercise' ? block.editable : fileNames;
   const exerciseProgress = useStore(app().progress.store, (p) => (block.kind === 'exercise' ? p.lessons[lesson.id]?.exercises[block.id] : undefined));
 
@@ -214,11 +235,21 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
         const passed = !harnessError && results.length > 0 && results.every((r) => r.status === 'pass');
         if (recordProgress && block.kind === 'exercise') app().progress.update((p) => recordExerciseCheck(p, lesson, block.id, passed));
         onChecked?.(passed);
-        announce(passed ? t('ws.passedAll') : t('ws.passedSome', { passed: results.filter((r) => r.status === 'pass').length, total: results.length }));
+        if (results.length > 0) announce(passed ? t('ws.passedAll') : t('ws.passedSome', { passed: results.filter((r) => r.status === 'pass').length, total: results.length }));
         if (!passed && errors.length > 0 && results.length === 0) setTab('console');
       },
     });
     if (mode === 'run' && recordProgress && block.kind === 'example') app().progress.update((p) => recordExampleRun(p, lesson, block.id));
+  };
+
+  // Step through: the current files run off screen with the tracer; the Steps tab shows the trace.
+  const traceRun = () => {
+    const container = traceHost.current;
+    if (!container || tracer.isActive) return;
+    const current = drafts.value.blocks[draftKey]?.files ?? starter;
+    setTracedFiles(current);
+    setTab('steps');
+    tracer.start({ block, files: current, mode: 'run', trace: true, storage: drafts.value.blocks[draftKey]?.storage ?? {}, lang: codeLang, container, title: t('ws.trace') });
   };
 
   // Compile errors and the first runtime error are also marked in the editor gutter.
@@ -230,11 +261,12 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
 
   useEffect(() => { if (runner.state.status === 'compile-error') setTab('console'); }, [runner.state.status]);
 
-  const s = runner.state;
-  const runBusy = runner.isActive && s.mode === 'run' && !s.unresponsive;
-  const checkBusy = s.status === 'checking';
+  const s: NodeRunState = runner.state;
+  const runBusy = nodeOff || (runner.isActive && s.mode === 'run' && !s.unresponsive);
+  const checkBusy = nodeOff || s.status === 'checking';
   const statusText = (() => {
     if (s.unresponsive) return t('ws.unresponsive', { s: Math.round(2.5) });
+    if (s.notice) return t(s.notice.key, s.notice.params);
     switch (s.status) {
       case 'running': return t('ws.running');
       case 'checking': return t('ws.checking');
@@ -249,8 +281,11 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
   })();
   const passedNow = block.kind === 'exercise' && s.tests !== null && !s.harnessError && s.tests.length > 0 && s.tests.every((x) => x.status === 'pass');
   const storageKeys = Object.keys(storage);
-  const tabs: Tab[] = [...(hasPreview(block) ? (['preview'] as Tab[]) : []), 'console', ...(block.kind === 'exercise' ? (['tests'] as Tab[]) : []), ...(storageKeys.length > 0 || /localStorage|sessionStorage/.test(Object.values(files).join('\n')) ? (['storage'] as Tab[]) : [])];
+  const tabs: Tab[] = [...(hasPreview(block) ? (['preview'] as Tab[]) : []), 'console', ...(block.kind === 'exercise' ? (['tests'] as Tab[]) : []), ...(!isNode && (storageKeys.length > 0 || /localStorage|sessionStorage/.test(Object.values(files).join('\n'))) ? (['storage'] as Tab[]) : []), ...(tracer.state.runCount > 0 ? (['steps'] as Tab[]) : [])];
   const consoleCount = s.console.filter((e) => e.level !== 'system').length + s.errors.length + s.compileErrors.length;
+  // A check whose program failed while loading: one error card and one line, no per-check feedback.
+  const loadError = s.mode === 'test' ? s.errors.find((e) => e.atLoad) ?? null : null;
+  const checkError = loadError ?? (s.mode === 'test' ? s.errors[0] ?? null : null);
 
   return (
     <div className="ws">
@@ -270,6 +305,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
         <div className="ws-actions">
           {/* aria-disabled, not disabled: a focused button that becomes disabled drops keyboard focus to the page body. */}
           <button ref={runButton} type="button" className="btn btn-primary" onClick={() => { if (!runBusy) run('run'); }} aria-disabled={runBusy || undefined}><Icon name="play" /> {t('ws.run')}</button>
+          {block.runtime === 'browser-js' && <button type="button" className="btn btn-trace" onClick={traceRun} aria-disabled={tracer.isActive || undefined}><Icon name="steps" /> {t('ws.trace')}</button>}
           {block.kind === 'exercise' && <button type="button" className="btn btn-check" onClick={() => { if (!checkBusy) run('test'); }} aria-disabled={checkBusy || undefined}><Icon name="check" /> {t('ws.check')}</button>}
           {(s.live || runner.isActive) && <button type="button" className="btn" onClick={() => { runner.stop(); runButton.current?.focus(); }}><Icon name="stop" /> {t('ws.stop')}</button>}
           <span className="ws-actions-gap" />
@@ -277,8 +313,12 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
           {draft?.files && <button type="button" className="btn btn-quiet" onClick={() => { if (draft.files && window.confirm(t('ws.resetConfirm'))) { setUndo({ files: draft.files, lang: draft.lang }); saveDraft({ files: localizeFiles(block.files, block, lang) as Record<string, string>, lang }); runner.reset(); } }}><Icon name="reset" size={14} /> {t('ws.reset')}</button>}
         </div>
         <p className={`ws-status ws-status-${s.unresponsive ? 'warn' : s.status}`} role="status" aria-live="polite">{statusText}{passedNow && <strong className="ws-passed"> · {exerciseProgress?.assistedPass ? t('ws.exercisePassedAssisted') : t('ws.exercisePassed')}</strong>}</p>
-        <p className="runtime-note"><Icon name="info" size={13} /> {t(`ws.runtime.${block.runtime}` as Key)}</p>
-        {block.limits && <details className="limits"><summary>{t('ws.limits')}</summary><Html html={block.limits[lang]} lang={lang} className="prose" /></details>}
+        {isNode ? <NodeRuntimeNote block={block} lang={lang} /> : (
+          <>
+            <p className="runtime-note"><Icon name="info" size={13} /> {t(`ws.runtime.${block.runtime}` as Key)}</p>
+            {block.limits && <details className="limits"><summary>{t('ws.limits')}</summary><Html html={block.limits[lang]} lang={lang} className="prose" /></details>}
+          </>
+        )}
       </section>
 
       <section className="ws-result panel" aria-label={t('ws.result')}>
@@ -314,9 +354,17 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
           )}
           {tab === 'tests' && block.kind === 'exercise' && (
             <>
-              {s.errors.length > 0 && s.mode === 'test' && s.errors.slice(0, 1).map((e, i) => <ErrorCard key={i} error={e} title={t('ws.runtimeError')} feedback={feedbackForError(block, e)} lang={lang} />)}
-              <TestsView block={block} state={s} lang={lang} />
+              {checkError && <ErrorCard error={checkError} title={t('ws.runtimeError')} feedback={feedbackForError(block, checkError)} lang={lang} />}
+              {loadError && s.tests && <p className="ws-note ws-load-error">{t('ws.loadErrorFirst')}</p>}
+              <TestsView block={block} state={s} lang={lang} quiet={loadError !== null} note={s.notice ? statusText : null} />
             </>
+          )}
+          {tab === 'steps' && (
+            <Suspense fallback={<p className="ws-empty">{t('app.loading')}</p>}>
+              <TracePanel state={tracer.state} files={tracedFiles} entry={block.entry} lang={lang}>
+                {tracer.state.compileErrors.map((e, i) => <ErrorCard key={i} error={e} title={t('ws.compileError')} feedback={feedbackForError(block, e)} lang={lang} />)}
+              </TracePanel>
+            </Suspense>
           )}
           {tab === 'storage' && (
             <div className="storage">
@@ -331,6 +379,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
           )}
         </div>
         <div ref={hiddenHost} className="hidden-frame-host" aria-hidden="true" />
+        <div ref={traceHost} className="hidden-frame-host" aria-hidden="true" />
       </section>
     </div>
   );

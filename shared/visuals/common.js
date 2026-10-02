@@ -65,10 +65,19 @@ export function renderText(ctx, value) {
   return out;
 }
 
-/** Simple placeholder substitution: "{item}" → values.item (used by per-item pipeline captions). */
+/**
+ * Simple placeholder substitution: "{item}" → values.item (pipeline captions). A value may be
+ * bilingual ({ uk, en }, e.g. an item label from a bilingual `show`): each language takes its own.
+ */
 export function fillPlaceholders(text, values) {
   const out = {};
-  for (const [lang, s] of Object.entries(toText(text))) out[lang] = String(s).replace(/\{(\w+)\}/g, (m, key) => (key in values ? String(values[key]) : m));
+  for (const [lang, s] of Object.entries(toText(text))) {
+    out[lang] = String(s).replace(/\{(\w+)\}/g, (m, key) => {
+      if (!(key in values)) return m;
+      const value = values[key];
+      return String(isPlainObject(value) ? value[lang] ?? Object.values(value)[0] : value);
+    });
+  }
   return out;
 }
 
@@ -139,9 +148,10 @@ export function bindCaptions(issues, captions, steps, path) {
 /**
  * Convert an authored value (YAML literal, { ref: id } or { fn: name }) to the trace format.
  * Primitives map by type; objects/arrays inline in YAML are an error (they must live in `heap` with an id,
- * because identity is the whole point of a memory graph).
+ * because identity is the whole point of a memory graph). `{ empty: true }` is a hole of a sparse
+ * array (an index that was never assigned: `[1, , 3]`), so it is accepted only among array items.
  */
-export function authoredValue(issues, value, path) {
+export function authoredValue(issues, value, path, { inArray = false } = {}) {
   if (value === null) return { t: 'null' };
   if (value === undefined) return { t: 'undefined' };
   if (typeof value === 'number') return Number.isFinite(value) ? { t: 'number', v: value } : { t: 'number', v: String(value) };
@@ -155,6 +165,11 @@ export function authoredValue(issues, value, path) {
     if (typeof value.ref === 'string') return { t: 'ref', id: value.ref };
     if (typeof value.number === 'number') return { t: 'number', v: value.number };
     if (typeof value.string === 'string') return { t: 'string', v: value.string };
+    if (value.empty === true && Object.keys(value).length === 1) {
+      if (inArray) return { t: 'empty' };
+      issues.add(path, 'an empty slot ({ empty: true }) exists only among the items of an array (a hole of a sparse array)');
+      return { t: 'opaque' };
+    }
     issues.add(path, 'inline objects are not allowed here: put the object in "heap" with an id and reference it with { ref: id }');
     return { t: 'opaque' };
   }
@@ -170,8 +185,8 @@ export function authoredValue(issues, value, path) {
 export function authoredHeapEntry(issues, entry, path, heapIds) {
   if (!isPlainObject(entry)) { issues.add(path, 'must be a mapping with "kind"'); return { t: 'opaque' }; }
   const kind = entry.kind ?? (Array.isArray(entry.items) ? 'array' : 'object');
-  const val = (v, p) => {
-    const out = authoredValue(issues, v, p);
+  const val = (v, p, options) => {
+    const out = authoredValue(issues, v, p, options);
     if (out.t === 'ref' && !heapIds.has(out.id)) issues.add(p, `unknown heap id "${out.id}"`);
     return out;
   };
@@ -183,7 +198,7 @@ export function authoredHeapEntry(issues, entry, path, heapIds) {
     }
     case 'array': {
       if (!Array.isArray(entry.items)) { issues.add(`${path}.items`, 'an array needs "items" (a list of values)'); return { t: 'array', length: 0, items: [], more: 0 }; }
-      return { t: 'array', length: entry.items.length, items: entry.items.map((v, i) => val(v, `${path}.items[${i}]`)), more: 0 };
+      return { t: 'array', length: entry.items.length, items: entry.items.map((v, i) => val(v, `${path}.items[${i}]`, { inArray: true })), more: 0 };
     }
     case 'function':
     case 'class':

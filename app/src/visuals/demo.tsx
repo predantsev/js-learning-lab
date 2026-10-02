@@ -5,9 +5,9 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../styles/tokens.css';
-import { VISUAL_LABELS, VisualPlayer, type Lang, type VisualKind, type VisualSpec } from './index';
+import { VISUAL_LABELS, VisualPlayer, type CompiledVisualSpec, type Lang, type VisualKind } from './index';
 
-type Sample = { file: string; id: string; visual: VisualKind; title: Record<Lang, string>; textEquivalent: Record<Lang, string>; spec: VisualSpec };
+type Sample = { file: string; id: string; visual: VisualKind; title: Record<Lang, string>; textEquivalent: Record<Lang, string>; spec: CompiledVisualSpec };
 
 const params = new URLSearchParams(location.search);
 const STYLES = ['calm-studio', 'editorial', 'dev-workspace'] as const;

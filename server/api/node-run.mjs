@@ -6,8 +6,16 @@ import { createNodeRunner, validateRunRequest } from './lib/node-runner.mjs';
 
 export async function register(api) {
   // JSLL_NODE_OS_SANDBOX=off turns the macOS Seatbelt layer off (troubleshooting; the permission
-  // model and the platform guard stay on).
-  const runner = await createNodeRunner({ runtimeDir: api.config.runtimeDir, osSandbox: process.env.JSLL_NODE_OS_SANDBOX === 'off' ? false : 'auto' });
+  // model and the platform guard stay on). JSLL_NODE_RUNNER=off turns Node execution off entirely:
+  // the feature reports "unavailable" and nothing runs. Code that starts the server can pass
+  // createNodeRunner options as `overrides.nodeRunner` (tests use a `support` override to exercise
+  // the real "no permission model" path).
+  const runner = await createNodeRunner({
+    runtimeDir: api.config.runtimeDir,
+    osSandbox: process.env.JSLL_NODE_OS_SANDBOX === 'off' ? false : 'auto',
+    ...(process.env.JSLL_NODE_RUNNER === 'off' ? { disabled: 'Isolated Node.js execution is turned off for this installation (JSLL_NODE_RUNNER=off).' } : {}),
+    ...(api.overrides?.nodeRunner ?? {}),
+  });
   api.features.isolatedNode = runner.feature;
   api.nodeRunner = runner;
 

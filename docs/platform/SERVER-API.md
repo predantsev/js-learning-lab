@@ -52,7 +52,8 @@ Request:
   "stdin": "",
   "args": [],
   "timeoutMs": 10000,
-  "capabilities": { "network": "none", "workers": false }
+  "capabilities": { "network": "none", "workers": false },
+  "strings": { "lamp": "Desk lamp" }
 }
 ```
 
@@ -70,6 +71,10 @@ Request:
 - `timeoutMs` — wall-clock limit, default 10 000, 100…60 000.
 - `capabilities.network` — `"none"` (default) or `"loopback"`. `capabilities.workers` — default
   `false`.
+- `strings` — the block's localized example text in the learner's language (`{ key: text }`, keys
+  `[a-zA-Z][a-zA-Z0-9_]*`, at most 500 keys and 32 KB, else `400`/`413`). Test mode exposes it to
+  the checks as `L`, as the browser runner does; a run in `run` mode ignores it (the learner files
+  already contain the text).
 - If the workspace has no `package.json`, a `{ "type": "module" }` one is written, so `.js` files
   are ES modules (the course standard). A learner-supplied `package.json` is used as is.
 
@@ -80,7 +85,7 @@ written as produced:
 |---|---|
 | `start` | `runId`, `node` (version), `mode`, `cwd` (workspace path, for shortening stack traces in the UI), `policy` { `network`, `workers`, `osSandbox`, `networkEnforcedBy`, `typescript` } |
 | `stdout` / `stderr` | `data` (UTF-8 text; multi-byte characters are never split) |
-| `tests` | test mode only: `results` [{ `name`, `status`: `pass`\|`fail`, `message?`, `errorName?`, `expected?`, `actual?`, `stack?`, `ms` }], optional `harnessError`, `loadError`, `errors` (uncaught errors outside a test) |
+| `tests` | test mode only: `results` [{ `name`, `status`: `pass`\|`fail`, `message?`, `errorName?`, `expected?`, `actual?`, `stack?`, `ms` }], optional `harnessError`, `loadError`, `errors` (uncaught errors outside a test, each with `phase`: `load` = before the first test, while the program loaded, or `idle` = between or after tests) |
 | `exit` | `code`, `signal`, `timedOut`, `truncated`, `durationMs`, `reason`, `stopped`, `error?` |
 
 `reason` distinguishes the REQ-032 states: `exited` · `timeout` · `output-limit` ·
@@ -114,6 +119,11 @@ restricted process; it imports learner modules with ordinary `import`. Globals (
 | `activeResources()` | `process.getActiveResourcesInfo()` minus the harness's own handles, for leak lessons. Node drops a closed handle one event-loop turn after its close callback, so check with `await waitFor(() => activeResources().length === 0)` |
 | `tmp(name)` | absolute path under `<workspace>/.tmp/`, parent folders created |
 | `loadError()` | the entry's import error (described), or `null` |
+| `L` | the request's `strings` (frozen object): localized example text, as in the browser runner |
+
+An uncaught error (or unhandled rejection) while a test runs fails that test at once with
+`uncaught error during the test: <Name>: <message>` — a request handler that throws would otherwise
+leave the test waiting for a response until its timeout.
 
 **Result channel.** The server writes a random per-run nonce to the child's fd 3 and closes it;
 the harness reads it before any learner code runs, closes fd 3 and writes `"<nonce> <json>"` to
@@ -204,7 +214,10 @@ permission model, `available` is `false`, `reason` explains why and `/api/node/r
 — code is never run without isolation. On macOS a second probe (no guard) checks that Seatbelt
 blocks a SQLite write outside the workspace and a signal to the parent; only then is
 `osSandbox.active` true. `JSLL_NODE_OS_SANDBOX=off` disables the Seatbelt layer for
-troubleshooting.
+troubleshooting. `JSLL_NODE_RUNNER=off` turns Node execution off entirely (`available: false`
+with that reason, every run `501`); code that starts the server can pass `createNodeRunner`
+options as `overrides.nodeRunner` (the end-to-end suite passes a `support` override to exercise the
+real "no permission model" path). Turning execution off never weakens isolation.
 
 ```json
 { "available": true, "node": "v25.2.1", "flags": ["--permission", "--allow-fs-read", "…"],
@@ -226,6 +239,7 @@ troubleshooting.
 | CPU time | `ulimit -t` = timeout × 2 + 5 s (× 8 with workers) | kernel `SIGXCPU`; normally the wall-clock timeout fires first |
 | Per-test timeout | default 4 s, max 30 s | that test fails, the next one runs |
 | stdin / args | 1 MB / 64 × 4 KB | `400` |
+| `strings` | 500 keys, 32 KB | `400` / `413` |
 
 **Runs never outlive the server.** The server kills live run groups on a normal exit. If it is
 killed or interrupted (Ctrl+C does not run exit handlers and runs are in their own process group),

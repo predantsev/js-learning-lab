@@ -8,7 +8,7 @@ import { Marked } from 'marked';
 import YAML from 'yaml';
 import { ROOT } from '../../server/config.mjs';
 import { CAPSTONES, GLOSSARY_LINK, Issues, LANGS, STAGES, paginate, unitOfLesson, validateGlossaryTerm, validateLessonSource } from '../../shared/content-schema.js';
-import { STRING_PLACEHOLDER, localizeText } from '../../shared/exercise.js';
+import { STRING_PLACEHOLDER, localizePair, localizeText } from '../../shared/exercise.js';
 import { CAPSTONES_DIR, compileCapstones, loadCapstoneSources, synthesizeStepLessons, writeCapstones } from './capstones.mjs';
 
 // JSLL_CONTENT_ROOT points the compiler/validator at another content tree with the same layout
@@ -252,8 +252,9 @@ export function staticIssuesForLesson(lesson, ctx) {
       for (const f of Object.keys(a.solution)) if (!(f in a.starter) && !(block.allowNewFiles === true)) add(`block "${block.id}"`, `solution adds "${f}" which is not in the starter (set allowNewFiles: true if the learner must create files)`);
       if (!Object.keys(a.variants).some((v) => v.startsWith('wrong'))) add(`block "${block.id}"`, `needs at least one deliberately failing fixture directory ${block.dir}/wrong/ (or wrong-<name>/)`);
     }
-    // Every %%key%% used in code must exist in the block's strings table.
-    const texts = block.kind === 'example' ? Object.values(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.values(a.starter), ...Object.values(a.solution), a.tests ?? '', ...Object.values(a.variants).flatMap((v) => Object.values(v))] : [block.code ?? '', ...(block.items ?? []).map((i) => i.code ?? '')];
+    // Every %%key%% used in code must exist in the block's strings table. (A visual's spec and the
+    // files it reads are checked when it compiles: shared/visuals/index.js compileVisual.)
+    const texts = block.kind === 'example' ? Object.values(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.values(a.starter), ...Object.values(a.solution), a.tests ?? '', ...Object.values(a.variants).flatMap((v) => Object.values(v))] : block.kind === 'visual' ? [block.title, block.textEquivalent].flatMap((pair) => (pair && typeof pair === 'object' ? Object.values(pair) : [])) : [block.code ?? '', ...(block.items ?? []).map((i) => i.code ?? '')];
     for (const text of texts) for (const m of String(text).matchAll(STRING_PLACEHOLDER)) if (!(block.strings && m[1] in block.strings)) add(`block "${block.id}"`, `placeholder %%${m[1]}%% has no entry in strings`);
   }
   return issues;
@@ -270,10 +271,12 @@ export async function compileLesson(lesson, ctx) {
     let compiled;
     if (block.kind === 'visual') {
       const { spec, ...meta } = rest;
-      compiled = renderLocalized(meta, md);
+      // %%key%% placeholders: the title and text equivalent take each language's own strings; the
+      // spec and its code files are compiled once per language (shared/visuals compileVisual).
+      compiled = renderLocalized({ ...meta, title: localizePair(meta.title, block), textEquivalent: localizePair(meta.textEquivalent, block) }, md);
       if (ctx.visuals) {
         try {
-          const out = await ctx.visuals.compileVisual(block.visual, spec, { readFile: (rel) => fs.readFile(path.join(dir, rel), 'utf8'), mdInline: md.inline, langs: LANGS });
+          const out = await ctx.visuals.compileVisual(block.visual, spec, { readFile: (rel) => fs.readFile(path.join(dir, rel), 'utf8'), mdInline: md.inline, langs: LANGS, strings: block.strings });
           compiled.spec = out.spec;
           for (const i of out.issues ?? []) issues.push({ path: `lesson ${source.id} › block "${block.id}".spec${i.path ? ` › ${i.path}` : ''}`, message: i.message });
         } catch (error) {

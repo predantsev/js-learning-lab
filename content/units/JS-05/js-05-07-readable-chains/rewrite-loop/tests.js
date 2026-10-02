@@ -1,49 +1,59 @@
 const sample = () => [
-  { id: "w-01", name: L.headphones, price: 80, acquired: false },
-  { id: "w-02", name: L.lamp, price: 45, acquired: false },
-  { id: "w-03", name: L.bicycle, price: 240, acquired: false },
-  { id: "w-04", name: L.book, price: 25, acquired: true },
-  { id: "w-05", name: L.tickets, price: null, acquired: false },
+  { id: "t-01", title: L.water, dueDate: "2026-03-02", done: false },
+  { id: "t-02", title: L.books, dueDate: "2026-03-01", done: false },
+  { id: "t-03", title: L.grandma, dueDate: null, done: false },
+  { id: "t-04", title: L.internet, dueDate: "2026-02-27", done: true },
+  { id: "t-05", title: L.dentist, dueDate: "2026-03-10", done: false },
 ];
-const label = (name, price) => name + ': ' + price;
+const label = (title, date) => title + ' · ' + date;
 
-test('isWanted is true only for items not acquired yet', () => {
+// The loop from the starter, kept here so the chain is compared with it even if the learner deletes it.
+const reference = (list, query) => {
+  const found = [];
+  for (const task of list) {
+    if (!task.done && task.title.toLowerCase().includes(query.toLowerCase())) found.push(task);
+  }
+  found.sort((a, b) => {
+    if (a.dueDate === b.dueDate) return 0;
+    if (a.dueDate === null) return 1;
+    if (b.dueDate === null) return -1;
+    return a.dueDate.localeCompare(b.dueDate);
+  });
+  return found.map((task) => label(task.title, task.dueDate ?? L.noDate));
+};
+
+test('isPending is true only for tasks not done yet', () => {
   const list = sample();
-  expect(scope.isWanted(list[0]), 'isWanted(a wish not acquired)').toBe(true);
-  expect(scope.isWanted(list[3]), 'isWanted(an acquired wish)').toBe(false);
+  expect(scope.isPending(list[0]), 'isPending(a task not done)').toBe(true);
+  expect(scope.isPending(list[3]), 'isPending(a done task)').toBe(false);
 });
 
-test('matchesQuery finds the query anywhere in the name, in any case', () => {
-  const lamp = sample()[1];
-  expect(scope.matchesQuery(lamp, L.queryUpper), `matchesQuery(lamp, "${L.queryUpper}")`).toBe(true);
-  expect(scope.matchesQuery(lamp, L.queryMiddle), `matchesQuery(lamp, "${L.queryMiddle}")`).toBe(true);
-  expect(scope.matchesQuery(lamp, 'xyz'), 'matchesQuery(lamp, "xyz")').toBe(false);
+test('matchesQuery finds the query anywhere in the title, in any case', () => {
+  const books = sample()[1];
+  expect(scope.matchesQuery(books, L.queryUpper), `matchesQuery(books, "${L.queryUpper}")`).toBe(true);
+  expect(scope.matchesQuery(books, L.queryMiddle), `matchesQuery(books, "${L.queryMiddle}")`).toBe(true);
+  expect(scope.matchesQuery(books, 'xyz'), 'matchesQuery(books, "xyz")').toBe(false);
 });
 
-test('byPriceAsc puts cheaper items first and items without a price last', () => {
-  const ids = sample().toSorted(scope.byPriceAsc).map((item) => item.id);
-  expect(ids, 'ids sorted with byPriceAsc').toEqual(['w-04', 'w-02', 'w-01', 'w-03', 'w-05']);
+test('byDueDate puts earlier dates first and tasks without a due date last', () => {
+  const ids = sample().toSorted(scope.byDueDate).map((task) => task.id);
+  expect(ids, 'ids sorted with byDueDate').toEqual(['t-04', 't-02', 't-01', 't-05', 't-03']);
 });
 
-test('toLabel makes the name: price label', () => {
+test('toLabel makes the title · due date label', () => {
   const list = sample();
-  expect(scope.toLabel(list[1]), 'toLabel(lamp)').toBe(label(L.lamp, 45));
-  expect(scope.toLabel(list[4]), 'toLabel(tickets without a price)').toBe(label(L.tickets, L.noPrice));
+  expect(scope.toLabel(list[1]), 'toLabel(books)').toBe(label(L.books, '2026-03-01'));
+  expect(scope.toLabel(list[2]), 'toLabel(a task without a due date)').toBe(label(L.grandma, L.noDate));
 });
 
-test('wantedLabels gives the same labels as the loop', () => {
-  expect(scope.wantedLabels(sample(), ''), 'wantedLabels(list, "")').toEqual([
-    label(L.lamp, 45), label(L.headphones, 80), label(L.bicycle, 240), label(L.tickets, L.noPrice),
-  ]);
-  expect(scope.wantedLabels(sample(), L.queryMulti), `wantedLabels(list, "${L.queryMulti}")`).toEqual([
-    label(L.lamp, 45), label(L.headphones, 80), label(L.tickets, L.noPrice),
-  ]);
-  expect(scope.wantedLabels(sample(), L.queryUpper), `wantedLabels(list, "${L.queryUpper}")`).toEqual([label(L.lamp, 45)]);
-  expect(scope.wantedLabels(sample(), 'xyz'), 'wantedLabels(list, "xyz")').toEqual([]);
+test('pendingLabels gives the same labels as the loop', () => {
+  for (const query of ['', L.queryMulti, L.queryUpper, 'xyz']) {
+    expect(scope.pendingLabels(sample(), query), `pendingLabels(list, "${query}")`).toEqual(reference(sample(), query));
+  }
 });
 
-test('wantedLabels does not change the list', () => {
+test('pendingLabels does not change the list', () => {
   const list = sample();
-  scope.wantedLabels(list, '');
-  expect(list, 'the list after wantedLabels').toEqual(sample());
+  scope.pendingLabels(list, '');
+  expect(list, 'the list after pendingLabels').toEqual(sample());
 });

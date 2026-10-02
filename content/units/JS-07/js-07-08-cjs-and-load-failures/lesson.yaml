@@ -1,0 +1,444 @@
+id: js-07-08-cjs-and-load-failures
+unit: JS-07
+title:
+  uk: "Читаємо CommonJS і розбираємо збої завантаження модулів"
+  en: "CommonJS reading and module load failures"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Прочитати код із `require` і `module.exports` та переписати його як рівнозначні `import` і `export`."
+    en: "Read `require`/`module.exports` code and rewrite it as equivalent `import`/`export`."
+  - uk: "Розпізнати за текстом помилки, чому модуль не завантажився: хибний відносний шлях, немає розширення, немає `./` або немає такого іменованого експорту."
+    en: "Diagnose a failed module load from its error text: a wrong relative path, a missing extension, a bare specifier or a named export that does not exist."
+  - uk: "Описати, що лишається неініціалізованим, коли в циклічній залежності один модуль читає значення іншого завчасно."
+    en: "Describe what a circular import can leave uninitialized when one module reads another’s binding too early."
+prerequisites: [js-07-07-live-bindings-dynamic-import]
+subskills:
+  - { family: J-10, skill: "CommonJS interoperability context", depth: intro }
+  - { family: J-10, skill: "module load/circular dependency diagnosis", depth: intro }
+glossary: [commonjs, module-resolution, circular-dependency]
+selfCheck: [four-imports, cycle-read, cjs-to-esm]
+
+blocks:
+  - id: commonjs
+    kind: explanation
+    title:
+      uk: "CommonJS: модулі, які ти зустрінеш у старшому коді"
+      en: "CommonJS: modules you will meet in older code"
+    body:
+      uk: |
+        До ES-модулів Node.js мав власну систему — [[commonjs|CommonJS]]. Її досі повно в старших проєктах, налаштуваннях інструментів і пакетах. Читати її треба вміти:
+
+        | CommonJS | ES-модуль |
+        |---|---|
+        | `const { total } = require("./money.js");` | `import { total } from "./money.js";` |
+        | `module.exports = { total, format };` | `export function total…` або `export { total, format };` |
+        | `module.exports = total;` | `export default total;` |
+
+        Відмінності глибші за синтаксис:
+
+        - `require(…)` — звичайний виклик функції: виконується тоді, коли до нього дійде черга, і повертає об’єкт експортів. Деструктуризація `const { total } = …` копіює значення тієї миті — живої прив’язки немає.
+        - `import` браузер обробляє ще до першого рядка коду, і в браузері шлях потребує розширення.
+        - У браузері `require` і `module` не існують: такий файл кидає `ReferenceError`. У Node.js, яку систему має файл, вирішують його налаштування — про це в етапі Node.js.
+      en: |
+        Before ES modules, Node.js had its own system — [[commonjs|CommonJS]]. Older projects, tool settings and packages are still full of it. You need to be able to read it:
+
+        | CommonJS | ES module |
+        |---|---|
+        | `const { total } = require("./money.js");` | `import { total } from "./money.js";` |
+        | `module.exports = { total, format };` | `export function total…` or `export { total, format };` |
+        | `module.exports = total;` | `export default total;` |
+
+        The differences go deeper than syntax:
+
+        - `require(…)` is an ordinary function call: it runs when its turn comes and returns the exports object. Destructuring `const { total } = …` copies the values of that moment — there is no live binding.
+        - The browser handles `import` before the first line of code, and in the browser the path needs its extension.
+        - In the browser `require` and `module` do not exist: such a file throws a `ReferenceError`. In Node.js, the file’s settings decide which system it uses — that comes in the Node.js stage.
+
+  - id: four-imports
+    kind: prediction
+    prompt:
+      uk: "У проєкті є файл `records.js`, що експортує `summarize`. Які з цих рядків коду в `main.js` дадуть модулю завантажитися в браузері? Обери всі, що дадуть."
+      en: "The project has a file `records.js` that exports `summarize`. Which of these lines of code in `main.js` let the module load in the browser? Choose all that do."
+    answer:
+      type: multi
+      options:
+        - id: correct
+          code: 'import { summarize } from "./records.js";'
+        - id: no-extension
+          code: 'import { summarize } from "./records";'
+          why:
+            uk: "Браузер не дописує розширення: він попросить файл, що буквально називається `records`, а такого немає."
+            en: "The browser does not add the extension: it asks for a file literally named `records`, and there is none."
+        - id: bare
+          code: 'import { summarize } from "records.js";'
+          why:
+            uk: "Без `./` чи `../` браузер вважає текст назвою пакета, а не шляхом до файла поруч."
+            en: "Without `./` or `../` the browser treats the text as a package name, not as a path to a file next to it."
+        - id: wrong-name
+          code: 'import { summarise } from "./records.js";'
+          why:
+            uk: "Файл знайдено, але експорту `summarise` у ньому немає (є `summarize`). Браузер перевіряє назви імпортів ще до запуску — і граф не збирається."
+            en: "The file is found, but it has no export `summarise` (there is `summarize`). The browser checks import names before running — and the graph cannot be put together."
+      correct: [correct]
+    explanation:
+      uk: "Завантажиться лише перший рядок коду: шлях від поточного файла (`./`), повна назва з розширенням і назва, яку модуль справді експортує. Кожна з трьох інших помилок зупиняє **весь** граф модулів: не виконується жоден файл, навіть правильні."
+      en: "Only the first line of code loads: a path from the current file (`./`), the full name with its extension and a name the module really exports. Each of the other three mistakes stops the **whole** module graph: not a single file runs, not even the correct ones."
+
+  - id: load-errors
+    kind: explanation
+    title:
+      uk: "Що кажуть помилки завантаження"
+      en: "What load errors say"
+    body:
+      uk: |
+        Курс перевіряє шляхи ще до запуску й пояснює їх докладніше за браузер. Ось чотири випадки — що побачиш тут і що написав би Chrome:
+
+        - **Немає розширення** — `from "./format"`. Курс: «Cannot find "./format". In the browser the file extension is required: did you mean "./format.js"?». Chrome: файл не знайдено (у консолі — помилка 404), нічого не виконується.
+        - **Немає `./`** — `from "records.js"`. Курс: «The package "records.js" is not available in the in-course sandbox…». Chrome: `TypeError: Failed to resolve module specifier "records.js". Relative references must start with either "/", "./", or "../".`
+        - **Хибний шлях** — `from "./record.js"`. Курс: «Cannot find the file "./record.js" imported from "main.js".». Chrome: 404, нічого не виконується.
+        - **Немає такого експорту** — `import { isValid } …`. І курс, і Chrome: `SyntaxError: The requested module '…/records.js' does not provide an export named 'isValid'`. Курс пише шлях від кореня проєкту: `~/records.js`.
+
+        Спільне в усіх чотирьох: браузер спершу знаходить файли й назви **всього** графа імпортів — це [[module-resolution|резолюція модулів]] — і лише тоді виконує код. Тож зламаний один імпорт — не виконується жоден модуль.
+      en: |
+        The course checks paths before running and explains them in more detail than the browser. Here are four cases — what you will see here and what Chrome would say:
+
+        - **No extension** — `from "./format"`. The course: “Cannot find "./format". In the browser the file extension is required: did you mean "./format.js"?”. Chrome: the file is not found (the console shows a 404 error), nothing runs.
+        - **No `./`** — `from "records.js"`. The course: “The package "records.js" is not available in the in-course sandbox…”. Chrome: `TypeError: Failed to resolve module specifier "records.js". Relative references must start with either "/", "./", or "../".`
+        - **A wrong path** — `from "./record.js"`. The course: “Cannot find the file "./record.js" imported from "main.js".”. Chrome: 404, nothing runs.
+        - **No such export** — `import { isValid } …`. Both the course and Chrome: `SyntaxError: The requested module '…/records.js' does not provide an export named 'isValid'`. The course writes the path from the project root: `~/records.js`.
+
+        What all four share: the browser first finds the files and names of the **whole** graph of imports — that is [[module-resolution]] — and only then runs code. So with one import broken, not a single module runs.
+
+  - id: broken-graph
+    kind: example
+    runtime: browser-js
+    dir: broken-graph
+    entry: main.js
+    expectError: true
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      wishesText: { uk: "Бажань: ", en: "Wishes: " }
+      totalText: { uk: "разом: ", en: "total: " }
+      uah: { uk: "грн", en: "UAH" }
+    title:
+      uk: "Три зламані імпорти — по одному за раз"
+      en: "Three broken imports — one at a time"
+    body:
+      uk: |
+        У `main.js` три імпорти, і всі три зламані. Кожен модуль друкує свою назву, коли виконується. Натисни **Запустити** й прочитай картку помилки на вкладці **Консоль**: на ній назва файла, номер рядка коду й пояснення.
+      en: |
+        `main.js` has three imports, and all three are broken. Every module prints its name when it runs. Press **Run** and read the error card on the **Console** tab: it shows the file name, the line number and the explanation.
+    tryIt:
+      uk: |
+        1. Картка «Код не вдалося запустити»: шлях `"records.js"` без `./`. Допиши `./` і запусти знову.
+        2. Тепер — шлях `"./format"` без розширення. Допиши `.js` і запусти.
+        3. Тепер картка `SyntaxError`: у `records.js` немає експорту `isValid`. Консоль порожня — жоден модуль не виконався, навіть справні. Подивись у `records.js`, як насправді називається функція, і виправ імпорт. Щоб не змінювати решту коду, можна імпортувати з новою назвою: `import { isValidWish as isValid } from "./records.js";` — слово `as` дає імпортованій функції іншу назву в цьому файлі.
+        4. Запусти: тепер виконуються всі три модулі, а останній рядок консолі — підсумок двох бажань.
+      en: |
+        1. The card “The code could not start”: the path `"records.js"` has no `./`. Add `./` and run again.
+        2. Now it is the path `"./format"` without an extension. Add `.js` and run.
+        3. Now the card shows a `SyntaxError`: `records.js` has no export `isValid`. The console is empty — not a single module ran, not even the healthy ones. Look in `records.js` for the function’s real name and fix the import. To keep the rest of the code unchanged, you can import it under another name: `import { isValidWish as isValid } from "./records.js";` — the word `as` gives the imported function a different name in this file.
+        4. Run: now all three modules run, and the last console line is the summary of two wishes.
+
+  - id: cjs-and-cycle
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Від CommonJS до ES-модулів і пастка циклу"
+      en: "From CommonJS to ES modules, and the cycle trap"
+    textEquivalent:
+      uk: "Ліворуч — CommonJS, праворуч — ES-модулі. require() відповідає import … from: обидва беруть щось з іншого файла, але require — звичайний виклик функції, що виконується, коли до нього дійде черга, а import браузер обробляє ще до першого рядка коду. module.exports відповідає export: об’єкт module.exports з кількома назвами — це іменовані експорти, а одне значення — default-експорт. У браузері require і module не існують, і такий файл кидає ReferenceError. Далі — циклічна залежність: main.js імпортує limits.js, limits.js імпортує labels.js, а labels.js імпортує limits.js. Перш ніж виконати limits.js, браузер іде його імпортом до labels.js, а той показує назад на вже розпочатий limits.js; по колу браузер не ходить, тож labels.js виконується першим, коли в limits.js не виконано жодного рядка коду. labels.js на верхньому рівні читає LIMIT, а const LIMIT ще не ініціалізовано, тож маємо ReferenceError: Cannot access 'LIMIT' before initialization. Вихід — не читати значення іншого модуля на верхньому рівні або винести спільне значення в третій модуль; глибше циклічні залежності розбиратимемо в JS-13."
+      en: "On the left is CommonJS, on the right ES modules. require() corresponds to import … from: both take something from another file, but require is an ordinary function call that runs when its turn comes, while the browser handles import before the first line of code. module.exports corresponds to export: a module.exports object with several names means named exports, and a single value means a default export. In the browser require and module do not exist, and such a file throws a ReferenceError. Next, a circular dependency: main.js imports limits.js, limits.js imports labels.js, and labels.js imports limits.js. Before running limits.js the browser follows its import to labels.js, which points back at the already started limits.js; the browser does not go round in circles, so labels.js runs first, while not a single line of code of limits.js has run. labels.js reads LIMIT at its top level, but const LIMIT is not initialized yet, so there is ReferenceError: Cannot access 'LIMIT' before initialization. The way out is not to read another module’s value at the top level, or to move the shared value into a third module; circular dependencies are covered in more depth in JS-13."
+    spec:
+      layout: grid
+      nodes:
+        - { id: cjs-require, label: "require()", col: 0, row: 0 }
+        - { id: esm-import, label: "import … from", col: 1, row: 0 }
+        - { id: cjs-exports, label: "module.exports", col: 0, row: 1 }
+        - { id: esm-export, label: "export", col: 1, row: 1 }
+        - { id: main, label: "main.js", col: 0, row: 2 }
+        - { id: limits, label: "limits.js", col: 0, row: 3 }
+        - { id: labels, label: "labels.js", col: 1, row: 3 }
+      edges:
+        - { id: same-import, from: cjs-require, to: esm-import, label: "≈", kind: line }
+        - { id: same-export, from: cjs-exports, to: esm-export, label: "≈", kind: line }
+        - { id: main-limits, from: main, to: limits, label: "import" }
+        - { id: cycle, from: limits, to: labels, label: { uk: "імпортують одне одного", en: "import each other" }, kind: both }
+      hidden: [main, limits, labels, main-limits, cycle]
+      steps:
+        - highlight: [cjs-require, same-import, esm-import]
+          dim: [cjs-exports, esm-export, same-export]
+          caption:
+            uk: "`require()` ≈ `import … from`: обидва беруть щось з іншого файла. Але `require` — звичайний виклик функції, що виконується, коли до нього дійде черга, а `import` браузер обробляє ще до першого рядка коду."
+            en: "`require()` ≈ `import … from`: both take something from another file. But `require` is an ordinary function call that runs when its turn comes, while the browser handles `import` before the first line of code."
+        - highlight: [cjs-exports, same-export, esm-export]
+          dim: [cjs-require, esm-import, same-import]
+          caption:
+            uk: "`module.exports = { … }` з кількома назвами ≈ іменовані експорти; `module.exports = одне значення` ≈ `export default`."
+            en: "`module.exports = { … }` with several names ≈ named exports; `module.exports = one value` ≈ `export default`."
+        - highlight: [cjs-require, cjs-exports]
+          annotate:
+            - { id: cjs-require, text: { uk: "у браузері: ReferenceError", en: "in the browser: ReferenceError" } }
+          caption:
+            uk: "У браузері `require` і `module` не існують: файл у стилі CommonJS кидає `ReferenceError` на першому ж такому рядку коду."
+            en: "In the browser `require` and `module` do not exist: a CommonJS-style file throws a `ReferenceError` on the very first such line of code."
+        - show: [main, limits, labels, main-limits, cycle]
+          highlight: [limits, cycle, labels]
+          dim: [cjs-require, esm-import, cjs-exports, esm-export, same-import, same-export]
+          caption:
+            uk: "Циклічна залежність: `limits.js` імпортує `labels.js`, а `labels.js` — `limits.js`. Так можна, але тут є пастка."
+            en: "A circular dependency: `limits.js` imports `labels.js`, and `labels.js` imports `limits.js`. That is allowed, but there is a trap."
+        - highlight: [main, main-limits, limits, cycle, labels]
+          dim: [cjs-require, esm-import, cjs-exports, esm-export, same-import, same-export]
+          annotate:
+            - { id: labels, text: { uk: "виконується 1-м", en: "runs 1st" } }
+          caption:
+            uk: "`main.js` імпортує `limits.js`. Перш ніж його виконати, браузер іде імпортом до `labels.js`, а той показує назад на вже розпочатий `limits.js`. По колу браузер не ходить: `labels.js` виконується **першим**, хоча в `limits.js` не виконано ще жодного рядка коду."
+            en: "`main.js` imports `limits.js`. Before running it, the browser follows its import to `labels.js`, which points back at the already started `limits.js`. The browser does not go round in circles: `labels.js` runs **first**, while not a single line of code of `limits.js` has run yet."
+        - highlight: [labels]
+          dim: [cjs-require, esm-import, cjs-exports, esm-export, same-import, same-export, main, main-limits]
+          annotate:
+            - { id: labels, text: { uk: "читає LIMIT завчасно", en: "reads LIMIT too early" } }
+            - { id: limits, text: { uk: "LIMIT ще не готовий", en: "LIMIT not ready yet" } }
+          caption:
+            uk: "`labels.js` на верхньому рівні читає `LIMIT`, а `const LIMIT` у `limits.js` ще не ініціалізовано — як у зоні TDZ з JS-02: `ReferenceError: Cannot access 'LIMIT' before initialization`."
+            en: "`labels.js` reads `LIMIT` at its top level, but `const LIMIT` in `limits.js` is not initialized yet — as in the TDZ from JS-02: `ReferenceError: Cannot access 'LIMIT' before initialization`."
+        - highlight: [limits, labels]
+          dim: [cjs-require, esm-import, cjs-exports, esm-export, same-import, same-export]
+          caption:
+            uk: "Вихід: не читати значення іншого модуля на верхньому рівні (читати його всередині функції, яку викличуть пізніше) або винести спільне значення в третій модуль, який імпортують обидва. Глибше — у JS-13."
+            en: "The way out: do not read another module’s value at the top level (read it inside a function that is called later), or move the shared value into a third module that both import. More depth in JS-13."
+
+  - id: cycle-read
+    kind: prediction
+    prompt:
+      uk: |
+        `limits.js` і `labels.js` імпортують одне одного — це [[circular-dependency|циклічна залежність]]. Сторінка запускає `main.js`. Що станеться?
+
+        ```js
+        // limits.js
+        import { label } from "./labels.js";
+        export const LIMIT = 3;
+        console.log(label);
+        ```
+
+        ```js
+        // labels.js
+        import { LIMIT } from "./limits.js";
+        export const label = "max " + LIMIT;
+        ```
+
+        ```js
+        // main.js
+        import { LIMIT } from "./limits.js";
+        console.log(LIMIT);
+        ```
+      en: |
+        `limits.js` and `labels.js` import each other — that is a [[circular-dependency|circular dependency]]. The page runs `main.js`. What happens?
+
+        ```js
+        // limits.js
+        import { label } from "./labels.js";
+        export const LIMIT = 3;
+        console.log(label);
+        ```
+
+        ```js
+        // labels.js
+        import { LIMIT } from "./limits.js";
+        export const label = "max " + LIMIT;
+        ```
+
+        ```js
+        // main.js
+        import { LIMIT } from "./limits.js";
+        console.log(LIMIT);
+        ```
+    answer:
+      type: choice
+      options:
+        - id: tdz
+          text:
+            uk: "`ReferenceError: Cannot access 'LIMIT' before initialization` у `labels.js`, і консоль порожня"
+            en: "`ReferenceError: Cannot access 'LIMIT' before initialization` in `labels.js`, and the console is empty"
+        - id: works
+          text:
+            uk: "`max 3`, а потім `3`"
+            en: "`max 3`, then `3`"
+          why:
+            uk: "Через цикл `labels.js` виконується раніше за `limits.js`, тож у мить читання `LIMIT` ще не має значення."
+            en: "Because of the cycle, `labels.js` runs before `limits.js`, so at the moment of reading, `LIMIT` has no value yet."
+        - id: undefined
+          text:
+            uk: "`max undefined`, а потім `3`"
+            en: "`max undefined`, then `3`"
+          why:
+            uk: "`const` до ініціалізації — не `undefined`, а зона TDZ, як у JS-02: читання кидає `ReferenceError`."
+            en: "A `const` before initialization is not `undefined` but in the TDZ, as in JS-02: reading it throws a `ReferenceError`."
+        - id: forbidden
+          text:
+            uk: "Код не запуститься: модулі не можуть імпортувати одне одного"
+            en: "The code does not start: modules cannot import each other"
+          why:
+            uk: "Цикли дозволені — граф збирається. Проблема не в самому циклі, а в тому, що `labels.js` читає значення завчасно."
+            en: "Cycles are allowed — the graph is put together. The problem is not the cycle itself but `labels.js` reading the value too early."
+      correct: [tdz]
+    explanation:
+      uk: "`main.js` → `limits.js` → `labels.js` → знову `limits.js`, який уже розпочато. Тож першим виконується `labels.js` і на верхньому рівні читає `LIMIT` — а рядок коду `export const LIMIT = 3` у `limits.js` ще не виконався. `const` у такій миті в зоні TDZ: `ReferenceError`, і до `console.log` не доходить жоден файл."
+      en: "`main.js` → `limits.js` → `labels.js` → `limits.js` again, which is already started. So `labels.js` runs first and reads `LIMIT` at its top level — while the line `export const LIMIT = 3` in `limits.js` has not run yet. A `const` at that moment is in the TDZ: a `ReferenceError`, and no file reaches its `console.log`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: помилка в назві під час виконання"
+      en: "Recall: a misspelled name while running"
+    strings:
+      before: { uk: "до", en: "before" }
+      after: { uk: "після", en: "after" }
+    items:
+      - id: misspelled-call
+        from: js-01-05-reading-an-error
+        prompt:
+          uk: "Назву функції написано з одруківкою. Що з’явиться в консолі?"
+          en: "A function name is misspelled. What appears in the console?"
+        code: |
+          console.log("%%before%%");
+          sumarize([80, 45]);
+          console.log("%%after%%");
+        verify:
+          logs: ["%%before%%"]
+          error: ReferenceError
+        answer:
+          type: choice
+          options:
+            - id: before-then-error
+              text:
+                uk: "«до», а потім `ReferenceError: sumarize is not defined` з номером рядка коду 2"
+                en: "“before”, then `ReferenceError: sumarize is not defined` with line number 2"
+            - id: nothing
+              text:
+                uk: "Нічого: картка «Код не вдалося запустити» із `SyntaxError`"
+                en: "Nothing: the card “The code could not start” with a `SyntaxError`"
+              why:
+                uk: "JavaScript цей код прочитати може. Невідому назву він помічає лише тоді, коли виконує її рядок коду."
+                en: "JavaScript can read this code. It notices an unknown name only when it runs that line of code."
+            - id: skipped
+              text:
+                uk: "«до» і «після»: зламаний рядок коду пропускається"
+                en: "“before” and “after”: the broken line of code is skipped"
+              why:
+                uk: "JavaScript не перестрибує через помилку: він зупиняється на ній."
+                en: "JavaScript does not jump over an error: it stops there."
+          correct: [before-then-error]
+        explanation:
+          uk: "Як у JS-01: назва помилки — `ReferenceError`, пояснення — `sumarize is not defined`, місце — рядок коду 2; усе, що вище, уже виконалося. З імпортом інакше: одруківка в **імпортованій** назві зупиняє все ще до першого рядка коду, бо браузер перевіряє імпорти до запуску."
+          en: "As in JS-01: the error’s name is `ReferenceError`, the explanation is `sumarize is not defined`, the place is line 2; everything above has already run. An import is different: a typo in an **imported** name stops everything before the first line of code, because the browser checks imports before running."
+
+  - id: cjs-to-esm
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: cjs-to-esm
+    entry: main.js
+    editable: [money.js, records.js]
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      gift: { uk: "Подарунок", en: "Gift" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      countText: { uk: "Витрат: ", en: "Expenses: " }
+      totalText: { uk: "разом: ", en: "total: " }
+      uah: { uk: "грн", en: "UAH" }
+    title:
+      uk: "Переклади CommonJS на ES-модулі"
+      en: "Translate CommonJS into ES modules"
+    instructions:
+      uk: |
+        `money.js` і `records.js` написано в CommonJS для Node.js. У браузері вони не працюють. Перепиши обидва файли як ES-модулі:
+
+        - `money.js` експортує `formatMinor` за назвою.
+        - `records.js` імпортує `formatMinor` з `./money.js` і експортує `validate` та `summarize` за назвою.
+        - Самі функції не змінюються.
+
+        `main.js` уже ES-модуль: він імпортує `{ validate, summarize }` і друкує підсумок — його не змінюй. Зверни увагу, які назви він імпортує: від цього залежить, якими мають бути експорти.
+      en: |
+        `money.js` and `records.js` are written in CommonJS for Node.js. They do not work in the browser. Rewrite both files as ES modules:
+
+        - `money.js` exports `formatMinor` by name.
+        - `records.js` imports `formatMinor` from `./money.js` and exports `validate` and `summarize` by name.
+        - The functions themselves do not change.
+
+        `main.js` is already an ES module: it imports `{ validate, summarize }` and prints a summary — do not change it. Notice which names it imports: that decides what the exports must be.
+    testTitles:
+      "money.js loads as an ES module":
+        uk: "money.js завантажується як ES-модуль"
+        en: "money.js loads as an ES module"
+      "money.js exports formatMinor by name":
+        uk: "money.js експортує formatMinor за назвою"
+        en: "money.js exports formatMinor by name"
+      "records.js loads as an ES module":
+        uk: "records.js завантажується як ES-модуль"
+        en: "records.js loads as an ES module"
+      "records.js exports validate and summarize by name":
+        uk: "records.js експортує validate і summarize за назвою"
+        en: "records.js exports validate and summarize by name"
+      "validate still checks the label, the amount and the category":
+        uk: "validate, як і раніше, перевіряє назву, суму й категорію"
+        en: "validate still checks the label, the amount and the category"
+      "summarize still counts and formats the total":
+        uk: "summarize, як і раніше, рахує й форматує підсумок"
+        en: "summarize still counts and formats the total"
+      "main.js runs and prints the summary":
+        uk: "main.js виконується й друкує підсумок"
+        en: "main.js runs and prints the summary"
+    hints:
+      nudge:
+        uk: "Почни з `money.js`: він нічого не імпортує. Яка з колонок таблиці CommonJS ↔ ES-модуль відповідає його останньому рядку коду?"
+        en: "Start with `money.js`: it imports nothing. Which row of the CommonJS ↔ ES module table matches its last line of code?"
+      explanation:
+        uk: "Об’єкт `module.exports = { … }` з назвами відповідає іменованим експортам, а не default-експорту одного об’єкта: `main.js` імпортує саме назви. Тож рядок коду з `module.exports` прибери, а функції експортуй за назвою — словом `export` перед кожною чи списком в одному рядку коду. Рядок із `require` у `records.js` замінює статичний імпорт з повним шляхом `./money.js`."
+        en: "A `module.exports = { … }` object with names corresponds to named exports, not to a default export of one object: `main.js` imports exactly the names. So remove the `module.exports` line and export the functions by name — with `export` in front of each, or with a list on one line. The `require` line in `records.js` is replaced by a static import with the full path `./money.js`."
+    solutionNote:
+      uk: "`module.exports = { formatMinor }` стало іменованим експортом `formatMinor`, а `require(\"./money.js\")` — статичним `import` з тим самим шляхом. Default-експорт об’єкта не підійшов би: `main.js` імпортує назви `validate` і `summarize`, тож потрібні саме іменовані експорти. Жодних `require` і `module` в ES-модулі не лишилося: у браузері їх немає."
+      en: "`module.exports = { formatMinor }` became the named export `formatMinor`, and `require(\"./money.js\")` became a static `import` with the same path. A default export of an object would not fit: `main.js` imports the names `validate` and `summarize`, so named exports are exactly what is needed. No `require` or `module` is left in the ES module: the browser has neither."
+    feedback:
+      - when: { test: "money.js loads as an ES module" }
+        message:
+          uk: "Ця перевірка завантажує `money.js` і чекає, що він виконається без помилки. `ReferenceError: module is not defined` означає, що у файлі ще лишився рядок коду в стилі CommonJS."
+          en: "This check loads `money.js` and expects it to run without an error. `ReferenceError: module is not defined` means a CommonJS-style line is still in the file."
+      - when: { test: "money.js exports formatMinor by name" }
+        message:
+          uk: "Ця перевірка шукає в `money.js` іменований експорт `formatMinor`, що перетворює `84550` на `\"845.50\"`."
+          en: "This check looks in `money.js` for the named export `formatMinor`, which turns `84550` into `\"845.50\"`."
+      - when: { test: "records.js loads as an ES module" }
+        message:
+          uk: "Ця перевірка завантажує `records.js` разом з усім, що він імпортує, і чекає, що все виконається без помилки. `ReferenceError` про `require` чи `module` означає залишок CommonJS; `SyntaxError` про відсутній експорт — що `money.js` не експортує потрібної назви."
+          en: "This check loads `records.js` together with everything it imports and expects all of it to run without an error. A `ReferenceError` about `require` or `module` means a CommonJS leftover; a `SyntaxError` about a missing export means that `money.js` does not export the needed name."
+      - when: { test: "records.js exports validate and summarize by name" }
+        message:
+          uk: "Ця перевірка шукає в `records.js` іменовані експорти `validate` і `summarize`. Default-експорт об’єкта `{ validate, summarize }` — це один експорт із назвою `default`, а не дві назви."
+          en: "This check looks in `records.js` for the named exports `validate` and `summarize`. A default export of the object `{ validate, summarize }` is one export called `default`, not two names."
+      - when: { test: "validate still checks the label, the amount and the category" }
+        message:
+          uk: "Ця перевірка викликає `validate` для правильної витрати й для витрати з трьома проблемами й чекає тих самих результатів, що давала функція в CommonJS. Переклад не змінює самих функцій."
+          en: "This check calls `validate` for a valid expense and for an expense with three problems and expects the same results the function gave in CommonJS. The translation does not change the functions themselves."
+      - when: { test: "summarize still counts and formats the total" }
+        message:
+          uk: "Ця перевірка викликає `summarize` для двох витрат і чекає `{ count: 2, totalMinor: 39050, totalText: \"390.50\" }`."
+          en: "This check calls `summarize` for two expenses and expects `{ count: 2, totalMinor: 39050, totalText: \"390.50\" }`."
+      - when: { test: "main.js runs and prints the summary" }
+        message:
+          uk: "Ця перевірка чекає, що вся програма виконається без помилок і `main.js` надрукує підсумок двох правильних витрат. Якщо на картці `SyntaxError` про модуль без потрібного експорту, порівняй назви, які імпортує `main.js`, з тими, що експортує `records.js`."
+          en: "This check expects the whole program to run without errors and `main.js` to print the summary of the two valid expenses. If the error card shows a `SyntaxError` about a module without the needed export, compare the names `main.js` imports with the ones `records.js` exports."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-07
+    body:
+      uk: "Коли проєкт не запускається після розділення на модулі, читай картку помилки так само: шлях без `./`, без `.js`, з помилкою в назві файла чи назва, якої модуль не експортує. А якщо `domain/` і `ui/` почнуть імпортувати одне одного, спитай себе, чи не читає хтось значення завчасно, — і винеси спільне в окремий модуль."
+      en: "When the project does not start after you split it into modules, read the error card the same way: a path without `./`, without `.js`, with a typo in the file name, or a name the module does not export. And if `domain/` and `ui/` start importing each other, ask yourself whether someone reads a value too early — and move the shared part into a separate module."

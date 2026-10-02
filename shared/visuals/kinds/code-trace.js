@@ -87,17 +87,24 @@ export function buildSpec(spec, ctx, issues, { file, source, trace }) {
   };
 }
 
-/** Wrap a run-time trace (sandbox `trace` event) in the compiled shape so the same player renders it. */
-export function traceToSpec(trace, code, file = 'index.js') {
+/**
+ * Wrap a run-time trace (sandbox `trace` event) in the compiled shape so the same player renders it.
+ * `source` is the code of `file`, or a map path → code of every traced file (a project with several
+ * modules): the player then shows the file of each step (step.file).
+ */
+export function traceToSpec(trace, source, file = 'index.js') {
   const consoleEntries = (trace.console ?? []).map((e) => ({ level: e.level, text: e.text }));
+  const files = source !== null && typeof source === 'object' ? source : null;
   return {
     kind: 'code-trace',
     file,
-    code,
+    code: files ? files[file] ?? '' : source,
+    ...(files ? { files } : {}),
     language: 'js',
     mode: 'all',
     totalSteps: trace.steps.length,
     truncated: trace.truncated === true,
+    maxSteps: trace.maxSteps ?? null,
     error: trace.error ?? null,
     console: consoleEntries,
     steps: trace.steps.map((raw) => ({ caption: null, trace: raw, logged: (trace.console ?? []).filter((e) => e.step < raw.i || (raw.kind === 'end' && e.step <= raw.i)).length })),
