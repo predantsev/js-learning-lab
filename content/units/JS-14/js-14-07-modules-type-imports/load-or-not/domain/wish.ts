@@ -1,4 +1,4 @@
-console.log("domain/wish.ts loaded");
+console.log("domain/wish.ts %%loaded%%");
 
 export interface Wish {
   readonly id: string;
