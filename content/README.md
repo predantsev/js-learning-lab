@@ -401,6 +401,20 @@ The same lesson's example (`node-notes`) writes `notes.txt` in the exercise fold
 
 Real loopback HTTP served by the platform, synthetic in-memory data: `GET /lab/ping`, `/lab/echo`, `/lab/status/<code>`, `/lab/delay/<ms>`, `/lab/flaky?key=K&fail=2`, `/lab/search?q=…` (shorter queries answer slower — stale-response race), collections `/lab/<wishlist|planner|habits|expenses>/items[/<id>]` (GET/POST/PUT/PATCH/DELETE, `?lang=uk|en`, `?delay=ms`, `?status=503`, `?flaky=N&key=K`), CORS cases `/lab/cors/open|closed|preflight|credentials`, `POST /lab/reset`.
 
+Measured while authoring JS-08 (real sandbox, Chrome):
+
+- `/lab/echo` reports `origin: "null"` because the sandbox has an opaque origin. `/lab/flaky` counters live for the whole server lifetime: use a unique key per run. `/lab/search` waits about 300 ms.
+- A URL outside the lab is rejected with `TypeError: Failed to fetch (blocked by the sandbox network policy)` and a console note that the network is disabled. Do not present that as "offline"; simulate offline with `mockFetch({ networkError: true })`.
+
+## Timers, promises and `fetch` in the browser sandbox (measured)
+
+- **Timing limits:** a run waits only for timers of 1500 ms or less and settles at 3000 ms; a loop running longer than 2 s is stopped with `LoopBudgetError`. Keep every delay whose output is checked below those limits.
+- **Order of a click and a timer:** in Chrome a click made during a long task is handled before a timer callback that was queued earlier. Never claim the opposite.
+- **Fake clock in tests:** replacing `window.setTimeout` inside a test works, and so does `rerun()` under it. The fake must skip non-function callbacks, or the typical mistake `setTimeout(fn(), ms)` crashes the test instead of failing it. Flush promise callbacks with `sleep(0)`.
+- **Project files through `fetch`:** `./data/x.json` answers 200 `application/json`, a missing file answers 404 "Not Found". They are served inside the sandbox, so they never appear in the DevTools Network panel. A prediction runs only `index.js`, so a prediction that fetches a project file needs `runnable: false`.
+- **Abort:** an aborted request rejects with a `DOMException` named `AbortError`; `AbortSignal.timeout` gives `TimeoutError`. `mockFetch` honours the signal; to inspect it, pass a handler function and read `init.signal`.
+- **Rejections:** an awaited rejection at top level is reported as a runtime error with the reason's name (so `verify.error` works); a fire-and-forget rejection is reported as an unhandled rejection. A solution that triggers either fails validation, and event-loop visuals must finish without any rejection.
+
 ## Before you report a unit as done
 
 - `node scripts/content/validate.mjs --unit <UNIT>` prints `CONTENT VALID`.
