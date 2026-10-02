@@ -1,5 +1,5 @@
 // The same text can be counted in three ways.
-const words = ["Київ", "🐈", "é", "Кі́т 🐈"];
+const words = ["Київ", "🐈", "e\u0301", "Кі\u0301т 🐈"];
 
 for (const word of words) {
   console.log(word, "→", "%%units%%", word.length, "·", "%%points%%", [...word].length);

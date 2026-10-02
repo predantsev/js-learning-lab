@@ -12,7 +12,10 @@ console.log("%%minor%%", totalMinor);
 const billMinor = 100;
 const people = 3;
 const share = Math.floor(billMinor / people);
-const shares = [share, share, share];
+const shares = [];
+for (let i = 0; i < people; i++) {
+  shares.push(share);
+}
 
 const sumOfShares = shares.reduce((sum, part) => sum + part, 0);
 console.log("%%shares%%", shares, "%%sum%%", sumOfShares, "%%of%%", billMinor);
