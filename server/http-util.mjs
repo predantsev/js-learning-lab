@@ -69,7 +69,12 @@ export async function readJson(req, limitBytes) {
 
 /** Serve a file from `root` (never outside it). Returns false when the file does not exist. */
 export async function serveStatic(req, res, root, relPath, headers = {}) {
-  const decoded = decodeURIComponent(relPath);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(relPath);
+  } catch {
+    return false; // malformed percent-encoding: no such file (was an unexpected 500)
+  }
   const file = path.resolve(root, `.${path.posix.normalize(`/${decoded}`)}`);
   if (file !== root && !file.startsWith(root + path.sep)) return false;
   let stat;

@@ -319,6 +319,32 @@ server.close();`,
     assert.equal(r.exit.code, 0);
   });
 
+  test('network "loopback": the platform server itself is unreachable (its page carries the API token)', async () => {
+    // Security review #7: before this check a loopback run could GET / on the platform port, read
+    // the token from the page and dump every learner document through /api/backup/create.
+    const port = ctx.server.port;
+    const r = await run({
+      capabilities: { network: 'loopback', workers: true },
+      files: {
+        'index.js': `import net from "node:net"; import { Worker } from "node:worker_threads";
+const tryConnect = (host) => new Promise((resolve) => { try { const s = net.connect(${port}, host); s.on("connect", () => { s.destroy(); resolve("CONNECTED"); }); s.on("error", (e) => resolve(e.code)); } catch (e) { resolve(e.code); } });
+const out = [];
+for (const host of ["localhost", "127.0.0.1", "::1"]) out.push(host + " " + await tryConnect(host));
+try { await fetch("http://127.0.0.1:${port}/"); out.push("fetch ALLOWED"); } catch (e) { out.push("fetch " + (e.cause?.code ?? e.code)); }
+const fromWorker = await new Promise((resolve) => {
+  const w = new Worker(\`const { parentPort } = require("node:worker_threads"); try { require("node:net").connect(${port}, "127.0.0.1").on("error", () => {}); parentPort.postMessage("ALLOWED"); } catch (e) { parentPort.postMessage(e.code); }\`, { eval: true });
+  w.once("message", (m) => { w.terminate(); resolve(m); });
+  w.once("error", (e) => resolve("error " + e.message));
+});
+out.push("worker " + fromWorker, "env " + String(process.env.JSLL_GUARD_PLATFORM_PORTS));
+console.log(out.join(","));`,
+      },
+    });
+    assert.equal(r.stdout, 'localhost ERR_JSLL_POLICY,127.0.0.1 ERR_JSLL_POLICY,::1 ERR_JSLL_POLICY,fetch ERR_JSLL_POLICY,worker ERR_JSLL_POLICY,env undefined\n', r.stderr);
+    assert.ok(!r.stdout.includes(ctx.token));
+    assert.ok(ctx.server.api.features.isolatedNode.limitations.some((l) => l.includes('own port')));
+  });
+
   test('a policy error explains how to bind a server to loopback', async () => {
     const r = await run({ capabilities: { network: 'loopback' }, files: { 'index.js': 'import http from "node:http"; http.createServer().listen(3000);' } });
     assert.match(r.stderr, /server\.listen\(3000, '127\.0\.0\.1'\)/);

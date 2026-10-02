@@ -1,17 +1,54 @@
 // Lab fixture API: real loopback HTTP endpoints for network lessons (JS-08, JS-16, RE-06, RN-06…).
 // Synthetic in-memory data only; state resets when the server restarts or on POST …/reset.
 // Documented for content authors in content/README.md ("Lab API").
+//
+// The lab needs no token and answers with `access-control-allow-origin: *` (CORS lessons), so any
+// web page open in the browser can send it simple requests. Its memory is therefore bounded:
+// at most LIMITS.collections collections, LIMITS.storedBytes of records written through the API
+// (`507 lab-full` beyond that, until POST /lab/reset) and LIMITS.counters retry counters (oldest
+// dropped first). Anything stored here is readable by every web page: never personal data.
 import { HttpError, readJson, sendJson } from './http-util.mjs';
 
 const MAX_DELAY_MS = 10_000;
+export const LAB_LIMITS = Object.freeze({ collections: 64, storedBytes: 8 * 1024 * 1024, counters: 1000 });
 const CORS_OPEN = { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-lab-attempt, x-total-count, location' };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const labFull = (what) => new HttpError(507, 'lab-full', `The lab keeps ${what} in memory. POST /lab/reset clears it.`);
 
-export function createLab({ domains = null } = {}) {
-  const collections = new Map(); // ns → Map(id → record)
+export function createLab({ domains = null, limits = LAB_LIMITS } = {}) {
+  const collections = new Map(); // `${ns}:${lang}` → Map(id → record)
+  const recordBytes = new Map(); // `${ns}:${lang}` → Map(id → bytes of records written through the API)
   const counters = new Map(); // key → attempts
+  let storedBytes = 0;
   let nextId = 1;
+
+  const bump = (key) => {
+    if (!counters.has(key) && counters.size >= limits.counters) counters.delete(counters.keys().next().value);
+    const attempt = (counters.get(key) ?? 0) + 1;
+    counters.set(key, attempt);
+    return attempt;
+  };
+  const putRecord = (key, items, id, record) => {
+    const sizes = recordBytes.get(key);
+    const bytes = Buffer.byteLength(JSON.stringify(record));
+    const delta = bytes - (sizes.get(id) ?? 0);
+    if (delta > 0 && storedBytes + delta > limits.storedBytes) throw labFull(`at most ${limits.storedBytes} bytes of records`);
+    storedBytes += delta;
+    sizes.set(id, bytes);
+    items.set(id, record);
+  };
+  const deleteRecord = (key, items, id) => {
+    const sizes = recordBytes.get(key);
+    storedBytes -= sizes.get(id) ?? 0;
+    sizes.delete(id);
+    items.delete(id);
+  };
+  const dropCollection = (key) => {
+    for (const bytes of recordBytes.get(key)?.values() ?? []) storedBytes -= bytes;
+    recordBytes.delete(key);
+    collections.delete(key);
+  };
 
   const seedFor = (ns, lang) => {
     const cap = domains?.capstones?.[ns];
@@ -19,20 +56,23 @@ export function createLab({ domains = null } = {}) {
     const localize = (v) => (v && typeof v === 'object' && !Array.isArray(v) && ('uk' in v || 'en' in v) ? v[lang] ?? v.uk : v);
     return cap.fixtures.map((f) => Object.fromEntries(Object.entries(f).map(([k, v]) => [k, localize(v)])));
   };
-  const collection = (ns, lang = 'uk') => {
+  const collectionKey = (ns, lang = 'uk') => {
     const key = `${ns}:${lang}`;
-    if (!collections.has(key)) collections.set(key, new Map(seedFor(ns, lang).map((r) => [String(r.id), r])));
-    return collections.get(key);
+    if (!collections.has(key)) {
+      if (collections.size >= limits.collections) throw labFull(`at most ${limits.collections} collections`);
+      collections.set(key, new Map(seedFor(ns, lang).map((r) => [String(r.id), r])));
+      recordBytes.set(key, new Map());
+    }
+    return key;
   };
+  const collection = (ns, lang = 'uk') => collections.get(collectionKey(ns, lang));
 
   async function applyControls(url, res, extraHeaders) {
     const delay = Math.min(Number(url.searchParams.get('delay') ?? 0) || 0, MAX_DELAY_MS);
     if (delay > 0) await sleep(delay);
     const flaky = Number(url.searchParams.get('flaky') ?? 0);
     if (flaky > 0) {
-      const key = `flaky:${url.pathname}:${url.searchParams.get('key') ?? ''}`;
-      const attempt = (counters.get(key) ?? 0) + 1;
-      counters.set(key, attempt);
+      const attempt = bump(`flaky:${url.pathname}:${url.searchParams.get('key') ?? ''}`);
       extraHeaders['x-lab-attempt'] = String(attempt);
       if (attempt <= flaky) {
         sendJson(res, Number(url.searchParams.get('status') ?? 503), { error: 'temporary failure', attempt }, extraHeaders);
@@ -49,7 +89,7 @@ export function createLab({ domains = null } = {}) {
   }
 
   /** @returns {Promise<boolean>} true when the request was handled */
-  return async function handleLab(req, res, url) {
+  async function handleLab(req, res, url) {
     const parts = url.pathname.split('/').filter(Boolean).slice(1); // after "lab"
     const method = req.method;
     const headers = { ...CORS_OPEN };
@@ -82,6 +122,8 @@ export function createLab({ domains = null } = {}) {
 
     if (parts[0] === 'reset' && method === 'POST') {
       collections.clear();
+      recordBytes.clear();
+      storedBytes = 0;
       counters.clear();
       return sendJson(res, 200, { ok: true }, headers), true;
     }
@@ -109,10 +151,8 @@ export function createLab({ domains = null } = {}) {
     }
 
     if (parts[0] === 'flaky') {
-      const key = `flaky:${url.searchParams.get('key') ?? 'default'}`;
       const fail = Number(url.searchParams.get('fail') ?? 2);
-      const attempt = (counters.get(key) ?? 0) + 1;
-      counters.set(key, attempt);
+      const attempt = bump(`flaky:${url.searchParams.get('key') ?? 'default'}`);
       headers['x-lab-attempt'] = String(attempt);
       if (attempt <= fail) return sendJson(res, Number(url.searchParams.get('status') ?? 503), { error: 'temporary failure', attempt }, headers), true;
       return sendJson(res, 200, { ok: true, attempt }, headers), true;
@@ -133,8 +173,16 @@ export function createLab({ domains = null } = {}) {
     if (parts.length >= 2 && parts[1] === 'items') {
       const ns = parts[0];
       const lang = url.searchParams.get('lang') === 'en' ? 'en' : 'uk';
-      const items = collection(ns, lang);
-      const id = parts[2] !== undefined ? decodeURIComponent(parts[2]) : null;
+      const key = collectionKey(ns, lang);
+      const items = collections.get(key);
+      let id = null;
+      if (parts[2] !== undefined) {
+        try {
+          id = decodeURIComponent(parts[2]);
+        } catch {
+          throw new HttpError(400, 'bad-id', 'The item id in the address is not valid percent-encoding.');
+        }
+      }
       if (await applyControls(url, res, headers)) return true;
       if (id === null) {
         if (method === 'GET') {
@@ -151,7 +199,7 @@ export function createLab({ domains = null } = {}) {
           if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'bad-body', 'Send a JSON object.');
           const newId = body.id !== undefined && !items.has(String(body.id)) ? String(body.id) : `lab-${nextId++}`;
           const record = { ...body, id: newId };
-          items.set(newId, record);
+          putRecord(key, items, newId, record);
           return sendJson(res, 201, record, { ...headers, location: `/lab/${ns}/items/${encodeURIComponent(newId)}` }), true;
         }
         throw new HttpError(405, 'method-not-allowed', 'Use GET or POST on a collection.');
@@ -162,21 +210,24 @@ export function createLab({ domains = null } = {}) {
         const body = await readJson(req, 256 * 1024);
         if (body === null || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'bad-body', 'Send a JSON object.');
         const record = method === 'PUT' ? { ...body, id } : { ...items.get(id), ...body, id };
-        items.set(id, record);
+        putRecord(key, items, id, record);
         return sendJson(res, 200, record, headers), true;
       }
       if (method === 'DELETE') {
-        items.delete(id);
+        deleteRecord(key, items, id);
         return res.writeHead(204, headers).end(), true;
       }
       throw new HttpError(405, 'method-not-allowed', 'Use GET, PUT, PATCH or DELETE on an item.');
     }
 
     if (parts.length === 2 && parts[1] === 'reset' && method === 'POST') {
-      for (const key of [...collections.keys()]) if (key.startsWith(`${parts[0]}:`)) collections.delete(key);
+      for (const key of [...collections.keys()]) if (key.startsWith(`${parts[0]}:`)) dropCollection(key);
       return sendJson(res, 200, { ok: true }, headers), true;
     }
 
     return false;
-  };
+  }
+  /** Current memory use, for tests and diagnostics. */
+  handleLab.stats = () => ({ collections: collections.size, storedBytes, counters: counters.size });
+  return handleLab;
 }

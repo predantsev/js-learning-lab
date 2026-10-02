@@ -156,7 +156,9 @@ starts, on macOS/Linux:
 - `cwd` = workspace. Environment = `NO_COLOR=1`, `TMPDIR=<workspace>/.tmp` (so `os.tmpdir()`
   works inside the sandbox), plus `SystemRoot`/`windir`/`TEMP`/`TMP` on Windows only. Nothing
   else is inherited: no token, no data-directory path, no `HOME`, no `PATH`. (macOS adds
-  `__CF_USER_TEXT_ENCODING` to every process; it is not a secret.)
+  `__CF_USER_TEXT_ENCODING` to every process; it is not a secret.) The server also passes
+  `JSLL_GUARD_PLATFORM_PORTS` (its own port); the guard removes it from `process.env` before
+  learner code runs and hands it to worker threads as environment data.
 - The child is its own process group (`detached`); timeouts and stops `SIGKILL` the whole group.
 - `stdout`/`stderr` pipes are switched to blocking writes in the child, so output reaches the
   server as it is produced even during a synchronous loop (macOS pipes are otherwise
@@ -194,6 +196,7 @@ the running machine):
 | `network: "none"` | node-permission on Node ≥ 25 (`--allow-net` absent); os-sandbox; platform-guard | Node < 25 has no network permission at all. |
 | `network: "loopback"` outbound | os-sandbox (outbound to localhost only); platform-guard | Node 25's `--allow-net` is all-or-nothing: once given, every address and interface is allowed. |
 | `network: "loopback"` listening address | platform-guard only | Seatbelt cannot tell loopback binds from other binds. The guard requires an explicit loopback host (`server.listen(3000, '127.0.0.1')`); `listen(3000)` is rejected with that advice, because it would accept connections from the local network. |
+| `network: "loopback"`: the platform server's own port | platform-guard only | The app page on that port carries the local API token, and the token gives access to every learner document (`/api/backup/create`). Measured before the guard check: a loopback run found the port by scanning 2000 loopback ports in 59 ms, read the token from `GET /` and dumped the store. Seatbelt could not express "loopback except one port" in the measurements of the security review (`docs/evidence/M1/security-review.md`), so this is guard-only on every OS and bypassable by deliberate code. Every other service listening on loopback stays reachable in this mode. |
 
 Network guard details: in `"none"` every `net`/`tls`/`http(s)`/`http2`/`fetch` connection,
 `listen`, UDP bind/send/connect and DNS lookup/resolve throws `ERR_JSLL_POLICY`. In
@@ -344,7 +347,9 @@ of failing the whole backup.
    platform guard is bypassable by deliberate code. On Linux and Windows there is no OS layer
    (*not implemented*), so `node:sqlite` paths, worker `execArgv` and signals rely on the guard
    alone, and on Node < 25 so does `network: "none"`.
-2. Loopback-only *listening* is guard-only on every OS.
+2. Loopback-only *listening* is guard-only on every OS. So is keeping a `network: "loopback"` run
+   away from the platform's own port (and therefore from the API token); other loopback services
+   are reachable in that mode. Untrusted code must not be run with `network: "loopback"`.
 3. Memory outside the JavaScript heap (Buffers, ArrayBuffers) is not capped; the workspace size
    is polled, not enforced by a quota.
 4. Platform guards apply in workers too; the result channel resists output forgery but not

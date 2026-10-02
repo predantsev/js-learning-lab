@@ -234,6 +234,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 const server = http.createServer(async (req, res) => {
+  // Answer only to this computer's own addresses, so a web page cannot read these files by
+  // pointing its own domain name at 127.0.0.1 (DNS rebinding).
+  if (![\`\${HOST}:\${port}\`, \`localhost:\${port}\`].includes(String(req.headers.host).toLowerCase())) {
+    res.writeHead(421, { 'content-type': 'text/plain; charset=utf-8' });
+    res.end('Misdirected request');
+    return;
+  }
   try {
     const url = new URL(req.url, \`http://\${HOST}\`);
     let rel = decodeURIComponent(url.pathname);

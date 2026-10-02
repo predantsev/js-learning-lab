@@ -189,7 +189,7 @@ export async function createApp(overrides = {}) {
     });
   };
 
-  return { handler, store, config, state, api };
+  return { handler, store, config, state, api, lab };
 }
 
 /** Start listening on both loopback families (`*.localhost` resolves to ::1 first on macOS). */
