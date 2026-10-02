@@ -147,3 +147,16 @@ test('twenty mount/teardown cycles leave nothing behind', async () => {
     expect(liveCount(), 'listeners left after 20 cycles').toBe(0);
   });
 });
+
+test('a second teardown call does not touch a newer list', () => {
+  fn('mount');
+  const root = newRoot();
+  const first = scope.mount(root, numbers(5), 2, counter());
+  first();
+  const second = scope.mount(root, numbers(5), 2, counter());
+  first();
+  expect(items(root), 'list items of the newer list after the old teardown ran again').toEqual(['L1', 'L2']);
+  press('+');
+  expect(items(root).length, 'list items of the newer list after the + key').toBe(4);
+  second();
+});
