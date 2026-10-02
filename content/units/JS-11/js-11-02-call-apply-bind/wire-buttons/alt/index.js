@@ -1,0 +1,26 @@
+const habit = {
+  name: "%%water%%",
+  completed: 0,
+  markDone() {
+    this.completed += 1;
+  },
+};
+
+// Make habit.markDone the click handler of both buttons:
+// the first one with bind, the second one with an arrow function.
+// Both must count on the habit, not on the button.
+function wire(first, second) {
+  const handler = habit.markDone.bind(habit);
+  first.addEventListener("click", handler);
+  second.addEventListener("click", (event) => {
+    habit.markDone.call(habit);
+  });
+}
+
+const firstButton = document.createElement("button");
+const secondButton = document.createElement("button");
+wire(firstButton, secondButton);
+
+firstButton.click();
+secondButton.click();
+console.log(habit.completed);
