@@ -1,0 +1,380 @@
+id: js-09-08-independent-delayed-retrieval
+unit: JS-09
+title:
+  uk: "Самостійно: CRUD, фільтр і збереження, перевірені тестами"
+  en: "Independent: CRUD, filter and persistence, verified by tests"
+kind: assessment
+minutes: 30
+contentVersion: 1
+purpose:
+  uk: "Самостійно, без підказок, поєднати незмінні оновлення, фільтр, збереження з перевіркою, делегований обробник подій і власні тести в новій предметній області — і показати, що твої тести справді ловлять дефекти."
+  en: "Combine immutable updates, a filter, validated persistence, a delegated event handler and your own tests in a new domain, on your own and without hints — and show that your tests really catch defects."
+objectives:
+  - uk: "Без підказок реалізувати додавання, оновлення й видалення, фільтр за статусом і збереження з відновленням для незнайомої синтетичної області та довести їх власними тестами меж і перезавантаження."
+    en: "Implement, without hints, add/update/remove, a status filter and save/reload for an unseen synthetic domain, and prove them with your own tests for boundaries and a reload."
+  - uk: "Під’єднати одну взаємодію через подію (додавання через submit форми) і перевірити її тестом рівня користувача."
+    en: "Wire one event-driven interaction (add through form submit) and verify it with a user-level test."
+prerequisites: [js-09-07-debug-with-tests]
+subskills:
+  - { family: P-04, skill: "assertions/boundaries", depth: assess }
+glossary: []
+
+blocks:
+  - id: the-task
+    kind: explanation
+    title:
+      uk: "Що перевіряє цей урок"
+      en: "What this lesson checks"
+    body:
+      uk: |
+        Тут ти працюєш **без підказок**: умова, редактор і перевірки. Знадобиться все, що було досі: незмінні оновлення списків, `filter`, збереження з перевіркою даних, обробник подій на батьківському елементі — і тести з цього розділу.
+
+        Перевірки дивляться на дві речі:
+
+        - **твій код**: вони викликають твої функції на власних даних (і зіпсованих теж), монтують сторінку в окремий контейнер і надсилають форму;
+        - **твої тести**: вони запускають твій `books.test.js` з еталонними модулями — там усі тести мають пройти — і з шістьма зламаними версіями, кожну з яких хоч один твій тест має впіймати.
+
+        Сховище вправи перевірки не змінюють: вони працюють із власними підробками сховища. Якщо перевірка не проходить, прочитай її назву й повідомлення: вони кажуть, *що* очікувалося, а не *як* це написати.
+      en: |
+        Here you work **without hints**: the task, the editor and the checks. You will need everything so far: immutable list updates, `filter`, saving with data validation, an event handler on a parent element — and the tests from this unit.
+
+        The checks look at two things:
+
+        - **your code**: they call your functions on their own data (damaged data too), mount the page into a separate container and submit the form;
+        - **your tests**: they run your `books.test.js` with reference modules — there every test must pass — and with six broken versions, each of which at least one of your tests must catch.
+
+        The checks do not change the exercise’s storage: they work with their own fake storages. If a check fails, read its title and message: they say *what* was expected, not *how* to write it.
+
+  - id: warm-up
+    kind: review
+    title:
+      uk: "Розминка: пригадай"
+      en: "Warm-up: recall"
+    items:
+      - id: immutable-update
+        from: js-04-10-immutable-updates
+        prompt:
+          uk: "Яке з оновлень статусу книжки `b-2` **не** змінює масив `books` і об’єкти в ньому?"
+          en: "Which update of the status of book `b-2` does **not** change the array `books` or the objects in it?"
+        answer:
+          type: choice
+          options:
+            - id: map-copy
+              code: "books.map((book) => (book.id === \"b-2\" ? { ...book, status: \"done\" } : book))"
+            - id: find-assign
+              code: "books.find((book) => book.id === \"b-2\").status = \"done\""
+              why:
+                uk: "`find` повертає той самий об’єкт, що лежить у масиві, тож присвоєння змінює запис у `books`."
+                en: "`find` returns the very object stored in the array, so the assignment changes the record inside `books`."
+            - id: map-assign
+              code: "books.map((book) => { if (book.id === \"b-2\") book.status = \"done\"; return book; })"
+              why:
+                uk: "`map` повертає новий масив, але з тими самими об’єктами, а присвоєння змінює один із них."
+                en: "`map` returns a new array, but with the same objects, and the assignment changes one of them."
+          correct: [map-copy]
+        explanation:
+          uk: "Новий масив і **копія** зміненого запису через spread — решта записів лишаються тими самими об’єктами. Початковий масив і його об’єкти не змінюються."
+          en: "A new array and a **copy** of the changed record made with spread — the other records stay the same objects. The original array and its objects do not change."
+      - id: filter-or-find
+        from: js-05-02-filter-find
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          const books = [
+            { id: "b-1", status: "done" },
+            { id: "b-2", status: "reading" },
+            { id: "b-3", status: "done" },
+          ];
+          console.log(books.filter((book) => book.status === "done").length, books.find((book) => book.status === "lost"));
+        verify: { logs: ["2 undefined"] }
+        answer:
+          type: choice
+          options:
+            - id: right
+              code: "2 undefined"
+            - id: find-empty
+              code: "2 []"
+              why:
+                uk: "`find` повертає один елемент або `undefined`, коли нічого не знайшов. Масив повертає `filter`."
+                en: "`find` returns one item, or `undefined` when it found nothing. An array is what `filter` returns."
+            - id: filter-first
+              code: "1 undefined"
+              why:
+                uk: "`filter` не зупиняється на першому збігу: він перевіряє всі елементи й лишає обидві прочитані книжки."
+                en: "`filter` does not stop at the first match: it checks every item and keeps both finished books."
+          correct: [right]
+        explanation:
+          uk: "`filter` дає масив усіх збігів, навіть порожній; `find` — перший збіг або `undefined`. Для фільтра за статусом потрібен `filter`."
+          en: "`filter` gives an array of all matches, even an empty one; `find` gives the first match or `undefined`. A status filter needs `filter`."
+      - id: one-listener
+        from: js-06-11-bubbling-capture-delegation
+        prompt:
+          uk: "Обробник `submit` додано до елемента-контейнера `root`, а не до форми всередині нього. Сторінку перемалювали, і форма тепер — новий елемент. Чи спрацює обробник, коли надіслати нову форму?"
+          en: "A `submit` handler is added to the container element `root`, not to the form inside it. The page was redrawn, and the form is now a new element. Does the handler run when the new form is submitted?"
+        answer:
+          type: choice
+          options:
+            - id: yes
+              text: { uk: "Так: подія `submit` спливає від форми до `root`", en: "Yes: the `submit` event bubbles up from the form to `root`" }
+            - id: no-new
+              text: { uk: "Ні: обробник прив’язаний до старої форми", en: "No: the handler is bound to the old form" }
+              why:
+                uk: "Обробник висить на `root`, а не на формі. Нова форма — теж усередині `root`, і її подія спливе до нього."
+                en: "The handler hangs on `root`, not on the form. The new form is inside `root` too, and its event bubbles up to it."
+            - id: no-bubble
+              text: { uk: "Ні: `submit` не спливає", en: "No: `submit` does not bubble" }
+              why:
+                uk: "У сучасних браузерах `submit` спливає, тому делегування працює і для форм."
+                en: "In modern browsers `submit` bubbles, which is why delegation works for forms too."
+          correct: [yes]
+        explanation:
+          uk: "Один обробник на батьківському елементі (делегування) обслуговує і ті елементи, що з’являться пізніше: подія спливає від `event.target` вгору. Саме тому в цьому завданні обробник висить на `root`."
+          en: "One handler on a parent element (delegation) also serves elements that appear later: the event bubbles up from `event.target`. That is why in this task the handler hangs on `root`."
+      - id: damaged-storage
+        from: js-07-05-persist-reload
+        prompt:
+          uk: "У сховищі під ключем застосунку лежить текст `{oops` — це не JSON. Що має зробити функція завантаження?"
+          en: "Under the app’s key the storage holds the text `{oops` — it is not JSON. What should the loading function do?"
+        answer:
+          type: choice
+          options:
+            - id: catch-default
+              text: { uk: "Перехопити помилку `JSON.parse` і повернути безпечне значення, наприклад порожній список", en: "Catch the `JSON.parse` error and return a safe value, for example an empty list" }
+            - id: throw
+              text: { uk: "Дати помилці вилетіти: так користувач побачить, що дані зіпсовані", en: "Let the error fly out: that way the user sees the data is damaged" }
+              why:
+                uk: "Неперехоплена помилка зупинить увесь застосунок ще до того, як він щось покаже. Користувач не побачить ні даних, ні пояснення."
+                en: "An uncaught error stops the whole app before it shows anything. The user sees neither the data nor an explanation."
+            - id: trust
+              text: { uk: "Нічого особливого: `JSON.parse` поверне `null`", en: "Nothing special: `JSON.parse` returns `null`" }
+              why:
+                uk: "`JSON.parse` на некоректному тексті кидає `SyntaxError`, а не повертає `null`."
+                en: "`JSON.parse` on invalid text throws a `SyntaxError`; it does not return `null`."
+          correct: [catch-default]
+        explanation:
+          uk: "`JSON.parse` кидає `SyntaxError` на тексті, що не є JSON. Завантаження загортає його в `try…catch` і після нього перевіряє форму даних (версію, масив, поля записів), щоб застосунок завжди стартував."
+          en: "`JSON.parse` throws a `SyntaxError` on text that is not JSON. Loading wraps it in `try…catch` and then checks the shape of the data (version, array, record fields), so the app always starts."
+
+  - id: reading-list
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: browser-js
+    dir: reading-list
+    entry: index.html
+    editable: [books.js, storage.js, ui.js, books.test.js]
+    strings:
+      lang: { uk: "uk", en: "en" }
+      heading: { uk: "Список читання", en: "Reading list" }
+      titleLabel: { uk: "Назва книжки", en: "Book title" }
+      addButton: { uk: "Додати", en: "Add" }
+      toRead: { uk: "прочитати", en: "to read" }
+      reading: { uk: "читаю", en: "reading" }
+      done: { uk: "прочитано", en: "done" }
+      book1: { uk: "Мапа зоряного неба", en: "A Map of the Night Sky" }
+      book2: { uk: "Кухня без поспіху", en: "Unhurried Cooking" }
+      book3: { uk: "Історія годинників", en: "A History of Clocks" }
+      tEmpty: { uk: "порожнє сховище дає порожній список", en: "empty storage gives an empty list" }
+      tOne: { uk: "одна книжка додається, а початковий список не змінюється", en: "one book is added and the original list stays unchanged" }
+      tMany: { uk: "фільтр лишає лише книжки з потрібним статусом", en: "the filter keeps only books with the status" }
+      tInvalid: { uk: "зіпсований JSON у сховищі дає порожній список", en: "damaged JSON in storage gives an empty list" }
+      tReload: { uk: "збережені книжки повертаються після перезавантаження", en: "saved books come back after a reload" }
+      tSubmit: { uk: "надсилання форми додає книжку на сторінку й у сховище", en: "submitting the form adds a book to the page and to storage" }
+      mEmpty: { uk: "loadBooks з порожнього сховища", en: "loadBooks from empty storage" }
+      mOne: { uk: "список після addBook", en: "list after addBook" }
+      mUnchanged: { uk: "початковий порожній список", en: "the original empty list" }
+      mMany: { uk: "id книжок зі статусом reading", en: "ids of books with status reading" }
+      mInvalid: { uk: "loadBooks із зіпсованим JSON", en: "loadBooks with damaged JSON" }
+      mReload: { uk: "книжки після save і load", en: "books after save and load" }
+      mItems: { uk: "кількість пунктів списку", en: "number of list items" }
+      mItemText: { uk: "назва в новому пункті", en: "title in the new item" }
+      mSaved: { uk: "книжок у сховищі", en: "books in storage" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rSameFields: { uk: "(вміст однаковий, але це два різні об’єкти)", en: "(same content, but two different objects)" }
+      rNeedsFunction: { uk: "toThrow чекає функцію: напиши expect(() => …)", en: "toThrow needs a function: write expect(() => …)" }
+      rDidNotThrow: { uk: "функція не кинула помилку", en: "the function did not throw" }
+      rOtherError: { uk: "очікувалася помилка", en: "expected an error of type" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Список читання з власними тестами"
+      en: "A reading list with your own tests"
+    instructions:
+      uk: |
+        Збери застосунок «Список читання». Книжка — це `{ id, title, status }`, де `status` — `"to-read"`, `"reading"` або `"done"`. Що має робити кожна функція, написано в коментарях над нею; ось коротко:
+
+        - `books.js` — `addBook(books, book)`, `updateBook(books, id, changes)`, `removeBook(books, id)` і `booksWithStatus(books, status)` (статус `"all"` дає всі книжки). Жодна не змінює переданий список.
+        - `storage.js` — `saveBooks(storage, books)` пише `{ "schemaVersion": 1, "books": [...] }` під ключем `STORAGE_KEY`; `loadBooks(storage)` читає назад і ніколи не кидає помилку: для відсутніх, зіпсованих даних чи іншої версії повертає `[]`, а недійсні записи пропускає.
+        - `ui.js` — `mount(root, storage)` кладе `MARKUP` у `root`, показує збережені книжки й додає книжку, коли надсилають форму. Обробник `submit` — **один, на `root`**, не на формі; він скасовує стандартну дію форми, обрізає пробіли довкола назви, нічого не додає для назви з самих пробілів чи довшої за 80 символів, а нову книжку зі статусом `"to-read"` і `id`, якого ще немає, зберігає й показує. `MARKUP` і `renderList` не змінюй.
+        - `books.test.js` — твої тести. Хоча б по одному на кожен випадок:
+          1. порожньо: `loadBooks` з порожнього сховища дає `[]`;
+          2. один: `addBook` додає одну книжку до порожнього списку, а сам порожній список не змінюється;
+          3. багато: `booksWithStatus` на кількох книжках із різними статусами лишає лише потрібні, у їхньому порядку;
+          4. зіпсований JSON у сховищі: `loadBooks` дає `[]`;
+          5. перезавантаження: після `saveBooks` той самий `loadBooks` повертає ті самі книжки;
+          6. форма: у новому контейнері з порожньою підробкою сховища введи назву, надішли форму й перевір пункт списку та сховище.
+
+        Для сховища в тестах бери підробку — об’єкт із методами `getItem` і `setItem`, — а не справжній `localStorage`. Контейнер для перевірки форми додай до `document.body` і прибери після тесту.
+      en: |
+        Build the “Reading list” app. A book is `{ id, title, status }`, where `status` is `"to-read"`, `"reading"` or `"done"`. The comments above each function say what it must do; in short:
+
+        - `books.js` — `addBook(books, book)`, `updateBook(books, id, changes)`, `removeBook(books, id)` and `booksWithStatus(books, status)` (the status `"all"` gives every book). None of them changes the list passed in.
+        - `storage.js` — `saveBooks(storage, books)` writes `{ "schemaVersion": 1, "books": [...] }` under the key `STORAGE_KEY`; `loadBooks(storage)` reads it back and never throws: for missing or damaged data or another version it returns `[]`, and it leaves out invalid records.
+        - `ui.js` — `mount(root, storage)` puts `MARKUP` into `root`, shows the saved books and adds a book when the form is submitted. The `submit` handler is **one, on `root`**, not on the form; it cancels the form’s default action, trims the spaces around the title, adds nothing for a title of spaces only or longer than 80 characters, and saves and shows a new book with the status `"to-read"` and an `id` no book has yet. Do not change `MARKUP` or `renderList`.
+        - `books.test.js` — your tests. At least one for every case:
+          1. empty: `loadBooks` from empty storage gives `[]`;
+          2. one: `addBook` adds one book to an empty list, and the empty list itself stays unchanged;
+          3. many: `booksWithStatus` on several books with different statuses keeps only the right ones, in their order;
+          4. damaged JSON in storage: `loadBooks` gives `[]`;
+          5. a reload: after `saveBooks`, `loadBooks` on the same storage returns the same books;
+          6. the form: in a new container with an empty fake storage, type a title, submit the form and check the list item and the storage.
+
+        For storage in tests use a fake — an object with the methods `getItem` and `setItem` — not the real `localStorage`. Add the container for the form test to `document.body` and remove it after the test.
+    testTitles:
+      "addBook returns a new list with the book at the end":
+        uk: "`addBook` повертає новий список із книжкою в кінці"
+        en: "`addBook` returns a new list with the book at the end"
+      "updateBook replaces one book with an updated copy":
+        uk: "`updateBook` замінює одну книжку оновленою копією"
+        en: "`updateBook` replaces one book with an updated copy"
+      "removeBook leaves out the book with that id":
+        uk: "`removeBook` прибирає книжку з цим `id`"
+        en: "`removeBook` leaves out the book with that `id`"
+      "booksWithStatus keeps the books with the status, and all of them for all":
+        uk: "`booksWithStatus` лишає книжки з цим статусом, а для `\"all\"` — усі"
+        en: "`booksWithStatus` keeps the books with the status, and all of them for `\"all\"`"
+      "saveBooks writes schemaVersion 1 and the books under jsll.reading.v1":
+        uk: "`saveBooks` пише `schemaVersion: 1` і книжки під `jsll.reading.v1`"
+        en: "`saveBooks` writes `schemaVersion: 1` and the books under `jsll.reading.v1`"
+      "loadBooks gives [] for missing, unparsable or wrong-version data":
+        uk: "`loadBooks` дає `[]` для відсутніх, зіпсованих даних чи іншої версії"
+        en: "`loadBooks` gives `[]` for missing, unparsable or wrong-version data"
+      "loadBooks leaves out invalid records":
+        uk: "`loadBooks` пропускає недійсні записи"
+        en: "`loadBooks` leaves out invalid records"
+      "mount shows the books already in storage":
+        uk: "`mount` показує книжки, що вже є у сховищі"
+        en: "`mount` shows the books already in storage"
+      "submitting the form adds a book, shows it and saves it":
+        uk: "Надсилання форми додає книжку, показує її й зберігає"
+        en: "Submitting the form adds a book, shows it and saves it"
+      "a title of spaces adds nothing":
+        uk: "Назва з самих пробілів нічого не додає"
+        en: "A title of spaces adds nothing"
+      "the submit is handled by one listener on root":
+        uk: "`submit` обробляє один обробник на `root`"
+        en: "The `submit` is handled by one listener on `root`"
+      "your tests pass with the reference modules":
+        uk: "Твої тести проходять з еталонними модулями"
+        en: "Your tests pass with the reference modules"
+      "one of your tests fails when loadBooks gives null for empty storage":
+        uk: "Твій тест падає, коли `loadBooks` для порожнього сховища дає `null`"
+        en: "Your test fails when `loadBooks` gives `null` for empty storage"
+      "one of your tests fails when addBook changes the list it receives":
+        uk: "Твій тест падає, коли `addBook` змінює отриманий список"
+        en: "Your test fails when `addBook` changes the list it receives"
+      "one of your tests fails when booksWithStatus ignores the status":
+        uk: "Твій тест падає, коли `booksWithStatus` не зважає на статус"
+        en: "Your test fails when `booksWithStatus` ignores the status"
+      "one of your tests fails when loadBooks throws on text that is not JSON":
+        uk: "Твій тест падає, коли `loadBooks` кидає помилку на тексті, що не є JSON"
+        en: "Your test fails when `loadBooks` throws on text that is not JSON"
+      "one of your tests fails when saveBooks saves nothing":
+        uk: "Твій тест падає, коли `saveBooks` нічого не зберігає"
+        en: "Your test fails when `saveBooks` saves nothing"
+      "one of your tests fails when submitting the form adds no book":
+        uk: "Твій тест падає, коли надсилання форми не додає книжки"
+        en: "Your test fails when submitting the form adds no book"
+    solutionNote:
+      uk: "Функції `books.js` повертають нові масиви (spread, `map`, `filter`) і не чіпають переданих. `loadBooks` перехоплює `SyntaxError` від `JSON.parse`, перевіряє версію й масив і фільтрує записи через `isBook`. Один обробник `submit` на `root` працює і для форми, яку перемалювали. Тести використовують свіжі дані й підробку сховища в кожному тесті, тому кожен із шести дефектів ловить «свій» тест."
+      en: "The functions in `books.js` return new arrays (spread, `map`, `filter`) and leave the ones passed in alone. `loadBooks` catches the `SyntaxError` from `JSON.parse`, checks the version and the array, and filters the records through `isBook`. One `submit` handler on `root` also works for a form that was redrawn. The tests use fresh data and a fake storage in every test, so each of the six defects is caught by “its” test."
+    feedback:
+      - when: { test: "addBook returns a new list with the book at the end" }
+        message:
+          uk: "Ця перевірка очікує новий масив із книжкою в кінці, а переданий масив — без змін."
+          en: "This check expects a new array with the book at the end, and the array passed in unchanged."
+      - when: { test: "updateBook replaces one book with an updated copy" }
+        message:
+          uk: "Ця перевірка очікує новий масив, де книжку з цим `id` замінено копією зі змінами, інші книжки — ті самі об’єкти, а переданий масив і його записи не змінилися."
+          en: "This check expects a new array where the book with this `id` is replaced by a copy with the changes, the other books are the same objects, and the array passed in and its records are unchanged."
+      - when: { test: "removeBook leaves out the book with that id" }
+        message:
+          uk: "Ця перевірка очікує новий масив без книжки з цим `id`; переданий масив має лишитися з трьома книжками."
+          en: "This check expects a new array without the book with this `id`; the array passed in must still hold three books."
+      - when: { test: "booksWithStatus keeps the books with the status, and all of them for all" }
+        message:
+          uk: "Ця перевірка очікує лише книжки з указаним статусом у їхньому порядку, `[]`, коли таких немає, і всі книжки для `\"all\"`."
+          en: "This check expects only the books with the given status in their order, `[]` when there are none, and every book for `\"all\"`."
+      - when: { test: "saveBooks writes schemaVersion 1 and the books under jsll.reading.v1" }
+        message:
+          uk: "Ця перевірка очікує під ключем `jsll.reading.v1` JSON-текст об’єкта `{ schemaVersion: 1, books }`."
+          en: "This check expects the JSON text of the object `{ schemaVersion: 1, books }` under the key `jsll.reading.v1`."
+      - when: { test: "loadBooks gives [] for missing, unparsable or wrong-version data" }
+        message:
+          uk: "Ця перевірка очікує `[]` без помилки для: нічого не збережено, текст не JSON, `schemaVersion` не 1, `books` не масив, текст `null`; і самі книжки для правильних даних."
+          en: "This check expects `[]` without an error for: nothing saved, text that is not JSON, `schemaVersion` other than 1, `books` that is not an array, the text `null`; and the books themselves for valid data."
+      - when: { test: "loadBooks leaves out invalid records" }
+        message:
+          uk: "Ця перевірка зберігає вперемішку дійсні й недійсні записи (`null`, `id`-число, назва з пробілів, невідомий статус) і очікує лише дійсні, у їхньому порядку."
+          en: "This check stores valid and invalid records mixed together (`null`, a number `id`, a title of spaces, an unknown status) and expects only the valid ones, in their order."
+      - when: { test: "mount shows the books already in storage" }
+        message:
+          uk: "Ця перевірка кладе три книжки в підробку сховища, викликає `mount` і очікує три пункти списку."
+          en: "This check puts three books into a fake storage, calls `mount` and expects three list items."
+      - when: { test: "submitting the form adds a book, shows it and saves it" }
+        message:
+          uk: "Ця перевірка вводить назву з пробілами довкола, надсилає форму й очікує: стандартну дію скасовано, у списку один пункт із назвою, у сховищі — книжка зі статусом `\"to-read\"`. Після другого надсилання — дві книжки з різними `id`."
+          en: "This check types a title with spaces around it, submits the form and expects: the default action cancelled, one list item with the title, a book with the status `\"to-read\"` in storage. After a second submit — two books with different `id`s."
+      - when: { test: "a title of spaces adds nothing" }
+        message:
+          uk: "Ця перевірка надсилає назву з самих пробілів і очікує, що в списку й сховищі нічого не з’явиться."
+          en: "This check submits a title of spaces only and expects nothing to appear in the list or in storage."
+      - when: { test: "the submit is handled by one listener on root" }
+        message:
+          uk: "Ця перевірка замінює форму її копією (у копії немає власних обробників) і надсилає її. Додати книжку зможе лише обробник на `root`."
+          en: "This check replaces the form with a copy of it (the copy has no handlers of its own) and submits it. Only a handler on `root` can add the book."
+      - when: { test: "your tests pass with the reference modules" }
+        message:
+          uk: "Ця перевірка запускає твій `books.test.js` з еталонними модулями й очікує, що всі тести пройдуть. Тести мають покладатися лише на те, що описано в умові: підготовлені тобою дані, `STORAGE_KEY`, `MARKUP` і поля книжки."
+          en: "This check runs your `books.test.js` with reference modules and expects every test to pass. The tests may rely only on what the task describes: data you prepared, `STORAGE_KEY`, `MARKUP` and the book’s fields."
+      - when: { test: "one of your tests fails when loadBooks gives null for empty storage" }
+        message:
+          uk: "Ця перевірка запускає твої тести з `loadBooks`, яка для порожнього сховища повертає `null`, і очікує, що хоч один упаде."
+          en: "This check runs your tests with a `loadBooks` that returns `null` for empty storage and expects at least one to fail."
+      - when: { test: "one of your tests fails when addBook changes the list it receives" }
+        message:
+          uk: "Ця перевірка запускає твої тести з `addBook`, яка додає книжку в сам переданий масив, і очікує, що хоч один упаде."
+          en: "This check runs your tests with an `addBook` that pushes the book into the array passed in and expects at least one to fail."
+      - when: { test: "one of your tests fails when booksWithStatus ignores the status" }
+        message:
+          uk: "Ця перевірка запускає твої тести з `booksWithStatus`, що повертає всі книжки, і очікує, що хоч один упаде."
+          en: "This check runs your tests with a `booksWithStatus` that returns every book and expects at least one to fail."
+      - when: { test: "one of your tests fails when loadBooks throws on text that is not JSON" }
+        message:
+          uk: "Ця перевірка запускає твої тести з `loadBooks`, що не перехоплює помилку `JSON.parse`, і очікує, що хоч один упаде."
+          en: "This check runs your tests with a `loadBooks` that does not catch the `JSON.parse` error and expects at least one to fail."
+      - when: { test: "one of your tests fails when saveBooks saves nothing" }
+        message:
+          uk: "Ця перевірка запускає твої тести з `saveBooks`, що нічого не пише у сховище, і очікує, що хоч один упаде."
+          en: "This check runs your tests with a `saveBooks` that writes nothing to storage and expects at least one to fail."
+      - when: { test: "one of your tests fails when submitting the form adds no book" }
+        message:
+          uk: "Ця перевірка запускає твої тести з `mount`, де надсилання форми нічого не додає, і очікує, що хоч один упаде."
+          en: "This check runs your tests with a `mount` where submitting the form adds nothing and expects at least one to fail."
+      - when: { error: SyntaxError }
+        message:
+          uk: "Код не вдалося запустити: синтаксична помилка в одному з файлів — назву файла й рядок видно в картці помилки."
+          en: "The code could not start: one of the files has a syntax error — the error card shows the file name and line."
+      - when: { error: TypeError }
+        message:
+          uk: "Під час запуску сталася `TypeError`. Якщо вона в `ui.js` чи `storage.js`, сторінка не змонтувалася — подивись на рядок у картці помилки й перевір, що кожна функція повертає те, що описано над нею."
+          en: "A `TypeError` happened while starting. If it is in `ui.js` or `storage.js`, the page did not mount — look at the line in the error card and check that every function returns what its comment describes."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-09
+    body:
+      uk: "Те саме тепер у твоєму проєкті: тести для валідації, фільтра, сортування й похідного значення доменних функцій, свіжі фікстури й зафіксований «сьогодні» — і закладений дефект, який ці тести мають знайти."
+      en: "Now the same in your project: tests for the validation, filter, sort and derived value of your domain functions, fresh fixtures and a fixed today — and a seeded defect these tests must find."

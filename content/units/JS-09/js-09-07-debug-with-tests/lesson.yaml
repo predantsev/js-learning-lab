@@ -1,0 +1,330 @@
+id: js-09-07-debug-with-tests
+unit: JS-09
+title:
+  uk: "Налагодження: хай тест, що падає, знайде дефект"
+  en: "Debug: let a failing test find the defect"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Перетворити повідомлення про помилку на тест, що її відтворює з детермінованою фікстурою, і виправляти код, доки тест не пройде, не зламавши інших тестів."
+    en: "Turn a bug report into a failing test that reproduces it with a deterministic fixture, then fix the code until it passes without breaking other tests."
+  - uk: "Звузити місце збою до однієї функції, додаючи менші тести довкола неї."
+    en: "Narrow a failure down to one function by adding smaller tests around it."
+prerequisites: [js-09-06-debugger-breakpoints]
+subskills:
+  - { family: P-04, skill: "assertions/boundaries", depth: assess }
+  - { family: P-04, skill: "deterministic fixtures", depth: assess }
+glossary: [regression-test]
+selfCheck: [which-fail-for-report, fresh-regression]
+
+blocks:
+  - id: report-first
+    kind: explanation
+    title:
+      uk: "Спершу тест, потім виправлення"
+      en: "The test first, then the fix"
+    body:
+      uk: |
+        Надходить повідомлення: «Сума витрат з 1 березня не враховує те, що я витратив саме 1 березня». Перше бажання — одразу лізти в код. Краще зробити інакше:
+
+        1. **Відтвори** дефект тестом: детермінована фікстура, зафіксована дата `from`, очікуване значення з умови задачі. Тест має **впасти** — і саме з тієї причини, про яку пише користувач.
+        2. **Звузь** місце: якщо функція викликає інші, додай менші тести для кожної з них. Той, що впаде, покаже функцію з дефектом.
+        3. **Виправ** код, доки новий тест не пройде, а старі не залишаться зеленими.
+
+        Тест, що лишається в наборі після виправлення, — [[regression-test|регресійний тест]]: якщо той самий дефект колись повернеться, набір одразу про це скаже.
+      en: |
+        A report arrives: “The total of expenses since March 1 leaves out what I spent on March 1 itself.” The first urge is to dive into the code right away. It is better to do this instead:
+
+        1. **Reproduce** the defect with a test: a deterministic fixture, a fixed `from` date, an expected value from the requirements. The test must **fail** — and for exactly the reason the user describes.
+        2. **Narrow** the place: if the function calls others, add smaller tests for each of them. The one that fails points at the function with the defect.
+        3. **Fix** the code until the new test passes and the old ones stay green.
+
+        A test that stays in the suite after the fix is a [[regression-test]]: if the same defect ever comes back, the suite says so at once.
+
+  - id: which-fail-for-report
+    kind: prediction
+    prompt:
+      uk: |
+        `totalSince(expenses, from)` рахує суму витрат, зроблених у день `from` або пізніше, а для порівняння дат викликає `isOnOrAfter(date, from)`. Є п’ять тестів, і всі проходять:
+
+        1. порожній список дає `0`;
+        2. з `from` = `"2026-03-05"` (пізніше за всі витрати) сума `0`;
+        3. з `from` = `"2026-02-01"` (раніше за всі витрати) рахуються всі витрати;
+        4. `isOnOrAfter("2026-03-02", "2026-03-01")` дає `true`;
+        5. `isOnOrAfter("2026-02-28", "2026-03-01")` дає `false`.
+
+        Користувач повідомляє: «Витрата, зроблена саме в день `from`, не рахується». Що можна сказати про ці тести?
+      en: |
+        `totalSince(expenses, from)` sums the expenses made on the day `from` or later, and calls `isOnOrAfter(date, from)` to compare dates. There are five tests, and all of them pass:
+
+        1. an empty list gives `0`;
+        2. with `from` = `"2026-03-05"` (later than every expense) the total is `0`;
+        3. with `from` = `"2026-02-01"` (earlier than every expense) every expense counts;
+        4. `isOnOrAfter("2026-03-02", "2026-03-01")` gives `true`;
+        5. `isOnOrAfter("2026-02-28", "2026-03-01")` gives `false`.
+
+        A user reports: “An expense made exactly on the day `from` is not counted.” What can you say about these tests?
+    answer:
+      type: choice
+      options:
+        - id: none-covers
+          text: { uk: "Жоден з них не перевіряє дату, що дорівнює `from`, тож дефект вони пропускають", en: "None of them checks a date equal to `from`, so they let the defect through" }
+        - id: data
+          text: { uk: "Усі тести проходять — отже, дефект у даних користувача, а не в коді", en: "All tests pass — so the defect is in the user’s data, not in the code" }
+          why:
+            uk: "Тести, що проходять, доводять лише ті випадки, які перевіряють. Повідомлення описує випадок, якого серед них немає: дату, що дорівнює `from`."
+            en: "Passing tests prove only the cases they check. The report describes a case that is not among them: a date equal to `from`."
+        - id: test-3
+          text: { uk: "Мав би впасти тест 3: він рахує всі витрати", en: "Test 3 should have failed: it counts every expense" }
+          why:
+            uk: "У тесті 3 усі дати пізніші за `from`. Для них `>` і `>=` дають той самий результат."
+            en: "In test 3 every date is later than `from`. For those, `>` and `>=` give the same result."
+        - id: tests-4-5
+          text: { uk: "Мали б впасти тести 4 і 5: вони перевіряють саме порівняння дат", en: "Tests 4 and 5 should have failed: they check exactly the date comparison" }
+          why:
+            uk: "Вони порівнюють **різні** дати. Межа — однакові дати, а таких пар у тестах немає."
+            en: "They compare **different** dates. The boundary is equal dates, and the tests have no such pair."
+      correct: [none-covers]
+    explanation:
+      uk: "Дефект сидить на точній межі: дата, що **дорівнює** `from`. Жоден з п’яти тестів туди не дивиться, тому всі зелені. Новий тест для цього випадку має впасти — так ти переконаєшся, що відтворив саме той дефект, про який пише користувач."
+      en: "The defect sits on an exact limit: a date **equal** to `from`. None of the five tests looks there, so all of them are green. A new test for that case must fail — that is how you make sure you reproduced exactly the defect the user describes."
+
+  - id: report-to-test
+    kind: example
+    runtime: browser-js
+    dir: report-to-test
+    entry: index.js
+    strings:
+      e01: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      e03: { uk: "Кава з друзями", en: "Coffee with friends" }
+      e04: { uk: "Лампочки", en: "Light bulbs" }
+      e06: { uk: "Обід", en: "Lunch" }
+      t1: { uk: "порожній список дає 0", en: "an empty list gives 0" }
+      t2: { uk: "from пізніше за всі витрати дає 0", en: "a from later than every expense gives 0" }
+      t3: { uk: "from раніше за всі витрати рахує все", en: "a from earlier than every expense counts everything" }
+      t4: { uk: "пізніша дата — on or after", en: "a later date is on or after" }
+      t5: { uk: "раніша дата — ні", en: "an earlier date is not" }
+      m1: { uk: "сума порожнього списку", en: "total of an empty list" }
+      m2: { uk: "сума з 2026-03-05", en: "total since 2026-03-05" }
+      m3: { uk: "сума з 2026-02-01", en: "total since 2026-02-01" }
+      m4: { uk: "2026-03-02 відносно 2026-03-01", en: "2026-03-02 against 2026-03-01" }
+      m5: { uk: "2026-02-28 відносно 2026-03-01", en: "2026-02-28 against 2026-03-01" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rSameFields: { uk: "(вміст однаковий, але це два різні об’єкти)", en: "(same content, but two different objects)" }
+      rNeedsFunction: { uk: "toThrow чекає функцію: напиши expect(() => …)", en: "toThrow needs a function: write expect(() => …)" }
+      rDidNotThrow: { uk: "функція не кинула помилку", en: "the function did not throw" }
+      rOtherError: { uk: "очікувалася помилка", en: "expected an error of type" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Від повідомлення до тесту"
+      en: "From a report to a test"
+    body:
+      uk: |
+        Тут `totalSince`, `isOnOrAfter` і ті самі п’ять тестів. Запусти: усі зелені, хоча дефект із повідомлення в коді є. Фікстури тут свіжі — кожен тест отримує витрати з `makeExpenses()`.
+      en: |
+        Here are `totalSince`, `isOnOrAfter` and the same five tests. Run it: all green, although the defect from the report is in the code. The fixtures are fresh here — every test gets its expenses from `makeExpenses()`.
+    tryIt:
+      uk: |
+        1. **Відтвори.** Додай у кінець `expenses.test.js` тест: з `from` = `"2026-03-01"` сума має бути `105600` (витрата `e-01` від 1 березня, 84550, плюс `e-06` від 2 березня, 21050). Запусти: тест падає з `очікувалося 105600, отримано 21050` — бракує саме витрати від 1 березня. Причина та, про яку пише користувач.
+        2. **Звузь.** Додай ще менший тест: `isOnOrAfter("2026-03-01", "2026-03-01")` має дати `true`. Він теж падає — отже, дефект в `isOnOrAfter`, а не в циклі `totalSince`.
+        3. **Виправ.** В `isOnOrAfter` заміни `>` на `>=`. Запусти: усі сім тестів зелені. Два нових залишаються в наборі як регресійні.
+      en: |
+        1. **Reproduce.** Add a test at the end of `expenses.test.js`: with `from` = `"2026-03-01"` the total must be `105600` (the expense `e-01` from March 1, 84550, plus `e-06` from March 2, 21050). Run: the test fails with `expected 105600, got 21050` — exactly the March 1 expense is missing. The cause is the one the user reports.
+        2. **Narrow.** Add an even smaller test: `isOnOrAfter("2026-03-01", "2026-03-01")` must give `true`. It fails too — so the defect is in `isOnOrAfter`, not in the loop of `totalSince`.
+        3. **Fix.** In `isOnOrAfter` replace `>` with `>=`. Run: all seven tests are green. The two new ones stay in the suite as regression tests.
+
+  - id: failing-trace
+    kind: visual
+    visual: code-trace
+    strings:
+      pass: { uk: "пройшов", en: "pass" }
+      fail: { uk: "упав: очікувалося", en: "fail: expected" }
+      got: { uk: "отримано", en: "got" }
+    title:
+      uk: "Шлях тесту, що падає"
+      en: "The path of the failing test"
+    textEquivalent:
+      uk: "Новий тест бере фікстуру з однією витратою e-01 від 2026-03-01 на 84550 копійок і викликає totalSince з from, що дорівнює тій самій даті, 2026-03-01. totalSince починає з суми 0 і для витрати викликає isOnOrAfter з двома однаковими датами. Усередині стоїть порівняння date > from: для однакових текстів воно хибне, тож isOnOrAfter повертає false, і витрату не додано. totalSince повертає 0. Тест порівнює фактичне значення 0 з очікуваним 84550 і друкує, що впав. Дефект — у рядку 2: порівняння має бути date >= from."
+      en: "The new test takes a fixture with one expense, e-01, from 2026-03-01 for 84550 minor units and calls totalSince with from equal to the same date, 2026-03-01. totalSince starts with a total of 0 and for the expense calls isOnOrAfter with two equal dates. Inside is the comparison date > from: for equal texts it is false, so isOnOrAfter returns false and the expense is not added. totalSince returns 0. The test compares the actual value 0 with the expected 84550 and prints that it failed. The defect is on line 2: the comparison must be date >= from."
+    spec:
+      file: visuals/failing-test.js
+      captions:
+        - at: { line: 16 }
+          text:
+            uk: "Детермінована фікстура: одна витрата `e-01` від `2026-03-01`. Дата `from` у тесті — та сама, `2026-03-01`."
+            en: "A deterministic fixture: one expense `e-01` from `2026-03-01`. The `from` date in the test is the same, `2026-03-01`."
+        - at: { line: 1, kind: call }
+          text:
+            uk: "`totalSince` викликала `isOnOrAfter` з двома **однаковими** датами — саме з межею, про яку повідомив користувач."
+            en: "`totalSince` called `isOnOrAfter` with two **equal** dates — exactly the boundary the user reported."
+        - at: { line: 2, kind: return }
+          text:
+            uk: "`\"2026-03-01\" > \"2026-03-01\"` — хибно: рядок не більший сам за себе. `isOnOrAfter` повертає `false`, і витрату пропущено. Ось дефект."
+            en: "`\"2026-03-01\" > \"2026-03-01\"` is false: a string is not greater than itself. `isOnOrAfter` returns `false`, and the expense is skipped. There is the defect."
+        - at: { line: 12, kind: return }
+          text:
+            uk: "`totalSince` повертає `0` — суму без жодної витрати."
+            en: "`totalSince` returns `0` — a total without a single expense."
+        - at: { line: 19 }
+          text:
+            uk: "Тест порівнює фактичне `0` з очікуваним `84550` і падає з тієї самої причини, що в повідомленні. Виправлення — `>=` у рядку 2."
+            en: "The test compares the actual `0` with the expected `84550` and fails for the same reason as in the report. The fix is `>=` on line 2."
+
+  - id: not-the-expected
+    kind: explanation
+    title:
+      uk: "Не підганяй очікування"
+      en: "Do not tune the expectation"
+    body:
+      uk: |
+        Коли тест падає, є спокуса змінити очікуване значення на те, що повертає код: `toBe(21050)` замість `toBe(105600)` — і все зелене. Але так ти не виправив дефект, а **записав його в тест**: тепер набір охороняє неправильну поведінку.
+
+        Очікуване значення береться з умови задачі, а не з коду. Змінювати його можна лише тоді, коли помилився сам тест — наприклад, ти неправильно порахував суму. Перевір це окремо, на папері.
+
+        І ще: тест, що падає лише разом з іншими чи лише в певному порядку, часто має **спільну фікстуру**, яку змінив попередній тест. Такий тест бреше в обидва боки — і зелений, і червоний.
+      en: |
+        When a test fails, it is tempting to change the expected value to whatever the code returns: `toBe(21050)` instead of `toBe(105600)` — and everything is green. But then you have not fixed the defect, you have **written it into the test**: now the suite guards the wrong behavior.
+
+        The expected value comes from the requirements, not from the code. Change it only when the test itself was wrong — for example, you added up the total incorrectly. Check that separately, on paper.
+
+        One more thing: a test that fails only together with others, or only in a certain order, often has a **shared fixture** that an earlier test changed. Such a test lies both ways — green and red.
+
+  - id: fresh-regression
+    kind: exercise
+    mode: debug
+    runtime: browser-js
+    dir: fresh-regression
+    entry: index.js
+    editable: [habits.js, habits.test.js]
+    strings:
+      h01: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      tNone: { uk: "з пізнішого дня — нуль виконань", en: "none since a later day" }
+      tBackfill: { uk: "дописаний заднім числом день рахується", en: "a back-filled day is counted" }
+      tEverything: { uk: "з 1 січня рахуються всі три дні", en: "since January 1 all three days count" }
+      tReport: { uk: "повідомлення: день from рахується", en: "report: the day from is counted" }
+      mNone: { uk: "виконань з 2026-03-05", en: "completions since 2026-03-05" }
+      mBackfill: { uk: "виконань з 2026-02-20", en: "completions since 2026-02-20" }
+      mEverything: { uk: "виконань з 2026-01-01", en: "completions since 2026-01-01" }
+      mReport: { uk: "виконань з 2026-03-01", en: "completions since 2026-03-01" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rSameFields: { uk: "(вміст однаковий, але це два різні об’єкти)", en: "(same content, but two different objects)" }
+      rNeedsFunction: { uk: "toThrow чекає функцію: напиши expect(() => …)", en: "toThrow needs a function: write expect(() => …)" }
+      rDidNotThrow: { uk: "функція не кинула помилку", en: "the function did not throw" }
+      rOtherError: { uk: "очікувалася помилка", en: "expected an error of type" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Регресійний тест, що не бреше"
+      en: "A regression test that does not lie"
+    instructions:
+      uk: |
+        `completedSince(habit, from)` у `habits.js` має рахувати, скільки днів виконання звички припадає на день `from` або пізніше. Колега вже додав у `habits.test.js` тест із повідомлення про помилку — «день `from` рахується». Запусти: падають три тести.
+
+        Тут два дефекти:
+
+        - один — у коді `completedSince`;
+        - другий — у самому файлі тестів: тести ділять одну звичку, і один із них її змінює.
+
+        Виправ обидва, не змінюючи очікуваних значень і не видаляючи тестів. Набір має проходити в будь-якому порядку — перевірки запустять його й задом наперед.
+      en: |
+        `completedSince(habit, from)` in `habits.js` must count how many completion days of the habit fall on the day `from` or later. A colleague has already added the test from the bug report to `habits.test.js` — “the day `from` is counted”. Run it: three tests fail.
+
+        There are two defects here:
+
+        - one in the code of `completedSince`;
+        - the other in the test file itself: the tests share one habit, and one of them changes it.
+
+        Fix both without changing the expected values and without deleting tests. The suite must pass in any order — the checks also run it back to front.
+    testTitles:
+      "completedSince counts a completion made on the day from":
+        uk: "`completedSince` рахує виконання, зроблене саме в день `from`"
+        en: "`completedSince` counts a completion made on the day `from`"
+      "completedSince leaves out earlier days and gives 0 for no completions":
+        uk: "`completedSince` не рахує раніших днів і дає `0`, коли виконань немає"
+        en: "`completedSince` leaves out earlier days and gives `0` when there are no completions"
+      "your tests pass in the order they are written":
+        uk: "Твої тести проходять у тому порядку, у якому написані"
+        en: "Your tests pass in the order they are written"
+      "your tests pass in reverse order too":
+        uk: "Твої тести проходять і в зворотному порядку"
+        en: "Your tests pass in reverse order too"
+      "your tests still catch the reported defect":
+        uk: "Твої тести досі ловлять дефект із повідомлення"
+        en: "Your tests still catch the reported defect"
+    hints:
+      nudge:
+        uk: "Спершу подивись на тест із повідомлення: яке порівняння дат у `completedSince` пропускає день, що дорівнює `from`? Потім знайди тест, який змінює спільну звичку."
+        en: "First look at the test from the report: which date comparison in `completedSince` drops the day equal to `from`? Then find the test that changes the shared habit."
+      explanation:
+        uk: "Виправивши лише порівняння, ти побачиш, що в написаному порядку ще падає тест «з 1 січня»: перед ним інший тест дописав у спільну звичку день `2026-02-20`. Кожен тест має отримувати свою звичку — наприклад, із функції, що щоразу будує новий об’єкт з новим масивом `completions`. Так у минулому уроці працювала `makeFixtures`, а в прикладі цього уроку — `makeExpenses`."
+        en: "Once you fix only the comparison, you will see that in the written order the “since January 1” test still fails: before it, another test added the day `2026-02-20` to the shared habit. Every test must get its own habit — for example, from a function that builds a new object with a new `completions` array every time. That is how `makeFixtures` worked in the previous lesson, and `makeExpenses` in this lesson’s example."
+    solutionNote:
+      uk: "У `completedSince` порівняння `>` пропускало день `from`; правильне — `>=`. А тест, що дописує день у `completions`, змінював спільну звичку, і тест «з 1 січня» бачив чотири дні замість трьох. З `makeHabit()` кожен тест має власну звичку, тож набір проходить у будь-якому порядку, а тест із повідомлення лишається регресійним: з `>` він знову впаде."
+      en: "In `completedSince` the comparison `>` dropped the day `from`; the right one is `>=`. And the test that adds a day to `completions` changed the shared habit, so the “since January 1” test saw four days instead of three. With `makeHabit()` every test has its own habit, so the suite passes in any order, and the test from the report stays as a regression test: with `>` it fails again."
+    feedback:
+      - when: { test: "completedSince counts a completion made on the day from" }
+        message:
+          uk: "Ця перевірка викликає `completedSince` з `from`, що дорівнює першому дню виконання, і очікує, що цей день теж порахується. Порівняння має пропускати дні, що **дорівнюють** `from`."
+          en: "This check calls `completedSince` with `from` equal to the first completion day and expects that day to count too. The comparison must let through days **equal** to `from`."
+      - when: { test: "completedSince leaves out earlier days and gives 0 for no completions" }
+        message:
+          uk: "Ця перевірка очікує, що дні до `from` не рахуються, а звичка без виконань дає `0`."
+          en: "This check expects days before `from` not to count, and a habit without completions to give `0`."
+      - when: { test: "your tests pass in the order they are written" }
+        message:
+          uk: "Ця перевірка запускає твої тести з правильною `completedSince` і очікує, що всі пройдуть. Якщо падає тест «з 1 січня», його звичку змінив попередній тест — дай кожному тесту власну звичку. Якщо падає інший, перевір, що очікувані значення лишилися такими, як були."
+          en: "This check runs your tests with a correct `completedSince` and expects all of them to pass. If the “since January 1” test fails, an earlier test changed its habit — give every test its own habit. If another one fails, check that the expected values are still what they were."
+      - when: { test: "your tests pass in reverse order too" }
+        message:
+          uk: "Ця перевірка запускає твої тести задом наперед із правильною `completedSince`. Тести, що проходять лише в одному порядку, залежать один від одного через спільні дані."
+          en: "This check runs your tests back to front with a correct `completedSince`. Tests that pass only in one order depend on each other through shared data."
+      - when: { test: "your tests still catch the reported defect" }
+        message:
+          uk: "Ця перевірка спершу запускає твої тести з правильною `completedSince` (усі мають пройти), а потім із версією, що пропускає день `from`, — і тоді хоч один має впасти. Тест із повідомлення має лишитися в наборі з очікуванням `1`: саме він охороняє від повернення дефекту."
+          en: "This check first runs your tests with a correct `completedSince` (all must pass), then against a version that drops the day `from` — and then at least one must fail. The test from the report must stay in the suite expecting `1`: it is the one that guards against the defect coming back."
+      - when: { error: SyntaxError }
+        message:
+          uk: "Код не вдалося запустити: синтаксична помилка в `habits.js` або `habits.test.js` — назву файла й рядок видно в картці помилки. Найчастіше бракує дужки після нової функції чи об’єкта."
+          en: "The code could not start: a syntax error in `habits.js` or `habits.test.js` — the error card shows the file name and line. Most often a bracket is missing after a new function or object."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: boolean-comparator
+        from: js-05-08-debug-comparator-missing
+        prompt:
+          uk: "Що не так із сортуванням `tasks.toSorted((a, b) => a.dueDate > b.dueDate)`?"
+          en: "What is wrong with the sort `tasks.toSorted((a, b) => a.dueDate > b.dueDate)`?"
+        answer:
+          type: choice
+          options:
+            - id: boolean
+              text: { uk: "Компаратор повертає `true`/`false`, а має повертати від’ємне число, нуль або додатне", en: "The comparator returns `true`/`false`, but it must return a negative number, zero or a positive one" }
+            - id: strings
+              text: { uk: "Дати-рядки не можна порівнювати через `>`", en: "Date strings cannot be compared with `>`" }
+              why:
+                uk: "Рядки `\"YYYY-MM-DD\"` порівнюються через `>` правильно: за символами зліва направо, а це й порядок дат."
+                en: "`\"YYYY-MM-DD\"` strings compare correctly with `>`: character by character from the left, which is the order of the dates."
+            - id: in-place
+              text: { uk: "`toSorted` змінює початковий масив", en: "`toSorted` changes the original array" }
+              why:
+                uk: "`toSorted` повертає новий масив і початкового не чіпає. Проблема — у тому, що повертає компаратор."
+                en: "`toSorted` returns a new array and leaves the original alone. The problem is in what the comparator returns."
+          correct: [boolean]
+        explanation:
+          uk: "Булевий компаратор ніколи не каже «`a` раніше» (`false` стає `0`, `true` — `1`), тож порядок залежить від рушія й даних. Як і з `>` проти `>=` у цьому уроці, такий дефект ховається на «зручних» даних — і ловиться тестом із незручними."
+          en: "A boolean comparator never says “`a` first” (`false` becomes `0`, `true` becomes `1`), so the order depends on the engine and the data. As with `>` versus `>=` in this lesson, such a defect hides on “convenient” data — and is caught by a test with inconvenient data."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-09
+    body:
+      uk: "У кроці проєкту в доменній функції сидить закладений дефект. Не шукай його очима: напиши тести для меж (порожньо, `null`, точні межі, зафіксований «сьогодні»), дай тесту, що впаде, показати місце, виправ код — і залиш цей тест у наборі як регресійний."
+      en: "In the project step a seeded defect sits in a domain function. Do not hunt for it by eye: write tests for the boundaries (empty, `null`, exact limits, a fixed today), let the failing test show the place, fix the code — and keep that test in the suite as a regression test."
