@@ -31,11 +31,15 @@ export class Store {
   }
 
   async open() {
-    await fs.mkdir(this.docsDir, { recursive: true });
+    // Private to this OS user: folders created here are 0700, files 0600 (on macOS every local
+    // user shares the "staff" group, and home folders are group-readable by default).
+    await fs.mkdir(this.docsDir, { recursive: true, mode: 0o700 });
     const metaPath = path.join(this.dataDir, 'meta.json');
     let meta = null;
     try {
       meta = JSON.parse(await fs.readFile(metaPath, 'utf8'));
+      // meta.json holds the local API token: tighten a file written by an earlier version.
+      if (process.platform !== 'win32') await fs.chmod(metaPath, 0o600).catch(() => {});
     } catch (error) {
       if (error.code !== 'ENOENT') throw new StoreError('meta-corrupt', `Cannot read ${metaPath}: ${error.message}`);
     }
@@ -84,9 +88,9 @@ export class Store {
   async #atomicWrite(file, text) {
     if (this.fault === 'write-fail') throw new StoreError('write-failed', 'Simulated write failure (test hook).');
     if (this.fault === 'disk-full') throw Object.assign(new StoreError('disk-full', 'No space left on device (test hook).'), { errno: 'ENOSPC' });
-    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
     const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
-    const handle = await fs.open(tmp, 'w');
+    const handle = await fs.open(tmp, 'w', 0o600);
     try {
       await handle.writeFile(text, 'utf8');
       await handle.sync();

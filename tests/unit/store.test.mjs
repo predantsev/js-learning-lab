@@ -34,6 +34,26 @@ test('writes are atomic: the envelope replaces the file and no temp files remain
   assert.deepEqual(JSON.parse(await fs.readFile(`${file}.bak`, 'utf8')).data, { files: { 'index.js': 'v1' } });
 });
 
+test('learner data is private to this OS user: folders 0700, files 0600, an older meta.json is tightened', async (t) => {
+  if (process.platform === 'win32') return t.skip('POSIX permissions');
+  const mode = async (p) => (await fs.stat(p)).mode & 0o777;
+  const root = await freshDir();
+  const dataDir = path.join(root, 'data');
+  const store = await new Store(dataDir).open();
+  await store.put('workspace/one', { files: { 'index.js': 'v1' } });
+  await store.put('workspace/one', { files: { 'index.js': 'v2' } }, { baseRev: 1 });
+  assert.equal(await mode(dataDir), 0o700);
+  assert.equal(await mode(store.docsDir), 0o700);
+  assert.equal(await mode(path.join(store.docsDir, 'workspace')), 0o700);
+  assert.equal(await mode(path.join(dataDir, 'meta.json')), 0o600, 'meta.json holds the API token');
+  assert.equal(await mode(path.join(store.docsDir, 'workspace', 'one.json')), 0o600);
+  assert.equal(await mode(path.join(store.docsDir, 'workspace', 'one.json.bak')), 0o600);
+  // A data folder written by an earlier version (umask 022): the token file is tightened on open.
+  await fs.chmod(path.join(dataDir, 'meta.json'), 0o644);
+  await new Store(dataDir).open();
+  assert.equal(await mode(path.join(dataDir, 'meta.json')), 0o600);
+});
+
 test('a stale revision is a conflict; force overwrites deliberately', async () => {
   const store = await new Store(await freshDir()).open();
   await store.put('progress', { step: 1 });
