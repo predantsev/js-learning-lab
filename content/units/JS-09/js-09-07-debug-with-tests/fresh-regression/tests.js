@@ -61,8 +61,11 @@ test('completedSince leaves out earlier days and gives 0 for no completions', as
   expect(count(habitWith([]), '2026-03-08'), 'no completions').toBe(0);
 });
 
+// The task forbids deleting tests: the four tests of the starter (or more) must still be there.
 test('your tests pass in the order they are written', async () => {
   await expectSuitePasses({ 'habits.js': reference });
+  const results = await runSuite({ 'habits.js': reference });
+  expect(results.length, 'number of tests in habits.test.js (the starter has 4)').toBeGreaterThanOrEqual(4);
 });
 
 test('your tests pass in reverse order too', async () => {

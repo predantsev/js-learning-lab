@@ -14,6 +14,6 @@ const cases = [
 
 for (const [label, name, valid] of cases) {
   test(label, () => {
-    expect(validateName(name).ok, label).toBe(valid);
+    expect(validateName(name).ok, "validateName(name).ok").toBe(valid);
   });
 }
