@@ -1,0 +1,636 @@
+id: js-15-13-debug-broken-setup
+unit: JS-15
+title:
+  uk: "Налагодження: зламаний script, lockfile і конфігурація"
+  en: "Debug: broken script, lockfile and config"
+kind: local-task
+minutes: 15
+contentVersion: 1
+purpose:
+  uk: "Проєкт, який «у мене працював», часто не встановлюється чи не запускається на іншому комп’ютері. Ти отримаєш саме такий проєкт, зафіксуєш кожну помилку, перш ніж щось міняти, полагодиш причини й доведеш результат установленням з чистої копії — не показавши жодного секрету."
+  en: "A project that “worked on my machine” often fails to install or start on another computer. You get exactly such a project, record every failure before changing anything, repair the causes and prove the result with an install from a clean copy — without exposing any secret."
+objectives:
+  - uk: "З’ясувати, чому наданий проєкт не встановлюється чи не запускається: script з помилкою в назві, lockfile, що розійшовся з `package.json`, діапазон версій, якому не відповідає жодна версія, і відсутнє значення env."
+    en: "Diagnose why a supplied project fails to install or start: a misspelled script, a lockfile out of sync with package.json, an incompatible version range and a missing env value."
+  - uk: "Полагодити кожну проблему з чистих файлів і довести це через `npm ci` і `npm test`, не показавши секрету ні у виводі, ні в commits."
+    en: "Repair each problem from clean files and prove it with npm ci and npm test, without exposing a secret in output or commits."
+prerequisites: [js-15-12-remotes-pr-review]
+subskills:
+  - { family: P-01, skill: "package scripts/manifest", depth: assess }
+  - { family: P-01, skill: "package manager/lockfile", depth: assess }
+  - { family: P-01, skill: "dependency/semver/security basics", depth: assess }
+  - { family: P-01, skill: "build/env/config", depth: assess }
+glossary: []
+
+blocks:
+  - id: how-to-debug-setup
+    kind: explanation
+    title:
+      uk: "Спершу записати, потім лагодити"
+      en: "Record first, repair second"
+    body:
+      uk: |
+        Коли проєкт не встановлюється, хочеться одразу «спробувати щось»: видалити lockfile, додати `--force`, перевстановити Node.js. Так губиться найцінніше — **перше** повідомлення про помилку, яке точно каже, що не так.
+
+        Порядок, якого варто триматися:
+
+        1. Запусти `npm ci`, `npm start`, `npm test` і **запиши** кожне повідомлення, нічого не змінюючи.
+        2. Для кожного знайди, **хто** скаржиться (npm, Node.js, твоя програма) і **на що**: назву script, версію, файл, змінну.
+        3. Лагодь по одній причині й перевіряй тією самою командою.
+        4. Доведи результат із **чистої копії**: склонуй репозиторій і виконай `npm ci` і `npm test` там, де немає твого `node_modules` і `.env`.
+
+        І ще одне правило: секрет не повинен з’являтися ні у виводі, ні в commit. `.env` лежить у `.gitignore`, а в репозиторії є лише `.env.example` з вигаданими значеннями.
+      en: |
+        When a project will not install, you want to “try something” right away: delete the lockfile, add `--force`, reinstall Node.js. That loses the most valuable thing — the **first** error message, which says exactly what is wrong.
+
+        The order to stick to:
+
+        1. Run `npm ci`, `npm start`, `npm test` and **write down** every message without changing anything.
+        2. For each one find **who** is complaining (npm, Node.js, your program) and **about what**: a script name, a version, a file, a variable.
+        3. Repair one cause at a time and check with the same command.
+        4. Prove the result from a **clean copy**: clone the repository and run `npm ci` and `npm test` where your `node_modules` and `.env` do not exist.
+
+        And one more rule: a secret must appear neither in the output nor in a commit. `.env` is in `.gitignore`, and the repository holds only `.env.example` with made-up values.
+
+  - id: predict-delete-lock
+    kind: prediction
+    prompt:
+      uk: "`npm ci` падає з `No matching version found for semver@^8.0.0`. Колега радить: «Видали `package-lock.json` і запусти `npm install` — це завжди допомагає». Що буде?"
+      en: "`npm ci` fails with `No matching version found for semver@^8.0.0`. A colleague advises: “Delete `package-lock.json` and run `npm install` — that always helps.” What happens?"
+    answer:
+      type: choice
+      options:
+        - id: same-error
+          text:
+            uk: "Та сама помилка: проблема в діапазоні в `package.json` — версії 8 не існує, — а lockfile тут ні до чого"
+            en: "The same error: the problem is the range in `package.json` — there is no version 8 — and the lockfile has nothing to do with it"
+        - id: fixed
+          text:
+            uk: "Усе встановиться: lockfile створиться заново"
+            en: "Everything installs: the lockfile is recreated"
+          why:
+            uk: "npm створює lockfile з діапазонів у `package.json`. Діапазону `^8.0.0` не відповідає жодна опублікована версія, тож встановлювати нічого."
+            en: "npm creates the lockfile from the ranges in `package.json`. No published version matches `^8.0.0`, so there is nothing to install."
+        - id: installs-old
+          text:
+            uk: "npm встановить найближчу версію, 7.x"
+            en: "npm installs the closest version, 7.x"
+          why:
+            uk: "npm ніколи не виходить за межі діапазону: `^8.0.0` означає «від 8.0.0 до 9», і 7.x туди не входить."
+            en: "npm never goes outside the range: `^8.0.0` means “from 8.0.0 up to 9”, and 7.x is not in it."
+      correct: [same-error]
+    explanation:
+      uk: "Повідомлення `No matching version found` прямо каже: діапазону не відповідає жодна версія. Лагодять діапазон, а lockfile видаляти не треба — він пам’ятає, з якими точно версіями проєкт працював, і ця інформація ще знадобиться."
+      en: "The message `No matching version found` says it outright: no version matches the range. You fix the range, and there is no need to delete the lockfile — it remembers exactly which versions the project worked with, and that information is still useful."
+
+  - id: broken-setup-lab
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Полагодити проєкт, що не встановлюється й не запускається"
+      en: "Repair a project that will not install or start"
+    intro:
+      uk: |
+        Ти створиш теку `~/js-course/broken-lab` з файлами зламаного проєкту й одразу закомітиш їх: так `git diff` потім покаже рівно твої виправлення. Потрібен інтернет (для пакета `semver`), облікові записи — ні. Команди однакові на macOS, Linux і Windows PowerShell, крім копіювання файла (вказано біля кроку).
+
+        Файли копіюй точно — **з помилками**. Файли `.env.example` і `.gitignore` починаються з крапки; у VS Code їх створюють так само, як інші.
+      en: |
+        You will create the folder `~/js-course/broken-lab` with the files of a broken project and commit them right away: that way `git diff` later shows exactly your repairs. Internet access is needed (for the `semver` package), accounts are not. The commands are the same on macOS, Linux and Windows PowerShell, except copying a file (given next to the step).
+
+        Copy the files exactly — **with their mistakes**. The files `.env.example` and `.gitignore` start with a dot; in VS Code you create them like any other file.
+    tools:
+      - name: "Node.js and npm"
+        version: "Node.js 22.13 or newer (checked with Node.js 25.2 and npm 11.6)"
+      - name: "Git"
+        version: "2.28 or newer"
+      - name: "A code editor"
+        version: "VS Code or any plain-text editor"
+    steps:
+      - text:
+          uk: |
+            Створи теку `~/js-course/broken-lab` і в ній файли.
+
+            `package.json`:
+
+            ```json
+            {
+              "name": "broken-lab",
+              "version": "1.0.0",
+              "private": true,
+              "type": "module",
+              "scripts": {
+                "strat": "node --env-file-if-exists=.env app.js",
+                "test": "node --test"
+              },
+              "dependencies": {
+                "semver": "^8.0.0"
+              }
+            }
+            ```
+
+            `package-lock.json`:
+
+            ```json
+            {
+              "name": "broken-lab",
+              "version": "1.0.0",
+              "lockfileVersion": 3,
+              "requires": true,
+              "packages": {
+                "": {
+                  "name": "broken-lab",
+                  "version": "1.0.0",
+                  "dependencies": {
+                    "semver": "^7.5.1"
+                  }
+                },
+                "node_modules/lru-cache": {
+                  "version": "6.0.0",
+                  "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-6.0.0.tgz",
+                  "integrity": "sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==",
+                  "license": "ISC",
+                  "dependencies": {
+                    "yallist": "^4.0.0"
+                  },
+                  "engines": {
+                    "node": ">=10"
+                  }
+                },
+                "node_modules/semver": {
+                  "version": "7.5.1",
+                  "resolved": "https://registry.npmjs.org/semver/-/semver-7.5.1.tgz",
+                  "integrity": "sha512-Wvss5ivl8TMRZXXESstBA4uR5iXgEN/VC5/sOcuXdVLzcdkz4HWetIoRfG5gb5X+ij/G9rw9YoGn3QoQ8OCSpw==",
+                  "license": "ISC",
+                  "dependencies": {
+                    "lru-cache": "^6.0.0"
+                  },
+                  "bin": {
+                    "semver": "bin/semver.js"
+                  },
+                  "engines": {
+                    "node": ">=10"
+                  }
+                },
+                "node_modules/yallist": {
+                  "version": "4.0.0",
+                  "resolved": "https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz",
+                  "integrity": "sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==",
+                  "license": "ISC"
+                }
+              }
+            }
+            ```
+
+            `app.js`:
+
+            ```js
+            // app.js: prints a summary of a few synthetic wishes.
+            import semver from "semver";
+            import { wantedSummary } from "./summary.js";
+
+            if (!semver.satisfies(process.version, ">=22.13.0")) {
+              throw new Error(`Node.js ${process.version} is too old: 22.13 or newer is needed`);
+            }
+
+            const currency = process.env.CURRENCY;
+            if (!currency) {
+              throw new Error("CURRENCY is not set: copy .env.example to .env");
+            }
+            const token = process.env.REPORT_TOKEN;
+
+            const wishes = [
+              { name: "Headphones", price: 80, acquired: false },
+              { name: "Desk lamp", price: 45, acquired: false },
+              { name: "Travel mug", price: 18, acquired: true },
+            ];
+
+            console.log(wantedSummary(wishes, currency));
+            console.log(`Report token: ${token ? "set" : "missing"}`);
+            ```
+
+            `summary.js`:
+
+            ```js
+            // summary.js: one line about the wishes that are still wanted.
+            export function wantedSummary(wishes, currency) {
+              const wanted = wishes.filter((wish) => !wish.acquired);
+              const total = wanted.reduce((sum, wish) => sum + (wish.price ?? 0), 0);
+              return `${wanted.length} wishes wanted, ${total} ${currency}`;
+            }
+            ```
+
+            `summary.test.js`:
+
+            ```js
+            // summary.test.js: run with npm test.
+            import { test } from "node:test";
+            import assert from "node:assert/strict";
+            import { wantedSummary } from "./summary.js";
+
+            test("counts and sums only the wanted wishes", () => {
+              const wishes = [
+                { name: "Bicycle", price: 240, acquired: false },
+                { name: "Concert tickets", price: null, acquired: false },
+                { name: "A book", price: 25, acquired: true },
+              ];
+              assert.equal(wantedSummary(wishes, "UAH"), "2 wishes wanted, 240 UAH");
+            });
+            ```
+
+            `README.md`:
+
+            ```markdown
+            # Broken lab
+
+            Prints a summary of synthetic wishes. Start it with `npm start`, test it with `npm test`.
+
+            - semver must be 7.5.2 or newer (advisory GHSA-c2qf-rxjj-qqgw).
+            - Settings come from `.env`; copy `.env.example` and fill in your own values. Never commit `.env`.
+            ```
+
+            `.env.example`:
+
+            ```text
+            CURRENCY=UAH
+            REPORT_TOKEN=replace-with-your-own-token
+            ```
+
+            `.gitignore`:
+
+            ```text
+            node_modules/
+            .env
+            ```
+
+            Збережи все й закоміть початковий стан:
+          en: |
+            Create the folder `~/js-course/broken-lab` with these files in it.
+
+            `package.json`:
+
+            ```json
+            {
+              "name": "broken-lab",
+              "version": "1.0.0",
+              "private": true,
+              "type": "module",
+              "scripts": {
+                "strat": "node --env-file-if-exists=.env app.js",
+                "test": "node --test"
+              },
+              "dependencies": {
+                "semver": "^8.0.0"
+              }
+            }
+            ```
+
+            `package-lock.json`:
+
+            ```json
+            {
+              "name": "broken-lab",
+              "version": "1.0.0",
+              "lockfileVersion": 3,
+              "requires": true,
+              "packages": {
+                "": {
+                  "name": "broken-lab",
+                  "version": "1.0.0",
+                  "dependencies": {
+                    "semver": "^7.5.1"
+                  }
+                },
+                "node_modules/lru-cache": {
+                  "version": "6.0.0",
+                  "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-6.0.0.tgz",
+                  "integrity": "sha512-Jo6dJ04CmSjuznwJSS3pUeWmd/H0ffTlkXXgwZi+eq1UCmqQwCh+eLsYOYCwY991i2Fah4h1BEMCx4qThGbsiA==",
+                  "license": "ISC",
+                  "dependencies": {
+                    "yallist": "^4.0.0"
+                  },
+                  "engines": {
+                    "node": ">=10"
+                  }
+                },
+                "node_modules/semver": {
+                  "version": "7.5.1",
+                  "resolved": "https://registry.npmjs.org/semver/-/semver-7.5.1.tgz",
+                  "integrity": "sha512-Wvss5ivl8TMRZXXESstBA4uR5iXgEN/VC5/sOcuXdVLzcdkz4HWetIoRfG5gb5X+ij/G9rw9YoGn3QoQ8OCSpw==",
+                  "license": "ISC",
+                  "dependencies": {
+                    "lru-cache": "^6.0.0"
+                  },
+                  "bin": {
+                    "semver": "bin/semver.js"
+                  },
+                  "engines": {
+                    "node": ">=10"
+                  }
+                },
+                "node_modules/yallist": {
+                  "version": "4.0.0",
+                  "resolved": "https://registry.npmjs.org/yallist/-/yallist-4.0.0.tgz",
+                  "integrity": "sha512-3wdGidZyq5PB084XLES5TpOSRA3wjXAlIWMhum2kRcv/41Sn2emQ0dycQW4uZXLejwKvg6EsvbdlVL+FYEct7A==",
+                  "license": "ISC"
+                }
+              }
+            }
+            ```
+
+            `app.js`:
+
+            ```js
+            // app.js: prints a summary of a few synthetic wishes.
+            import semver from "semver";
+            import { wantedSummary } from "./summary.js";
+
+            if (!semver.satisfies(process.version, ">=22.13.0")) {
+              throw new Error(`Node.js ${process.version} is too old: 22.13 or newer is needed`);
+            }
+
+            const currency = process.env.CURRENCY;
+            if (!currency) {
+              throw new Error("CURRENCY is not set: copy .env.example to .env");
+            }
+            const token = process.env.REPORT_TOKEN;
+
+            const wishes = [
+              { name: "Headphones", price: 80, acquired: false },
+              { name: "Desk lamp", price: 45, acquired: false },
+              { name: "Travel mug", price: 18, acquired: true },
+            ];
+
+            console.log(wantedSummary(wishes, currency));
+            console.log(`Report token: ${token ? "set" : "missing"}`);
+            ```
+
+            `summary.js`:
+
+            ```js
+            // summary.js: one line about the wishes that are still wanted.
+            export function wantedSummary(wishes, currency) {
+              const wanted = wishes.filter((wish) => !wish.acquired);
+              const total = wanted.reduce((sum, wish) => sum + (wish.price ?? 0), 0);
+              return `${wanted.length} wishes wanted, ${total} ${currency}`;
+            }
+            ```
+
+            `summary.test.js`:
+
+            ```js
+            // summary.test.js: run with npm test.
+            import { test } from "node:test";
+            import assert from "node:assert/strict";
+            import { wantedSummary } from "./summary.js";
+
+            test("counts and sums only the wanted wishes", () => {
+              const wishes = [
+                { name: "Bicycle", price: 240, acquired: false },
+                { name: "Concert tickets", price: null, acquired: false },
+                { name: "A book", price: 25, acquired: true },
+              ];
+              assert.equal(wantedSummary(wishes, "UAH"), "2 wishes wanted, 240 UAH");
+            });
+            ```
+
+            `README.md`:
+
+            ```markdown
+            # Broken lab
+
+            Prints a summary of synthetic wishes. Start it with `npm start`, test it with `npm test`.
+
+            - semver must be 7.5.2 or newer (advisory GHSA-c2qf-rxjj-qqgw).
+            - Settings come from `.env`; copy `.env.example` and fill in your own values. Never commit `.env`.
+            ```
+
+            `.env.example`:
+
+            ```text
+            CURRENCY=UAH
+            REPORT_TOKEN=replace-with-your-own-token
+            ```
+
+            `.gitignore`:
+
+            ```text
+            node_modules/
+            .env
+            ```
+
+            Save everything and commit the starting state:
+        command: "cd ~/js-course/broken-lab\ngit init -b main\ngit add .\ngit commit -m \"Start from the broken setup\""
+        expect:
+          uk: "`[main (root-commit) …] Start from the broken setup` і `8 files changed`."
+          en: "`[main (root-commit) …] Start from the broken setup` and `8 files changed`."
+      - text:
+          uk: "**Запиши**, нічого не змінюючи, що кажуть три команди. Не лагодь поки нічого — лише читай, хто скаржиться й на що."
+          en: "**Write down**, changing nothing, what three commands say. Do not repair anything yet — just read who is complaining and about what."
+        command: "npm ci\nnpm start\nnpm test"
+        expect:
+          uk: |
+            ```text
+            npm error code ETARGET
+            npm error notarget No matching version found for semver@^8.0.0.
+            …
+            npm error Missing script: "start"
+            …
+            ✔ counts and sums only the wanted wishes
+            ℹ pass 1
+            ℹ fail 0
+            ```
+
+            Тести проходять — отже, логіка програми ціла, а проблеми в налаштуваннях проєкту.
+          en: |
+            ```text
+            npm error code ETARGET
+            npm error notarget No matching version found for semver@^8.0.0.
+            …
+            npm error Missing script: "start"
+            …
+            ✔ counts and sums only the wanted wishes
+            ℹ pass 1
+            ℹ fail 0
+            ```
+
+            The tests pass — so the program’s logic is intact, and the problems are in the project’s setup.
+      - text:
+          uk: |
+            **Діапазон.** Версії 8 у `semver` немає, а README вимагає «7.5.2 або новішу». Встанови правильний діапазон і знову спробуй чисте встановлення:
+          en: |
+            **The range.** `semver` has no version 8, and the README requires “7.5.2 or newer”. Set the right range and try the clean install again:
+        command: "npm pkg set \"dependencies.semver=^7.5.2\"\nnpm ci"
+        expect:
+          uk: |
+            Нова помилка — і це прогрес:
+
+            ```text
+            npm error code EUSAGE
+            npm error
+            npm error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+            npm error
+            npm error Invalid: lock file's semver@7.5.1 does not satisfy semver@7.8.5
+            ```
+
+            Lockfile досі пам’ятає вразливу 7.5.1, яка новому діапазону `^7.5.2` не відповідає. Версія праворуч у повідомленні — найновіша 7.x на момент запуску, у тебе вона може бути новішою. Старіші npm можуть написати `does not satisfy semver@^7.5.2`.
+          en: |
+            A new error — and that is progress:
+
+            ```text
+            npm error code EUSAGE
+            npm error
+            npm error `npm ci` can only install packages when your package.json and package-lock.json or npm-shrinkwrap.json are in sync. Please update your lock file with `npm install` before continuing.
+            npm error
+            npm error Invalid: lock file's semver@7.5.1 does not satisfy semver@7.8.5
+            ```
+
+            The lockfile still remembers the vulnerable 7.5.1, which does not match the new range `^7.5.2`. The version on the right of the message is the newest 7.x at the time of the run; yours may be newer. Older npm versions may print `does not satisfy semver@^7.5.2`.
+      - text:
+          uk: "**Lockfile.** Онови його так, як радить повідомлення, і перевір, що чисте встановлення й audit тепер проходять:"
+          en: "**The lockfile.** Update it as the message suggests, and check that the clean install and the audit now pass:"
+        command: "npm install\ngit diff --stat\nnpm ci\nnpm audit"
+        expect:
+          uk: |
+            ```text
+            added 1 package, and audited 2 packages in 500ms
+
+            found 0 vulnerabilities
+             package-lock.json | 29 ++++-------------------------
+             package.json      |  2 +-
+             2 files changed, 5 insertions(+), 26 deletions(-)
+            ```
+
+            Lockfile втратив дві транзитивні залежності старої версії. `npm ci` — `added 1 package`, `npm audit` — `found 0 vulnerabilities`.
+          en: |
+            ```text
+            added 1 package, and audited 2 packages in 500ms
+
+            found 0 vulnerabilities
+             package-lock.json | 29 ++++-------------------------
+             package.json      |  2 +-
+             2 files changed, 5 insertions(+), 26 deletions(-)
+            ```
+
+            The lockfile lost the two transitive dependencies of the old version. `npm ci` — `added 1 package`, `npm audit` — `found 0 vulnerabilities`.
+      - text:
+          uk: |
+            **Script.** `npm run` покаже, що script називається `strat`. Перейменуй його й запусти:
+          en: |
+            **The script.** `npm run` shows that the script is called `strat`. Rename it and start:
+        command: "npm pkg delete scripts.strat\nnpm pkg set \"scripts.start=node --env-file-if-exists=.env app.js\"\nnpm start"
+        expect:
+          uk: |
+            Тепер скаржиться вже твоя програма:
+
+            ```text
+            > broken-lab@1.0.0 start
+            > node --env-file-if-exists=.env app.js
+
+            .env not found. Continuing without it.
+            …
+            Error: CURRENCY is not set: copy .env.example to .env
+            ```
+          en: |
+            Now it is your own program complaining:
+
+            ```text
+            > broken-lab@1.0.0 start
+            > node --env-file-if-exists=.env app.js
+
+            .env not found. Continuing without it.
+            …
+            Error: CURRENCY is not set: copy .env.example to .env
+            ```
+      - text:
+          uk: |
+            **Env.** Створи `.env` з прикладу (на Windows: `Copy-Item .env.example .env`). Відкрий `.env` у редакторі й заміни значення `REPORT_TOKEN` на будь-який вигаданий текст — **не друкуй** цей файл у терміналі. Потім:
+          en: |
+            **Env.** Create `.env` from the example (on Windows: `Copy-Item .env.example .env`). Open `.env` in the editor and replace the value of `REPORT_TOKEN` with any made-up text — **do not print** this file in the terminal. Then:
+        command: "cp .env.example .env\nnpm start\ngit status --short\ngit check-ignore -v .env"
+        expect:
+          uk: |
+            ```text
+            2 wishes wanted, 125 UAH
+            Report token: set
+             M package-lock.json
+             M package.json
+            .gitignore:2:.env	.env
+            ```
+
+            Програма каже лише, що токен є, — не його значення. `git status` не бачить `.env`, а `git check-ignore` пояснює чому: рядок 2 у `.gitignore`.
+          en: |
+            ```text
+            2 wishes wanted, 125 UAH
+            Report token: set
+             M package-lock.json
+             M package.json
+            .gitignore:2:.env	.env
+            ```
+
+            The program says only that the token is there — not its value. `git status` does not see `.env`, and `git check-ignore` explains why: line 2 of `.gitignore`.
+      - text:
+          uk: "Закоміть виправлення — лише ці два файли:"
+          en: "Commit the repairs — only these two files:"
+        command: "git add package.json package-lock.json\ngit commit -m \"Fix the start script and the semver range\""
+        expect:
+          uk: "`[main …] Fix the start script and the semver range`, `2 files changed`."
+          en: "`[main …] Fix the start script and the semver range`, `2 files changed`."
+      - text:
+          uk: "**Доказ із чистої копії.** Склонуй репозиторій у нову теку — там немає ні `node_modules`, ні твого `.env` — і встанови, перевір, запусти:"
+          en: "**Proof from a clean copy.** Clone the repository into a new folder — there is neither `node_modules` nor your `.env` there — then install, test and start:"
+        command: "cd ~/js-course\ngit clone broken-lab broken-lab-check\ncd broken-lab-check\nnpm ci\nnpm test\nnpm start"
+        expect:
+          uk: "`npm ci` — `found 0 vulnerabilities`; `npm test` — `ℹ pass 1`; `npm start` — знову `Error: CURRENCY is not set …`. Це правильно: `.env` не потрапив у репозиторій. Після `cp .env.example .env` тут `npm start` друкує `2 wishes wanted, 125 UAH`."
+          en: "`npm ci` — `found 0 vulnerabilities`; `npm test` — `ℹ pass 1`; `npm start` — again `Error: CURRENCY is not set …`. That is correct: `.env` did not get into the repository. After `cp .env.example .env` here, `npm start` prints `2 wishes wanted, 125 UAH`."
+    verify:
+      - id: failures-recorded
+        text:
+          uk: "До будь-яких змін я записав три результати: `ETARGET` у `npm ci`, `Missing script: \"start\"` у `npm start` і зелені тести."
+          en: "Before any change I recorded three results: `ETARGET` from `npm ci`, `Missing script: \"start\"` from `npm start` and green tests."
+      - id: range-and-lock-fixed
+        text:
+          uk: "Після виправлення діапазону `npm ci` показав помилку синхронізації, а після `npm install` — встановив пакети без помилок і вразливостей."
+          en: "After fixing the range `npm ci` showed the sync error, and after `npm install` it installed the packages with no errors and no vulnerabilities."
+      - id: env-not-committed
+        text:
+          uk: "`npm start` надрукував `Report token: set`, а `git check-ignore` підтвердив, що `.env` ігнорується."
+          en: "`npm start` printed `Report token: set`, and `git check-ignore` confirmed that `.env` is ignored."
+      - id: clean-copy
+        text:
+          uk: "У чистому клоні `npm ci` і `npm test` пройшли, а `npm start` спершу вимагав `.env`."
+          en: "In the clean clone `npm ci` and `npm test` passed, and `npm start` first asked for `.env`."
+    troubleshooting:
+      - problem:
+          uk: "`npm error Unexpected token … in JSON at position …` або `EJSONPARSE`"
+          en: "`npm error Unexpected token … in JSON at position …` or `EJSONPARSE`"
+        fix:
+          uk: "Під час копіювання в `package.json` чи `package-lock.json` загубилася кома або лапка. Скопіюй файл з уроку заново цілком."
+          en: "A comma or a quote got lost while copying `package.json` or `package-lock.json`. Copy the whole file from the lesson again."
+      - problem:
+          uk: "`npm ci` одразу пише про синхронізацію, без `ETARGET`"
+          en: "`npm ci` reports the sync problem right away, without `ETARGET`"
+        fix:
+          uk: "Деякі версії npm перевіряють збіг lockfile раніше, ніж шукають версію. Це та сама пара проблем у іншому порядку: виправ діапазон, потім онови lockfile через `npm install`."
+          en: "Some npm versions check the lockfile match before looking for a version. It is the same pair of problems in another order: fix the range, then update the lockfile with `npm install`."
+      - problem:
+          uk: "`git status` показує `.env` серед нових файлів"
+          en: "`git status` lists `.env` among new files"
+        fix:
+          uk: "`.gitignore` збережено з іншою назвою (наприклад, `.gitignore.txt`) або без рядка `.env`. **Не** роби `git add .`, доки `git status` показує `.env`. Виправ `.gitignore` і перевір `git check-ignore -v .env`."
+          en: "`.gitignore` was saved under another name (for example `.gitignore.txt`) or without the `.env` line. Do **not** run `git add .` while `git status` lists `.env`. Fix `.gitignore` and check with `git check-ignore -v .env`."
+      - problem:
+          uk: "`.env` випадково потрапив у commit"
+          en: "`.env` got into a commit by accident"
+        fix:
+          uk: "У навчальному проєкті значення вигадане, тож нічого страшного. У справжньому — вважай секрет розкритим: заміни його в сервісі, що його видав. Прибрати `.env` з наступних commits: `git rm --cached .env`, додай рядок у `.gitignore` і закоміть."
+          en: "In the practice project the value is made up, so no harm done. In a real one, treat the secret as exposed: replace it with the service that issued it. To keep `.env` out of later commits: `git rm --cached .env`, add the line to `.gitignore` and commit."
+    recovery:
+      uk: "Перший commit «Start from the broken setup» — твоя точка повернення. `git diff` показує все, що ти змінив відтоді, а `git restore package.json package-lock.json` повертає ці два файли до зламаного стану, якщо хочеш почати лагодити заново."
+      en: "The first commit, “Start from the broken setup”, is your return point. `git diff` shows everything you changed since, and `git restore package.json package-lock.json` returns these two files to the broken state if you want to start repairing again."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-15
+    body:
+      uk: "Коли твій проєкт отримає `package.json`, lockfile і `.env.example`, перевіряй його так само: чиста копія, `npm ci`, `npm test` — і жодного секрету в історії."
+      en: "Once your project has `package.json`, a lockfile and `.env.example`, check it the same way: a clean copy, `npm ci`, `npm test` — and no secret in the history."
