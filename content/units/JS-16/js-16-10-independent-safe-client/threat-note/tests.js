@@ -1,4 +1,5 @@
-const HTML_SINK = /innerHTML|outerHTML|insertAdjacentHTML|document\.write/i;
+// An HTML sink named as the API; a mention after "not"/"не"/"instead of"/"замість" ("textContent, not innerHTML") is fine.
+const HTML_SINK = /(?<!(?:^|[\s,(])(?:not|never|instead of|rather than|не|ні|без|замість|а не)\s+)(?:innerHTML|outerHTML|insertAdjacentHTML|document\.write)/i;
 const TEXT_SINK = /textContent|createTextNode|text node|текстов/i;
 
 function note() {
