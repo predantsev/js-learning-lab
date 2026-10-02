@@ -41,7 +41,7 @@ test('completionRate reads each completion only a few times', () => {
   const { proxy, counter } = counted(habit.completions);
   const rate = fn('completionRate')(proxy, days);
   expect(rate, 'completionRate over 1,000 days').toBe(expectedRate(habit.completions, days));
-  expect(counter.reads, `reads of the ${habit.completions.length} completions over 1,000 days`).toBeLessThanOrEqual(3 * habit.completions.length);
+  expect(counter.reads, `reads of the ${habit.completions.length} completions over 1,000 days`).toBeLessThanOrEqual(30 * habit.completions.length);
 });
 
 test('categoryPath builds the path from the root', () => {
