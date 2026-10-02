@@ -9,6 +9,12 @@ test('valid stored text gives ok with every wish', () => {
   expect(result.value?.map((item) => item.id), 'ids in value').toEqual(['w-04', 'w-05']);
 });
 
+test('ok gives the records as validateItem returned them, with trimmed names', () => {
+  const result = parseStoredWishes(JSON.stringify([wish({ name: `  ${L.book}  ` })]));
+  expect(result.ok, 'ok for one valid wish').toBe(true);
+  expect(result.value?.[0]?.name, 'name of the wish in value').toBe(L.book);
+});
+
 test('text that is not JSON gives the invalid-json error instead of throwing', () => {
   let result;
   expect(() => {
