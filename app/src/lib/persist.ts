@@ -56,7 +56,9 @@ export class Doc<T> {
     if (Object.is(next, this.store.get())) return;
     this.store.set(next);
     this.dirty = true;
-    if (this.state !== 'conflict') this.state = 'pending';
+    // A failed or conflicting document stays visibly so until a write really succeeds: more edits
+    // must not turn the "not saved" warning back into an ordinary "pending" state.
+    if (this.state !== 'conflict' && this.state !== 'failed') this.state = 'pending';
     recompute();
     this.schedule(DEBOUNCE_MS);
   }
@@ -72,7 +74,8 @@ export class Doc<T> {
     if (!this.dirty || this.inFlight || (this.state === 'conflict' && !force)) return;
     this.inFlight = true;
     this.dirty = false;
-    this.state = 'saving';
+    // A retry of a failed write keeps showing "not saved" until the server confirms it.
+    if (this.state !== 'failed') this.state = 'saving';
     recompute();
     try {
       const result = await api<{ rev: number }>('PUT', `/api/store/doc?id=${encodeURIComponent(this.id)}`, { baseRev: this.rev, data: this.store.get(), force }, { keepalive });

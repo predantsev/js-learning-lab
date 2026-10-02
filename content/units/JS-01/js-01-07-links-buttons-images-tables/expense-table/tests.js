@@ -27,5 +27,8 @@ test('the table has two rows of expenses', () => {
 test('every expense row has a cell for each column', () => {
   const columns = screen.$('table tr')?.children.length ?? 0;
   expect(dataRows().length, 'rows with <td> cells').toBeGreaterThan(0);
-  for (const row of dataRows()) expect(row.children.length, 'cells in an expense row').toBe(columns);
+  for (const row of dataRows()) {
+    expect(row.children.length, 'cells in an expense row').toBe(columns);
+    for (const cell of row.children) expect(cell.textContent.trim().length, 'length of the text in an expense cell').toBeGreaterThan(0);
+  }
 });

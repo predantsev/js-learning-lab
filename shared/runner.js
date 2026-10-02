@@ -29,7 +29,9 @@ const LIB_FILES = {
 };
 
 const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-/** src given to an <img> whose project file does not exist (the sandbox reports it as a blocked resource). */
+/** Former marker for an <img> whose project file does not exist. prepareRun now leaves such a src
+ *  untouched and the sandbox runtime reports `missing-file` itself; the runtime still understands
+ *  the marker, and components/project imports it. */
 export const MISSING_IMAGE_PREFIX = 'about:invalid#jsll-missing-file:';
 
 function defaultHtml(entry, runtime, lang) {
@@ -77,14 +79,27 @@ export function prepareRun(input) {
   }
 
   // Project images (SVG files are text) are inlined as data: URLs, because the sandbox loads no
-  // resources from the network. A missing file stays a broken image, as in a real browser; its
-  // src names the file so the console can explain what is missing (MISSING_IMAGE_PREFIX).
+  // resources from the network: in <img src> and in url(...) of styles (an inline <style> resolves
+  // against the page, an inlined stylesheet file against its own folder). A reference that matches
+  // no project file stays exactly as written — a broken image shows its alt text, as in a real
+  // browser — and the sandbox runtime explains in the console which file is missing.
+  const svgData = (path) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(files[path])}`;
+  const projectSvg = (ref, base) => {
+    if (/^[a-z]+:|^\/\/|^#/i.test(ref)) return null;
+    const target = normalizePath(`${base}/${ref.split(/[?#]/)[0]}`);
+    return target !== null && Object.prototype.hasOwnProperty.call(files, target) && /\.svg$/i.test(target) ? target : null;
+  };
   for (const img of [...doc.querySelectorAll('img[src]')]) {
-    const src = img.getAttribute('src');
-    if (/^[a-z]+:|^\/\//i.test(src)) continue;
-    const target = fromHtml(src.split(/[?#]/)[0]);
-    if (target !== null && Object.prototype.hasOwnProperty.call(files, target) && /\.svg$/i.test(target)) img.setAttribute('src', `data:image/svg+xml;charset=utf-8,${encodeURIComponent(files[target])}`);
-    else img.setAttribute('src', `${MISSING_IMAGE_PREFIX}${target ?? src}`);
+    const target = projectSvg(img.getAttribute('src').trim(), baseDir);
+    if (target) img.setAttribute('src', svgData(target));
+  }
+  for (const style of [...doc.querySelectorAll('style')]) {
+    const file = style.getAttribute('data-file');
+    const base = file === null ? baseDir : file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '';
+    style.textContent = style.textContent.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/g, (match, _quote, ref) => {
+      const target = projectSvg(ref.trim(), base);
+      return target ? `url("${svgData(target)}")` : match;
+    });
   }
 
   for (const script of [...doc.querySelectorAll('script')]) {
@@ -168,15 +183,33 @@ export function prepareRun(input) {
 
 let frameCounter = 0;
 let siteGeneration = 0;
+// Some browsers (embedded browser panes among them) cannot load *.localhost subdomains. Then the
+// sandbox moves to the IP host: 127.0.0.1 is never an application host (the server redirects it to
+// localhost), so the sandbox stays a different site from the app at localhost or
+// js-learning-lab.localhost.
+let ipSandbox = false;
+let sandboxSeen = false; // a sandbox frame said "ready" in this page, so its host works here
+/** A frame that finished loading without the sandbox saying "ready" shows an error or blocked page. */
+const LOADED_WITHOUT_READY_MS = 2000;
 
 /**
  * Pick the sandbox origin. Each generation is a different *site* (jsll-run-N.localhost), so a frame
  * whose renderer got stuck never shares a process with the next run (spike: docs/evidence/M1).
  */
 export function sandboxOriginFor(port, { ipFallback = false } = {}) {
-  return ipFallback ? `http://127.0.0.1:${port}` : `http://jsll-run-${siteGeneration}.localhost:${port}`;
+  return ipFallback || ipSandbox ? `http://127.0.0.1:${port}` : `http://jsll-run-${siteGeneration}.localhost:${port}`;
 }
 export const nextSandboxSite = () => { siteGeneration += 1; };
+/**
+ * Call after a run failed with `sandbox-unreachable`. When the failing host was a *.localhost
+ * sandbox host that never worked in this page, switch to the IP host and return true: the caller
+ * prepares the run again (the payload names the origin) and retries once.
+ */
+export function fallBackToIpSandbox(failedOrigin) {
+  if (ipSandbox || sandboxSeen || !/\.localhost:\d+$/.test(failedOrigin)) return false;
+  ipSandbox = true;
+  return true;
+}
 
 /**
  * One execution in a fresh frame.
@@ -209,6 +242,13 @@ export class SandboxRun {
     this.frame = frame;
     this.state = 'booting';
     window.addEventListener('message', this.listener);
+    // The sandbox says "ready" while its page is still parsing; a page that finished loading without
+    // it is an error or blocked page (the host could not be reached): report that quickly.
+    frame.addEventListener('load', () => {
+      if (this.state !== 'booting' || this.frame !== frame) return;
+      clearTimeout(this.loadTimer);
+      this.loadTimer = setTimeout(() => { if (this.state === 'booting') this.#fail('sandbox-unreachable'); }, LOADED_WITHOUT_READY_MS);
+    });
     this.container.replaceChildren(frame);
     this.readyTimer = setTimeout(() => {
       if (this.state === 'booting') this.#fail('sandbox-unreachable');
@@ -227,6 +267,7 @@ export class SandboxRun {
 
   #cleanupTimers() {
     clearTimeout(this.readyTimer);
+    clearTimeout(this.loadTimer);
     clearInterval(this.heartbeat);
   }
 
@@ -237,6 +278,8 @@ export class SandboxRun {
     if (message.type === 'ready') {
       if (this.state === 'booting' && message.frameId === this.frameId) {
         clearTimeout(this.readyTimer);
+        clearTimeout(this.loadTimer);
+        sandboxSeen = true;
         this.state = 'running';
         this.lastPong = performance.now();
         this.frame.contentWindow.postMessage({ jsll: 1, frameId: this.frameId, type: 'run', payload: { ...this.prepared.payload, runId: this.runId, nonce: this.nonce } }, '*');

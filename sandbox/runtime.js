@@ -119,9 +119,11 @@
   function cleanStack(stack) {
     let s = String(stack);
     for (const [url, file] of blobToFile) s = s.split(url).join(file);
+    // Runtime frames carry the frame document's URL (the runtime is inlined into frame.html by
+    // the sandbox build) or /sandbox/runtime.js; learner code has its own file names.
     return s
       .split('\n')
-      .filter((line) => !/\/sandbox\/runtime\.js/.test(line))
+      .filter((line) => !/\/sandbox\/(?:runtime\.js|frame\.html)/.test(line))
       .join('\n');
   }
 
@@ -171,21 +173,30 @@
     if (flushTimer === null) flushTimer = nativeSetTimeout(flush, 30);
   }
   const captured = [];
+  // While a test re-evaluates the entry module (rerun), its output goes to that rerun only: not to
+  // the learner's console and not to logs().
+  let rerunSink = null;
+  const record = (level, args, shownLevel = level) => {
+    if (rerunSink) { rerunSink.push({ level, args }); return; }
+    captured.push({ level, args });
+    emitConsole(shownLevel, args);
+  };
   for (const level of ['log', 'info', 'warn', 'error', 'debug', 'table', 'dir']) {
     const original = console[level].bind(console);
     console[level] = (...args) => {
-      original(...args);
-      captured.push({ level, args });
-      emitConsole(level === 'dir' || level === 'debug' ? 'log' : level, args);
+      // Once the console limit is reached, stop feeding the real console too: a flood of native
+      // console calls delays this frame's messages and makes a guarded loop look unresponsive.
+      if (!consoleSuppressed) original(...args);
+      record(level, args, level === 'dir' || level === 'debug' ? 'log' : level);
     };
   }
   const originalAssert = console.assert.bind(console);
   console.assert = (condition, ...args) => {
     originalAssert(condition, ...args);
-    if (!condition) { captured.push({ level: 'error', args: ['Assertion failed:', ...args] }); emitConsole('error', ['Assertion failed:', ...args]); }
+    if (!condition) record('error', ['Assertion failed:', ...args]);
   };
   console.clear = () => { emitSystem('console-cleared'); };
-  window.alert = (message) => { captured.push({ level: 'alert', args: [message] }); emitConsole('alert', [String(message)]); };
+  window.alert = (message) => { if (rerunSink) rerunSink.push({ level: 'alert', args: [message] }); else { captured.push({ level: 'alert', args: [message] }); emitConsole('alert', [String(message)]); } };
   window.confirm = () => { emitSystem('no-confirm'); return false; };
   window.prompt = () => { emitSystem('no-prompt'); return null; };
 
@@ -199,7 +210,7 @@
     window.addEventListener('error', (event) => {
       if (event.error !== undefined && event.error !== null) reportError(event.error, 'runtime');
       else if (event.message) reportError({ name: 'Error', message: event.message, stack: `${event.filename}:${event.lineno}:${event.colno}` }, 'runtime');
-      else if (event.target && event.target !== window && event.target.tagName) emitSystem('resource-blocked', event.target.src || event.target.href || event.target.tagName);
+      else if (event.target && event.target !== window && event.target.tagName) explainResource(event);
     }, true);
     window.addEventListener('unhandledrejection', (event) => { reportError(event.reason, 'unhandled-rejection'); });
     // These run last (bubble phase on window), after learner handlers had their chance to call
@@ -227,6 +238,32 @@
   }
   let lastSubmitPrevented = null;
 
+  // A resource that failed to load: a project path (not in the project, or not loadable this way)
+  // is explained differently from an external address the sandbox blocks (no network).
+  const MISSING_FILE_MARK = 'about:invalid#jsll-missing-file:';
+  const inlinedImages = new WeakSet();
+  function explainResource(event) {
+    const el = event.target;
+    const url = el.currentSrc || el.src || el.href || '';
+    if (url.startsWith(MISSING_FILE_MARK)) { emitSystem('missing-file', url.slice(MISSING_FILE_MARK.length)); return; }
+    let parsed = null;
+    try { parsed = new URL(url, document.baseURI); } catch (e) { parsed = null; }
+    if (parsed && parsed.origin === location.origin && parsed.pathname.startsWith('/sandbox/')) {
+      const path = decodeURIComponent(parsed.pathname.slice('/sandbox/'.length));
+      // A project SVG assigned from JavaScript (img.src = 'images/a.svg') is shown like one written
+      // in the HTML: as a data: URL. The failed first attempt stays invisible to learner code.
+      if (el.tagName === 'IMG' && run && /\.svg$/i.test(path) && Object.prototype.hasOwnProperty.call(run.files, path) && !inlinedImages.has(el)) {
+        inlinedImages.add(el);
+        event.stopImmediatePropagation();
+        el.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(run.files[path])}`;
+        return;
+      }
+      emitSystem('missing-file', path);
+      return;
+    }
+    emitSystem('resource-blocked', url || el.tagName);
+  }
+
   // ---------- hooks used by transformed learner code ----------
   Object.defineProperties(window, {
     __jsllLoopExceeded: {
@@ -238,7 +275,7 @@
         throw error;
       },
     },
-    __jsllScope: { value: (file, getters) => { scopes.set(file, getters); } },
+    __jsllScope: { value: (file, getters) => { if (rerunScope) rerunScope(file, getters); else scopes.set(file, getters); } },
     __jsllResolve: {
       value: (spec, from) => {
         if (typeof spec !== 'string' || !(spec.startsWith('./') || spec.startsWith('../') || spec.startsWith('/'))) return spec;
@@ -570,6 +607,52 @@
     return { calls, restore: () => { window.fetch = original; } };
   }
 
+  // ---------- rerun: check a top-level script against several inputs ----------
+  // Re-evaluates the entry module as a fresh module instance (its own top-level bindings) with the
+  // given globals defined on window; imported modules and the page (DOM) are shared, not reset.
+  let rerunScope = null;
+  let rerunGlobals = []; // [name, previous property descriptor | undefined], restored afterwards
+  function restoreRerunGlobals() {
+    for (const [name, previous] of rerunGlobals.reverse()) {
+      if (previous) Object.defineProperty(window, name, previous);
+      else delete window[name];
+    }
+    rerunGlobals = [];
+  }
+  async function rerun({ globals = {} } = {}) {
+    if (rerunSink) throw new Error('rerun(): await one rerun before starting the next');
+    const file = run.scopeFile;
+    const code = file ? run.modules[file] : undefined;
+    if (typeof code !== 'string') throw new Error('rerun(): the entry is not a JavaScript module of the project');
+    restoreRerunGlobals();
+    for (const [name, value] of Object.entries(globals)) {
+      rerunGlobals.push([name, Object.getOwnPropertyDescriptor(window, name)]);
+      Object.defineProperty(window, name, { value, writable: true, configurable: true, enumerable: true });
+    }
+    const url = createObjectURL(new NativeBlob([code], { type: 'text/javascript' }));
+    blobToFile.set(url, file);
+    const sink = [];
+    let fresh = {};
+    let error = null;
+    rerunSink = sink;
+    rerunScope = (f, getters) => { if (f === file) fresh = getters; else scopes.set(f, getters); };
+    try {
+      await import(url);
+    } catch (e) {
+      error = e;
+    } finally {
+      rerunSink = null;
+      rerunScope = null;
+    }
+    return {
+      logs: sink.filter((c) => c.level !== 'alert').map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
+      rawLogs: sink.map((c) => ({ level: c.level, args: c.args })),
+      alerts: sink.filter((c) => c.level === 'alert').map((c) => String(c.args[0])),
+      scope: fresh,
+      error,
+    };
+  }
+
   async function runTests() {
     const scope = new Proxy({}, {
       get: (_, name) => { for (const file of [run.scopeFile, ...scopes.keys()]) { const g = scopes.get(file); if (g && name in g) { try { return g[name]; } catch (e) { return undefined; } } } return undefined; },
@@ -577,7 +660,7 @@
     });
     const api = {
       test: (name, fn) => { tests.push({ name, fn }); },
-      expect, spy, sleep, settle, waitFor, user, screen, mockFetch, scope,
+      expect, spy, sleep, settle, waitFor, user, screen, mockFetch, scope, rerun,
       scopeOf: (file) => scopes.get(file) || {},
       logs: () => captured.filter((c) => c.level !== 'alert').map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
       rawLogs: () => captured.map((c) => ({ level: c.level, args: c.args })),
@@ -610,6 +693,7 @@
       }
       outcome.ms = Math.round(performance.now() - started);
       results.push(outcome);
+      restoreRerunGlobals(); // injected values never leak into the next test
     }
     flush();
     post('tests', { results });

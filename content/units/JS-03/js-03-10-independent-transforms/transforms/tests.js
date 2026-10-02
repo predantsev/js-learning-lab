@@ -68,10 +68,18 @@ test('all four are arrow functions', () => {
 test('nothing is printed and inputs stay unchanged', () => {
   const before = logs().length;
   const record = { name: ' Lamp ', price: 0 };
-  scope.trimName(record.name);
-  scope.describe(record.name, 'a', 'b');
-  scope.withFallback((r) => r.price, '—')(record);
-  scope.compose((text) => text + '!', (r) => r.name)(record);
+  // Only printing and changed inputs count here; wrong results and errors are reported by the checks above.
+  const attempt = (call) => {
+    try {
+      call();
+    } catch {
+      // ignored on purpose
+    }
+  };
+  attempt(() => scope.trimName(record.name));
+  attempt(() => scope.describe(record.name, 'a', 'b'));
+  attempt(() => scope.withFallback((r) => r.price, '—')(record));
+  attempt(() => scope.compose((text) => text + '!', (r) => r.name)(record));
   expect(logs().length - before, 'lines printed by the four functions').toBe(0);
   expect(record, 'the record after all calls').toEqual({ name: ' Lamp ', price: 0 });
 });

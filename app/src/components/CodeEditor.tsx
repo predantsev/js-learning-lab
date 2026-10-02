@@ -33,7 +33,8 @@ const theme = EditorView.theme({
   '.cm-gutters': { backgroundColor: 'transparent', color: 'var(--ll-dim)', border: 'none' },
   '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--ll-soft) 55%, transparent)' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent', color: 'var(--ll-ink)' },
-  '&.cm-focused': { outline: 'none' },
+  // Visible focus (REQ-031): the same ring as other controls, drawn inside the scroll box.
+  '&.cm-focused': { outline: '2px solid var(--ll-focus)', outlineOffset: '-2px' },
   '&.cm-focused .cm-cursor': { borderLeftColor: 'var(--ll-accent)' },
   '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection': { backgroundColor: 'color-mix(in srgb, var(--ll-accent) 28%, transparent) !important' },
   '.cm-tooltip': { backgroundColor: 'var(--ll-panel)', color: 'var(--ll-ink)', border: '1px solid var(--ll-line)', borderRadius: '6px' },
@@ -78,6 +79,9 @@ export function CodeEditor({ path, value, readOnly = false, ariaLabel, described
   const view = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // True while the editor is being updated from `value` (a language switch, a reload from disk):
+  // such changes are not learner edits and must not be saved back as if they were.
+  const syncing = useRef(false);
   const readOnlyCompartment = useRef(new Compartment());
 
   useEffect(() => {
@@ -95,7 +99,7 @@ export function CodeEditor({ path, value, readOnly = false, ariaLabel, described
           EditorState.tabSize.of(2),
           readOnlyCompartment.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
           EditorView.contentAttributes.of({ 'aria-label': ariaLabel, ...(describedBy ? { 'aria-describedby': describedBy } : {}), spellcheck: 'false', autocapitalize: 'off' }),
-          EditorView.updateListener.of((update) => { if (update.docChanged) onChangeRef.current?.(update.state.doc.toString()); }),
+          EditorView.updateListener.of((update) => { if (update.docChanged && !syncing.current) onChangeRef.current?.(update.state.doc.toString()); }),
         ],
       }),
     });
@@ -107,7 +111,13 @@ export function CodeEditor({ path, value, readOnly = false, ariaLabel, described
 
   useEffect(() => {
     const v = view.current;
-    if (v && v.state.doc.toString() !== value) v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } });
+    if (!v || v.state.doc.toString() === value) return;
+    syncing.current = true;
+    try {
+      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } });
+    } finally {
+      syncing.current = false;
+    }
   }, [value]);
 
   useEffect(() => {
