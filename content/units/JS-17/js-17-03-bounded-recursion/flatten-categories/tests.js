@@ -4,8 +4,9 @@ const flatten = () => {
 };
 const node = (id, name, children = []) => ({ id, name, children });
 const chain = (levels) => {
-  let current = node('c-' + levels, L.other);
-  for (let i = levels - 1; i >= 1; i--) current = node('c-' + i, L.other, [current]);
+  // Every level has its own name, so that only the ids can repeat.
+  let current = node('c-' + levels, `${L.other} ${levels}`);
+  for (let i = levels - 1; i >= 1; i--) current = node('c-' + i, `${L.other} ${i}`, [current]);
   return current;
 };
 const thrown = (run) => {
