@@ -128,6 +128,8 @@ export function loadDrafts(lessonId: string): Promise<Doc<DraftsDoc>> {
   let doc = draftDocs.get(lessonId);
   if (!doc) {
     doc = Doc.load<DraftsDoc>(`drafts/${lessonId}`, () => ({ blocks: {} }));
+    // A failed load (server unreachable) must not be remembered: the next attempt asks again.
+    doc.catch(() => draftDocs.delete(lessonId));
     draftDocs.set(lessonId, doc);
   }
   return doc;
@@ -169,4 +171,11 @@ export function useActiveCapstone(): CapstoneId | null {
 
 // ---- session-only UI state: per-block language overrides survive navigation, not restarts ----
 export const blockLang = new Store<Record<string, Lang>>({});
-export const toggleBlockLang = (key: string, current: Lang): void => blockLang.set((m) => ({ ...m, [key]: current === 'uk' ? 'en' : 'uk' }));
+/** Show the block in the other language; switching back to the interface language removes the
+ *  override, so the block follows later global language changes like every other block. */
+export const toggleBlockLang = (key: string, current: Lang, global: Lang): void => blockLang.set((m) => {
+  const next: Lang = current === 'uk' ? 'en' : 'uk';
+  const rest = { ...m };
+  delete rest[key];
+  return next === global ? rest : { ...rest, [key]: next };
+});

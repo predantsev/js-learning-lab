@@ -1,5 +1,5 @@
 // Small shared UI pieces: icons, trusted compiled HTML with glossary terms, dialog, live region.
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { app, useT } from '../state/app';
 import { pick } from '../lib/i18n';
 import type { Lang } from '../lib/types';
@@ -73,11 +73,13 @@ export function TermPopover({ termId, anchor, lang, onClose }: { termId: string;
   const ref = useRef<HTMLDivElement>(null);
   const id = useId();
   const rect = anchor.getBoundingClientRect();
+  const onCloseRef = useRef(onClose);
+  useLayoutEffect(() => { onCloseRef.current = onClose; });
   useEffect(() => {
     anchor.setAttribute('aria-expanded', 'true');
     anchor.setAttribute('aria-controls', id);
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); onClose(); } };
-    const onDown = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node) && event.target !== anchor) onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); onCloseRef.current(); } };
+    const onDown = (event: MouseEvent) => { if (!ref.current?.contains(event.target as Node) && event.target !== anchor) onCloseRef.current(); };
     document.addEventListener('keydown', onKey, true);
     document.addEventListener('mousedown', onDown);
     return () => {
@@ -86,7 +88,7 @@ export function TermPopover({ termId, anchor, lang, onClose }: { termId: string;
       document.removeEventListener('keydown', onKey, true);
       document.removeEventListener('mousedown', onDown);
     };
-  }, [anchor, id, onClose]);
+  }, [anchor, id]);
   const left = Math.max(12, Math.min(rect.left, window.innerWidth - 372));
   const below = rect.bottom + 240 < window.innerHeight;
   return (
@@ -106,14 +108,18 @@ export function TermPopover({ termId, anchor, lang, onClose }: { termId: string;
 export function Dialog({ title, children, onClose, actions, wide = false }: { title: string; children: ReactNode; onClose: () => void; actions?: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
   const titleId = useId();
+  // Callers pass inline callbacks; opening must happen once per mount, not on every re-render
+  // (re-opening a modal dialog moves focus to its first control and loses the learner's place).
+  const onCloseRef = useRef(onClose);
+  useLayoutEffect(() => { onCloseRef.current = onClose; });
   useEffect(() => {
     const dialog = ref.current;
     if (!dialog) return undefined;
     dialog.showModal();
-    const onCancel = (event: Event) => { event.preventDefault(); onClose(); };
+    const onCancel = (event: Event) => { event.preventDefault(); onCloseRef.current(); };
     dialog.addEventListener('cancel', onCancel);
     return () => { dialog.removeEventListener('cancel', onCancel); dialog.close(); };
-  }, [onClose]);
+  }, []);
   return (
     <dialog ref={ref} className={wide ? 'dialog dialog-wide' : 'dialog'} aria-labelledby={titleId}>
       <h2 id={titleId} className="dialog-title">{title}</h2>
