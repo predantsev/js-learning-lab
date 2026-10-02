@@ -2,7 +2,11 @@
 // Learner files stay untouched on disk/in storage; this produces the executable form for the
 // sandbox: types/JSX removed, relative imports rewritten to import-map specifiers, loops guarded
 // by a time budget, and (optionally) top-level bindings exposed to behavior tests.
+// The two node-webstorage modules keep Babel from touching Node's localStorage global while it
+// loads (a warning on Node 25); import order matters.
+import './node-webstorage-hide.js';
 import * as BabelNs from '@babel/standalone';
+import './node-webstorage-restore.js';
 
 const Babel = BabelNs.default ?? BabelNs;
 
