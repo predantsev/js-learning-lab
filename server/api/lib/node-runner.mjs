@@ -11,6 +11,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import { HttpError } from '../../http-util.mjs';
 import { pathProblem, randomId, validateFiles, writeFiles } from './project-files.mjs';
+import { scratchName, sweepScratch } from './scratch.mjs';
 
 export const HARNESS_DIR = realpathSync(fileURLToPath(new URL('../../node-harness/', import.meta.url)));
 const SANDBOX_EXEC = '/usr/bin/sandbox-exec';
@@ -229,6 +230,8 @@ function validateStrings(value, limits) {
 export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits = LIMITS, support = detectNodeSupport(), nodeBinary = realpathSync(process.execPath), disabled = null, platformPorts = () => [] } = {}) {
   const runsDir = path.join(runtimeDir, 'node-runs');
   await fs.mkdir(runsDir, { recursive: true });
+  // Workspaces left behind by a server that crashed or was killed (see scratch.mjs).
+  await sweepScratch(runsDir);
   const runsRoot = realpathSync(runsDir);
   const runs = new Map();
   const nodeRoot = path.dirname(path.dirname(nodeBinary)); // <prefix>/bin/node → <prefix>
@@ -279,7 +282,7 @@ export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits 
 
   /** Spawn a short probe and return its stdout parsed as JSON (null on failure). */
   async function probe(spec, source, { profile = null, guard = true } = {}) {
-    const workspace = path.join(runsRoot, randomId('selftest'));
+    const workspace = path.join(runsRoot, scratchName('selftest'));
     await fs.mkdir(path.join(workspace, '.tmp'), { recursive: true });
     try {
       await fs.writeFile(path.join(workspace, 'probe.mjs'), source);
@@ -373,9 +376,11 @@ export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits 
     if (!feature.available) throw new HttpError(501, 'isolation-unavailable', feature.reason);
     if (runs.size >= limits.concurrent) throw new HttpError(429, 'busy', `At most ${limits.concurrent} Node runs can be active at once. Stop one or wait for it to finish.`);
     const runId = randomId('nr');
-    const run = { runId, kill: () => {}, finished: false };
+    // Until the process exists, a stop (POST /api/node/stop, or a client that went away before the
+    // "start" event) is remembered and the run ends without starting Node.
+    const run = { runId, pendingStop: null, kill: (reason) => { run.pendingStop ??= reason; }, finished: false };
     runs.set(runId, run);
-    const workspace = path.join(runsRoot, runId);
+    const workspace = path.join(runsRoot, `${process.pid}-${runId}`);
     const startedAt = performance.now();
     try {
       await fs.mkdir(path.join(workspace, '.tmp'), { recursive: true });
@@ -476,6 +481,11 @@ export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits 
         return { type: 'tests', results: [], harnessError: { name: 'HarnessError', message: `The checks did not finish: ${why}.` } };
       };
 
+      if (run.pendingStop !== null) {
+        state.reason = run.pendingStop;
+        finish({ code: null, signal: null });
+        return;
+      }
       try {
         child = spawn(command, args, {
           cwd: workspace,
