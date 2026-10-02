@@ -3,7 +3,7 @@
 // Run: node --test tests/unit/visuals-compile.test.mjs
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { compileVisual, traceToSpec } from '../../shared/visuals/index.js';
+import { compileVisual, specForLang, traceToSpec } from '../../shared/visuals/index.js';
 import { compileSamples } from '../../scripts/content/compile-visual-samples.mjs';
 
 const text = (s) => ({ uk: `${s} (uk)`, en: `${s} (en)` });
@@ -13,12 +13,84 @@ const messages = (issues) => issues.map((i) => `${i.path}: ${i.message}`).join('
 test('all sample blocks compile without issues', async () => {
   const { samples, failures } = await compileSamples();
   assert.deepEqual(failures, []);
-  assert.deepEqual(samples.map((s) => s.visual).sort(), ['code-trace', 'diagram', 'event-loop', 'git-graph', 'memory-graph', 'pipeline', 'render-timeline', 'sequence']);
+  const kinds = ['code-trace', 'diagram', 'event-loop', 'git-graph', 'memory-graph', 'pipeline', 'render-timeline', 'sequence'];
+  assert.deepEqual(samples.slice(0, kinds.length).map((s) => s.file), kinds.map((k) => `${k}.yaml`), 'the canonical sample of every kind comes first');
+  assert.deepEqual([...new Set(samples.map((s) => s.visual))].sort(), kinds);
   for (const s of samples) {
-    assert.ok(s.spec.steps.length >= 2, s.file);
-    for (const step of s.spec.steps) { assert.ok(step.caption.uk && step.caption.en, `${s.file}: every step has a bilingual caption`); }
+    for (const lang of ['uk', 'en']) {
+      const spec = specForLang(s.spec, lang);
+      assert.ok(spec.steps.length >= 2, s.file);
+      for (const step of spec.steps) { assert.ok(step.caption.uk && step.caption.en, `${s.file}: every step has a bilingual caption`); }
+    }
     JSON.stringify(s.spec); // serializable
   }
+});
+
+test('strings: %%key%% in the code file, captions and labels is resolved per language; one compiled variant per language', async () => {
+  const strings = { item: { uk: 'Лампа', en: 'Lamp' } };
+  const files = { 'a.js': 'const name = "%%item%%";\nconsole.log(name);\n' };
+  const captions = [{ at: { line: 2 }, text: { uk: 'бачимо %%item%%', en: 'we see %%item%%' } }];
+  const r = await compileVisual('code-trace', { file: 'a.js', captions }, { ...ctx(files), strings });
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  assert.deepEqual(Object.keys(r.spec), ['kind', 'byLang']);
+  assert.equal(r.spec.kind, 'code-trace');
+  assert.equal(r.spec.byLang.uk.code, 'const name = "Лампа";\nconsole.log(name);\n');
+  assert.equal(r.spec.byLang.en.code, 'const name = "Lamp";\nconsole.log(name);\n');
+  assert.deepEqual(r.spec.byLang.uk.console, [{ level: 'log', text: 'Лампа' }]);
+  assert.deepEqual(r.spec.byLang.en.console, [{ level: 'log', text: 'Lamp' }]);
+  assert.equal(r.spec.byLang.uk.steps[0].trace.scopes[r.spec.byLang.uk.steps[0].trace.scope].vars[0].value.v, 'Лампа', 'the trace really ran the Ukrainian text');
+  assert.equal(r.spec.byLang.uk.steps[0].caption.uk, '<p>бачимо Лампа</p>');
+  assert.equal(r.spec.byLang.en.steps[0].caption.en, '<p>we see Lamp</p>');
+  assert.equal(specForLang(r.spec, 'en'), r.spec.byLang.en);
+  // Plain-text labels drawn in pictures (diagram), pipeline data and their labels.
+  const d = await compileVisual('diagram', { nodes: [{ id: 'a', label: '%%item%%' }, { id: 'b', label: 'fixed' }], steps: [{ caption: text('x') }] }, { ...ctx(), strings });
+  assert.deepEqual(d.issues, []);
+  assert.deepEqual(d.spec.byLang.uk.nodes[0].label, { uk: 'Лампа', en: 'Лампа' });
+  assert.deepEqual(d.spec.byLang.en.nodes[0].label, { uk: 'Lamp', en: 'Lamp' });
+  const p = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items: [{ name: '%%item%%', price: 5 }] }, stages: [{ op: 'map', fn: 'x => x.name.toUpperCase()', caption: text('m') }] }, { ...ctx(), strings });
+  assert.deepEqual(p.issues, [], messages(p.issues));
+  assert.deepEqual(p.spec.byLang.uk.steps.at(-1).output.items.map((i) => i.label), ['ЛАМПА']);
+  assert.deepEqual(p.spec.byLang.en.steps.at(-1).output.items.map((i) => i.label), ['LAMP']);
+  // Strings that reach nothing visible collapse to the plain shape.
+  const unused = await compileVisual('code-trace', { code: 'let a = 1;\n', captions: [{ at: { line: 1 }, text: text('a') }] }, { ...ctx(), strings });
+  assert.equal(unused.spec.kind, 'code-trace');
+  assert.equal(unused.spec.byLang, undefined);
+});
+
+test('strings: unknown keys, a missing table and language-dependent steps are refused', async () => {
+  const strings = { item: { uk: 'Лампа', en: 'Lamp' } };
+  const cap = [{ at: { line: 1 }, text: text('a') }];
+  const unknown = await compileVisual('code-trace', { code: 'const a = "%%nope%%";\n', captions: cap }, { ...ctx(), strings });
+  assert.equal(unknown.spec, null);
+  assert.match(messages(unknown.issues), /strings: placeholder %%nope%% has no entry in strings/);
+  const noTable = await compileVisual('code-trace', { file: 'a.js', captions: cap }, ctx({ 'a.js': 'const a = "%%item%%";\n' }));
+  assert.equal(noTable.spec, null);
+  assert.match(messages(noTable.issues), /placeholder %%item%% has no entry in strings \(add a strings table to the block\)/);
+  // "Лампа" has 5 letters, "Lamp" 4: the loop runs a different number of times in each language.
+  const loop = { code: 'const word = "%%item%%";\nfor (const ch of word) {\n  ch;\n}\n', steps: 'all', captions: [{ at: { line: 1 }, text: text('a') }, { at: { line: 2, hit: 'every' }, text: text('b') }, { at: { line: 3, hit: 'every' }, text: text('c') }, { at: { line: 4, kind: 'end' }, text: text('d') }] };
+  const diverge = await compileVisual('code-trace', loop, { ...ctx(), strings });
+  assert.equal(diverge.spec, null);
+  assert.match(messages(diverge.issues), /the uk and en versions have different numbers of steps \(\d+ and \d+\)/);
+  // A caption that only matches in one language names that language.
+  const oneLang = await compileVisual('code-trace', { code: 'const word = "%%item%%";\nif (word.length > 4) {\n  console.log(word);\n}\n', captions: [{ at: { line: 3 }, text: text('long') }] }, { ...ctx(), strings });
+  assert.match(messages(oneLang.issues), /no step runs line 3.*\(with the en strings\)/);
+});
+
+test('lesson build: a visual block with strings gets localized title, text equivalent and spec', async () => {
+  const { compileLesson, createMarkdown } = await import('../../scripts/content/lib.mjs');
+  const visuals = await import('../../shared/visuals/index.js');
+  const block = {
+    id: 'v', kind: 'visual', visual: 'code-trace', strings: { item: { uk: 'Лампа', en: 'Lamp' } },
+    title: { uk: 'Про %%item%%', en: 'About %%item%%' }, textEquivalent: { uk: 'Рядок «%%item%%».', en: 'The string "%%item%%".' },
+    spec: { code: 'const a = "%%item%%";\nconsole.log(a);\n', captions: [{ at: { line: 2 }, text: { uk: 'виводить %%item%%', en: 'prints %%item%%' } }] },
+  };
+  const { lesson, issues } = await compileLesson({ dir: '/nonexistent', assets: {}, source: { id: 'js-99-01-strings', blocks: [block] } }, { md: createMarkdown(new Map()), visuals });
+  assert.deepEqual(issues, []);
+  const out = lesson.blocks[0];
+  assert.deepEqual(out.title, { uk: 'Про Лампа', en: 'About Lamp' });
+  assert.equal(out.textEquivalent.en, '<p>The string &quot;Lamp&quot;.</p>');
+  assert.equal(out.spec.byLang.uk.console[0].text, 'Лампа');
+  assert.equal(out.spec.byLang.en.steps[0].caption.en, 'prints Lamp');
 });
 
 test('code-trace: captions bind to generated steps; unmatched or ambiguous captions fail', async () => {
@@ -79,6 +151,17 @@ test('memory-graph from a trace derives bindings and heap per captioned step', a
   assert.deepEqual(r.spec.steps[1].changed, ['b']);
 });
 
+test('memory-graph: { empty: true } marks a hole of a sparse array, exactly as a real trace shows it', async () => {
+  const r = await compileVisual('memory-graph', { states: [{ caption: text('a'), bindings: [{ name: 'list', kind: 'const', value: { ref: 'a' } }], heap: { a: { kind: 'array', items: [1, { empty: true }, 3] } } }] }, ctx());
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  assert.deepEqual(r.spec.steps[0].heap.a, { t: 'array', length: 3, items: [{ t: 'number', v: 1 }, { t: 'empty' }, { t: 'number', v: 3 }], more: 0 });
+  const { runTraced } = await import('../../shared/visuals/exec-node.js');
+  const { trace } = await runTraced('const list = [1, , 3];\n', { file: 'a.js' });
+  const real = Object.values(trace.steps.at(-1).heap).find((h) => h.t === 'array');
+  assert.deepEqual(real.items, r.spec.steps[0].heap.a.items, 'authored and traced holes look the same');
+  assert.equal(real.length, 3);
+});
+
 test('memory-graph authored states diff into "changed" when not given', async () => {
   const r = await compileVisual('memory-graph', { states: [
     { caption: text('a'), bindings: [{ name: 'x', value: { ref: 'o' } }], heap: { o: { kind: 'object', props: { n: 1 } } } },
@@ -112,6 +195,95 @@ test('pipeline executes the stage functions: per-item filter steps, map labels, 
   assert.equal(r.spec.resultLabel.en, '<p>1 left (en)</p>');
   const broken = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items: [1] }, stages: [{ op: 'map', fn: 'x => x.boom()', caption: text('m') }] }, ctx());
   assert.match(messages(broken.issues), /threw while running/);
+});
+
+test('pipeline: some / every / find stop at the deciding item; later items are shown as not checked', async () => {
+  const input = { label: text('in'), caption: text('c'), items: [1, 4, 6, 3], show: 'n => `n${n}`' };
+  const stage = (op, fn) => ({ op, fn, perItem: true, caption: text('{item} → {result}'), summary: text('{tested} of {count}, {skipped} skipped → {result}') });
+  const some = await compileVisual('pipeline', { input, stages: [stage('some', 'n => n > 3')] }, ctx());
+  assert.deepEqual(some.issues, [], messages(some.issues));
+  const s = some.spec.steps;
+  assert.equal(s.length, 1 + 2 + 1, 'input, two tested items, the result: no step for the items after the first true');
+  assert.deepEqual(s[1].items.map((i) => i.status), ['nomatch', 'waiting', 'waiting', 'waiting']);
+  assert.deepEqual(s[1].output, { kind: 'pending' });
+  assert.deepEqual(s[2].items.map((i) => i.status), ['nomatch', 'match', 'skipped', 'skipped'], 'the short-circuit is visible on the deciding step');
+  assert.deepEqual(s[2].output, { kind: 'value', label: 'true' });
+  assert.equal(s[3].caption.en, '<p>2 of 4, 2 skipped → true (en)</p>');
+  const every = await compileVisual('pipeline', { input, stages: [stage('every', 'n => n < 5')] }, ctx());
+  assert.deepEqual(every.spec.steps.at(-1).items.map((i) => i.status), ['match', 'match', 'nomatch', 'skipped']);
+  assert.deepEqual(every.spec.steps.at(-1).output, { kind: 'value', label: 'false' });
+  const all = await compileVisual('pipeline', { input, stages: [stage('every', 'n => n > 0')] }, ctx());
+  assert.deepEqual(all.spec.steps.at(-1).output, { kind: 'value', label: 'true' }, 'every with no false checks everything');
+  assert.equal(all.spec.steps.length, 1 + 4 + 1);
+  const find = await compileVisual('pipeline', { input, stages: [stage('find', 'n => n % 2 === 0')] }, ctx());
+  assert.deepEqual(find.spec.steps.at(-1).output, { kind: 'value', label: 'n4' });
+  assert.deepEqual(find.spec.steps.at(-1).items.map((i) => i.status), ['nomatch', 'match', 'skipped', 'skipped']);
+  const none = await compileVisual('pipeline', { input, stages: [stage('find', 'n => n > 100')] }, ctx());
+  assert.deepEqual(none.spec.steps.at(-1).output, { kind: 'value', label: 'undefined' });
+  // These results are what the real methods return.
+  assert.deepEqual([[1, 4, 6, 3].some((n) => n > 3), [1, 4, 6, 3].every((n) => n < 5), [1, 4, 6, 3].find((n) => n % 2 === 0)], [true, false, 4]);
+});
+
+test('pipeline: sort / toSorted can show every real comparator call; toSorted keeps its own name', async () => {
+  const items = [45, 240, 80, 12];
+  const r = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items }, stages: [{ op: 'toSorted', fn: '(a, b) => a - b', perComparison: true, caption: text('{index}/{count}: a={a} b={b} → {result}'), summary: text('{comparisons} comparisons') }] }, ctx());
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  assert.equal(r.spec.stages[0].op, 'toSorted');
+  // The comparisons the engine really makes (same V8 sort as the compiler).
+  const calls = [];
+  const expected = items.toSorted((a, b) => { calls.push([a, b]); return a - b; });
+  const comparisonSteps = r.spec.steps.filter((s) => s.compare);
+  assert.equal(comparisonSteps.length, calls.length);
+  const label = (id) => r.spec.steps[0].items.find((i) => i.id === id).label;
+  assert.deepEqual(comparisonSteps.map((s) => [Number(label(s.compare.a)), Number(label(s.compare.b))]), calls);
+  assert.deepEqual(comparisonSteps.map((s) => s.compare.order), calls.map(([a, b]) => (a - b < 0 ? 'a-first' : a - b > 0 ? 'b-first' : 'keep')));
+  assert.equal(comparisonSteps[0].caption.en, `<p>1/${calls.length}: a=${calls[0][0]} b=${calls[0][1]} → ${calls[0][0] - calls[0][1]} (en)</p>`);
+  assert.deepEqual(comparisonSteps[0].output, { kind: 'pending' });
+  const last = r.spec.steps.at(-1);
+  assert.deepEqual(last.output.items.map((i) => Number(i.label)), expected);
+  assert.equal(last.caption.en, `<p>${calls.length} comparisons (en)</p>`);
+  assert.deepEqual(last.items.map((i) => i.status), ['moved', 'moved', 'moved', 'moved']);
+  const tooMany = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items: Array.from({ length: 30 }, (_, i) => (i * 7919) % 101) }, stages: [{ op: 'sort', fn: '(a, b) => a - b', perComparison: true, caption: text('x'), summary: text('y') }] }, ctx());
+  assert.match(messages(tooMany.issues), /per-comparison steps are limited to 40/);
+});
+
+test('pipeline: item labels can be bilingual; captions take the label of their language', async () => {
+  const r = await compileVisual('pipeline', {
+    input: { label: text('in'), caption: text('c'), items: [{ n: 'Lamp', p: 45 }, { n: 'Desk', p: 240 }], show: { uk: 'x => `${x.n}: ${x.p} грн`', en: 'x => `${x.n}: €${x.p}`' } },
+    stages: [{ op: 'filter', fn: 'x => x.p < 100', perItem: true, caption: { uk: 'перевіряємо {item}', en: 'checking {item}' }, summary: text('s') }, { op: 'map', fn: 'x => x.n', show: { uk: 'n => `назва ${n}`', en: 'n => `name ${n}`' }, caption: text('m') }],
+  }, ctx());
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  assert.deepEqual(r.spec.steps[0].items[0].label, { uk: 'Lamp: 45 грн', en: 'Lamp: €45' });
+  assert.equal(r.spec.steps[1].caption.uk, '<p>перевіряємо Lamp: 45 грн</p>');
+  assert.equal(r.spec.steps[1].caption.en, '<p>checking Lamp: €45</p>');
+  assert.deepEqual(r.spec.steps.at(-1).output.items[0].label, { uk: 'назва Lamp', en: 'name Lamp' });
+  // A plain `show` keeps plain string labels (unchanged shape).
+  const plain = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items: [1], show: 'x => `#${x}`' }, stages: [{ op: 'map', fn: 'x => x', caption: text('m') }] }, ctx());
+  assert.equal(plain.spec.steps[0].items[0].label, '#1');
+});
+
+test('pipeline: a stage marked throws shows the real error; an unexpected or missing throw is refused', async () => {
+  let real;
+  try { undefined.trim(); } catch (error) { real = error; }
+  const input = { label: text('in'), caption: text('c'), items: [{ note: ' a ' }, {}, { note: 'c' }] };
+  const mapStage = { op: 'map', fn: 'x => x.note.trim()', throws: true, perItem: true, caption: text('{item} → {result}'), summary: text('stopped: {error}') };
+  const r = await compileVisual('pipeline', { input, stages: [mapStage] }, ctx());
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  const last = r.spec.steps.at(-1);
+  assert.deepEqual(last.output, { kind: 'error', name: real.name, message: real.message });
+  assert.deepEqual(last.items.map((i) => i.status), ['mapped', 'error', 'skipped']);
+  assert.equal(last.caption.en, `<p>stopped: ${real.name}: ${real.message} (en)</p>`);
+  assert.equal(r.spec.steps.length, 1 + 2 + 1, 'the third item is never reached');
+  const unexpected = await compileVisual('pipeline', { input, stages: [{ ...mapStage, throws: undefined }] }, ctx());
+  assert.match(messages(unexpected.issues), /threw while running: TypeError: .*set throws: true/);
+  const notThrown = await compileVisual('pipeline', { input, stages: [{ ...mapStage, fn: 'x => x.note' }] }, ctx());
+  assert.match(messages(notThrown.issues), /expected to throw but completed/);
+  const after = await compileVisual('pipeline', { input, stages: [mapStage, { op: 'filter', fn: 'x => x', caption: text('f') }] }, ctx());
+  assert.match(messages(after.issues), /stage 2 \(filter\) never runs: stage 1 throws/);
+  const comparator = await compileVisual('pipeline', { input: { label: text('in'), caption: text('c'), items: [2, 1] }, stages: [{ op: 'sort', fn: '(a, b) => a.x.y - b', throws: true, caption: text('{error}') }] }, ctx());
+  assert.deepEqual(comparator.issues, [], messages(comparator.issues));
+  assert.equal(comparator.spec.steps.at(-1).output.kind, 'error');
+  assert.deepEqual(comparator.spec.steps.at(-1).items.map((i) => i.status), ['error', 'error'], 'the two items of the failing comparison');
 });
 
 test('event-loop: the claimed console order is verified against the real output', async () => {
@@ -183,6 +355,29 @@ test('diagram layout places grouped nodes in group columns and sizes the viewBox
   assert.deepEqual(r.spec.steps[1].hidden, []);
   assert.deepEqual(r.spec.edges[0].label, { uk: 'go (uk)', en: 'go (en)' });
   assert.deepEqual(r.spec.steps[1].annotate, [{ id: 'c', text: { uk: 'note', en: 'note' } }]);
+});
+
+test('diagram layout: groups stacked in rows (tb, or a grid) get room for both frames; side-by-side groups stay compact', async () => {
+  const spec = (layout, extra = {}) => ({
+    layout,
+    groups: [{ id: 'g1', label: 'Browser' }, { id: 'g2', label: 'Server' }],
+    nodes: [{ id: 'a', label: 'A', group: 'g1', ...extra.a }, { id: 'b', label: 'B', group: 'g1', ...extra.b }, { id: 'c', label: 'C', group: 'g2', ...extra.c }],
+    edges: [{ from: 'b', to: 'c' }],
+    steps: [{ caption: text('one') }],
+  });
+  const disjoint = (out) => {
+    const [g1, g2] = out.spec.groups;
+    return g1.y + g1.h < g2.y || g2.y + g2.h < g1.y || g1.x + g1.w < g2.x || g2.x + g2.w < g1.x;
+  };
+  const tb = await compileVisual('diagram', spec('tb'), ctx());
+  assert.deepEqual(tb.issues, []);
+  assert.ok(disjoint(tb), `tb frames do not overlap: ${JSON.stringify(tb.spec.groups)}`);
+  const grid = await compileVisual('diagram', spec('grid', { a: { col: 0, row: 0 }, b: { col: 1, row: 0 }, c: { col: 0, row: 1 } }), ctx());
+  assert.ok(disjoint(grid), 'a grid stacking groups in rows');
+  const lr = await compileVisual('diagram', spec('lr'), ctx());
+  assert.ok(disjoint(lr));
+  const [a, b] = lr.spec.nodes;
+  assert.equal(b.y - a.y, 46 + 22, 'nodes of one group column keep the normal row gap');
 });
 
 test('sequence and render-timeline compile to one step per message / per phase', async () => {

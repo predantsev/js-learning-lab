@@ -43,6 +43,12 @@ test('memory-graph: heap ids, refs and inline objects', () => {
   assert.ok(paths(issues).includes('spec.states[0].heap.o.kind'));
   assert.ok(paths(issues).includes('spec.states[0].changed'));
   assert.ok(paths(validateVisualSpec('memory-graph', { from: 'trace', file: 'a.js', captions: [{ at: { line: 1 }, text }] })).length === 0);
+  // { empty: true } is a hole of a sparse array: only among array items.
+  const sparse = (heap, value = { ref: 'a' }) => validateVisualSpec('memory-graph', { states: [{ caption: text, bindings: [{ name: 'x', value }], heap }] });
+  assert.deepEqual(sparse({ a: { kind: 'array', items: ['w', { empty: true }, 's'] } }), []);
+  assert.ok(paths(sparse({ a: { kind: 'array', items: [] } }, { empty: true })).includes('spec.states[0].bindings[0].value'), 'not a binding value');
+  assert.ok(paths(sparse({ a: { kind: 'object', props: { k: { empty: true } } } })).includes('spec.states[0].heap.a.props.k'), 'not an object property');
+  assert.ok(paths(sparse({ a: { kind: 'set', items: [{ empty: true }] } })).includes('spec.states[0].heap.a.items[0]'), 'not a set item');
 });
 
 test('pipeline: ops, function sources, perItem needs summary, reduce needs initial', () => {
@@ -55,6 +61,15 @@ test('pipeline: ops, function sources, perItem needs summary, reduce needs initi
   assert.ok(paths(issues).includes('spec.stages[1].summary'));
   assert.ok(paths(issues).includes('spec.stages[1].initial'));
   assert.ok(paths(issues).includes('spec.stages[2].perItem'));
+  // New stages and fields: some/every/toSorted, perComparison, throws, bilingual show.
+  const fine = validateVisualSpec('pipeline', { input: { label: text, caption: text, items: [1], show: { uk: 'x => `${x} грн`', en: 'x => `€${x}`' } }, stages: [{ op: 'toSorted', fn: '(a, b) => a - b', perComparison: true, caption: text, summary: text }, { op: 'some', fn: 'x => x > 1', caption: text, throws: false }, { op: 'every', fn: 'x => x', caption: text }] });
+  assert.deepEqual(fine, []);
+  const wrong = validateVisualSpec('pipeline', { input: { label: text, caption: text, items: [1], show: { uk: 'x => x' } }, stages: [{ op: 'filter', fn: 'x => x', caption: text, perComparison: true }, { op: 'toSorted', fn: '(a, b) => a - b', caption: text, perItem: true, summary: text }, { op: 'sort', fn: '(a, b) => a - b', caption: text, perComparison: true }, { op: 'map', fn: 'x => x', caption: text, throws: 'yes' }] });
+  assert.ok(paths(wrong).includes('spec.input.show'), 'a bilingual show needs both languages');
+  assert.ok(paths(wrong).includes('spec.stages[0].perComparison'), 'only sorts have comparisons');
+  assert.ok(paths(wrong).includes('spec.stages[1].perItem'), 'toSorted is not per item either');
+  assert.ok(paths(wrong).includes('spec.stages[2].summary'), 'perComparison needs a summary');
+  assert.ok(paths(wrong).includes('spec.stages[3].throws'));
 });
 
 test('event-loop: steps list the stack, queues are string lists', () => {

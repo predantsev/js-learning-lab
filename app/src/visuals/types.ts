@@ -23,7 +23,7 @@ export type Heap = Record<string, HeapEntry>;
 
 export type TraceVar = { name: string; kind: string; value?: TraceValue; uninit?: boolean };
 export type TraceScope = { id: number; kind: string; name: string; parent: number | null; vars: TraceVar[] };
-export type TraceFrame = { id: number; name: string; line: number; scope: number | null };
+export type TraceFrame = { id: number; name: string; line: number; scope: number | null; kind?: 'module' | 'function'; file?: string };
 export type TraceEvent =
   | { type: 'call'; name: string; args: { name: string; value: TraceValue }[]; from: number | null }
   | { type: 'return'; name: string; value: TraceValue; implicit?: boolean }
@@ -42,6 +42,9 @@ export type StepBase = { caption: Localized | null };
 
 export type CodeTraceSpec = {
   kind: 'code-trace'; file: string; code: string; language: string; mode: 'captioned' | 'all'; totalSteps: number; truncated: boolean;
+  /** Run-time traces of a project: every traced file (path → code); the player shows each step's file. */
+  files?: Record<string, string>;
+  maxSteps?: number | null;
   error: { name: string; message: string } | null; console: ConsoleEntry[];
   steps: (StepBase & { trace: TraceStep; logged: number })[];
 };
@@ -52,11 +55,20 @@ export type MemoryGraphSpec = {
   steps: (StepBase & { line: number | null; bindings: MemoryBinding[]; heap: Heap; changed: string[] })[];
 };
 
-export type PipelineItem = { id: string; label: string; status: 'in' | 'waiting' | 'kept' | 'dropped' | 'mapped' | 'consumed' | 'moved' | 'skipped' };
-export type PipelineOutput = { kind: 'list'; items: { id: string; label: string; from: string }[] } | { kind: 'value'; label: string; initial?: string };
+export type PipelineStatus = 'in' | 'waiting' | 'kept' | 'dropped' | 'mapped' | 'consumed' | 'moved' | 'skipped' | 'match' | 'nomatch' | 'error';
+/** An item label: one text, or one per language (a bilingual `show`). */
+export type PipelineLabel = string | Localized;
+export type PipelineItem = { id: string; label: PipelineLabel; status: PipelineStatus };
+export type PipelineOutput =
+  | { kind: 'list'; items: { id: string; label: PipelineLabel; from: string }[] }
+  | { kind: 'value'; label: PipelineLabel; initial?: PipelineLabel }
+  | { kind: 'pending' }
+  | { kind: 'error'; name: string; message: string };
+/** One comparator call of a sort/toSorted stage (perComparison). */
+export type PipelineCompare = { a: string; b: string; result: string; order: 'a-first' | 'b-first' | 'keep' | 'error'; index: number; count: number };
 export type PipelineSpec = {
   kind: 'pipeline'; code: string | null; language: string; input: { label: Localized }; stages: { op: string; fn: string; source: string }[]; resultLabel: Localized | null;
-  steps: (StepBase & { stage: number; focus?: string; items: PipelineItem[]; output: PipelineOutput | null })[];
+  steps: (StepBase & { stage: number; focus?: string; compare?: PipelineCompare; items: PipelineItem[]; output: PipelineOutput | null })[];
 };
 
 export type EventLoopSpec = {
@@ -98,3 +110,7 @@ export type RenderTimelineSpec = {
 };
 
 export type VisualSpec = CodeTraceSpec | MemoryGraphSpec | PipelineSpec | EventLoopSpec | DiagramSpec | SequenceSpec | GitGraphSpec | RenderTimelineSpec;
+
+/** A visual whose block has a strings table: one compiled spec per language (same steps in both). */
+export type LocalizedVisualSpec = { kind: VisualKind; byLang: Record<Lang, VisualSpec> };
+export type CompiledVisualSpec = VisualSpec | LocalizedVisualSpec;

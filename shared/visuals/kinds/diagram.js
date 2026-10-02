@@ -159,9 +159,27 @@ export function layout(spec) {
   let x = GROUP_PAD;
   for (const c of cols) { colX.set(c, x); x += colWidth.get(c) + GAP_X; }
   const rows = [...new Set(nodes.map((n) => n.row))].sort((a, b) => a - b);
+  // Two rows whose nodes belong to different groups in overlapping columns (tb layout, or a grid
+  // that stacks groups) need room for both frames and the lower frame's heading; otherwise the
+  // frames would overlap.
+  const runsOf = (row) => {
+    const runs = new Map();
+    for (const n of nodes) {
+      if (n.row !== row) continue;
+      const run = runs.get(n.group) ?? { group: n.group, from: n.col, to: n.col };
+      run.from = Math.min(run.from, n.col);
+      run.to = Math.max(run.to, n.col);
+      runs.set(n.group, run);
+    }
+    return [...runs.values()];
+  };
+  const framesMeet = (upper, lower) => runsOf(upper).some((a) => runsOf(lower).some((b) => a.group !== b.group && (a.group !== null || b.group !== null) && a.from <= b.to && b.from <= a.to));
   const rowY = new Map();
   let y = GROUP_PAD + (groups.length > 0 ? GROUP_HEAD : 0);
-  for (const r of rows) { rowY.set(r, y); y += NODE_H + GAP_Y; }
+  rows.forEach((r, i) => {
+    rowY.set(r, y);
+    y += NODE_H + GAP_Y + (i + 1 < rows.length && framesMeet(r, rows[i + 1]) ? 2 * GROUP_PAD + GROUP_HEAD + 10 : 0);
+  });
   for (const n of nodes) {
     n.x = colX.get(n.col) + (colWidth.get(n.col) - n.w) / 2;
     n.y = rowY.get(n.row);
