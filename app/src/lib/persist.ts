@@ -119,6 +119,33 @@ export class Doc<T> {
   get hasUnsavedChanges(): boolean {
     return this.dirty || this.inFlight;
   }
+
+  /** A save is on its way to the server right now (an ordinary request, cancelled if the page goes away). */
+  get saving(): boolean {
+    return this.inFlight;
+  }
+
+  /** Bytes of the request body that would save the current value. */
+  pendingBytes(): number {
+    return new TextEncoder().encode(JSON.stringify({ baseRev: this.rev, data: this.store.get(), force: false })).length;
+  }
+}
+
+// Browsers refuse keepalive request bodies above 64 KiB, counted over all keepalive requests in
+// flight together; a bigger save sent while the page closes is dropped (measured in Chrome).
+const KEEPALIVE_BUDGET = 60 * 1024;
+
+/** Would closing the page now lose an edit? (An in-flight save, or more than keepalive can carry.) */
+function closingLosesWork(): boolean {
+  let budget = KEEPALIVE_BUDGET;
+  for (const doc of docs.values()) {
+    if (!doc.hasUnsavedChanges) continue;
+    if (doc.saving) return true;
+    const bytes = doc.pendingBytes();
+    if (bytes > budget) return true;
+    budget -= bytes;
+  }
+  return false;
 }
 
 export const allDocs = (): Doc<unknown>[] => [...docs.values()];
@@ -134,14 +161,28 @@ export function unsavedSnapshot(): { createdAt: string; docs: { id: string; data
 }
 
 function flushAll(): void {
-  for (const doc of docs.values()) void doc.flush({ keepalive: true });
+  // keepalive lets a save outlive the page, within the browser's budget; bigger saves go as
+  // ordinary requests (beforeunload asks the learner to wait for those).
+  let budget = KEEPALIVE_BUDGET;
+  for (const doc of docs.values()) {
+    if (!doc.hasUnsavedChanges) continue;
+    const bytes = doc.pendingBytes();
+    const keepalive = bytes <= budget;
+    if (keepalive) budget -= bytes;
+    void doc.flush({ keepalive });
+  }
 }
 if (typeof window !== 'undefined') {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll(); });
   window.addEventListener('pagehide', flushAll);
   window.addEventListener('beforeunload', (event) => {
     const s = saveStatus.get().state;
-    if (s === 'failed' || s === 'conflict') { event.preventDefault(); event.returnValue = ''; }
+    if (s === 'failed' || s === 'conflict' || closingLosesWork()) {
+      // Start the save now: it completes while the browser asks whether to leave.
+      flushAll();
+      event.preventDefault();
+      event.returnValue = '';
+    }
   });
 }
 export const tokenForDownloadName = (): string => String(boot.port);
