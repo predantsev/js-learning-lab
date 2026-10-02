@@ -325,9 +325,15 @@
   // A resource that failed to load: a project path (not in the project, or not loadable this way)
   // is explained differently from an external address the sandbox blocks (no network).
   const MISSING_FILE_MARK = 'about:invalid#jsll-missing-file:';
+  let entryFetchFailed = false;
   const inlinedImages = new WeakSet();
   function explainResource(event) {
     const el = event.target;
+    // A module script written by the platform (`import "~/index.js"`) whose module graph could not be
+    // fetched: the browser fires `error` here only, without an error object. The reason is reported
+    // once the entry modules settle; it is not a missing file. (Link and evaluation errors of a module
+    // graph reach the window `error` listener instead.)
+    if (el.tagName === 'SCRIPT' && !el.getAttribute('src')) { entryFetchFailed = true; return; }
     const url = el.currentSrc || el.src || el.href || '';
     if (url.startsWith(MISSING_FILE_MARK)) { emitSystem('missing-file', url.slice(MISSING_FILE_MARK.length)); return; }
     let parsed = null;
@@ -808,10 +814,14 @@
         // Module entries may still be evaluating (top-level await): wait for them, then for
         // short-lived async work, before checking behavior or reporting completion.
         const limit = run.options.settleTimeoutMs;
-        await Promise.race([
+        const outcome = await Promise.race([
           Promise.allSettled((run.entryModules || []).map((spec) => import(spec))),
-          new Promise((r) => nativeSetTimeout(r, limit)),
+          new Promise((r) => nativeSetTimeout(() => r(null), limit)),
         ]);
+        // A module graph that could not be fetched fired `error` only at its <script> element (see
+        // explainResource): report why, instead of nothing. One error card is enough.
+        const failed = entryFetchFailed ? (outcome ?? []).find((result) => result.status === 'rejected') : null;
+        if (failed) reportError(normalizeModuleError(failed.reason), 'runtime');
         await quiescent(limit);
         flush();
         post('loaded', {});

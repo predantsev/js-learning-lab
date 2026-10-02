@@ -88,6 +88,9 @@ export function guidanceKey(error: RunError): Key {
   if (error.kind === 'syntax') return 'err.guide.syntax';
   if (error.kind === 'import' || error.kind === 'project') return 'err.guide.import';
   if (error.phase === 'unhandled-rejection') return 'err.guide.unhandled';
+  // A module the browser could not fetch, load or resolve while the program ran: an import problem,
+  // not a TypeError in the code. (An import() nobody handled keeps the advice to handle it.)
+  if (/^(Failed to fetch dynamically imported module|Failed to load module script|Failed to resolve module specifier)/.test(error.message ?? '')) return 'err.guide.import';
   const known = ['ReferenceError', 'TypeError', 'RangeError', 'SyntaxError', 'LoopBudgetError'];
   return (known.includes(error.name) ? `err.guide.${error.name}` : 'err.guide.generic') as Key;
 }

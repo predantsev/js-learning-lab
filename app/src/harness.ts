@@ -27,5 +27,5 @@ async function runProject(input: RunInput) {
   return result;
 }
 
-Object.assign(window, { jsll: { runProject, prepareRun, SandboxRun, sandboxOriginFor, port } });
+Object.assign(window, { jsll: { runProject, prepareRun, SandboxRun, runToCompletion, sandboxOriginFor, port } });
 document.documentElement.dataset.harness = 'ready';

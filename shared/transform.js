@@ -114,15 +114,50 @@ function loopGuardPlugin({ types: t }, { budgetMs }) {
 }
 
 function rewriteImportsPlugin({ types: t }, { resolve, onError }) {
-  const rewrite = (sourceNode, path) => {
+  // `type` is the import attribute (`with { type: "json" }`) or null. A project .json file is a
+  // module whose default export is the parsed data either way (moduleSourceFor), so `type: "json"`
+  // is accepted for .json files and the attribute is dropped by the caller (the sandbox's policy
+  // gives JSON fetches no connection). Other attribute types are refused before running.
+  // Returns true when the import names a JSON module.
+  const rewrite = (sourceNode, type = null) => {
+    const at = { line: sourceNode.loc?.start.line ?? null, column: sourceNode.loc?.start.column ?? null };
     const result = resolve(sourceNode.value);
     if (result.error) {
-      onError({ message: result.error, code: result.code, line: sourceNode.loc?.start.line ?? null, column: sourceNode.loc?.start.column ?? null });
-      return;
+      onError({ message: result.error, code: result.code, ...at });
+      return false;
+    }
+    if (type !== null) {
+      if (type !== 'json') {
+        onError({ message: `"${sourceNode.value}" is imported with { type: "${type}" }, which the in-course sandbox does not support. Only { type: "json" } works here, for a .json file of the project.`, code: 'unsupported-import-type', ...at });
+        return false;
+      }
+      if (!result.path || !/\.json$/i.test(result.path)) {
+        onError({ message: `"${sourceNode.value}" is imported with { type: "json" }, but it is not a .json file of the project.`, code: 'not-json-module', ...at });
+        return false;
+      }
     }
     if (result.path) sourceNode.value = MODULE_PREFIX + result.path;
-    void path;
+    return type === 'json';
   };
+  const dropAttributes = (node) => {
+    if (node.attributes) node.attributes = [];
+    if (node.assertions) node.assertions = [];
+  };
+  const keyName = (key) => (t.isIdentifier(key) ? key.name : t.isStringLiteral(key) ? key.value : null);
+  /** `type` of a static import's attributes (`with { type: "json" }`), or null. */
+  const attributeType = (node) => {
+    for (const attribute of node.attributes ?? node.assertions ?? []) if (keyName(attribute.key) === 'type' && t.isStringLiteral(attribute.value)) return attribute.value.value;
+    return null;
+  };
+  /** `type` of import(spec, { with: { type: "json" } }), when written literally; otherwise null. */
+  const optionsType = (options) => {
+    if (!t.isObjectExpression(options)) return null;
+    const withProp = options.properties.find((p) => t.isObjectProperty(p) && keyName(p.key) === 'with');
+    if (!withProp || !t.isObjectExpression(withProp.value)) return null;
+    const typeProp = withProp.value.properties.find((p) => t.isObjectProperty(p) && keyName(p.key) === 'type');
+    return typeProp && t.isStringLiteral(typeProp.value) ? typeProp.value.value : null;
+  };
+  const resolveAtRunTime = (arg, file) => t.callExpression(t.identifier('__jsllResolve'), [arg, t.stringLiteral(file)]);
   // import(…) is wrapped in __jsllImported(…) (sandbox runtime): a failed import rejects with the
   // same error, its message naming project paths instead of import-map keys ('~/records.js').
   const wrapImport = (path) => {
@@ -132,21 +167,25 @@ function rewriteImportsPlugin({ types: t }, { resolve, onError }) {
   return {
     name: 'jsll-rewrite-imports',
     visitor: {
-      ImportDeclaration(path) { rewrite(path.node.source, path); },
-      ExportAllDeclaration(path) { rewrite(path.node.source, path); },
-      ExportNamedDeclaration(path) { if (path.node.source) rewrite(path.node.source, path); },
+      ImportDeclaration(path) { if (rewrite(path.node.source, attributeType(path.node))) dropAttributes(path.node); },
+      ExportAllDeclaration(path) { if (rewrite(path.node.source, attributeType(path.node))) dropAttributes(path.node); },
+      ExportNamedDeclaration(path) { if (path.node.source && rewrite(path.node.source, attributeType(path.node))) dropAttributes(path.node); },
       ImportExpression(path) {
         if (path.node.__jsllWrapped) return;
         const arg = path.node.source;
-        if (t.isStringLiteral(arg)) rewrite(arg, path);
-        else path.node.source = t.callExpression(t.identifier('__jsllResolve'), [arg, t.stringLiteral(this.file.opts.filename.replace(/^\//, ''))]);
+        const type = optionsType(path.node.options);
+        if (t.isStringLiteral(arg)) rewrite(arg, type);
+        else path.node.source = resolveAtRunTime(arg, this.file.opts.filename.replace(/^\//, ''));
+        if (type === 'json') path.node.options = null;
         wrapImport(path);
       },
       CallExpression(path) {
         if (!t.isImport(path.node.callee) || path.node.__jsllWrapped) return;
         const arg = path.node.arguments[0];
-        if (t.isStringLiteral(arg)) rewrite(arg, path);
-        else if (arg) path.node.arguments[0] = t.callExpression(t.identifier('__jsllResolve'), [arg, t.stringLiteral(this.file.opts.filename.replace(/^\//, ''))]);
+        const type = optionsType(path.node.arguments[1]);
+        if (t.isStringLiteral(arg)) rewrite(arg, type);
+        else if (arg) path.node.arguments[0] = resolveAtRunTime(arg, this.file.opts.filename.replace(/^\//, ''));
+        if (type === 'json') path.node.arguments.splice(1, 1);
         wrapImport(path);
       },
     },

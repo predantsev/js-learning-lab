@@ -150,3 +150,64 @@ test('an error carries its cause chain: every level, a value that is not an erro
   assert.equal(none.causes, undefined);
   assert.deepEqual(undefinedCause.causes, [{ t: 'undefined' }], 'an own cause property is shown even when it is undefined');
 });
+
+test('project .json files import with { type: "json" }: statically, re-exported and with import()', async () => {
+  const r = await run({
+    files: {
+      'index.js': [
+        'import data from "./data/items.json" with { type: "json" };',
+        'import { items } from "./reexport.js";',
+        'import plain from "./data/items.json";',
+        'console.log(data.items.length, items.items[1], plain === data);',
+        'const path = "./data/items.json";',
+        'const loaded = await import(path, { with: { type: "json" } });',
+        'const literal = await import("./data/items.json", { with: { type: "json" } });',
+        'console.log(loaded.default === data, literal.default.items[0]);',
+      ].join('\n'),
+      'reexport.js': 'export { default as items } from "./data/items.json" with { type: "json" };\n',
+      'data/items.json': '{ "items": ["lamp", "plant"] }',
+    },
+  });
+  assert.equal(r.status, 'done');
+  assert.deepEqual(r.errors, []);
+  // In the sandbox a .json file is one module, with or without the attribute (a browser keeps a JSON
+  // module apart from other imports of the same file, and refuses the import without the attribute).
+  assert.deepEqual(texts(r), ['2 plant true', 'true lamp']);
+});
+
+test('an import attribute that cannot work is refused before running, with the file and the reason', async () => {
+  const css = await run({ files: { 'index.js': 'import sheet from "./styles.css" with { type: "css" };\n', 'styles.css': 'p { color: red; }' } });
+  assert.equal(css.status, 'compile-error');
+  assert.deepEqual([css.compileErrors[0].kind, css.compileErrors[0].code, css.compileErrors[0].file, css.compileErrors[0].line], ['import', 'unsupported-import-type', 'index.js', 1]);
+  assert.match(css.compileErrors[0].message, /"\.\/styles\.css" is imported with \{ type: "css" \}/);
+  const notJson = await run({ files: { 'index.js': 'import x from "./util.js" with { type: "json" };\n', 'util.js': 'export default 1;' } });
+  assert.deepEqual([notJson.compileErrors[0].code, notJson.compileErrors[0].message], ['not-json-module', '"./util.js" is imported with { type: "json" }, but it is not a .json file of the project.']);
+});
+
+test('a module graph that fails to load while running is reported as one error, never as silence or a missing frame.html', async () => {
+  // Every import is checked before running, so the failures are provoked by changing the prepared run:
+  // a specifier the import map does not know, and a module whose fetch fails (HTTP 404).
+  const runChanged = (change) => page.evaluate(async (how) => {
+    const { prepareRun, runToCompletion, sandboxOriginFor, port } = window.jsll;
+    const sandboxOrigin = sandboxOriginFor(port);
+    const prepared = prepareRun({ files: { 'index.js': 'console.log("never");\n' }, entry: 'index.js', runtime: 'browser-js', sandboxOrigin });
+    if (how === 'unknown-specifier') prepared.payload.modules['index.js'] = 'import "~/gone.js";\nconsole.log("never");\n';
+    else {
+      prepared.payload.libs['gone-lib'] = `${sandboxOrigin}/sandbox/libs/does-not-exist.js`;
+      prepared.payload.modules['index.js'] = 'import "gone-lib";\nconsole.log("never");\n';
+    }
+    const container = document.createElement('div');
+    document.getElementById('stage').append(container);
+    return runToCompletion({ container, sandboxOrigin, prepared, visible: false });
+  }, change);
+  for (const [change, pattern] of [['unknown-specifier', /gone\.js/], ['fetch-fails', /dynamically imported module|module script/]]) {
+    const r = await runChanged(change);
+    assert.equal(r.status, 'done', change);
+    assert.deepEqual(texts(r), [], change);
+    assert.deepEqual(r.console.filter((e) => e.level === 'system').map((e) => e.code), [], `${change}: no "missing file frame.html" note`);
+    assert.equal(r.errors.length, 1, `${change}: ${JSON.stringify(r.errors)}`);
+    assert.equal(r.errors[0].name, 'TypeError', change);
+    assert.match(r.errors[0].message, pattern, change);
+    assert.doesNotMatch(r.errors[0].message, /~\//, change);
+  }
+});
