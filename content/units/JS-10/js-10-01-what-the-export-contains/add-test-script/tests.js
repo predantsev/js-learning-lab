@@ -11,10 +11,10 @@ test('npm start still runs serve.mjs with node', () => {
   expect(start.trim(), 'scripts.start').toMatch(/^node\s+(\.\/)?serve\.mjs$/);
 });
 
-test('npm test runs node --test', () => {
+test('npm test runs run-tests.js with node', () => {
   const testScript = readPackage().scripts?.test;
   expect(typeof testScript, 'type of scripts.test').toBe('string');
-  expect(testScript.trim(), 'scripts.test').toMatch(/^node\s+--test(\s|$)/);
+  expect(testScript.trim(), 'scripts.test').toMatch(/^node\s+(\.\/)?run-tests\.js$/);
 });
 
 test('name and type stay as exported', () => {

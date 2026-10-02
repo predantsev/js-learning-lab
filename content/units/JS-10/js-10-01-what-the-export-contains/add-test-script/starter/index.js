@@ -18,4 +18,10 @@ if (pkg !== undefined) {
       console.log(`npm ${name} → %%noScript%% "${name}"`);
     }
   }
+  // Does `npm test` start a file of this project? (serve.mjs is left out of this exercise.)
+  const file = /^node\s+(?:\.\/)?(\S+\.m?js)$/.exec((scripts.test ?? "").trim())?.[1];
+  if (file !== undefined) {
+    const response = await fetch("./" + file);
+    console.log(response.ok ? "%%fileFound%%" : "%%fileMissing%%", file);
+  }
 }
