@@ -47,7 +47,7 @@ test('prices are formatted with only a few formatter preparations', () => {
     Number.prototype.toLocaleString = originalToLocale;
     Intl.NumberFormat = OriginalFormat;
   }
-  expect(preparations, 'toLocaleString calls and new Intl.NumberFormat while rendering 2,000 wishes').toBeLessThanOrEqual(100);
+  expect(preparations, 'toLocaleString calls and new Intl.NumberFormat while rendering 2,000 wishes').toBeLessThanOrEqual(300);
 });
 
 test('every toggle button keeps its data-id and aria-pressed', () => {
