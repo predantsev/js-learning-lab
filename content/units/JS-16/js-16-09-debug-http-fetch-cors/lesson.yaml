@@ -1,0 +1,420 @@
+id: js-16-09-debug-http-fetch-cors
+unit: JS-16
+title:
+  uk: "Налагодження: HTTP-помилка, відхилений fetch чи CORS"
+  en: "Debug: HTTP error vs rejected fetch vs CORS"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Лише за панеллю Network і консоллю визначити, чим є підготовлений збій: HTTP-відповіддю з помилкою, відхиленим `fetch` чи блоком CORS."
+    en: "Diagnose from the network panel and the console alone whether a seeded failure is an HTTP error response, a rejected `fetch` or a CORS block."
+  - uk: "Полагодити клієнт так, щоб кожен клас збою отримував свій стан і повідомлення, тіло не-JSON ніколи не розбиралося, а повтор застосовувався лише до збоїв, які варто повторювати."
+    en: "Repair the client so each failure class gets the right state and message, a non-JSON body is never parsed and retries apply only to retryable failures."
+prerequisites: [js-16-08-secrets-storage-privacy, js-16-05-devtools-network-failures]
+subskills:
+  - { family: W-04, skill: "HTTP methods/status/headers", depth: assess }
+  - { family: W-04, skill: "JSON content types", depth: assess }
+  - { family: W-04, skill: "fetch response checks", depth: assess }
+  - { family: W-04, skill: "same-origin/CORS/preflight/credentials", depth: assess }
+  - { family: W-04, skill: "network/offline failures", depth: assess }
+glossary: []
+selfCheck: [predict-console, load-records]
+
+blocks:
+  - id: three-lookalikes
+    kind: explanation
+    title:
+      uk: "Три збої, які в інтерфейсі виглядають однаково"
+      en: "Three failures that look the same in the interface"
+    body:
+      uk: |
+        Людина бачить лише «не завантажилось». Ти — маєш три джерела правди: що отримав код, що показує консоль браузера і що записала панель Network.
+
+        | | Що отримує код | Консоль браузера | Network |
+        |---|---|---|---|
+        | **`500` з HTML-тілом** | Response, `ok: false`, Content-Type `text/html` | `… status of 500 (Internal Server Error)`; `SyntaxError`, якщо код розібрав тіло як JSON | `500` |
+        | **Офлайн** | відхилення: `TypeError: Failed to fetch` | `net::ERR_INTERNET_DISCONNECTED` | `(failed)` |
+        | **Блок CORS** | відхилення: `TypeError: Failed to fetch` | `… has been blocked by CORS policy: …` | `CORS error`; у журналі сервера запит є |
+
+        Звідси правила для клієнта:
+
+        - Відповідь не `ok` — повідомлення зі статусом, **без повтору**: `404` чи `400` наступної секунди будуть такими самими.
+        - Content-Type не JSON — тіло не розбирати.
+        - Відхилений `fetch` код не може розрізнити: це мережа чи CORS. Один повтор недорогий і рятує від миттєвого збою мережі. Але повідомлення не має казати «сервер не працює»: при блоці CORS сервер **відповів**. А полагодити CORS можна лише на сервері.
+      en: |
+        The person sees only “did not load”. You have three sources of truth: what the code got, what the browser console shows and what the Network panel recorded.
+
+        | | What the code gets | Browser console | Network |
+        |---|---|---|---|
+        | **`500` with an HTML body** | a Response, `ok: false`, Content-Type `text/html` | `… status of 500 (Internal Server Error)`; a `SyntaxError` if the code parsed the body as JSON | `500` |
+        | **Offline** | a rejection: `TypeError: Failed to fetch` | `net::ERR_INTERNET_DISCONNECTED` | `(failed)` |
+        | **CORS block** | a rejection: `TypeError: Failed to fetch` | `… has been blocked by CORS policy: …` | `CORS error`; the server log has the request |
+
+        Hence the client’s rules:
+
+        - A response that is not `ok` — a message with the status, **no retry**: a `404` or `400` will be the same a second later.
+        - A Content-Type that is not JSON — do not parse the body.
+        - A rejected `fetch` cannot be told apart by the code: network or CORS. One retry is cheap and saves you from a momentary network glitch. But the message must not say “the server is down”: in a CORS block the server **did answer**. And CORS can be fixed only on the server.
+
+  - id: predict-console
+    kind: prediction
+    prompt:
+      uk: |
+        Сторінка `http://127.0.0.1:4300` тричі не змогла завантажити справи. DevTools ще не відкрито — є лише три записи з консолі браузера:
+
+        - **A**: `Failed to load resource: net::ERR_INTERNET_DISCONNECTED`, потім `Uncaught TypeError: Failed to fetch`
+        - **B**: `Access to fetch at 'http://127.0.0.1:8080/tasks.json' from origin 'http://127.0.0.1:4300' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`, потім `Uncaught TypeError: Failed to fetch`
+        - **C**: `Failed to load resource: the server responded with a status of 500 (Internal Server Error)`, потім `Uncaught SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON`
+
+        Що є чим?
+      en: |
+        The page `http://127.0.0.1:4300` failed to load the tasks three times. DevTools is not open yet — there are only three records from the browser console:
+
+        - **A**: `Failed to load resource: net::ERR_INTERNET_DISCONNECTED`, then `Uncaught TypeError: Failed to fetch`
+        - **B**: `Access to fetch at 'http://127.0.0.1:8080/tasks.json' from origin 'http://127.0.0.1:4300' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`, then `Uncaught TypeError: Failed to fetch`
+        - **C**: `Failed to load resource: the server responded with a status of 500 (Internal Server Error)`, then `Uncaught SyntaxError: Unexpected token '<', "<!doctype "... is not valid JSON`
+
+        Which is which?
+    answer:
+      type: choice
+      options:
+        - id: right
+          text:
+            uk: "A — офлайн, B — блок CORS, C — `500` з HTML-тілом, яке код розібрав як JSON"
+            en: "A — offline, B — a CORS block, C — a `500` with an HTML body the code parsed as JSON"
+        - id: b-down
+          text:
+            uk: "A — офлайн, B — сервер на `8080` не працює, C — `500`"
+            en: "A — offline, B — the server on `8080` is down, C — a `500`"
+          why:
+            uk: "Текст B прямо каже про CORS policy і про заголовок, якого бракує у **відповіді** — отже, відповідь була. Вимкнений сервер дав би `net::ERR_CONNECTION_REFUSED`."
+            en: "Text B speaks of a CORS policy and of a header missing from the **response** — so there was a response. A server that is down would give `net::ERR_CONNECTION_REFUSED`."
+        - id: c-json
+          text:
+            uk: "A — офлайн, B — блок CORS, C — сервер надіслав зіпсований JSON зі статусом 200"
+            en: "A — offline, B — a CORS block, C — the server sent broken JSON with status 200"
+          why:
+            uk: "Перший рядок C називає статус `500`, а `\"<!doctype \"` — початок HTML-сторінки. Код розібрав сторінку помилки як JSON, бо не перевірив ні `ok`, ні Content-Type."
+            en: "The first line of C names status `500`, and `\"<!doctype \"` is the start of an HTML page. The code parsed the error page as JSON because it checked neither `ok` nor the Content-Type."
+        - id: same
+          text:
+            uk: "A і B — те саме, бо в обох `TypeError: Failed to fetch`"
+            en: "A and B are the same, because both have `TypeError: Failed to fetch`"
+          why:
+            uk: "Для коду вони однакові, а для тебе — ні: перші рядки консолі різні. Офлайн запит не вийшов із браузера; при CORS сервер відповів, але браузер не віддав відповіді."
+            en: "To the code they are the same, but not to you: the first console lines differ. Offline the request never left the browser; with CORS the server answered, but the browser withheld the response."
+      correct: [right]
+    explanation:
+      uk: "Перший рядок кожного запису — від браузера, і він називає причину: `ERR_INTERNET_DISCONNECTED` — немає мережі, `blocked by CORS policy` — немає дозволу у відповіді, `status of 500` — відповідь із помилкою. Другий рядок — що з цим зробив код. У прикладі нижче ти відтвориш ці збої й подивишся ще й на панель Network."
+      en: "The first line of each record comes from the browser, and it names the cause: `ERR_INTERNET_DISCONNECTED` — no network, `blocked by CORS policy` — no permission in the response, `status of 500` — an error response. The second line is what the code did with it. In the example that follows you reproduce these failures and look at the Network panel too."
+
+  - id: replay
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Три збої поруч: що надіслав сервер і що побачив код"
+      en: "Three failures side by side: what the server sent and what the code saw"
+    textEquivalent:
+      uk: "Підготовлений обробник loadRecords тричі робить запит. Перший раз сервер відповідає 500 з Content-Type text/html і HTML-сторінкою помилки. Браузер віддає коду Response з ok false, але обробник не перевіряє ok і викликає response.json(); розбір HTML кидає SyntaxError, обробник вважає це збоєм і повторює запит — і так тричі, а потім пише «сервер не працює». Другий раз увімкнено Offline: запит не виходить із браузера, сервер нічого не отримує, fetch відхиляється з TypeError: Failed to fetch; обробник тричі повторює й пише «сервер не працює», хоча проблема в мережі людини. Третій раз запит іде на інший origin без дозволу CORS: сервер отримує його, записує в журнал і відповідає 200 зі списком, але браузер не віддає відповідь коду, і fetch відхиляється тим самим TypeError; обробник пише «сервер не працює», хоча сервер працює й відповів. Виправлений обробник: перевіряє ok і показує статус без повтору, перевіряє Content-Type перед розбором і для відхиленого fetch робить один повтор та показує нейтральне повідомлення."
+      en: "The seeded handler loadRecords makes a request three times. The first time the server answers 500 with Content-Type text/html and an HTML error page. The browser hands the code a Response with ok false, but the handler does not check ok and calls response.json(); parsing HTML throws a SyntaxError, the handler takes that as a failure and repeats the request — three times in all, and then writes “the server is down”. The second time Offline is on: the request never leaves the browser, the server receives nothing, and fetch rejects with TypeError: Failed to fetch; the handler retries three times and writes “the server is down”, although the problem is the person’s network. The third time the request goes to another origin without a CORS permission: the server receives it, logs it and answers 200 with the list, but the browser withholds the response from the code, and fetch rejects with the same TypeError; the handler writes “the server is down”, although the server is up and did answer. The repaired handler checks ok and shows the status without a retry, checks the Content-Type before parsing, and for a rejected fetch makes one retry and shows a neutral message."
+    spec:
+      actors:
+        - { id: code, label: { uk: "loadRecords", en: "loadRecords" } }
+        - { id: browser, label: { uk: "Браузер", en: "Browser" } }
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+      messages:
+        - from: server
+          to: browser
+          label: "500 · text/html"
+          kind: return
+          note: { uk: "<!doctype html>… сторінка помилки", en: "<!doctype html>… an error page" }
+          caption:
+            uk: "Збій 1: сервер відповідає `500` і HTML-сторінкою помилки."
+            en: "Failure 1: the server answers `500` with an HTML error page."
+        - from: browser
+          to: code
+          label: "Response { ok: false }"
+          kind: return
+          note: { uk: "гілка: json() → SyntaxError → повтор ×3", en: "branch: json() → SyntaxError → retry ×3" }
+          caption:
+            uk: "Код отримує Response, але не перевіряє `ok`, розбирає HTML як JSON, ловить `SyntaxError` і **повторює** запит, хоча відповідь буде та сама."
+            en: "The code gets a Response but does not check `ok`, parses the HTML as JSON, catches a `SyntaxError` and **repeats** the request, although the answer will be the same."
+        - from: code
+          to: browser
+          label: "fetch (Offline)"
+          caption:
+            uk: "Збій 2: увімкнено Offline."
+            en: "Failure 2: Offline is on."
+        - from: browser
+          to: code
+          label: "TypeError: Failed to fetch"
+          kind: return
+          note: { uk: "сервер нічого не отримав · гілка: «сервер не працює»", en: "the server got nothing · branch: “server is down”" }
+          caption:
+            uk: "Запит не вийшов із браузера, сервер нічого не отримав. Обробник пише «сервер не працює» — а проблема в мережі людини."
+            en: "The request never left the browser; the server got nothing. The handler writes “the server is down” — but the problem is the person’s network."
+        - from: browser
+          to: server
+          label: "GET /tasks.json"
+          kind: async
+          note: { uk: "інший origin, без дозволу CORS", en: "another origin, no CORS permission" }
+          caption:
+            uk: "Збій 3: запит на інший origin. Він **доходить** до сервера."
+            en: "Failure 3: a request to another origin. It **reaches** the server."
+        - from: server
+          to: browser
+          label: "200 [list]"
+          kind: return
+          note: { uk: "журнал сервера: GET /tasks.json 200", en: "server log: GET /tasks.json 200" }
+          caption:
+            uk: "Сервер відповідає `200` зі списком, але без `Access-Control-Allow-Origin`."
+            en: "The server answers `200` with the list, but without `Access-Control-Allow-Origin`."
+        - from: browser
+          to: code
+          label: "TypeError: Failed to fetch"
+          kind: return
+          note: { uk: "гілка: «сервер не працює»", en: "branch: “server is down”" }
+          caption:
+            uk: "Браузер не віддає відповіді — код бачить той самий `TypeError`, що й офлайн. «Сервер не працює» — неправда: він відповів."
+            en: "The browser withholds the response — the code sees the same `TypeError` as offline. “The server is down” is false: it answered."
+        - from: code
+          to: code
+          label: "ok? Content-Type? retry once"
+          kind: note
+          caption:
+            uk: "Виправлення: `ok` — до тіла й без повтору, Content-Type — до розбору, один повтор лише для відхиленого `fetch` і повідомлення, що нікого не звинувачує."
+            en: "The repair: `ok` before the body and without a retry, the Content-Type before parsing, one retry only for a rejected `fetch`, and a message that blames no one."
+
+  - id: failure-recorder
+    kind: example
+    runtime: browser-js
+    dir: failure-recorder
+    entry: index.html
+    capabilities: { network: lab }
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Що бачить код", en: "What the code sees" }
+      againButton: { uk: "Запит ще раз", en: "Request again" }
+      againLabel: { uk: "ще раз", en: "again" }
+      fulfilled: { uk: "fetch виконано —", en: "fetch fulfilled —" }
+      rejected: { uk: "fetch відхилено —", en: "fetch rejected —" }
+    title:
+      uk: "Відтвори збої: 500, CORS, офлайн"
+      en: "Reproduce the failures: 500, CORS, offline"
+    body:
+      uk: |
+        Код робить справжні запити до сервера фікстур: `/lab/status/500` відповідає статусом `500`, а `/lab/cors/closed` — `200`, але без дозволу CORS. Для кожного запиту консоль платформи показує, що отримав **код**. Відкрий DevTools браузера (**Console** і **Network**), щоб побачити те, чого код не бачить.
+      en: |
+        The code makes real requests to the fixture server: `/lab/status/500` answers with status `500`, and `/lab/cors/closed` with `200` but without a CORS permission. For each request the platform’s console shows what the **code** got. Open the browser’s DevTools (**Console** and **Network**) to see what the code cannot.
+    tryIt:
+      uk: |
+        1. Запусти з відкритою панеллю Network. Рядок `500` — звичайна відповідь сервера. Рядок `closed` — у стовпчику Status `CORS error`, хоча сервер відповів `200`: консоль браузера пояснює, чому код отримав лише `TypeError`.
+        2. Порівняй два записи в консолі платформи: `500` дав Response з `ok false`, CORS — відхилення. Код бачить блок CORS так само, як відсутність мережі.
+        3. Офлайн: **після** запуску обери в Network **Offline** і натисни «Запит ще раз» на сторінці. Очікувано — `TypeError` і рядок `(failed)`. Якщо запит пройшов, твій Chrome не застосовує умови мережі до окремого вікна пісочниці — тоді повтори цей крок на сторінці `http://127.0.0.1:5173/` з уроку про cookie (`await fetch("/")` у її Console). Потім поверни **No throttling**.
+      en: |
+        1. Run with the Network panel open. The `500` row is an ordinary server answer. The `closed` row has `CORS error` in the Status column, although the server answered `200`: the browser console explains why the code got only a `TypeError`.
+        2. Compare the two records in the platform’s console: `500` gave a Response with `ok false`, CORS a rejection. The code sees a CORS block exactly like a missing network.
+        3. Offline: **after** the run choose **Offline** in Network and press “Request again” on the page. Expected: a `TypeError` and a `(failed)` row. If the request went through, your Chrome does not apply network conditions to the sandbox’s separate frame — then repeat this step on the page `http://127.0.0.1:5173/` from the cookies lesson (`await fetch("/")` in its Console). Then switch back to **No throttling**.
+
+  - id: cors-for-real
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Блок CORS ще раз: журнал сервера — свідок"
+      en: "The CORS block once more: the server log as a witness"
+    intro:
+      uk: "Ті самі два сервери, що в уроці про CORS: сторінка на `127.0.0.1:5173`, фікстури на `127.0.0.1:5180`. Мета — довести собі, що при блоці CORS сервер запит отримав. Команди однакові в macOS, Linux і Windows PowerShell; перевірено в macOS із esbuild 0.28.2."
+      en: "The same two servers as in the CORS lesson: the page on `127.0.0.1:5173`, the fixtures on `127.0.0.1:5180`. The goal is to prove to yourself that in a CORS block the server did receive the request. The commands are the same on macOS, Linux and Windows PowerShell; checked on macOS with esbuild 0.28.2."
+    tools:
+      - { name: "esbuild", version: "0.28 (in ~/js-course/web-lab)" }
+      - { name: "Google Chrome", version: "current desktop version" }
+    steps:
+      - text:
+          uk: "У першому вікні терміналу запусти сторінку, у другому — фікстури **без** `--cors-origin`."
+          en: "In the first terminal window start the page, in the second the fixtures **without** `--cors-origin`."
+        command: "cd ~/js-course/web-lab\nnpx esbuild --servedir=page --serve=127.0.0.1:5173"
+        expect:
+          uk: "` > Local: http://127.0.0.1:5173/`; у другому вікні — `npx esbuild --servedir=fixtures --serve=127.0.0.1:5180` і ` > Local: http://127.0.0.1:5180/`."
+          en: "` > Local: http://127.0.0.1:5173/`; in the second window `npx esbuild --servedir=fixtures --serve=127.0.0.1:5180` and ` > Local: http://127.0.0.1:5180/`."
+      - text:
+          uk: "Відкрий `http://127.0.0.1:5173/`, DevTools → **Console** і **Network**, і виконай у Console:"
+          en: "Open `http://127.0.0.1:5173/`, DevTools → **Console** and **Network**, and run in the Console:"
+        command: "await fetch(\"http://127.0.0.1:5180/wishes.json\").then((r) => r.json())"
+        expect:
+          uk: "Консоль: `… blocked by CORS policy: No 'Access-Control-Allow-Origin' header …` і `Uncaught TypeError: Failed to fetch`. Network: рядок `wishes.json` зі статусом `CORS error`. Другий термінал: `… \"GET /wishes.json\" 200 …`."
+          en: "Console: `… blocked by CORS policy: No 'Access-Control-Allow-Origin' header …` and `Uncaught TypeError: Failed to fetch`. Network: a `wishes.json` row with the status `CORS error`. Second terminal: `… \"GET /wishes.json\" 200 …`."
+      - text:
+          uk: "Для порівняння зупини сервер фікстур (Ctrl + C у другому вікні) і повтори той самий рядок коду."
+          en: "For comparison stop the fixture server (Ctrl + C in the second window) and repeat the same line of code."
+        expect:
+          uk: "Тепер у консолі `net::ERR_CONNECTION_REFUSED` замість повідомлення про CORS, і той самий `TypeError: Failed to fetch`; у журналі сервера нового рядка, звісно, немає. Для коду обидва випадки однакові — розрізнити їх можна лише так, як щойно зробив ти. Зупини й перший сервер."
+          en: "Now the console shows `net::ERR_CONNECTION_REFUSED` instead of the CORS message, and the same `TypeError: Failed to fetch`; there is no new line in the server log, of course. To the code both cases are the same — they can only be told apart the way you just did it. Stop the first server too."
+    verify:
+      - id: logged
+        text:
+          uk: "При блоці CORS журнал сервера показав `GET /wishes.json 200`."
+          en: "During the CORS block the server log showed `GET /wishes.json 200`."
+      - id: refused
+        text:
+          uk: "Коли сервер фікстур не працював, консоль показала `net::ERR_CONNECTION_REFUSED`, а код отримав той самий `TypeError`."
+          en: "With the fixture server stopped, the console showed `net::ERR_CONNECTION_REFUSED`, and the code got the same `TypeError`."
+    troubleshooting:
+      - problem:
+          uk: "Запит повернув масив без жодного блоку"
+          en: "The request returned the array without any block"
+        fix:
+          uk: "Сервер фікстур досі запущено з `--cors-origin=http://127.0.0.1:5173` з уроку про CORS. Зупини його й запусти без цього прапорця."
+          en: "The fixture server is still running with `--cors-origin=http://127.0.0.1:5173` from the CORS lesson. Stop it and start it without that flag."
+      - problem:
+          uk: "Сервер фікстур зупинено, а запит однаково отримує якусь відповідь"
+          en: "The fixture server is stopped, yet the request still gets some answer"
+        fix:
+          uk: "На цьому порту слухає інша програма — наприклад, Docker чи інший сервер розробки. Під час перевірки цього уроку саме так поводився порт 8080, тому тут і взято 5180. Перевір, хто слухає порт (`lsof -i :5180` у macOS і Linux, `Get-NetTCPConnection -LocalPort 5180` у PowerShell), або візьми інший порт."
+          en: "Another program listens on that port — Docker or another development server, for example. That is exactly what port 8080 did while this lesson was being checked, which is why 5180 is used here. Check who listens on the port (`lsof -i :5180` on macOS and Linux, `Get-NetTCPConnection -LocalPort 5180` in PowerShell), or take another port."
+      - problem:
+          uk: "`npx esbuild` пише, що не знаходить пакет або пропонує його встановити"
+          en: "`npx esbuild` says it cannot find the package or offers to install it"
+        fix:
+          uk: "Ти не в теці `~/js-course/web-lab`, де esbuild встановлено. Перейди туди командою `cd ~/js-course/web-lab`."
+          en: "You are not in the `~/js-course/web-lab` folder where esbuild is installed. Go there with `cd ~/js-course/web-lab`."
+    recovery:
+      uk: "Сервери нічого не змінюють у файлах. Якщо щось пішло не так, зупини обидва (Ctrl + C) і почни з першого кроку."
+      en: "The servers change nothing in the files. If something went wrong, stop both (Ctrl + C) and start again from the first step."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: загублений promise"
+      en: "Recall: a floating promise"
+    items:
+      - id: missing-await
+        from: js-08-11-debug-async
+        prompt:
+          uk: "Обробник кліку викликає `loadRecords(url)` без `await` усередині `try { … } catch { showMessage(…) }`. `fetch` у `loadRecords` відхиляється. Що побачать людина й консоль?"
+          en: "A click handler calls `loadRecords(url)` without `await` inside `try { … } catch { showMessage(…) }`. The `fetch` in `loadRecords` rejects. What do the person and the console see?"
+        answer:
+          type: choice
+          options:
+            - id: unhandled
+              text: { uk: "Людина — нічого; у консолі — необроблене відхилення", en: "The person — nothing; the console — an unhandled rejection" }
+            - id: caught
+              text: { uk: "`catch` покаже повідомлення людині", en: "`catch` shows the person a message" }
+              why:
+                uk: "Без `await` виклик лише запускає promise і йде далі; `try` закінчується раніше, ніж promise відхилиться, тож `catch` його не ловить."
+                en: "Without `await` the call only starts the promise and moves on; the `try` ends before the promise rejects, so `catch` does not catch it."
+            - id: nothing
+              text: { uk: "Нічого ніде: відхилення без `await` зникає безслідно", en: "Nothing anywhere: a rejection without `await` disappears without a trace" }
+              why:
+                uk: "Браузер повідомляє про кожне відхилення, яке ніхто не обробив, — це червоний рядок у консолі."
+                en: "The browser reports every rejection nobody handled — a red line in the console."
+          correct: [unhandled]
+        explanation:
+          uk: "`try/catch` ловить відхилення лише того promise, на який чекає `await`. Перш ніж розбирати, який це збій — HTTP, мережа чи CORS, — переконайся, що помилка взагалі доходить до твого коду."
+          en: "`try/catch` catches the rejection only of a promise that `await` waits for. Before working out which failure it is — HTTP, network or CORS — make sure the error reaches your code at all."
+
+  - id: load-records
+    kind: exercise
+    mode: debug
+    runtime: browser-js
+    dir: load-records
+    entry: index.html
+    editable: [index.js]
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Витрати", en: "Expenses" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      httpError: { uk: "Сервер відповів помилкою", en: "The server answered with an error" }
+      notJson: { uk: "Сервер надіслав не ті дані.", en: "The server sent the wrong kind of data." }
+      noAnswer: { uk: "Не вдалося отримати відповідь. Перевір з’єднання; якщо воно є, причину назве консоль браузера.", en: "Could not get an answer. Check your connection; if it works, the browser console names the reason." }
+      serverDown: { uk: "Сервер не працює.", en: "The server is down." }
+    title:
+      uk: "Полагодь loadRecords"
+      en: "Repair loadRecords"
+    instructions:
+      uk: |
+        `loadRecords` пройшла всі ручні перевірки, доки сервер відповідав. Під час збоїв вона поводиться погано:
+
+        - відповідь `404` із JSON-тілом вважає успіхом і пробує показати тіло помилки як список;
+        - сторінку помилки `500` (HTML) розбирає як JSON;
+        - повторює **будь-який** збій, зокрема `404`, тричі;
+        - для блоку CORS і для офлайну пише «Сервер не працює».
+
+        Коментар над `MESSAGES` описує, як вона **має** поводитися. Полагодь її. Перевірки підставлять відповіді `200`, `404`, `500` з HTML, сторінку HTML зі статусом `200` і відхилений `fetch` та порахують запити.
+      en: |
+        `loadRecords` passed every manual check while the server answered. During failures it behaves badly:
+
+        - it takes a `404` answer with a JSON body for success and tries to show the error body as a list;
+        - it parses a `500` error page (HTML) as JSON;
+        - it retries **any** failure, a `404` included, three times;
+        - for a CORS block and for offline it writes “The server is down.”
+
+        The comment above `MESSAGES` describes how it **should** behave. Repair it. The checks put in `200` and `404` answers, a `500` with HTML, an HTML page with status `200` and a rejected `fetch`, and count the requests.
+    testTitles:
+      "shows the records of a JSON answer":
+        uk: "Показує записи з JSON-відповіді"
+        en: "Shows the records of a JSON answer"
+      "shows the status of an HTTP error and does not retry it":
+        uk: "Показує статус HTTP-помилки й не повторює її"
+        en: "Shows the status of an HTTP error and does not retry it"
+      "does not parse a 200 page that is not JSON":
+        uk: "Не розбирає сторінку зі статусом `200`, яка не є JSON"
+        en: "Does not parse a `200` page that is not JSON"
+      "retries a rejected fetch exactly once":
+        uk: "Повторює відхилений `fetch` рівно один раз"
+        en: "Retries a rejected `fetch` exactly once"
+      "after the retry the message does not claim the server is down":
+        uk: "Після повтору повідомлення не стверджує, що сервер не працює"
+        en: "After the retry the message does not claim the server is down"
+      "a load that works on the second attempt shows the records":
+        uk: "Завантаження, що вдалося з другої спроби, показує записи"
+        en: "A load that works on the second attempt shows the records"
+    hints:
+      nudge:
+        uk: "Зараз один `try` огортає все: і `fetch`, і розбір, і показ. Тому будь-яка помилка — від мережі до `SyntaxError` — потрапляє в той самий `catch` і той самий повтор. Які кроки мають отримати власну реакцію?"
+        en: "Right now one `try` wraps everything: the `fetch`, the parsing and the display. So any error — from the network to a `SyntaxError` — lands in the same `catch` and the same retry. Which steps need their own reaction?"
+      explanation:
+        uk: "Повтор має сенс лише тоді, коли відповіді не було: оточи `try/catch` тільки `await fetch(url)`. Отриману відповідь перевір: не `ok` — повідомлення зі статусом і `return`; Content-Type без `application/json` — повідомлення й `return`, без `json()`. Цикл спроб обмеж двома. І заміни текст для відхиленого `fetch`: для коду блок CORS і офлайн однакові, тож повідомлення не має звинувачувати сервер."
+        en: "A retry only makes sense when there was no answer: wrap only `await fetch(url)` in `try/catch`. Check the response you got: not `ok` — a message with the status and `return`; a Content-Type without `application/json` — a message and `return`, without `json()`. Limit the attempt loop to two. And change the text for a rejected `fetch`: to the code a CORS block and offline are the same, so the message must not blame the server."
+    solutionNote:
+      uk: "Кожен клас збою отримав свою реакцію: відповідь не `ok` показує статус і не повторюється, бо буде такою самою; не-JSON не розбирається; лише відхилений `fetch` — коли відповіді не було — отримує один повтор і нейтральне повідомлення. Причину відхилення (мережа чи CORS) людина чи розробник побачить у консолі браузера; код її не знає і не вдає, що знає."
+      en: "Each failure class got its own reaction: a response that is not `ok` shows the status and is not retried, because it would be the same; non-JSON is not parsed; only a rejected `fetch` — when there was no answer — gets one retry and a neutral message. The reason for the rejection (network or CORS) shows up for the person or developer in the browser console; the code does not know it and does not pretend to."
+    feedback:
+      - when: { test: "shows the records of a JSON answer" }
+        message:
+          uk: "Ця перевірка відповідає `200` із JSON-списком і очікує дві назви в `#records` та порожнє повідомлення."
+          en: "This check answers `200` with a JSON list and expects two names in `#records` and an empty message."
+      - when: { test: "shows the status of an HTTP error and does not retry it" }
+        message:
+          uk: "Ця перевірка очікує один запит і повідомлення «Сервер відповів помилкою (404)» для `404` та «… (500)» для `500` з HTML-тілом, а список — порожній. Якщо запитів більше, HTTP-помилка повторюється."
+          en: "This check expects one request and the message “The server answered with an error (404)” for a `404`, and “… (500)” for a `500` with an HTML body, with an empty list. If there are more requests, the HTTP error is being retried."
+      - when: { test: "does not parse a 200 page that is not JSON" }
+        message:
+          uk: "Ця перевірка відповідає `200` з Content-Type `text/html` і очікує один запит, повідомлення «Сервер надіслав не ті дані.» і порожній список."
+          en: "This check answers `200` with Content-Type `text/html` and expects one request, the message “The server sent the wrong kind of data.” and an empty list."
+      - when: { test: "retries a rejected fetch exactly once" }
+        message:
+          uk: "Ця перевірка змушує `fetch` щоразу відхилятися й очікує рівно два запити — першу спробу й один повтор."
+          en: "This check makes `fetch` reject every time and expects exactly two requests — the first attempt and one retry."
+      - when: { test: "after the retry the message does not claim the server is down" }
+        message:
+          uk: "Ця перевірка очікує після двох відхилених спроб повідомлення з `MESSAGES.noAnswer`, а не «Сервер не працює.»."
+          en: "This check expects, after two rejected attempts, the message from `MESSAGES.noAnswer`, not “The server is down.”"
+      - when: { test: "a load that works on the second attempt shows the records" }
+        message:
+          uk: "Ця перевірка відхиляє першу спробу, а на другу відповідає `200` зі списком, і очікує два запити, обидві назви й порожнє повідомлення."
+          en: "This check rejects the first attempt and answers the second with `200` and a list, and expects two requests, both names and an empty message."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` означає, що значення має не той тип, на який розраховує код. `records.map is not a function` — у `renderList` потрапило тіло помилки замість списку: перевір `ok` до розбору. `… is not a function` для `loadRecords` — програма зупинилася ще під час завантаження."
+          en: "A `TypeError` means a value has a different type than the code expects. `records.map is not a function` — an error body reached `renderList` instead of a list: check `ok` before parsing. `… is not a function` for `loadRecords` — the program stopped while loading."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-16
+    body:
+      uk: "У кроці проєкту ти навмисно зупиниш локальний сервер посеред роботи. Твій клієнт має повторити такий збій один раз і показати чесне повідомлення, а `404` для невідомої категорії чи дня — показати як порожній стан, без жодного повтору."
+      en: "In the project step you will deliberately stop the local server mid-work. Your client must retry such a failure once and show an honest message, and show a `404` for an unknown category or day as an empty state, without any retry."
