@@ -153,10 +153,14 @@ case asserts exactly one `beforeunload` dialog, accepted after 300 ms.
 
 ### M-3 — file permissions (fixed, commit `1c2591e`)
 
-Before: the new store test failed with `actual: 493` (0755) for the data folder. Now folders
-created by the store are 0700, documents, `.bak` and `meta.json` are 0600, and an existing
-`meta.json` is tightened on open (`tests/unit/store.test.mjs` › *learner data is private to this
-OS user*). This narrows file reads only; H-1 stays open.
+Before: the new store test failed with `actual: 493` (0755) for the data folder.
+- **New installations:** folders 0700; documents, `.bak` and `meta.json` 0600.
+- **Existing installations:** `meta.json` is tightened on open. Each document becomes 0600 on its
+  next write, because the temp file is created 0600 and renamed over it. Existing folder modes
+  are not changed (`mkdir` leaves an existing folder alone).
+
+Test: `tests/unit/store.test.mjs` › *learner data is private to this OS user*. This narrows
+file reads only; H-1 stays open.
 
 ### M-4 — exported `serve.mjs` and DNS rebinding (fixed, commit `833b863`)
 
@@ -259,6 +263,15 @@ access and storage isolation):
   `blocks.tsx`, `Lesson.tsx`, `Workspace.tsx`, `pages.tsx`, `ui.tsx`, `VisualPlayer.tsx`,
   `RenderTimeline.tsx`). The app CSP has `script-src 'self'` without `'unsafe-inline'`, so injected
   markup could not run script anyway.
+- **Downloads:** the frame's `sandbox` attribute has no `allow-downloads`, so a download it
+  starts is refused by the browser *(inferred from the attribute, not exercised)*.
+- **`blob:`/`data:` self-navigation:** the app CSP `frame-src` lists only the loopback sandbox
+  origins, not `blob:` or `data:`, so navigating the frame to such a URL is refused. Even if it
+  were not, the document would stay sandboxed and opaque *(inferred from the CSP, not exercised)*.
+- **`document.open/write`:** learner code that rewrites its own document stays in the same opaque,
+  sandboxed frame. The worst case is that the runtime's listeners are gone, pings go unanswered
+  and the app's unresponsive auto-stop ends the run *(inferred from `shared/runner.js` heartbeat
+  and `useRunner.ts`, not exercised)*.
 - **L-3 (accepted, now stated):** the browser runner installs `test`/`expect` with
   `Object.assign(window, …)` after the learner program loaded (`sandbox/runtime.js:678`).
   Learner code in the same realm can redefine them, or patch built-ins they use, and so make checks
@@ -329,10 +342,10 @@ written. M-2 was the one silent-loss path found (fixed).
 
 - **`@babel/standalone` 7.29.9** (`node -e …version`) transforms learner code in the app page,
   the token-holding origin (`shared/runner.js` → `shared/transform.js`, called from `useRunner`).
-  It parses and transforms, and does not execute learner code. The known compile-time
-  code-execution issue in Babel's `path.evaluate` (CVE-2023-45133) is fixed from 7.23.2. A future
-  Babel parser bug would land in the token origin; moving the transform into a worker is the
-  hardening option.
+  It parses and transforms, and does not execute learner code. A compile-time code-execution bug
+  in Babel's `path.evaluate` (CVE-2023-45133) was fixed in 7.23.2. The installed 7.29.9 is later
+  *(from memory, not checked against the advisory)*. Any Babel bug of that kind would run in the
+  token origin; moving the transform into a worker is the hardening option.
 - **`tsc` (typescript 7.0.2 native binary)** runs as a child with `PATH` and `NO_COLOR` only, in a
   fresh folder with a server-generated `tsconfig.jsll.json` (`noEmit`). It is not
   permission-sandboxed. Learner `.ts` files can make it read other files through references or
@@ -343,8 +356,10 @@ written. M-2 was the one silent-loss path found (fixed).
 
 ## Accepted limits, stated plainly
 
-1. Untrusted code must not be run with `network: "loopback"`. Only the platform guard keeps such a
-   run off the platform's port, and every other loopback service is reachable (C-1, H-2).
+1. Residual risk, not an enforceable rule: learners will paste code into Node lessons that use
+   `network: "loopback"`. Until the H-1 design lands, the platform guard is the only thing between
+   such code and the token, and every other loopback service is reachable (C-1, H-2). The
+   learner-visible limitations say so.
 2. Any process that can open a loopback connection can read the API token from `/` (H-1).
 3. Check results in both runners are self-assessment. Deliberate learner code can make them pass
    (L-3; SERVER-API.md for Node).
@@ -364,10 +379,13 @@ $ npm test                                → ℹ tests 152 · ℹ pass 152 · �
 $ npm run test:e2e                        → ℹ tests 123 · ℹ pass 123 · ℹ fail 0 · ℹ skipped 0
 ```
 
-Each new regression test was also run against the original code of the file it guards, and it
-failed there. The outputs are quoted in the finding sections. For the lab, the before/after
-evidence is the `lab-growth.mjs` probe, because the new test imports `LAB_LIMITS`, which the old
-module does not export.
+The new tests were run against the original code of the files they guard, and they failed there;
+the outputs are quoted in the finding sections. Two need a note:
+- **Unload test:** the run on the original `persist.ts` used an earlier form of the test, without
+  the dialog assertions. That run failed on the saved content. The final form would also fail
+  there, on the dialog count, because no dialog appears.
+- **Lab:** the before/after evidence is the `lab-growth.mjs` probe. The new test imports
+  `LAB_LIMITS`, which the old module does not export.
 
 ## Not examined
 
