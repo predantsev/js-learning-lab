@@ -22,22 +22,31 @@ export async function register(api) {
   api.nodeRunner = runner;
 
   api.route('POST', '/api/node/run', async ({ req, res }) => {
+    // A dropped connection stops the run. The listener is attached before anything else: a client
+    // that goes away while the files are being written (before the "start" event) must not leave
+    // the run going until its time limit.
+    let runId = null;
+    let disconnected = false;
+    res.on('close', () => {
+      if (res.writableEnded) return;
+      disconnected = true;
+      if (runId) runner.stop(runId, 'disconnected');
+    });
     if (!runner.feature.available) throw new HttpError(501, 'isolation-unavailable', runner.feature.reason, { feature: runner.feature });
     const spec = validateRunRequest(await readJson(req));
     let streaming = false;
-    let runId = null;
     const emit = (event) => {
+      if (event.type === 'start') {
+        runId = event.runId;
+        if (disconnected) runner.stop(runId, 'disconnected'); // Node is not started at all
+      }
+      if (disconnected || res.writableEnded || res.destroyed) return;
       if (!streaming) {
         streaming = true;
         res.writeHead(200, { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-accel-buffering': 'no' });
         res.socket?.setNoDelay(true);
-        // A dropped connection stops the run.
-        res.on('close', () => {
-          if (!res.writableEnded && runId) runner.stop(runId, 'disconnected');
-        });
       }
-      if (event.type === 'start') runId = event.runId;
-      if (!res.writableEnded && !res.destroyed) res.write(`${JSON.stringify(event)}\n`);
+      res.write(`${JSON.stringify(event)}\n`);
     };
     await runner.start(spec, emit); // throws 429 / 501 before anything is streamed
     if (!res.writableEnded) res.end();

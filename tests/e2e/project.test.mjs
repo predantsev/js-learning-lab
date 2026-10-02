@@ -541,39 +541,57 @@ test('after export the project explains local authority and offers reference dow
   assert.ok((await panel.locator('.reference-diff .diff-add').count()) > 0);
 });
 
-test('opening a later step with missing earlier work offers the reference before it (synthetic second step)', async () => {
-  // A temporary build adds a synthetic JS-02 step (a footer) to a copy of the real capstone content.
-  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-project-synthetic-'));
-  cleanups.push(() => fs.rm(tmp, { recursive: true, force: true }));
-  const caps = path.join(tmp, 'capstones');
-  await fs.cp(path.join(ROOT, 'content', 'capstones'), caps, { recursive: true });
-  const stepDir = path.join(caps, 'steps', 'JS-02');
-  await fs.mkdir(stepDir, { recursive: true });
-  const both = (text) => `{ uk: "${text}", en: "${text}" }`;
-  await fs.writeFile(path.join(stepDir, 'step.yaml'), [
-    'unit: JS-02', 'mode: in-platform', 'entry: index.html',
-    `title: ${both('Synthetic test step')}`, `intro: ${both('A synthetic step used only by tests/e2e/project.test.mjs.')}`,
-    `purpose: ${both('Test fixture.')}`, `objectives: [${both('Add a footer.')}]`, `transfer: ${both('Open the step in the project.')}`, '',
-  ].join('\n'));
-  await fs.writeFile(path.join(stepDir, 'tests.js'), "test('page has a footer', () => { expect(screen.$('footer'), 'a <footer> element').toBeTruthy(); });\n");
-  for (const id of CAPSTONES) {
-    const v = path.join(stepDir, id);
-    await fs.cp(path.join(caps, 'steps', 'JS-01', id, 'reference'), path.join(v, 'reference'), { recursive: true });
-    const html = await fs.readFile(path.join(v, 'reference', 'index.html'), 'utf8');
-    await fs.writeFile(path.join(v, 'reference', 'index.html'), html.replace('</main>', '</main>\n  <footer><p>%%footerText%%</p></footer>'));
-    await fs.writeFile(path.join(v, 'task.yaml'), [
-      'strings:', `  footerText: ${both('Synthetic footer')}`,
-      `instructions: ${both('Add a footer after main.')}`,
-      'testTitles:', `  "page has a footer": ${both('The page has a footer')}`, '',
+/**
+ * A temporary build whose capstones have CP-START, the real JS-01 step and a synthetic JS-02 step
+ * (a footer) in place of every later real step. Only CP-START and JS-01 are copied from
+ * content/capstones, so the synthetic step never collides with the real JS-02 (its tests, strings
+ * and references) or with steps after it, whatever they contain. Built once, shared by the tests.
+ */
+let syntheticBuild = null;
+function syntheticSteps() {
+  syntheticBuild ??= (async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-project-synthetic-'));
+    cleanups.push(() => fs.rm(tmp, { recursive: true, force: true }));
+    const caps = path.join(tmp, 'capstones');
+    await fs.cp(path.join(ROOT, 'content', 'capstones', 'start'), path.join(caps, 'start'), { recursive: true });
+    await fs.cp(path.join(ROOT, 'content', 'capstones', 'steps', 'JS-01'), path.join(caps, 'steps', 'JS-01'), { recursive: true });
+    const stepDir = path.join(caps, 'steps', 'JS-02');
+    await fs.mkdir(stepDir, { recursive: true });
+    const both = (text) => `{ uk: "${text}", en: "${text}" }`;
+    await fs.writeFile(path.join(stepDir, 'step.yaml'), [
+      'unit: JS-02', 'mode: in-platform', 'entry: index.html',
+      `title: ${both('Synthetic test step')}`, `intro: ${both('A synthetic step used only by tests/e2e/project.test.mjs.')}`,
+      `purpose: ${both('Test fixture.')}`, `objectives: [${both('Add a footer.')}]`, `transfer: ${both('Open the step in the project.')}`, '',
     ].join('\n'));
-  }
-  const dist = path.join(tmp, 'dist');
-  await fs.mkdir(dist);
-  await fs.symlink(path.join(ROOT, 'dist', 'app'), path.join(dist, 'app'));
-  await fs.symlink(path.join(ROOT, 'dist', 'sandbox'), path.join(dist, 'sandbox'));
-  const build = await buildContent({ outDir: path.join(dist, 'content'), quiet: true, capstonesDir: caps });
-  assert.deepEqual(build.issues, [], 'the synthetic content compiles cleanly');
-  const synthetic = JSON.parse(await fs.readFile(path.join(dist, 'content', 'capstones', 'wishlist.json'), 'utf8'));
+    await fs.writeFile(path.join(stepDir, 'tests.js'), "test('page has a footer', () => { expect(screen.$('footer'), 'a <footer> element').toBeTruthy(); });\n");
+    for (const id of CAPSTONES) {
+      const v = path.join(stepDir, id);
+      await fs.cp(path.join(caps, 'steps', 'JS-01', id, 'reference'), path.join(v, 'reference'), { recursive: true });
+      const html = await fs.readFile(path.join(v, 'reference', 'index.html'), 'utf8');
+      await fs.writeFile(path.join(v, 'reference', 'index.html'), html.replace('</main>', '</main>\n  <footer><p>%%footerText%%</p></footer>'));
+      await fs.writeFile(path.join(v, 'task.yaml'), [
+        'strings:', `  footerText: ${both('Synthetic footer')}`,
+        `instructions: ${both('Add a footer after main.')}`,
+        'testTitles:', `  "page has a footer": ${both('The page has a footer')}`,
+        'feedback:', '  - when: { error: ReferenceError }',
+        '    message: { uk: "Синтетичний відгук про ReferenceError: %%footerText%%", en: "Synthetic ReferenceError feedback: %%footerText%%" }', '',
+      ].join('\n'));
+    }
+    const dist = path.join(tmp, 'dist');
+    await fs.mkdir(dist);
+    await fs.symlink(path.join(ROOT, 'dist', 'app'), path.join(dist, 'app'));
+    await fs.symlink(path.join(ROOT, 'dist', 'sandbox'), path.join(dist, 'sandbox'));
+    const build = await buildContent({ outDir: path.join(dist, 'content'), quiet: true, capstonesDir: caps });
+    const wishlist = JSON.parse(await fs.readFile(path.join(dist, 'content', 'capstones', 'wishlist.json'), 'utf8'));
+    return { dist, issues: build.issues, wishlist };
+  })();
+  return syntheticBuild;
+}
+
+test('opening a later step with missing earlier work offers the reference before it (synthetic second step)', async () => {
+  const { dist, issues, wishlist: synthetic } = await syntheticSteps();
+  assert.deepEqual(issues, [], 'the synthetic content compiles cleanly');
+  assert.deepEqual(synthetic.steps.map((s) => s.unit), ['JS-01', 'JS-02'], 'the real JS-01 and the synthetic JS-02, nothing else');
   const data2 = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-project-data2-'));
   cleanups.push(() => fs.rm(data2, { recursive: true, force: true }));
   const server2 = await startServer({ port: 0, dataDir: data2, distDir: dist, quiet: true });
@@ -621,4 +639,41 @@ test('opening a later step with missing earlier work offers the reference before
   assert.equal(await p.locator('dialog .btn', { hasText: 'Зберегти в теку' }).count(), 0);
   assert.match(await p.locator('dialog .export-actions').innerText(), /Збереження в теку недоступне в цій установці/);
   assert.equal(await p.locator('dialog .btn-primary', { hasText: 'Завантажити .zip' }).count(), 1);
+});
+
+test('the project screen shows the authored feedback of the step for an error, in the console and with the checks', async () => {
+  const { dist, issues } = await syntheticSteps();
+  assert.deepEqual(issues, [], 'the synthetic content compiles cleanly');
+  const data3 = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-project-data3-'));
+  cleanups.push(() => fs.rm(data3, { recursive: true, force: true }));
+  const server3 = await startServer({ port: 0, dataDir: data3, distDir: dist, quiet: true });
+  cleanups.push(() => server3.close());
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 960 } });
+  cleanups.push(() => ctx.close());
+  const p = await ctx.newPage();
+  await onboard(p, server3.url, 'wishlist');
+  await openProject(p, server3.url, 'JS-02');
+  await p.getByRole('button', { name: 'Продовжити зі своїми файлами' }).click();
+  await p.waitForSelector('.starter-declined');
+  // The step's rule `when: { error: ReferenceError }`, with %%footerText%% in the project language.
+  const feedback = 'Синтетичний відгук про ReferenceError: Synthetic footer';
+  await editFile(p, 'app.js', 'console.log("before");\nshowFooter();\n');
+  // Check: the program fails while loading; its error card carries the feedback, once.
+  const check = await checkStep(p);
+  assert.equal(check.status, 'pending');
+  const checkCard = p.locator('.project-result .error-card');
+  assert.equal(await checkCard.count(), 1);
+  assert.match(await checkCard.innerText(), /ReferenceError: showFooter is not defined/);
+  assert.equal((await checkCard.locator('.test-feedback').innerText()).trim(), feedback);
+  assert.equal(await p.locator('.project-result .ws-load-error').count(), 1, 'the load error is named as the reason the checks failed');
+  assert.equal(await p.locator('.project-result .test-list .test-feedback').count(), 0, 'no per-check feedback for a program that did not load');
+  // Run: the console shows the same error card with the feedback.
+  await runPreview(p);
+  await p.locator('.project-result .result-tab', { hasText: 'Консоль' }).click();
+  const runCard = p.locator('.project-result .console-wrap .error-card');
+  assert.equal(await runCard.count(), 1);
+  assert.equal((await runCard.locator('.test-feedback').innerText()).trim(), feedback);
+  // In English the feedback follows the interface language.
+  await p.locator('.lang-option[lang="en"]').click();
+  await p.locator('.project-result .console-wrap .error-card .test-feedback', { hasText: 'Synthetic ReferenceError feedback: Synthetic footer' }).waitFor();
 });

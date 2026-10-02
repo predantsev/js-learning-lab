@@ -101,7 +101,8 @@ already active, `501 {"error":"isolation-unavailable"}` when this machine cannot
 
 `{ "runId": "nr-…" }` → `{ "stopped": true }` if the run was active (its `exit` event then has
 `reason: "stopped"`), `{ "stopped": false }` otherwise. Closing the `/run` response connection
-also stops the run (`reason: "disconnected"`).
+also stops the run (`reason: "disconnected"`), including a connection closed before the `start`
+event: then Node is not started at all.
 
 ### Test harness (test mode)
 
@@ -138,8 +139,8 @@ server copies that location into `harnessError.file/line`.
 
 ### Process launch
 
-For each run the server writes the files to `<runtimeDir>/node-runs/<runId>/` (realpath), then
-starts, on macOS/Linux:
+For each run the server writes the files to `<runtimeDir>/node-runs/<server pid>-<runId>/`
+(realpath), then starts, on macOS/Linux:
 
 ```
 /bin/sh -c 'ulimit -t <cpu> && shift && exec /usr/bin/env -u SHLVL -u PWD -u OLDPWD -u _ "$@"' jsll-run <cpu> \
@@ -163,7 +164,11 @@ starts, on macOS/Linux:
 - `stdout`/`stderr` pipes are switched to blocking writes in the child, so output reaches the
   server as it is produced even during a synchronous loop (macOS pipes are otherwise
   asynchronous and would queue output in the child's memory).
-- The workspace is deleted after the run; `ExperimentalWarning` (and, with workers,
+- The workspace is deleted after the run. A server that crashed or was killed cannot do that, so
+  every server start removes the `node-runs/*` and `typecheck/*` folders whose server process (the
+  `<server pid>` prefix) no longer exists, and unprefixed folders of older versions; folders of a
+  server that is still running on the same runtime folder are kept (`server/api/lib/scratch.mjs`).
+- `ExperimentalWarning` (and, with workers,
   `SecurityWarning`) lines are suppressed because the platform's own flags would otherwise print
   them on every run — this also hides Node's experimental notice for `node:sqlite`.
 - TypeScript: `.ts/.mts/.cts` files run through Node's own type stripping when available
@@ -261,7 +266,7 @@ run stuck in a synchronous loop. All three paths are tested (`runs never outlive
 
 - The installed `typescript@7` is the native compiler with no JavaScript API. Each request writes
   the files plus a generated `tsconfig.jsll.json` (reserved name) to
-  `<runtimeDir>/typecheck/<id>/` and runs the compiler binary (located through the package's
+  `<runtimeDir>/typecheck/<server pid>-<id>/` and runs the compiler binary (located through the package's
   `getExePath`, falling back to `node_modules/typescript/bin/tsc` run by this Node) with
   `-p tsconfig.jsll.json --pretty false`; the folder is deleted afterwards.
 - Generated options: `noEmit`, `strict` (default true), `target ES2022`, `module ESNext`,

@@ -250,6 +250,8 @@ export const en: Dict = {
   'err.guide.TypeError': 'TypeError: a value was not of the type the code expected. Most often something that is not a function was called, or a property of undefined or null was read.',
   'err.guide.RangeError': 'RangeError: a value went outside the allowed range. “Maximum call stack size exceeded” means recursion without a stop condition.',
   'err.guide.SyntaxError': 'SyntaxError while running: most often JSON.parse received invalid text.',
+  'err.guide.missingExport': 'The module {module} does not export the name {export}, so no file of the program ran: imports are checked before the first line of code runs. Check that the name in import { … } is spelled exactly as in {module}, with the same capital and small letters, and that its declaration in {module} has the word export in front of it.',
+  'err.guide.missingDefault': 'The module {module} has no default export (export default), and an import without curly braces asks for exactly that, so no file of the program ran. Either import a named export in curly braces — import { name } from … — or add export default to {module}.',
   'err.guide.LoopBudgetError': 'The loop ran longer than {ms} ms, so it was stopped. Check the loop’s end condition: does the thing it depends on ever change?',
   'err.guide.unhandled': 'A promise was rejected and nothing handled it. Add .catch(...) or wrap the await in try/catch.',
   'err.guide.generic': 'The program stopped because of an error. Read the message: it names the error type, explains it and points to the place in the code.',
@@ -257,6 +259,8 @@ export const en: Dict = {
   'err.guide.node.policy': 'The exercise rules do not allow this (network, server address, signals or database files). The original message below says what was blocked and why.',
   'err.guide.node.import': 'Node.js could not find what is imported. Import exercise files by a relative path with the extension (./utils.js) and built-in modules with the node: prefix (node:fs); there are no npm packages here. Also check that the other file exports that name (export) and that the code uses import, not require.',
   'err.original': 'Original message',
+  'err.causes': 'Caused by (the cause property), each one the cause of the one before',
+  'err.causedBy': 'Caused by:',
 
   'hint.need': 'Need a hint?',
   'hint.more': 'Another hint',

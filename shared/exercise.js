@@ -66,6 +66,8 @@ export function consoleLines(entries) {
     }
   };
   const showNested = (v) => (v.t === 'string' ? JSON.stringify(v.v) : show(v));
-  return entries.filter((e) => e.level !== 'system').map((e) => e.args.map(show).join(' '));
+  // console.trace: the label, its arguments, then one indented "at …" line per frame.
+  const trace = (e) => [['console.trace', ...e.args.map(show)].join(' '), ...(e.stack ? e.stack.split('\n').map((frame) => `    ${frame}`) : [])].join('\n');
+  return entries.filter((e) => e.level !== 'system').map((e) => (e.level === 'trace' ? trace(e) : e.args.map(show).join(' ')));
 }
 export { consoleLines as default };

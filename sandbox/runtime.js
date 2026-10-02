@@ -59,6 +59,38 @@
   const MAX_DEPTH = 4;
   const MAX_ITEMS = 60;
   const MAX_STRING = 4000;
+  const MAX_CAUSES = 5;
+  const isErrorObject = (v) => v instanceof Error || Object.prototype.toString.call(v) === '[object Error]';
+  /**
+   * The `cause` chain of an error (new Error(message, { cause })), outermost first: each Error as
+   * { t: 'error', name, message }; a cause that is not an Error as its serialized value, which ends
+   * the chain; a cause seen before as { t: 'circular' }; after MAX_CAUSES levels { t: 'more' }.
+   * Only an own `cause` property counts, as in the browser's console.
+   */
+  function causeChain(error) {
+    const chain = [];
+    const seen = new Set([error]);
+    let current = error;
+    for (;;) {
+      let next;
+      try {
+        if (!Object.prototype.hasOwnProperty.call(current, 'cause')) break;
+        next = current.cause;
+      } catch (e) {
+        break;
+      }
+      if (chain.length >= MAX_CAUSES) { chain.push({ t: 'more', name: '…' }); break; }
+      if (next !== null && typeof next === 'object' && seen.has(next)) { chain.push({ t: 'circular' }); break; }
+      if (!isErrorObject(next)) { chain.push(serialize(next, 1)); break; }
+      let name = 'Error';
+      let message = '';
+      try { name = String(next.name ?? 'Error'); message = projectPaths(next.message ?? ''); } catch (e) { /* keep the defaults */ }
+      chain.push({ t: 'error', name, message });
+      seen.add(next);
+      current = next;
+    }
+    return chain;
+  }
   function serialize(value, depth = 0, seen = new Set()) {
     const type = typeof value;
     if (value === null) return { t: 'null' };
@@ -71,7 +103,10 @@
     if (type === 'function') return { t: 'function', name: value.name || '', cls: /^class\s/.test(Function.prototype.toString.call(value)) };
     if (seen.has(value)) return { t: 'circular' };
     try {
-      if (value instanceof Error) return { t: 'error', name: value.name, message: String(value.message), stack: cleanStack(value.stack || '') };
+      if (value instanceof Error) {
+        const causes = causeChain(value);
+        return { t: 'error', name: value.name, message: projectPaths(value.message), stack: cleanStack(value.stack || ''), ...(causes.length > 0 ? { causes } : {}) };
+      }
       if (value instanceof Date) return { t: 'date', v: Number.isNaN(value.getTime()) ? 'Invalid Date' : value.toISOString() };
       if (value instanceof RegExp) return { t: 'regexp', v: String(value) };
       if (typeof Node !== 'undefined' && value instanceof Node) {
@@ -116,15 +151,49 @@
     }
   }
 
-  function cleanStack(stack) {
-    let s = String(stack);
+  // ---------- learner-facing stack traces and module messages ----------
+  // Runtime frames carry the frame document's URL (the runtime is inlined into frame.html by the
+  // sandbox build) or /sandbox/runtime.js; learner code has its own file names (a sourceURL comment
+  // names every transformed script after its project path).
+  const RUNTIME_FRAME = /\/sandbox\/(?:runtime\.js|frame\.html)/;
+  const blobsToFiles = (text) => {
+    let s = String(text);
     for (const [url, file] of blobToFile) s = s.split(url).join(file);
-    // Runtime frames carry the frame document's URL (the runtime is inlined into frame.html by
-    // the sandbox build) or /sandbox/runtime.js; learner code has its own file names.
-    return s
+    return s;
+  };
+  /** Internal module specifiers ('~/records.js', the import-map keys) read as project paths ('records.js'). */
+  const projectPaths = (text) => blobsToFiles(text).replace(/(['"])~\/([^'"]*)\1/g, '$1$2$1');
+  function cleanStack(stack) {
+    return projectPaths(stack)
       .split('\n')
-      .filter((line) => !/\/sandbox\/(?:runtime\.js|frame\.html)/.test(line))
+      .filter((line) => !RUNTIME_FRAME.test(line))
       .join('\n');
+  }
+  // `error.stack` itself, as learner code reads it (console.log(error.stack)) and as the error card
+  // and the console get it: no frames of this runtime, project paths instead of internal ones, and
+  // no "Proxy." receiver for functions the checks call through `scope`. Learner code may replace it.
+  function prepareStackTrace(error, sites) {
+    let header;
+    try { header = Error.prototype.toString.call(error); } catch (e) { header = 'Error'; }
+    const lines = [projectPaths(header)];
+    for (const site of sites) {
+      let file = '';
+      try { file = String(site.getScriptNameOrSourceURL() || site.getFileName() || ''); } catch (e) { file = ''; }
+      if (RUNTIME_FRAME.test(file)) continue;
+      let text = String(site);
+      try { if (site.getTypeName() === 'Proxy') text = text.replace(/^(async )?Proxy\./, '$1'); } catch (e) { /* keep V8's text */ }
+      lines.push(`    at ${blobsToFiles(text)}`);
+    }
+    return lines.join('\n');
+  }
+  Object.defineProperty(Error, 'prepareStackTrace', { value: prepareStackTrace, writable: true, configurable: true, enumerable: false });
+  /** A module error created by the browser (failed import or link) names import-map keys; learner code
+   *  that catches it, and the error card, see project paths instead. The same object is kept. */
+  function normalizeModuleError(error) {
+    try {
+      if (error !== null && typeof error === 'object' && typeof error.message === 'string' && /['"]~\//.test(error.message)) error.message = projectPaths(error.message);
+    } catch (e) { /* a frozen or exotic object stays as it is */ }
+    return error;
   }
 
   function describeError(error) {
@@ -133,13 +202,13 @@
       const where = /(?:\(|\s|@)([^\s()@]+?):(\d+):(\d+)\)?/.exec(stack.split('\n').slice(1).join('\n') || stack);
       return {
         name: String(error.name || 'Error'),
-        message: String(error.message),
+        message: projectPaths(error.message),
         stack,
         file: where ? where[1] : null,
         line: error.jsllLine ?? (where ? Number(where[2]) : null),
         column: where ? Number(where[3]) : null,
         loopBudgetMs: error.jsllBudgetMs ?? null,
-        cause: error.cause !== undefined ? serialize(error.cause) : undefined,
+        causes: (() => { const causes = causeChain(error); return causes.length > 0 ? causes : undefined; })(),
       };
     }
     return { name: 'Thrown value', message: (() => { try { return String(error); } catch { return 'unprintable value'; } })(), stack: '', file: null, line: null, column: null, thrown: serialize(error) };
@@ -153,11 +222,11 @@
     queue = [];
     post('console', { entries });
   }
-  function emitConsole(level, args) {
+  function emitConsole(level, args, extra = null) {
     if (!run) return;
     if (consoleSuppressed) return;
     const limit = run.options.consoleLimit;
-    const entry = { level, args: args.map((a) => serialize(a)), at: Math.round(performance.now()) };
+    const entry = { level, args: args.map((a) => serialize(a)), at: Math.round(performance.now()), ...extra };
     consoleCount += 1;
     consoleBytes += JSON.stringify(entry).length;
     if (consoleCount > limit.entries || consoleBytes > limit.bytes) {
@@ -176,10 +245,10 @@
   // While a test re-evaluates the entry module (rerun), its output goes to that rerun only: not to
   // the learner's console and not to logs().
   let rerunSink = null;
-  const record = (level, args, shownLevel = level) => {
-    if (rerunSink) { rerunSink.push({ level, args }); return; }
-    captured.push({ level, args });
-    emitConsole(shownLevel, args);
+  const record = (level, args, shownLevel = level, extra = null) => {
+    if (rerunSink) { rerunSink.push({ level, args, ...extra }); return; }
+    captured.push({ level, args, ...extra });
+    emitConsole(shownLevel, args, extra);
   };
   for (const level of ['log', 'info', 'warn', 'error', 'debug', 'table', 'dir']) {
     const original = console[level].bind(console);
@@ -190,6 +259,17 @@
       record(level, args, level === 'dir' || level === 'debug' ? 'log' : level);
     };
   }
+  // console.trace(...args): the arguments (shown after the label "console.trace") and the stack of the call in
+  // project paths, as a "trace" entry. It reaches the learner's console and rawLogs(), not logs():
+  // checks that read printed text read what the program printed with log, info, warn and error.
+  const originalTrace = console.trace.bind(console);
+  console.trace = (...args) => {
+    if (!consoleSuppressed) originalTrace(...args);
+    let stack = '';
+    try { stack = cleanStack(new Error().stack || '').split('\n').slice(1).map((line) => line.trim()).join('\n'); } catch (e) { stack = ''; }
+    record('trace', args, 'trace', { stack });
+  };
+  const printed = (c) => c.level !== 'alert' && c.level !== 'trace';
   const originalAssert = console.assert.bind(console);
   console.assert = (condition, ...args) => {
     originalAssert(condition, ...args);
@@ -212,11 +292,11 @@
   function installListeners() {
     window.addEventListener('message', onMessage);
     window.addEventListener('error', (event) => {
-      if (event.error !== undefined && event.error !== null) reportError(event.error, 'runtime');
+      if (event.error !== undefined && event.error !== null) reportError(normalizeModuleError(event.error), 'runtime');
       else if (event.message) reportError({ name: 'Error', message: event.message, stack: `${event.filename}:${event.lineno}:${event.colno}` }, 'runtime');
       else if (event.target && event.target !== window && event.target.tagName) explainResource(event);
     }, true);
-    window.addEventListener('unhandledrejection', (event) => { reportError(event.reason, 'unhandled-rejection'); });
+    window.addEventListener('unhandledrejection', (event) => { reportError(normalizeModuleError(event.reason), 'unhandled-rejection'); });
     // These run last (bubble phase on window), after learner handlers had their chance to call
     // preventDefault(). A real navigation would discard the running program, so it is replaced
     // by an explanation; `submitPrevented` lets tests see what the learner's handler did.
@@ -245,9 +325,15 @@
   // A resource that failed to load: a project path (not in the project, or not loadable this way)
   // is explained differently from an external address the sandbox blocks (no network).
   const MISSING_FILE_MARK = 'about:invalid#jsll-missing-file:';
+  let entryFetchFailed = false;
   const inlinedImages = new WeakSet();
   function explainResource(event) {
     const el = event.target;
+    // A module script written by the platform (`import "~/index.js"`) whose module graph could not be
+    // fetched: the browser fires `error` here only, without an error object. The reason is reported
+    // once the entry modules settle; it is not a missing file. (Link and evaluation errors of a module
+    // graph reach the window `error` listener instead.)
+    if (el.tagName === 'SCRIPT' && !el.getAttribute('src')) { entryFetchFailed = true; return; }
     const url = el.currentSrc || el.src || el.href || '';
     if (url.startsWith(MISSING_FILE_MARK)) { emitSystem('missing-file', url.slice(MISSING_FILE_MARK.length)); return; }
     let parsed = null;
@@ -279,6 +365,7 @@
         throw error;
       },
     },
+    __jsllImported: { value: (promise) => promise.then(undefined, (error) => { throw normalizeModuleError(error); }) },
     __jsllScope: { value: (file, getters) => { if (rerunScope) rerunScope(file, getters); else scopes.set(file, getters); } },
     __jsllResolve: {
       value: (spec, from) => {
@@ -649,8 +736,8 @@
       rerunScope = null;
     }
     return {
-      logs: sink.filter((c) => c.level !== 'alert').map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
-      rawLogs: sink.map((c) => ({ level: c.level, args: c.args })),
+      logs: sink.filter(printed).map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
+      rawLogs: sink.map((c) => ({ level: c.level, args: c.args, ...(c.stack !== undefined ? { stack: c.stack } : {}) })),
       alerts: sink.filter((c) => c.level === 'alert').map((c) => String(c.args[0])),
       scope: fresh,
       error,
@@ -666,8 +753,8 @@
       test: (name, fn) => { tests.push({ name, fn }); },
       expect, spy, sleep, settle, waitFor, user, screen, mockFetch, scope, rerun,
       scopeOf: (file) => scopes.get(file) || {},
-      logs: () => captured.filter((c) => c.level !== 'alert').map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
-      rawLogs: () => captured.map((c) => ({ level: c.level, args: c.args })),
+      logs: () => captured.filter(printed).map((c) => c.args.map((a) => (typeof a === 'string' ? a : show(a))).join(' ')),
+      rawLogs: () => captured.map((c) => ({ level: c.level, args: c.args, ...(c.stack !== undefined ? { stack: c.stack } : {}) })),
       alerts: () => captured.filter((c) => c.level === 'alert').map((c) => String(c.args[0])),
       loadError: () => loadErrors[0] || null,
       storage: window.localStorage,
@@ -727,10 +814,14 @@
         // Module entries may still be evaluating (top-level await): wait for them, then for
         // short-lived async work, before checking behavior or reporting completion.
         const limit = run.options.settleTimeoutMs;
-        await Promise.race([
+        const outcome = await Promise.race([
           Promise.allSettled((run.entryModules || []).map((spec) => import(spec))),
-          new Promise((r) => nativeSetTimeout(r, limit)),
+          new Promise((r) => nativeSetTimeout(() => r(null), limit)),
         ]);
+        // A module graph that could not be fetched fired `error` only at its <script> element (see
+        // explainResource): report why, instead of nothing. One error card is enough.
+        const failed = entryFetchFailed ? (outcome ?? []).find((result) => result.status === 'rejected') : null;
+        if (failed) reportError(normalizeModuleError(failed.reason), 'runtime');
         await quiescent(limit);
         flush();
         post('loaded', {});
@@ -748,13 +839,33 @@
     document.close();
   }
 
+  // A new frame can receive the run before it knows its own size: the frame lives in another renderer
+  // process and gets its viewport from the page a few milliseconds later. Until then innerWidth and
+  // innerHeight are 0 and Chrome does not focus anything in it (button.focus() leaves
+  // document.activeElement on <body>; measured in about 1 of 6 hidden validator runs). The program
+  // starts once the frame has a size, or after SIZE_WAIT_MS for a frame that really has none.
+  const SIZE_WAIT_MS = 1000;
+  function whenSized() {
+    const sized = () => window.innerWidth > 0 && window.innerHeight > 0;
+    if (sized()) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => { window.removeEventListener('resize', onResize); nativeClearTimeout(timer); resolve(); };
+      const onResize = () => { if (sized()) done(); };
+      const timer = nativeSetTimeout(done, SIZE_WAIT_MS);
+      window.addEventListener('resize', onResize);
+    });
+  }
+  let starting = false;
   function onMessage(event) {
     if (event.source !== controller) return;
     const message = event.data;
     if (!message || message.jsll !== 1 || message.frameId !== frameId) return;
     if (message.type === 'ping') post('pong', { seq: message.seq });
-    else if (message.type === 'run' && run === null) {
-      try { start(message.payload); } catch (error) { reportError(error, 'bootstrap'); post('done', {}); }
+    else if (message.type === 'run' && run === null && !starting) {
+      starting = true;
+      whenSized().then(() => {
+        try { start(message.payload); } catch (error) { reportError(error, 'bootstrap'); post('done', {}); }
+      });
     }
   }
 

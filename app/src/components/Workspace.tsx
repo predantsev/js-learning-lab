@@ -3,10 +3,11 @@
 import { type KeyboardEvent, Suspense, lazy, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { localizeFiles } from '@shared/exercise.js';
 import type { Doc } from '../lib/persist';
+import { errorFeedback, testFeedback } from '../lib/feedback';
 import { type Key } from '../lib/i18n';
 import { recordExampleRun, recordExerciseCheck } from '../lib/progress';
 import { useStore } from '../lib/store';
-import type { ConsoleEntry, ConsoleValue, DraftsDoc, ExampleBlock, ExerciseBlock, L10n, Lang, Lesson, RunError, TestResult } from '../lib/types';
+import type { ConsoleEntry, ConsoleValue, DraftsDoc, ExampleBlock, ExerciseBlock, L10n, Lang, Lesson, RunError } from '../lib/types';
 import { app, useT } from '../state/app';
 import { CodeEditor, type EditorIssue } from './CodeEditor';
 import { NodeRuntimeNote } from './NodeRuntime';
@@ -23,6 +24,7 @@ const TracePanel = lazy(() => import('./TracePanel'));
 const hasPreview = (block: WsBlock): boolean => block.runtime !== 'isolated-node' && (block.preview ?? (block.entry.endsWith('.html') || block.runtime === 'browser-react' || block.runtime === 'concept-preview'));
 
 function Value({ v, nested = false }: { v: ConsoleValue; nested?: boolean }) {
+  const t = useT();
   switch (v.t) {
     case 'string': return <span className={nested ? 'cv-string' : undefined}>{nested ? JSON.stringify(v.v) : String(v.v)}</span>;
     case 'number': case 'bigint': return <span className="cv-number">{String(v.v)}</span>;
@@ -40,7 +42,11 @@ function Value({ v, nested = false }: { v: ConsoleValue; nested?: boolean }) {
     }
     case 'map': return <span><span className="cv-dim">Map({String(v.size)}) </span>{'{'}{(v.entries as [ConsoleValue, ConsoleValue][]).map(([k, x], i) => <span key={i}>{i > 0 && ', '}<Value v={k} nested /> =&gt; <Value v={x} nested /></span>)}{'}'}</span>;
     case 'set': return <span><span className="cv-dim">Set({String(v.size)}) </span>{'{'}{(v.items as ConsoleValue[]).map((x, i) => <span key={i}>{i > 0 && ', '}<Value v={x} nested /></span>)}{'}'}</span>;
-    case 'error': return <span className="cv-error">{String(v.name)}: {String(v.message)}</span>;
+    case 'error': {
+      // An error with a `cause`: one more line per level of the cause chain (serialized by the sandbox).
+      const causes = (v.causes as ConsoleValue[] | undefined) ?? [];
+      return <span><span className="cv-error">{String(v.name)}: {String(v.message)}</span>{causes.map((c, i) => <span key={i} className="cv-cause"><span className="cv-dim">{t('err.causedBy')}</span> <Value v={c} nested /></span>)}</span>;
+    }
     case 'node': return <span className="cv-key">{String(v.v)}</span>;
     case 'typed': return <span><span className="cv-dim">{String(v.name)}({String(v.length)}) </span>[{(v.items as number[]).join(', ')}]</span>;
     case 'promise': return <span className="cv-dim">Promise</span>;
@@ -58,42 +64,62 @@ export function ConsoleView({ entries, errors }: { entries: ConsoleEntry[]; erro
     <ol className="console" aria-label={t('ws.console')}>
       {entries.map((entry, i) => entry.level === 'system'
         ? <li key={i} className="console-line console-system"><Icon name="info" size={14} /><span>{t(`sys.${entry.code}` as Key, { detail: entry.detail ?? '' })}</span></li>
-        : <li key={i} className={`console-line console-${entry.level}`}>{entry.level === 'alert' && <span className="console-tag">{t('sys.alert')}</span>}{entry.args.map((a, j) => <span key={j} className="console-arg"><Value v={a} /></span>)}</li>)}
+        : <li key={i} className={`console-line console-${entry.level}`}>{entry.level === 'alert' && <span className="console-tag">{t('sys.alert')}</span>}{entry.level === 'trace' && <span className="console-tag" lang="en">console.trace</span>}{entry.args.map((a, j) => <span key={j} className="console-arg"><Value v={a} /></span>)}{entry.level === 'trace' && entry.stack && <span className="console-stack" lang="en">{entry.stack}</span>}</li>)}
     </ol>
   );
+}
+
+/**
+ * A module-linking error of the browser runner: an import asks a module for an export it does not
+ * have (`default` for an import without curly braces). The program never ran, so this is not a
+ * runtime SyntaxError such as JSON.parse throws.
+ */
+export function moduleLinkError(error: RunError): { module: string; export: string } | null {
+  if (error.kind) return null;
+  const m = /^The requested module '([^']+)' does not provide an export named '([^']+)'$/.exec(error.message ?? '');
+  return m ? { module: m[1], export: m[2] } : null;
 }
 
 export function guidanceKey(error: RunError): Key {
   const node = nodeGuidanceKey(error);
   if (node) return node;
+  const link = moduleLinkError(error);
+  if (link) return link.export === 'default' ? 'err.guide.missingDefault' : 'err.guide.missingExport';
   if (error.kind === 'syntax') return 'err.guide.syntax';
   if (error.kind === 'import' || error.kind === 'project') return 'err.guide.import';
   if (error.phase === 'unhandled-rejection') return 'err.guide.unhandled';
+  // A module the browser could not fetch, load or resolve while the program ran: an import problem,
+  // not a TypeError in the code. (An import() nobody handled keeps the advice to handle it.)
+  if (/^(Failed to fetch dynamically imported module|Failed to load module script|Failed to resolve module specifier)/.test(error.message ?? '')) return 'err.guide.import';
   const known = ['ReferenceError', 'TypeError', 'RangeError', 'SyntaxError', 'LoopBudgetError'];
   return (known.includes(error.name) ? `err.guide.${error.name}` : 'err.guide.generic') as Key;
 }
 
-/** Authored feedback for an error (`when: { error: Name }`). A syntax error found before running
- *  has no error name of its own; it counts as SyntaxError, the most common beginner error. */
+/** Authored feedback for an error (`when: { error: Name }`) of an exercise (lib/feedback.ts). */
 export function feedbackForError(block: WsBlock, error: RunError): L10n | null {
-  if (block.kind !== 'exercise') return null;
-  const name = error.kind === 'syntax' ? 'SyntaxError' : error.name;
-  return block.feedback?.find((f) => f.when.error === name)?.message ?? null;
+  return block.kind === 'exercise' ? errorFeedback(block.feedback, error) : null;
 }
 
 /** Localized guidance next to the verbatim diagnostic (REQ-019), plus the lesson's own feedback. */
 export function ErrorCard({ error, title, feedback = null, lang = 'uk' }: { error: RunError; title: string; feedback?: L10n | null; lang?: Lang }) {
   const t = useT();
   const where = error.file && error.line ? t('ws.atLine', { file: error.file, line: error.line }) : error.file ?? null;
+  const link = moduleLinkError(error);
   return (
     <div className="error-card" role="alert">
       <div className="error-card-title"><Icon name="warn" /> {title}{where && <span className="error-where">{where}</span>}</div>
-      <p className="error-guide">{t(guidanceKey(error), { ms: error.loopBudgetMs ?? 2000 })}</p>
+      <p className="error-guide">{t(guidanceKey(error), { ms: error.loopBudgetMs ?? 2000, module: link?.module ?? '', export: link?.export ?? '' })}</p>
       {feedback && <Html html={feedback[lang]} lang={lang} className="prose test-feedback" />}
       <div className="error-original">
         <span className="label">{t('err.original')}</span>
         <pre lang="en">{error.kind ? error.message : `${error.name}: ${error.message}`}{error.frame ? `\n\n${error.frame}` : ''}</pre>
       </div>
+      {error.causes && error.causes.length > 0 && (
+        <div className="error-causes">
+          <span className="label">{t('err.causes')}</span>
+          <ol>{error.causes.map((c, i) => <li key={i} lang="en"><Value v={c} /></li>)}</ol>
+        </div>
+      )}
     </div>
   );
 }
@@ -110,18 +136,7 @@ function TestsView({ block, state, lang, quiet = false, note = null }: { block: 
   if (!state.tests) return <p className="ws-empty">{state.status === 'checking' ? t('ws.checking') : note ?? t('ws.previewEmpty')}</p>;
   const passed = state.tests.filter((x) => x.status === 'pass').length;
   const all = passed === state.tests.length && state.tests.length > 0;
-  // Feedback for a failed test: the rule naming the test, otherwise a rule naming the error the test
-  // threw (an error inside a test, not at load time). The same error message is shown once.
-  const shownErrorFeedback = new Set<L10n>();
-  const feedbackFor = (test: TestResult): L10n | null => {
-    const byTest = block.feedback?.find((f) => f.when.test === test.name)?.message;
-    if (byTest) return byTest;
-    if (!test.errorName || test.errorName === 'AssertionError') return null;
-    const byError = feedbackForError(block, { name: test.errorName, message: test.message ?? '' });
-    if (!byError || shownErrorFeedback.has(byError)) return null;
-    shownErrorFeedback.add(byError);
-    return byError;
-  };
+  const feedbackFor = testFeedback(block.feedback);
   return (
     <div className="tests">
       <p className={all ? 'tests-summary tests-ok' : 'tests-summary'}>{all ? <><Icon name="check" /> {t('ws.passedAll')}</> : t('ws.passedSome', { passed, total: state.tests.length })}</p>

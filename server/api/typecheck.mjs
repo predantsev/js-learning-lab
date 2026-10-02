@@ -8,7 +8,8 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ROOT } from '../config.mjs';
 import { HttpError, readJson } from '../http-util.mjs';
-import { randomId, validateFiles, writeFiles } from './lib/project-files.mjs';
+import { validateFiles, writeFiles } from './lib/project-files.mjs';
+import { scratchName, sweepScratch } from './lib/scratch.mjs';
 
 const CONFIG_NAME = 'tsconfig.jsll.json';
 const TIMEOUT_MS = 20_000;
@@ -108,6 +109,8 @@ function validateOptions(options) {
 export async function register(api) {
   const compiler = await locateCompiler();
   const typecheckRoot = path.join(api.config.runtimeDir, 'typecheck');
+  // Folders left behind by a server that crashed or was killed (see lib/scratch.mjs).
+  await sweepScratch(typecheckRoot);
   let active = 0;
   let available = compiler !== null;
   let reason = compiler === null ? 'The typescript package is not installed (run npm install).' : undefined;
@@ -134,7 +137,7 @@ export async function register(api) {
     const options = validateOptions(body.options);
     if (active >= MAX_CONCURRENT) throw new HttpError(429, 'busy', `At most ${MAX_CONCURRENT} type checks can run at once.`);
     active += 1;
-    let dir = path.join(typecheckRoot, randomId('tc'));
+    let dir = path.join(typecheckRoot, scratchName('tc'));
     const started = performance.now();
     try {
       await fs.mkdir(dir, { recursive: true });
