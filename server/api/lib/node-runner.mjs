@@ -109,6 +109,7 @@ function enforcement(support, osActive) {
     networkNone: [...(support.allowNet ? ['node-permission'] : []), ...os, 'platform-guard'],
     networkLoopbackOutbound: [...os, 'platform-guard'],
     networkLoopbackListen: ['platform-guard'],
+    platformServerPort: ['platform-guard'],
     sqliteFiles: [...os, 'platform-guard'],
     signalsToOtherProcesses: [...os, 'platform-guard'],
   };
@@ -120,6 +121,7 @@ function limitations(support, osActive) {
     'node:sqlite does not consult the permission model on any tested Node version (it can read and write database files anywhere); database paths are limited by the platform guard' + (osActive ? ' and the macOS Seatbelt profile (writes: workspace only; reads: personal and temporary folders closed).' : ' only (bypassable by deliberate code).'),
     'A worker started with its own execArgv runs without the permission model; the platform guard rejects that option' + (osActive ? ' and Seatbelt still applies to the whole process.' : ' (bypassable by deliberate code).'),
     'Loopback-only servers are enforced by the platform guard only: Seatbelt cannot restrict which address a server binds to.',
+    'With network "loopback", a program can connect to any service listening on this computer\'s loopback addresses. Only the course platform\'s own port is refused, and only by the platform guard (bypassable by deliberate code): its page carries the local API token, which gives access to all saved learner data. Do not run untrusted code with network "loopback".',
     'Memory: the JavaScript heap is capped; memory outside the heap (Buffers, ArrayBuffers) is not.',
     'Disk use in the workspace is checked every 250 ms, so a burst can briefly exceed the limit before the run is stopped.',
   ];
@@ -224,7 +226,7 @@ function validateStrings(value, limits) {
  * `disabled` (a reason) turns execution off without probing: the feature reports unavailable with
  * that reason and every run answers 501. Turning execution off never weakens isolation.
  */
-export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits = LIMITS, support = detectNodeSupport(), nodeBinary = realpathSync(process.execPath), disabled = null } = {}) {
+export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits = LIMITS, support = detectNodeSupport(), nodeBinary = realpathSync(process.execPath), disabled = null, platformPorts = () => [] } = {}) {
   const runsDir = path.join(runtimeDir, 'node-runs');
   await fs.mkdir(runsDir, { recursive: true });
   const runsRoot = realpathSync(runsDir);
@@ -264,6 +266,10 @@ export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits 
   function childEnv(workspace) {
     const tmp = path.join(workspace, '.tmp');
     const env = { NO_COLOR: '1', TMPDIR: tmp };
+    // Read and removed by the guard before learner code runs (see guard.cjs): the platform's own
+    // ports, which a "loopback" run must not reach (the app page there carries the API token).
+    const ports = (platformPorts() ?? []).filter((p) => Number.isInteger(p) && p > 0);
+    if (ports.length > 0) env.JSLL_GUARD_PLATFORM_PORTS = ports.join(',');
     if (process.platform === 'win32') {
       Object.assign(env, { TEMP: tmp, TMP: tmp });
       for (const key of ['SystemRoot', 'SYSTEMROOT', 'windir']) if (process.env[key]) env[key] = process.env[key];

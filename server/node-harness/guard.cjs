@@ -6,6 +6,7 @@
 // process that deliberately reaches internal handles can get around it. It exists to stop honest
 // mistakes with a clear message, and to cover what the permission model does not:
 //   - network host policy (Node <25 has no network permission; Node 25 has only all-or-nothing),
+//   - the platform server's own port in "loopback" mode (its page carries the local API token),
 //   - node:sqlite file paths (node:sqlite does not consult the permission model),
 //   - worker execArgv (a worker given its own execArgv starts WITHOUT the permission model),
 //   - signals to other processes (process.kill is not covered by the permission model).
@@ -54,7 +55,24 @@ function isLoopbackHost(host) {
 const isPortLike = (value) => typeof value === 'number' || (typeof value === 'string' && /^\s*\d+\s*$/.test(value));
 const socketPathAllowed = (p) => typeof p === 'string' && !p.startsWith('\\\\') && allowed('fs.write', path.resolve(p));
 
-function installNetwork(mode) {
+// Ports of the platform server itself. Its page carries the local API token, so a run must never
+// reach it, even in "loopback" mode. The server passes them in JSLL_GUARD_PLATFORM_PORTS; the
+// variable is removed before learner code runs and handed to worker threads as environment data.
+const PLATFORM_PORTS_ENV = 'JSLL_GUARD_PLATFORM_PORTS';
+const PLATFORM_PORTS_KEY = 'jsll-platform-ports';
+function takePlatformPorts() {
+  let raw = null;
+  if (workerThreads.isMainThread) {
+    raw = process.env[PLATFORM_PORTS_ENV] ?? null;
+    delete process.env[PLATFORM_PORTS_ENV];
+    try { workerThreads.setEnvironmentData(PLATFORM_PORTS_KEY, raw ?? ''); } catch { /* older Node */ }
+  } else {
+    try { raw = workerThreads.getEnvironmentData(PLATFORM_PORTS_KEY) ?? null; } catch { raw = null; }
+  }
+  return new Set(String(raw ?? '').split(',').map((p) => Number(p)).filter((p) => Number.isInteger(p) && p > 0 && p < 65536));
+}
+
+function installNetwork(mode, platformPorts = new Set()) {
   const off = (what) => policyError(`Network access is turned off for this exercise (network: "none"): ${what} was blocked.`, 'network');
   const wrap = (owner, name, check) => {
     const raw = owner[name];
@@ -80,6 +98,8 @@ function installNetwork(mode) {
       if (!socketPathAllowed(target.path)) throw policyError(`Only sockets inside the exercise folder are reachable: ${shown} was blocked.`, 'network');
     } else if (!isLoopbackHost(String(target.host))) {
       throw policyError(`This exercise only allows loopback network access (127.0.0.1, ::1, localhost): ${shown} was blocked.`, 'network');
+    } else if (platformPorts.has(Number(target.port))) {
+      throw policyError(`Port ${Number(target.port)} belongs to the course platform itself, which programs in the course runner cannot reach: ${shown} was blocked. Start your own server with listen() and connect to its port.`, 'network');
     }
   });
 
@@ -320,8 +340,9 @@ function installBlockingOutput() {
 }
 
 function install({ network }) {
+  const platformPorts = takePlatformPorts();
   installBlockingOutput();
-  installNetwork(network === 'loopback' ? 'loopback' : 'none');
+  installNetwork(network === 'loopback' ? 'loopback' : 'none', platformPorts);
   installSqlite();
   installWorkers();
   installSignals();

@@ -13,6 +13,8 @@ export async function register(api) {
   const runner = await createNodeRunner({
     runtimeDir: api.config.runtimeDir,
     osSandbox: process.env.JSLL_NODE_OS_SANDBOX === 'off' ? false : 'auto',
+    // The platform's own port (known only after listen): runs must never reach it (guard.cjs).
+    platformPorts: () => [api.state.port],
     ...(process.env.JSLL_NODE_RUNNER === 'off' ? { disabled: 'Isolated Node.js execution is turned off for this installation (JSLL_NODE_RUNNER=off).' } : {}),
     ...(api.overrides?.nodeRunner ?? {}),
   });
