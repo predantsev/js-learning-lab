@@ -16,6 +16,12 @@ test('indexById maps every id to its item, for any item type', () => {
   expect(byId.get('r-99'), 'an unknown id').toBeUndefined();
 });
 
+test('indexById keeps the first item when an id repeats', () => {
+  const byId = indexById([recipe({}), recipe({ title: L.pie })]);
+  expect(byId.size, 'number of keys for two items with id r-04').toBe(1);
+  expect(byId.get('r-04')?.title, 'title kept for r-04').toBe(L.pancakes);
+});
+
 test('parseRecipes accepts valid recipes, including a null rating and empty tags', () => {
   const result = parse([recipe({}), recipe({ id: 'r-05', rating: null, tags: [], course: 'dessert' })]);
   expect(result.ok, 'ok for two valid recipes').toBe(true);
