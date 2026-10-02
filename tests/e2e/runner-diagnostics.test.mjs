@@ -120,3 +120,33 @@ test('console.trace reaches the console with its arguments and project-path stac
   assert.equal(traces[1].stack, 'at formatAmount (index.js:3:11)\nat formatRow (index.js:7:27)\nat index.js:9:13');
   assert.deepEqual(r.console.filter((e) => e.level !== 'system').map((e) => e.level), ['trace', 'trace', 'log'], 'in the order the program printed them');
 });
+
+test('an error carries its cause chain: every level, a value that is not an error, cycles and a depth limit', async () => {
+  const err = (name, message) => ({ t: 'error', name, message });
+  const thrown = await run({ files: { 'index.js': 'const inner = new TypeError("x is undefined");\nconst middle = new RangeError("bad amount", { cause: inner });\nthrow new Error("the task was not saved", { cause: middle });\n' } });
+  assert.equal(thrown.errors.length, 1);
+  assert.deepEqual(thrown.errors[0].causes, [err('RangeError', 'bad amount'), err('TypeError', 'x is undefined')]);
+
+  const logged = await run({
+    files: {
+      'index.js': [
+        'console.log(new Error("habit cannot be saved", { cause: ["name is empty"] }));',
+        'const a = new Error("a");',
+        'const b = new Error("b", { cause: a });',
+        'a.cause = b;',
+        'console.log(b);',
+        'let deep = new Error("level 0");',
+        'for (let i = 1; i < 9; i++) deep = new Error("level " + i, { cause: deep });',
+        'console.log(deep);',
+        'console.log(new Error("no cause"));',
+        'console.log(new Error("undefined cause", { cause: undefined }));',
+      ].join('\n'),
+    },
+  });
+  const [withValue, cyclic, deep, none, undefinedCause] = logged.console.map((e) => e.args[0]);
+  assert.deepEqual(withValue.causes, [{ t: 'array', items: [{ t: 'string', v: 'name is empty', cut: false }], length: 1 }]);
+  assert.deepEqual(cyclic.causes, [err('Error', 'a'), { t: 'circular' }]);
+  assert.deepEqual(deep.causes, [err('Error', 'level 7'), err('Error', 'level 6'), err('Error', 'level 5'), err('Error', 'level 4'), err('Error', 'level 3'), { t: 'more', name: '…' }]);
+  assert.equal(none.causes, undefined);
+  assert.deepEqual(undefinedCause.causes, [{ t: 'undefined' }], 'an own cause property is shown even when it is undefined');
+});

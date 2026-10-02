@@ -136,5 +136,6 @@ export interface ConsoleValue { t: string; v?: unknown; [k: string]: unknown }
 /** `stack`: the call stack of a console.trace() entry (level "trace"), one "at …" frame per line. */
 export interface ConsoleEntry { level: string; args: ConsoleValue[]; at: number; code?: string; detail?: string; stack?: string }
 /** `atLoad`: thrown while the program loaded, before checks could run (both runtimes mark it). */
-export interface RunError { name: string; message: string; stack?: string; file?: string | null; line?: number | null; column?: number | null; phase?: string; loopBudgetMs?: number | null; kind?: string; frame?: string | null; code?: string; atLoad?: boolean }
+/** `causes`: the error's `cause` chain, outermost first (sandbox runtime `causeChain`). */
+export interface RunError { name: string; message: string; stack?: string; file?: string | null; line?: number | null; column?: number | null; phase?: string; loopBudgetMs?: number | null; kind?: string; frame?: string | null; code?: string; atLoad?: boolean; causes?: ConsoleValue[] }
 export interface TestResult { name: string; status: 'pass' | 'fail'; message?: string; ms?: number; errorName?: string; stack?: string }

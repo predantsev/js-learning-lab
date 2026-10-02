@@ -24,6 +24,7 @@ const TracePanel = lazy(() => import('./TracePanel'));
 const hasPreview = (block: WsBlock): boolean => block.runtime !== 'isolated-node' && (block.preview ?? (block.entry.endsWith('.html') || block.runtime === 'browser-react' || block.runtime === 'concept-preview'));
 
 function Value({ v, nested = false }: { v: ConsoleValue; nested?: boolean }) {
+  const t = useT();
   switch (v.t) {
     case 'string': return <span className={nested ? 'cv-string' : undefined}>{nested ? JSON.stringify(v.v) : String(v.v)}</span>;
     case 'number': case 'bigint': return <span className="cv-number">{String(v.v)}</span>;
@@ -41,7 +42,11 @@ function Value({ v, nested = false }: { v: ConsoleValue; nested?: boolean }) {
     }
     case 'map': return <span><span className="cv-dim">Map({String(v.size)}) </span>{'{'}{(v.entries as [ConsoleValue, ConsoleValue][]).map(([k, x], i) => <span key={i}>{i > 0 && ', '}<Value v={k} nested /> =&gt; <Value v={x} nested /></span>)}{'}'}</span>;
     case 'set': return <span><span className="cv-dim">Set({String(v.size)}) </span>{'{'}{(v.items as ConsoleValue[]).map((x, i) => <span key={i}>{i > 0 && ', '}<Value v={x} nested /></span>)}{'}'}</span>;
-    case 'error': return <span className="cv-error">{String(v.name)}: {String(v.message)}</span>;
+    case 'error': {
+      // An error with a `cause`: one more line per level of the cause chain (serialized by the sandbox).
+      const causes = (v.causes as ConsoleValue[] | undefined) ?? [];
+      return <span><span className="cv-error">{String(v.name)}: {String(v.message)}</span>{causes.map((c, i) => <span key={i} className="cv-cause"><span className="cv-dim">{t('err.causedBy')}</span> <Value v={c} nested /></span>)}</span>;
+    }
     case 'node': return <span className="cv-key">{String(v.v)}</span>;
     case 'typed': return <span><span className="cv-dim">{String(v.name)}({String(v.length)}) </span>[{(v.items as number[]).join(', ')}]</span>;
     case 'promise': return <span className="cv-dim">Promise</span>;
@@ -92,6 +97,12 @@ export function ErrorCard({ error, title, feedback = null, lang = 'uk' }: { erro
         <span className="label">{t('err.original')}</span>
         <pre lang="en">{error.kind ? error.message : `${error.name}: ${error.message}`}{error.frame ? `\n\n${error.frame}` : ''}</pre>
       </div>
+      {error.causes && error.causes.length > 0 && (
+        <div className="error-causes">
+          <span className="label">{t('err.causes')}</span>
+          <ol>{error.causes.map((c, i) => <li key={i} lang="en"><Value v={c} /></li>)}</ol>
+        </div>
+      )}
     </div>
   );
 }

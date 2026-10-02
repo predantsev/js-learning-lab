@@ -25,7 +25,9 @@ async function runInExample(code, { lang = 'uk' } = {}) {
   const session = await openApp(browser, lab, { hash: `#/lesson/${L1}/1` });
   const { page } = session;
   await page.locator('#block-basics-example').waitFor();
-  if (lang === 'en') await page.locator('.lang-switch').getByRole('button', { name: 'EN', exact: true }).click();
+  // The interface language is a saved preference shared by the tests of this file: set it every time.
+  await page.locator(`.lang-switch .lang-option[lang="${lang}"]`).click();
+  await page.locator(`.lang-switch .lang-option[lang="${lang}"][aria-pressed="true"]`).waitFor();
   await replaceEditor(page, code);
   await page.locator('.ws-actions').getByRole('button', { name: t(lang, 'ws.run'), exact: true }).click();
   await page.locator('.ws-status.ws-status-done').waitFor({ timeout: 10_000 });
@@ -43,4 +45,22 @@ test('console.trace shows its label, its arguments and the stack of the call in 
   assert.match(await page.locator('.console').innerText(), /after/);
   assert.deepEqual(problems, []);
   await context.close();
+});
+
+test('the error card and the console show the cause chain of an error, with localized labels', async () => {
+  const code = 'const inner = new TypeError("x is undefined");\nconst saveError = new Error("the task was not saved", { cause: inner });\nconsole.log(saveError);\nthrow new Error("import failed", { cause: saveError });\n';
+  for (const lang of ['uk', 'en']) {
+    const { page, problems, context } = await runInExample(code, { lang });
+    const card = page.locator('.error-card');
+    await card.waitFor();
+    assert.match(await card.locator('.error-original pre').innerText(), /^Error: import failed$/);
+    assert.equal((await card.locator('.error-causes .label').innerText()).trim().toLowerCase(), t(lang, 'err.causes').toLowerCase());
+    assert.deepEqual(await card.locator('.error-causes li').allInnerTexts(), ['Error: the task was not saved', 'TypeError: x is undefined']);
+    // The logged error: its own line, then one line per cause.
+    const line = page.locator('.console .console-log').first();
+    assert.equal(await line.locator('.cv-error').first().innerText(), 'Error: the task was not saved');
+    assert.deepEqual((await line.locator('.cv-cause').allInnerTexts()).map((s) => s.trim()), [`${t(lang, 'err.causedBy')} TypeError: x is undefined`]);
+    assert.deepEqual(problems, []);
+    await context.close();
+  }
 });

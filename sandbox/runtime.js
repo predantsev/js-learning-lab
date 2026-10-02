@@ -59,6 +59,38 @@
   const MAX_DEPTH = 4;
   const MAX_ITEMS = 60;
   const MAX_STRING = 4000;
+  const MAX_CAUSES = 5;
+  const isErrorObject = (v) => v instanceof Error || Object.prototype.toString.call(v) === '[object Error]';
+  /**
+   * The `cause` chain of an error (new Error(message, { cause })), outermost first: each Error as
+   * { t: 'error', name, message }; a cause that is not an Error as its serialized value, which ends
+   * the chain; a cause seen before as { t: 'circular' }; after MAX_CAUSES levels { t: 'more' }.
+   * Only an own `cause` property counts, as in the browser's console.
+   */
+  function causeChain(error) {
+    const chain = [];
+    const seen = new Set([error]);
+    let current = error;
+    for (;;) {
+      let next;
+      try {
+        if (!Object.prototype.hasOwnProperty.call(current, 'cause')) break;
+        next = current.cause;
+      } catch (e) {
+        break;
+      }
+      if (chain.length >= MAX_CAUSES) { chain.push({ t: 'more', name: '…' }); break; }
+      if (next !== null && typeof next === 'object' && seen.has(next)) { chain.push({ t: 'circular' }); break; }
+      if (!isErrorObject(next)) { chain.push(serialize(next, 1)); break; }
+      let name = 'Error';
+      let message = '';
+      try { name = String(next.name ?? 'Error'); message = projectPaths(next.message ?? ''); } catch (e) { /* keep the defaults */ }
+      chain.push({ t: 'error', name, message });
+      seen.add(next);
+      current = next;
+    }
+    return chain;
+  }
   function serialize(value, depth = 0, seen = new Set()) {
     const type = typeof value;
     if (value === null) return { t: 'null' };
@@ -71,7 +103,10 @@
     if (type === 'function') return { t: 'function', name: value.name || '', cls: /^class\s/.test(Function.prototype.toString.call(value)) };
     if (seen.has(value)) return { t: 'circular' };
     try {
-      if (value instanceof Error) return { t: 'error', name: value.name, message: projectPaths(value.message), stack: cleanStack(value.stack || '') };
+      if (value instanceof Error) {
+        const causes = causeChain(value);
+        return { t: 'error', name: value.name, message: projectPaths(value.message), stack: cleanStack(value.stack || ''), ...(causes.length > 0 ? { causes } : {}) };
+      }
       if (value instanceof Date) return { t: 'date', v: Number.isNaN(value.getTime()) ? 'Invalid Date' : value.toISOString() };
       if (value instanceof RegExp) return { t: 'regexp', v: String(value) };
       if (typeof Node !== 'undefined' && value instanceof Node) {
@@ -173,7 +208,7 @@
         line: error.jsllLine ?? (where ? Number(where[2]) : null),
         column: where ? Number(where[3]) : null,
         loopBudgetMs: error.jsllBudgetMs ?? null,
-        cause: error.cause !== undefined ? serialize(error.cause) : undefined,
+        causes: (() => { const causes = causeChain(error); return causes.length > 0 ? causes : undefined; })(),
       };
     }
     return { name: 'Thrown value', message: (() => { try { return String(error); } catch { return 'unprintable value'; } })(), stack: '', file: null, line: null, column: null, thrown: serialize(error) };
