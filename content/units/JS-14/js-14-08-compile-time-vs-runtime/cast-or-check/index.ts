@@ -14,13 +14,8 @@ console.log("as Wish[] →", castTotal);
 
 // Lane 2: unknown + runtime validation, record by record.
 const parsed: unknown = JSON.parse(stored);
-if (Array.isArray(parsed)) {
-  parsed.forEach((item: unknown, index: number) => {
-    const result = validateItem(item);
-    if (result.ok) {
-      console.log(`#${index} ok: ${result.value.id}`);
-    } else {
-      console.log(`#${index} rejected: ${Object.keys(result.errors).join(", ")}`);
-    }
-  });
+const records = Array.isArray(parsed) ? parsed : [];
+for (const record of records) {
+  const result = validateItem(record);
+  console.log(result.ok ? `ok: ${result.value.id}` : `rejected: ${Object.keys(result.errors).join(", ")}`);
 }
