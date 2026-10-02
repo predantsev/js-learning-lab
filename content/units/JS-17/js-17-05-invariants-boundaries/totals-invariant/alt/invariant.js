@@ -14,6 +14,11 @@ export function assertInvariant(totals) {
       throw new Error(`%%wrongCategory%% ${category}`);
     }
   }
+  for (const [category, total] of totals.byCategory) {
+    if (total !== (expected[category] ?? 0)) {
+      throw new Error(`%%wrongCategory%% ${category}`);
+    }
+  }
   const sum = [...totals.byCategory.values()].reduce((total, value) => total + value, 0);
   if (sum !== totals.overall) {
     throw new Error(`%%wrongOverall%% ${totals.overall}`);
