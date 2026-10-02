@@ -4,7 +4,7 @@
 
 Read README.md, docs/STATUS.md, docs/REQUIREMENTS.md, docs/CURRICULUM.md, docs/CONTENT-DATA.md, docs/VERIFICATION.md, docs/DECISIONS.md and docs/COMPETENCY-MATRIX.md before implementation. Markdown is canonical. Stable requirement and curriculum IDs must survive edits; retire IDs explicitly rather than reuse them.
 
-The owner explicitly authorized public documentation publication after requirements and review corrections. On 2026-10-01 the owner separately authorized implementation of the complete platform and course from this plan ("this is only a plan; I want you to implement it … make it the best learning material on the listed topics", translated from the Ukrainian request). Implementation is tracked by epic #13 and milestone issues #7–#12 and follows docs/IMPLEMENTATION-HANDOFF.md. Hosted deployment remains unauthorized. The public repository is predantsev/js-learning-lab; public visibility overrides the usual private Startups default. No license has been selected.
+The owner explicitly authorized public documentation publication after requirements and review corrections. On 2026-10-01 the owner separately authorized implementation of the complete platform and course from this plan ("this is only a plan; I want you to implement it … make it the best learning material on the listed topics", translated from the Ukrainian request). Implementation is tracked by epic #13 and milestone issues #7–#12 and follows docs/IMPLEMENTATION-HANDOFF.md. Hosted deployment remains unauthorized. The public repository is predantsev/js-learning-lab; public visibility overrides the usual private Startups default. The project is licensed under MIT (LICENSE), chosen by the owner on 2026-10-02.
 
 ## Hard product invariants
 

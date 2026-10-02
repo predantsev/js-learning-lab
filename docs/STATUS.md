@@ -61,7 +61,7 @@ What this does not establish: all authoring and review was done by AI agents. No
 
 ### Next steps
 
-1. Owner decisions: the launch-address security change, the license (DEC-06), and whether later runs continue with JS-08…JS-18 before React.
+1. Owner decisions: the launch-address security change, and whether later runs continue with JS-08…JS-18 before React. The license was decided on 2026-10-02: MIT for code, course content and documentation.
 2. Author JS-08 (11 lessons left; measured sandbox facts for timers, promises and `fetch` are in the authoring guide), then JS-09, JS-15 and JS-10 so that the CP-JS export checkpoint becomes reachable.
 3. Human review of a sample of lessons in both languages before more content is produced at scale.
 
