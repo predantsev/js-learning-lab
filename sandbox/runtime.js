@@ -71,7 +71,7 @@
     if (type === 'function') return { t: 'function', name: value.name || '', cls: /^class\s/.test(Function.prototype.toString.call(value)) };
     if (seen.has(value)) return { t: 'circular' };
     try {
-      if (value instanceof Error) return { t: 'error', name: value.name, message: String(value.message), stack: cleanStack(value.stack || '') };
+      if (value instanceof Error) return { t: 'error', name: value.name, message: projectPaths(value.message), stack: cleanStack(value.stack || '') };
       if (value instanceof Date) return { t: 'date', v: Number.isNaN(value.getTime()) ? 'Invalid Date' : value.toISOString() };
       if (value instanceof RegExp) return { t: 'regexp', v: String(value) };
       if (typeof Node !== 'undefined' && value instanceof Node) {
@@ -116,15 +116,49 @@
     }
   }
 
-  function cleanStack(stack) {
-    let s = String(stack);
+  // ---------- learner-facing stack traces and module messages ----------
+  // Runtime frames carry the frame document's URL (the runtime is inlined into frame.html by the
+  // sandbox build) or /sandbox/runtime.js; learner code has its own file names (a sourceURL comment
+  // names every transformed script after its project path).
+  const RUNTIME_FRAME = /\/sandbox\/(?:runtime\.js|frame\.html)/;
+  const blobsToFiles = (text) => {
+    let s = String(text);
     for (const [url, file] of blobToFile) s = s.split(url).join(file);
-    // Runtime frames carry the frame document's URL (the runtime is inlined into frame.html by
-    // the sandbox build) or /sandbox/runtime.js; learner code has its own file names.
-    return s
+    return s;
+  };
+  /** Internal module specifiers ('~/records.js', the import-map keys) read as project paths ('records.js'). */
+  const projectPaths = (text) => blobsToFiles(text).replace(/(['"])~\/([^'"]*)\1/g, '$1$2$1');
+  function cleanStack(stack) {
+    return projectPaths(stack)
       .split('\n')
-      .filter((line) => !/\/sandbox\/(?:runtime\.js|frame\.html)/.test(line))
+      .filter((line) => !RUNTIME_FRAME.test(line))
       .join('\n');
+  }
+  // `error.stack` itself, as learner code reads it (console.log(error.stack)) and as the error card
+  // and the console get it: no frames of this runtime, project paths instead of internal ones, and
+  // no "Proxy." receiver for functions the checks call through `scope`. Learner code may replace it.
+  function prepareStackTrace(error, sites) {
+    let header;
+    try { header = Error.prototype.toString.call(error); } catch (e) { header = 'Error'; }
+    const lines = [projectPaths(header)];
+    for (const site of sites) {
+      let file = '';
+      try { file = String(site.getScriptNameOrSourceURL() || site.getFileName() || ''); } catch (e) { file = ''; }
+      if (RUNTIME_FRAME.test(file)) continue;
+      let text = String(site);
+      try { if (site.getTypeName() === 'Proxy') text = text.replace(/^(async )?Proxy\./, '$1'); } catch (e) { /* keep V8's text */ }
+      lines.push(`    at ${blobsToFiles(text)}`);
+    }
+    return lines.join('\n');
+  }
+  Object.defineProperty(Error, 'prepareStackTrace', { value: prepareStackTrace, writable: true, configurable: true, enumerable: false });
+  /** A module error created by the browser (failed import or link) names import-map keys; learner code
+   *  that catches it, and the error card, see project paths instead. The same object is kept. */
+  function normalizeModuleError(error) {
+    try {
+      if (error !== null && typeof error === 'object' && typeof error.message === 'string' && /['"]~\//.test(error.message)) error.message = projectPaths(error.message);
+    } catch (e) { /* a frozen or exotic object stays as it is */ }
+    return error;
   }
 
   function describeError(error) {
@@ -133,7 +167,7 @@
       const where = /(?:\(|\s|@)([^\s()@]+?):(\d+):(\d+)\)?/.exec(stack.split('\n').slice(1).join('\n') || stack);
       return {
         name: String(error.name || 'Error'),
-        message: String(error.message),
+        message: projectPaths(error.message),
         stack,
         file: where ? where[1] : null,
         line: error.jsllLine ?? (where ? Number(where[2]) : null),
@@ -212,11 +246,11 @@
   function installListeners() {
     window.addEventListener('message', onMessage);
     window.addEventListener('error', (event) => {
-      if (event.error !== undefined && event.error !== null) reportError(event.error, 'runtime');
+      if (event.error !== undefined && event.error !== null) reportError(normalizeModuleError(event.error), 'runtime');
       else if (event.message) reportError({ name: 'Error', message: event.message, stack: `${event.filename}:${event.lineno}:${event.colno}` }, 'runtime');
       else if (event.target && event.target !== window && event.target.tagName) explainResource(event);
     }, true);
-    window.addEventListener('unhandledrejection', (event) => { reportError(event.reason, 'unhandled-rejection'); });
+    window.addEventListener('unhandledrejection', (event) => { reportError(normalizeModuleError(event.reason), 'unhandled-rejection'); });
     // These run last (bubble phase on window), after learner handlers had their chance to call
     // preventDefault(). A real navigation would discard the running program, so it is replaced
     // by an explanation; `submitPrevented` lets tests see what the learner's handler did.
@@ -279,6 +313,7 @@
         throw error;
       },
     },
+    __jsllImported: { value: (promise) => promise.then(undefined, (error) => { throw normalizeModuleError(error); }) },
     __jsllScope: { value: (file, getters) => { if (rerunScope) rerunScope(file, getters); else scopes.set(file, getters); } },
     __jsllResolve: {
       value: (spec, from) => {

@@ -123,6 +123,12 @@ function rewriteImportsPlugin({ types: t }, { resolve, onError }) {
     if (result.path) sourceNode.value = MODULE_PREFIX + result.path;
     void path;
   };
+  // import(…) is wrapped in __jsllImported(…) (sandbox runtime): a failed import rejects with the
+  // same error, its message naming project paths instead of import-map keys ('~/records.js').
+  const wrapImport = (path) => {
+    path.node.__jsllWrapped = true;
+    path.replaceWith(t.callExpression(t.identifier('__jsllImported'), [path.node]));
+  };
   return {
     name: 'jsll-rewrite-imports',
     visitor: {
@@ -130,15 +136,18 @@ function rewriteImportsPlugin({ types: t }, { resolve, onError }) {
       ExportAllDeclaration(path) { rewrite(path.node.source, path); },
       ExportNamedDeclaration(path) { if (path.node.source) rewrite(path.node.source, path); },
       ImportExpression(path) {
+        if (path.node.__jsllWrapped) return;
         const arg = path.node.source;
         if (t.isStringLiteral(arg)) rewrite(arg, path);
         else path.node.source = t.callExpression(t.identifier('__jsllResolve'), [arg, t.stringLiteral(this.file.opts.filename.replace(/^\//, ''))]);
+        wrapImport(path);
       },
       CallExpression(path) {
-        if (!t.isImport(path.node.callee)) return;
+        if (!t.isImport(path.node.callee) || path.node.__jsllWrapped) return;
         const arg = path.node.arguments[0];
         if (t.isStringLiteral(arg)) rewrite(arg, path);
         else if (arg) path.node.arguments[0] = t.callExpression(t.identifier('__jsllResolve'), [arg, t.stringLiteral(this.file.opts.filename.replace(/^\//, ''))]);
+        wrapImport(path);
       },
     },
   };
