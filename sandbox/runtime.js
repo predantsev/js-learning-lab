@@ -839,13 +839,33 @@
     document.close();
   }
 
+  // A new frame can receive the run before it knows its own size: the frame lives in another renderer
+  // process and gets its viewport from the page a few milliseconds later. Until then innerWidth and
+  // innerHeight are 0 and Chrome does not focus anything in it (button.focus() leaves
+  // document.activeElement on <body>; measured in about 1 of 6 hidden validator runs). The program
+  // starts once the frame has a size, or after SIZE_WAIT_MS for a frame that really has none.
+  const SIZE_WAIT_MS = 1000;
+  function whenSized() {
+    const sized = () => window.innerWidth > 0 && window.innerHeight > 0;
+    if (sized()) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => { window.removeEventListener('resize', onResize); nativeClearTimeout(timer); resolve(); };
+      const onResize = () => { if (sized()) done(); };
+      const timer = nativeSetTimeout(done, SIZE_WAIT_MS);
+      window.addEventListener('resize', onResize);
+    });
+  }
+  let starting = false;
   function onMessage(event) {
     if (event.source !== controller) return;
     const message = event.data;
     if (!message || message.jsll !== 1 || message.frameId !== frameId) return;
     if (message.type === 'ping') post('pong', { seq: message.seq });
-    else if (message.type === 'run' && run === null) {
-      try { start(message.payload); } catch (error) { reportError(error, 'bootstrap'); post('done', {}); }
+    else if (message.type === 'run' && run === null && !starting) {
+      starting = true;
+      whenSized().then(() => {
+        try { start(message.payload); } catch (error) { reportError(error, 'bootstrap'); post('done', {}); }
+      });
     }
   }
 

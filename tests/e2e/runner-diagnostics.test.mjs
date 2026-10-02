@@ -211,3 +211,18 @@ test('a module graph that fails to load while running is reported as one error, 
     assert.doesNotMatch(r.errors[0].message, /~\//, change);
   }
 });
+
+test('focus() works in every hidden validator frame: the program starts only once the frame has its size', async () => {
+  // Measured before the fix: about 1 run in 6 started in a 0×0 frame, and button.focus() then left
+  // document.activeElement on <body>. Thirty runs fail with probability above 99% without the fix.
+  const code = 'const sized = innerWidth > 0 && innerHeight > 0;\nconst save = document.createElement("button");\nsave.textContent = "Save";\ndocument.body.append(save);\nsave.focus();\nconsole.log(sized, document.activeElement.tagName);\n';
+  const seen = [];
+  for (let i = 0; i < 30; i++) {
+    const r = await run({ files: { 'index.js': code } });
+    seen.push(texts(r).join(' | '));
+  }
+  assert.deepEqual([...new Set(seen)], ['true BUTTON'], seen.join(', '));
+  // An element written in the page itself, as lessons do.
+  const html = await run({ entry: 'index.html', files: { 'index.html': '<!doctype html><body><button id="save">Save</button><script type="module" src="./index.js"></script></body>', 'index.js': 'document.querySelector("#save").focus();\nconsole.log(document.activeElement.tagName);\n' } });
+  assert.deepEqual(texts(html), ['BUTTON']);
+});
