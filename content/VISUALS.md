@@ -43,6 +43,46 @@ Rules that apply to every kind:
 - `file:` paths are relative to the lesson directory and may not leave it.
 - `textEquivalent` describes the whole mechanism in prose (what changes, in which order, and why),
   not "a diagram of X".
+- **Width:** pictures (`diagram`, `sequence`, `memory-graph`) must fit the lesson column — see
+  section 6 before you draw anything wide.
+
+### 1.1 Localized example text: `strings`
+
+Example UI text inside a visual (a greeting, a product name, a reminder) follows the lesson
+language, exactly like in `example`/`exercise` blocks: put a bilingual `strings` table on the block
+and write `%%key%%` wherever the text appears. Identifiers and comments stay English.
+
+```yaml
+- id: greeting-strings
+  kind: visual
+  visual: code-trace
+  strings:
+    greeting: { uk: "Привіт", en: "Hello" }
+  title: { uk: "…", en: "…" }
+  textEquivalent: { uk: "… «%%greeting%%» …", en: "… \"%%greeting%%\" …" }
+  spec:
+    file: visuals/greeting.js          # contains: const greeting = "%%greeting%%";
+    captions:
+      - at: { line: 2 }
+        text: { uk: "`greeting` — `\"%%greeting%%\"`.", en: "`greeting` is `\"%%greeting%%\"`." }
+```
+
+- `%%key%%` is resolved **in the code file, in every string of the spec** (labels, items, `fn`/`show`
+  sources, `log` claims, captions) and in the block's `title` and `textEquivalent`; each language
+  gets its own text.
+- The visual is **compiled once per language**: the Ukrainian version really runs the Ukrainian
+  text, the English version the English one. When the two differ, the compiled spec is
+  `{ kind, byLang: { uk: spec, en: spec } }` (one JSON structure; the player picks the language);
+  when they come out identical, it stays the plain spec.
+- **Both languages must show the same steps** (same number of steps, and for `code-trace` the same
+  line and kind at each step), so the learner keeps the step when switching language. A `%%key%%`
+  that changes what the code does (`if (name.length > 4)`, a loop over the letters) is refused:
+  `the uk and en versions have different numbers of steps …`. A caption that matches in only one
+  language is reported with `(with the en strings)`.
+- A `%%key%%` with no entry in `strings` fails the build (`placeholder %%name%% has no entry in
+  strings`), with or without a table.
+
+Sample: `content/_samples/visuals/code-trace-strings.yaml`.
 
 ## 2. Preview and check
 
@@ -58,18 +98,22 @@ npm start   # then open /visuals-demo.html on the app host (http://js-learning-l
 ```
 
 The demo page has language / style / appearance / column-width / reduced-motion switches and takes
-query parameters (`?only=code-trace&lang=en&style=editorial&appearance=dark&width=420&reduced=1`).
+query parameters (`?only=code-trace&lang=en&style=editorial&appearance=dark&width=420&reduced=1`;
+`only` takes a kind or a sample id). The compile command prints the steps of every sample, whether it
+has one version per language and the natural width of a diagram (with a warning above 450 px).
 
 Programmatic use (the content build does exactly this):
 
 ```js
-import { validateVisualSpec, compileVisual } from './shared/visuals/index.js';
+import { validateVisualSpec, compileVisual, specForLang } from './shared/visuals/index.js';
 const issues = validateVisualSpec(block.visual, block.spec);          // static, sync, [{ path, message }]
 const { spec, issues } = await compileVisual(block.visual, block.spec, {
   readFile: async (relative) => fs.readFile(path.join(lessonDir, relative), 'utf8'),
   mdInline: (md) => marked.parseInline(md),
   langs: ['uk', 'en'],
+  strings: block.strings,                                             // optional, section 1.1
 });
+const shown = specForLang(spec, 'en');                                // the spec the player renders in English
 ```
 
 `spec` (when `issues` is empty) is a self-contained JSON object; the player receives it unchanged.
@@ -102,8 +146,21 @@ Each step is the state **before** the highlighted line runs. A `return` step is 
 return value was computed; a `return` line therefore has no `stmt` step of its own. A `throw`
 statement produces a `stmt` step and then a `throw` step.
 
+What the steps show, exactly as the engine does it:
+
+- **Per-iteration bindings:** every iteration of `for (let i …)` has its own `i`, and a closure
+  created in an iteration keeps that iteration's binding — also when it is called after the loop
+  (`f = () => j` created when `j` is 1 shows and returns 1, not the final value).
+- **Waiting frames:** while a call inside `return a(b(x))` (or inside the collection of a
+  `for…of`) runs, the waiting caller frame points at that `return` (or loop) line; a `return` step
+  shows the scope of the `return` statement (a block or loop that already ended is gone).
+- **Function names:** an anonymous function or arrow gets the name the engine infers from where it
+  is written — `const double = (n) => …` is `ƒ double` in the heap and in the console, as is
+  `{ greet: () => … }` → `greet`. Display names such as `map callback` appear only in the call stack.
+
 `--trace file.js` prints every generated step with its line, kind, hit number, frame and
-variables — use it to pick the moments worth a caption.
+variables (`null` prints as `null`, `undefined` as `undefined`, objects as `#id`) — use it to pick
+the moments worth a caption.
 
 Compile errors you will see: `no step runs line N; lines with steps: …`, `line N runs 2 times,
 hit 5 does not exist`, `step 99 does not exist`, `step 7 (line 4, stmt) has no caption` (only in
@@ -123,6 +180,13 @@ environment with `console`, timers and `Promise` only).
 The player shows the code with the current line, variables grouped by scope (block → function →
 **captured scopes** of a closure → module), the call stack, a heap of objects/arrays/functions with
 stable `#ids` (two bindings to one object show the same id) and the console.
+
+A panel that stays **empty in every shown step is not drawn**, and one line under the code names
+it instead (`Not shown, empty in every step: call stack (no function is called), heap (no
+objects).`), so the picture and its text version say the same. Empty means: Variables — no scope
+has a variable; Call stack — nothing but the program (module) frame is ever on it, i.e. no function
+is called; Heap — no object, array or function exists. If a caption talks about the call stack or
+the heap, the example must actually call a function or create an object.
 
 ```yaml
 spec:
@@ -163,10 +227,16 @@ Common mistakes: captioning a line that never runs (`no step runs line N`); forg
 several statements share a line — keep one statement per line); an inline `code:` with
 `import`; a long loop without `maxSteps` thought (the default 400 is per *step*, not per line).
 
-**Run time (learner code):** the same tracer runs inside the sandbox. The app transforms the
-learner project with `prepareRun({ …, options: { trace: true, extraPlugins: [traceBabelPlugin] } })`
-and receives a `trace` event after the run; `traceToSpec(trace, code, file)` turns it into the same
-compiled shape (captions are `null`; the player falls back to "Line N"). Both are exported from
+**Run time (learner code) — "Step through":** every `browser-js` workspace has a **Step through**
+button next to Run. It runs the learner's current files off screen with the same tracer and opens
+the **Steps** result tab: the trace in the code-trace player, in the learner's language, starting
+at step 1 (captions are `null`; the player names the line, "Line N"). The tab says so clearly when
+the code has a syntax error (with the diagnostic), when the trace was cut at 400 steps, when the
+program stopped with an uncaught error (the last step shows where) and when no steps were recorded.
+Tracing never changes the learner's files. Under the hood: `useRunner().start({ …, trace: true })`
+→ `prepareRun({ …, options: { trace: true, extraPlugins: [traceBabelPlugin] } })` → `trace` event →
+`traceToSpec(trace, files, entry)`. With a map of files, each step shows the file it runs in
+(an imported module runs before the module that imports it). Both functions are exported from
 `shared/visuals/index.js`.
 
 ### 4.2 `memory-graph` — bindings, values and references
@@ -214,6 +284,24 @@ Values: YAML literals (`5`, `"text"`, `true`, `null`), the strings `"undefined"`
 `ctor`), `array` (`items`), `function`/`class` (`name`), `map` (`entries: [[k, v], …]`), `set` (`items`).
 Every state repeats the full picture (bindings + heap); the compiler does not carry anything over.
 
+**Holes of a sparse array:** `{ empty: true }` among an array's `items` is an index that was never
+assigned — not `undefined` (`1 in list` is `false`). It is drawn as `<empty>`, the same way a real
+trace shows `[1, , 3]`, and it is accepted only among array items:
+
+```yaml
+heap:
+  r1: { kind: array, items: ["water", { empty: true }, "stretch"] }   # const list = ["water", , "stretch"];
+```
+
+**Widths follow the content:** the variable and heap columns are as wide as their longest text in
+any step and either language (so the picture never changes size while stepping), up to what the
+panel can show at the legible minimum scale (section 6). Long identifiers are never shortened; when
+the column is too narrow for a long *value*, only the value is cut with `…` — the full text stays in
+a tooltip and in the text version. The code panel above the graph behaves the same way: its font
+shrinks to fit the longest line (not below 0.72 rem), then long lines wrap under their line number
+instead of scrolling sideways. So keep the names your lesson uses; there is no need to shorten them.
+Sample: `content/_samples/visuals/memory-graph-sparse.yaml`.
+
 **B. From a trace** — the states are the captioned steps of a real run:
 
 ```yaml
@@ -231,9 +319,10 @@ that is not in this state's `heap`; forgetting to repeat unchanged bindings in t
 
 ### 4.3 `pipeline` — a collection through array stages
 
-**Use for:** `filter`, `map`, `reduce`, `sort`, `find`, `flatMap` and chains of them: what each
-stage receives, what its function answers for every item, what comes out. This is the kind used
-by the approved `filter` reference design.
+**Use for:** `filter`, `map`, `flatMap`, `reduce`, `find`, `some`, `every`, `sort`, `toSorted`
+and chains of them: what each stage receives, what its function answers for every item, what
+comes out — including where a stage stops early, which comparisons a sort makes and how a stage
+fails. This is the kind used by the approved `filter` reference design.
 **Do not use for:** loops with side effects (→ `code-trace`), nested data transformations that
 are not an array method.
 
@@ -254,11 +343,11 @@ spec:
     show: "item => `${item.name} €${item.price}`"   # optional: how an item is labelled (function source)
     caption: { uk: "…", en: "…" }                   # the first step shows the input
   stages:
-    - op: filter                 # filter | map | reduce | sort | find | flatMap
+    - op: filter                 # filter | map | flatMap | reduce | find | some | every | sort | toSorted
       fn: "(item) => item.price <= 100"             # function source, exactly what the learner writes
       label: "item.price <= 100"                    # optional short display of fn (default: fn)
       perItem: true                                 # optional: one step per item, then a summary step
-      caption:                                      # with perItem: a template, placeholders {item} {result} {index} {count} {acc}
+      caption:                                      # with perItem: a template, placeholders {item} {result} {index} {count} {acc} {error}
         uk: "`filter` перевіряє елемент {index} з {count}: `{item}` → **{result}**."
         en: "`filter` tests item {index} of {count}: `{item}` → **{result}**."
       summary: { uk: "…", en: "…" }                 # required with perItem: caption of the stage-result step
@@ -274,14 +363,76 @@ spec:
     label: { uk: "Залишилося {count} назви", en: "{count} names remain" }   # optional, {count} = items in the final output
 ```
 
-Steps: input → (per item when `perItem`) → one result step per stage. `sort` cannot be shown per
-item. After `reduce`/`find` the output is a single value; another stage may follow only when that
-value is an array.
+Steps: input → (per item when `perItem`, per comparison when `perComparison`) → one result step per
+stage. After `reduce`/`find`/`some`/`every` the output is a single value; another stage may follow
+only when that value is an array. The stage caption (or the `summary`) may use `{count}` (items the
+stage received), `{tested}` (items its function was called for), `{skipped}` (items never
+checked), `{comparisons}` (sort/toSorted), `{result}` (the output, or the number of output items)
+and `{error}`.
+
+**Stopping early — `find`, `some`, `every`.** These stop at the deciding item, like the real
+methods: `find` at the first `true` (its output is that item, or `undefined`), `some` at the first
+`true` (output `true`), `every` at the first `false` (output `false`). With `perItem` there is one
+step per item *actually tested*; on the deciding step the items after it are marked *not checked*
+and the output appears (before that it reads *not decided yet*).
+
+```yaml
+    - op: some
+      fn: "(habit) => habit.missed > 2"
+      perItem: true
+      caption: { uk: "`some` перевіряє {item} → **{result}**.", en: "`some` checks {item} → **{result}**." }
+      summary: { uk: "Перевірено {tested} з {count}, {skipped} — ні.", en: "{tested} of {count} checked, {skipped} never." }
+```
+
+**Every comparison of a sort — `perComparison`.** `sort` (sorts the array in place) and `toSorted`
+(returns a sorted copy; the stage is shown under its own name) can show one step per call of the
+comparator — the real calls the engine makes (V8, as in Chrome and Node; another engine may compare
+other pairs, with the same result for a consistent comparator). Each step marks the two items `a`
+and `b`, the value returned and what it means (below zero: `a` first; above zero: `b` first; zero:
+keep their order). Placeholders: `{a}` `{b}` `{result}` `{index}` `{count}`; `summary` is required;
+at most 40 comparisons (use few items). A sort cannot use `perItem`.
+
+```yaml
+    - op: toSorted
+      fn: "(a, b) => a - b"
+      perComparison: true
+      caption: { uk: "Порівняння {index} з {count}: `a = {a}`, `b = {b}` → **{result}**.", en: "Comparison {index} of {count}: `a = {a}`, `b = {b}` → **{result}**." }
+      summary: { uk: "Усього порівнянь: {comparisons}.", en: "Comparisons in total: {comparisons}." }
+```
+
+**Bilingual item labels.** `show` (of the input or of a stage) may be `{ uk, en }` — one label
+function per language; `{item}`/`{result}` in captions then take the label of their language.
+(Data inside the items can also be localized with `strings` and `%%key%%`, section 1.1.)
+
+```yaml
+    show:
+      uk: "habit => `${habit.id} · пропущено ${habit.missed}`"
+      en: "habit => `${habit.id} · missed ${habit.missed}`"
+```
+
+**A stage that throws — `throws: true`.** When the error is the point of the example, mark the
+stage: the step of the item that failed and the result step show the **real** error name and
+message of the run (`TypeError: Cannot read properties of undefined (reading 'trim')`), the items
+after it are *not checked*, and the chain ends there (no stage may follow). A stage marked
+`throws: true` that does not throw is a build error, and so is a stage that throws without it.
+
+```yaml
+    - op: map
+      fn: "(wish) => wish.note.trim()"
+      throws: true
+      perItem: true
+      caption: { uk: "`map` для `{item}` → **{result}**.", en: "`map` for `{item}` → **{result}**." }
+      summary: { uk: "Ланцюжок зупинився: **{error}**.", en: "The chain stopped: **{error}**." }
+```
+
+Samples: `pipeline.yaml`, `pipeline-some.yaml`, `pipeline-tosorted.yaml`, `pipeline-throws.yaml` in
+`content/_samples/visuals/`.
 
 Common mistakes: `fn` that is not a function expression (write `item => …` or `function (item) {…}`);
 a `show` for the input that is then reused on `map` outputs (it is not — map/flatMap/reduce outputs
-use the stage's own `show` or a generic format); `perItem` without `summary`; `reduce` without
-`initial`; a function that throws for some item (the build reports *the function threw while running*).
+use the stage's own `show` or a generic format); `perItem`/`perComparison` without `summary`;
+`reduce` without `initial`; a function that throws for some item without `throws: true` (the build
+reports *the function threw while running*); `perItem` on a sort (use `perComparison`).
 
 ### 4.4 `event-loop` — stack, queues and the order of output
 
@@ -352,7 +503,13 @@ spec:
 
 Layout is computed at build time: ungrouped nodes are layered by their edges, grouped nodes sit in
 their group's column, nodes in one column stack in order. Give long labels a `w` or shorten them;
-labels are single-line plain text.
+labels are single-line plain text. Groups stacked on top of each other (`layout: tb`, or a `grid`
+that puts groups in rows) get room for both frames and the lower group's heading.
+
+Width (section 6): every column costs its widest node (96–240 px, about 8 px per label character)
+plus 96 px of gap, so three groups side by side (`layout: lr`) are usually too wide for the lesson
+column — `layout: tb` or a `grid` that stacks the groups keeps the picture narrow; the sample
+`diagram.yaml` stacks browser / server / database at 444 px.
 
 Common mistakes: `show` for an id that is not in `hidden`; a hidden id that no step ever shows;
 Markdown in node labels (it is printed literally); two edges between the same nodes without
@@ -382,6 +539,11 @@ spec:
 
 Labels wrap automatically but long labels make tall rows: put details in `note`, keep the label
 to the message name. A `note` kind message must have `to` equal to `from`.
+
+Width (section 6): actor labels wrap to two lines of about 14 characters (20 when a label needs
+it), and every actor column is as wide as the longest of those lines in either language (96–150 px)
+plus 40 px between actors. Three actors with short labels (`Browser`, `api.example server`) stay
+within ~450 px; a fourth actor or long actor labels make the picture wider than the lesson column.
 
 ### 4.7 `git-graph` — commits, branches, HEAD and the working tree
 
@@ -484,17 +646,39 @@ contradict the snapshot of the render the handler was created in.
 - `prefers-reduced-motion` (and the app's `reducedMotion` flag) disables every animation; changes
   are still marked. Otherwise a change gets a single 0.45 s highlight, never an infinite pulse.
 - Everything is styled through the design tokens, so the three application styles and light/dark
-  appearance apply automatically; layouts work from 420 px to 760 px of column width.
+  appearance apply automatically; layouts work from 420 px to 760 px of column width (section 6).
+- Panels that stay empty for a whole `code-trace` are not drawn and are named in one line instead;
+  code panels never scroll sideways (smaller font, then wrapped lines under their number).
 
 UI strings live in `app/src/visuals/labels.ts` (`VISUAL_LABELS.uk` / `.en`).
 
-## 6. Choosing a kind — quick table
+## 6. Width: the lesson column
+
+A visual usually sits in the lesson column next to the workspace. In the narrowest supported
+layout that column is **about 420 px**, which leaves **about 345 px** for a picture inside the
+player. Keep the **natural width** of `diagram`, `sequence` and `memory-graph` pictures within
+**about 420–450 px**:
+
+- The player draws a picture at its natural width when the column allows it and otherwise **scales
+  it down to the available width — but never below 75 %** (the legible minimum: 13 px labels render
+  at ~9.8 px, the smallest 11 px labels at ~8.3 px). 450 px × 75 % ≈ 338 px still fits the 345 px.
+- Only a picture whose 75 % is wider than the panel makes the panel scroll sideways — avoid that:
+  the learner then sees part of the picture at a time.
+- Natural widths: `diagram` — `compile-visual-samples.mjs` prints it and warns above 450 px; the
+  compiled spec has `layout.width` (section 4.5 has the rules of thumb). `sequence` — about
+  40 + n × (actor width) + (n − 1) × 40 px, actor width 96–150 px (section 4.6). `memory-graph` —
+  the columns follow their texts and never get wider than the panel allows at 75 % (section 4.2).
+- Code panels (in every kind) need no width planning: they shrink the font and wrap long lines.
+- Check the result in the demo page at `?width=420`; the end-to-end test
+  `tests/e2e/visuals.test.mjs` checks the samples there.
+
+## 7. Choosing a kind — quick table
 
 | Concept | Kind |
 |---|---|
 | scope, closure, TDZ, call stack, recursion, loops | `code-trace` |
-| reference vs copy, mutation, shallow/deep | `memory-graph` |
-| filter / map / reduce / sort chains | `pipeline` |
+| reference vs copy, mutation, shallow/deep, sparse arrays | `memory-graph` |
+| filter / map / reduce / find / some / every / sort chains | `pipeline` |
 | setTimeout vs promise, microtasks, async order | `event-loop` |
 | client/server/DB, same-origin, native vs web, trees, state machines | `diagram` |
 | request/response, CORS preflight, auth, SSR + hydration, RN bridge | `sequence` |

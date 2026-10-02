@@ -1,5 +1,5 @@
 // "Steps" result tab: the learner's own code, run with the execution tracer, in the code-trace
-// player (content/VISUALS.md § run time). Loaded lazily with the visual players.
+// player (content/VISUALS.md, section 4.1 "Run time"). Loaded lazily with the visual players.
 import { type ReactNode, useMemo } from 'react';
 import { traceToSpec } from '@shared/visuals/kinds/code-trace.js';
 import type { Lang } from '../lib/types';
