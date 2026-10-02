@@ -192,6 +192,10 @@
   // ---------- errors ----------
   function reportError(error, phase) {
     flush();
+    // A step-through run records where the program stopped: the module body has no try/catch of its own.
+    if (run && run.options.trace && (phase === 'runtime' || phase === 'unhandled-rejection') && window.__jsllTrace && typeof window.__jsllTrace.uncaught === 'function') {
+      try { window.__jsllTrace.uncaught(error); } catch { /* the trace stays as it is */ }
+    }
     post('error', { error: describeError(error), phase });
   }
   function installListeners() {

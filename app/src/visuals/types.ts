@@ -23,7 +23,7 @@ export type Heap = Record<string, HeapEntry>;
 
 export type TraceVar = { name: string; kind: string; value?: TraceValue; uninit?: boolean };
 export type TraceScope = { id: number; kind: string; name: string; parent: number | null; vars: TraceVar[] };
-export type TraceFrame = { id: number; name: string; line: number; scope: number | null; kind?: 'module' | 'function' };
+export type TraceFrame = { id: number; name: string; line: number; scope: number | null; kind?: 'module' | 'function'; file?: string };
 export type TraceEvent =
   | { type: 'call'; name: string; args: { name: string; value: TraceValue }[]; from: number | null }
   | { type: 'return'; name: string; value: TraceValue; implicit?: boolean }
@@ -42,6 +42,9 @@ export type StepBase = { caption: Localized | null };
 
 export type CodeTraceSpec = {
   kind: 'code-trace'; file: string; code: string; language: string; mode: 'captioned' | 'all'; totalSteps: number; truncated: boolean;
+  /** Run-time traces of a project: every traced file (path → code); the player shows each step's file. */
+  files?: Record<string, string>;
+  maxSteps?: number | null;
   error: { name: string; message: string } | null; console: ConsoleEntry[];
   steps: (StepBase & { trace: TraceStep; logged: number })[];
 };

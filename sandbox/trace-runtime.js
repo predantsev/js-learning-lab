@@ -171,7 +171,7 @@
       i: steps.length,
       line, col, endLine, kind,
       file: inst ? inst.file : (top ? top.scope.file : ''),
-      frames: frames.map((f) => ({ id: f.id, name: f.name, line: f.line, scope: f.current ? f.current.id : null, kind: f.scope && f.scope.kind === 'module' ? 'module' : 'function' })),
+      frames: frames.map((f) => ({ id: f.id, name: f.name, line: f.line, scope: f.current ? f.current.id : null, kind: f.scope && f.scope.kind === 'module' ? 'module' : 'function', file: (f.current || f.scope || {}).file || '' })),
       frameId: top ? top.id : null,
       scope: inst ? inst.id : null,
       scopes,

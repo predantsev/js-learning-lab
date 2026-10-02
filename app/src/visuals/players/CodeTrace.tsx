@@ -97,7 +97,10 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
   const changed = changedVars(step, previous);
   const heapChanged = changedHeap(step.heap, previous ? previous.heap : null);
   const frames = [...step.frames].reverse();
-  const context = step.frames.slice(0, -1).map((f) => f.line).filter((l) => l > 0);
+  // A run-time trace of a project with several modules carries every file: show the step's own file.
+  const shownFile = spec.files && step.file && step.file in spec.files ? step.file : spec.file;
+  const code = spec.files && shownFile in spec.files ? spec.files[shownFile] : spec.code;
+  const context = step.frames.slice(0, -1).filter((f) => !f.file || f.file === shownFile).map((f) => f.line).filter((l) => l > 0);
   const consoleEntries = spec.console.slice(0, current.logged);
   const heapIds = Object.keys(step.heap);
   const shown = useMemo(() => panelPresence(spec.steps), [spec]);
@@ -105,7 +108,7 @@ export function CodeTrace({ spec, index, tick, labels }: PlayerProps<CodeTraceSp
   const stackColumn = shown.callStack || shown.heap;
   return (
     <div className="viz-grid viz-code-trace">
-      <CodeView code={spec.code} currentLine={step.line} context={context} label={labels.code} currentLabel={labels.lineN} file={spec.file} flashKey={tick} />
+      <CodeView code={code} currentLine={step.line} context={context} label={labels.code} currentLabel={labels.lineN} file={shownFile} flashKey={tick} />
       <EventLine step={step} labels={labels} heap={step.heap} />
       {spec.truncated && index === spec.steps.length - 1 ? <p className="viz-note">{labels.truncated}</p> : null}
       {shown.variables || stackColumn ? (

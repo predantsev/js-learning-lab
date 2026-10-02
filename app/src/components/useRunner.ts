@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { runInputForBlock } from '@shared/exercise.js';
 import { SandboxRun, prepareRun, sandboxOriginFor } from '@shared/runner.js';
+import { traceBabelPlugin } from '@shared/visuals/tracer.js';
 import { boot } from '../lib/api';
 import type { ConsoleEntry, ExampleBlock, ExerciseBlock, Lang, RunError, TestResult } from '../lib/types';
 
@@ -19,10 +20,12 @@ export interface RunState {
   failure: string | null;
   runCount: number;
   live: boolean;
+  /** Execution trace of a step-through run (sandbox `trace` event; see shared/visuals traceToSpec). */
+  trace: unknown | null;
 }
 
 export const AUTO_STOP_AFTER_MS = 8000;
-const initial: RunState = { status: 'idle', mode: null, console: [], errors: [], compileErrors: [], tests: null, harnessError: null, unresponsive: false, failure: null, runCount: 0, live: false };
+const initial: RunState = { status: 'idle', mode: null, console: [], errors: [], compileErrors: [], tests: null, harnessError: null, unresponsive: false, failure: null, runCount: 0, live: false, trace: null };
 const MAX_CONSOLE = 600;
 
 /** What a run needs from a block; lesson blocks and capstone steps both provide it. */
@@ -39,6 +42,8 @@ export interface StartOptions {
   onTests?: (results: TestResult[], harnessError: RunError | null, errors: RunError[]) => void;
   onNavigate?: (path: string) => void;
   entryOverride?: string;
+  /** Step-through run: instrument the code with the tracer and run it off screen. */
+  trace?: boolean;
 }
 
 export function useRunner() {
@@ -68,12 +73,12 @@ export function useRunner() {
       errorsRef.current = [];
       const sandboxOrigin = sandboxOriginFor(boot.port);
       const input = runInputForBlock(options.entryOverride ? { ...options.block, entry: options.entryOverride } : options.block, options.files, { mode: options.mode, storage: options.storage, lang: options.lang });
-      const prepared = prepareRun({ ...input, sandboxOrigin });
+      const prepared = prepareRun({ ...input, sandboxOrigin, ...(options.trace ? { options: { ...input.options, trace: true, extraPlugins: [traceBabelPlugin] } } : {}) });
       if ('errors' in prepared) {
         setState((s) => ({ ...initial, runCount: s.runCount + 1, status: 'compile-error', mode: options.mode, compileErrors: prepared.errors as RunError[] }));
         return;
       }
-      const visible = options.mode === 'run';
+      const visible = options.mode === 'run' && !options.trace;
       if (!visible) prepared.payload.options.offscreen = true;
       setState((s) => ({ ...initial, runCount: s.runCount + 1, status: options.mode === 'test' ? 'checking' : 'running', mode: options.mode, live: true }));
       const run = new SandboxRun({
@@ -104,6 +109,9 @@ export function useRunner() {
             case 'navigate':
               options.onNavigate?.(event.path as string);
               break;
+            case 'trace':
+              setState((s) => ({ ...s, trace: event.trace }));
+              break;
             case 'unresponsive':
               setState((s) => ({ ...s, unresponsive: true }));
               autoStop.current = setTimeout(() => {
@@ -125,9 +133,9 @@ export function useRunner() {
               setState((s) => ({ ...s, status: 'failed', failure: event.code as string, live: false }));
               break;
             case 'done':
-              // A check run has nothing left to show; an interactive run stays alive for the preview.
-              if (options.mode === 'test') { active.current?.stop(); active.current = null; }
-              setState((s) => ({ ...s, status: 'done', live: options.mode === 'run' }));
+              // A check or step-through run has nothing left to show; an interactive run stays alive for the preview.
+              if (!visible) { active.current?.stop(); active.current = null; }
+              setState((s) => ({ ...s, status: 'done', live: visible }));
               break;
             default:
               break;
