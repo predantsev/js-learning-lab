@@ -293,7 +293,11 @@ export function staticIssuesForLesson(lesson, ctx) {
       // `when: { error: ReferenceError }` fires only for an error while the program loads or one thrown
       // by a check itself.
       const courseRunner = 'testing.js' in a.starter || /from\s*['"]\.\/testing\.js['"]/.test(a.tests ?? '');
+      // Checks that first assert the type of a function fail with an assertion after a load crash, so
+      // the learner never reads "… is not a function" there (content/README.md, rule 33).
+      const guarded = /typeof\s+scope(Of\([^)]*\))?\.[\w$]+\s*[,)]|requireFunction\s*\(|scope(Of\([^)]*\))?\.[\w$]+\s*(,[^)]*)?\)\s*\.toBeTypeOf\(\s*['"]function['"]\s*\)/.test(a.tests ?? '');
       for (const [i, rule] of (block.feedback ?? []).entries()) {
+        if (guarded && rule?.when?.error === 'TypeError' && LANGS.some((l) => /is not a function|не є функцією/i.test(String(rule.message?.[l] ?? '')))) warn(`block "${block.id}".feedback[${i}]`, 'the TypeError feedback quotes "… is not a function", but the checks first assert that the function exists (typeof / requireFunction): after a load crash they report `type of X: expected "undefined" to be "function"`, and only the error card shows "… is not a function". Check that the text describes what the learner sees in each case (content/README.md, rule 33)');
         if (courseRunner && rule?.when?.error === 'ReferenceError') warn(`block "${block.id}".feedback[${i}]`, 'when: { error: ReferenceError } does not fire for errors inside the learner\'s own tests: the course runner (testing.js) catches them and reports a failed learner test. It matches only an error while the program loads or one thrown by a check; if this advice is for an error inside the learner\'s tests, put it into the feedback of the check that runs them (when: { test }) — content/README.md, "Feedback and course runners"');
       }
     }

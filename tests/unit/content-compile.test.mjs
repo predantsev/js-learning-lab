@@ -127,3 +127,16 @@ test('lesson files that the repository ignores (dist/, build/, coverage/, .env) 
   const found = gitIgnoredLessonFiles(new Map([['js-01-99-ignored-files', lesson]]));
   assert.deepEqual(found.get('js-01-99-ignored-files')?.sort(), ['demo/.env', 'demo/dist/bundle.js', 'task/solution/build/out.js', 'task/starter/coverage/report.json', 'task/wrong/.env.local']);
 });
+
+test('TypeError feedback that quotes "is not a function" is a rule-33 warning when the checks guard the function first', () => {
+  const rule = { when: { error: 'TypeError' }, message: pair('Якщо бачиш `total is not a function`, …', 'If you see `total is not a function`, …') };
+  const warningsFor = (tests) => staticIssuesForLesson(lessonWith([{ ...exercise, feedback: [rule] }], { cart: { ...exerciseAssets.cart, tests } }), ctx).filter((i) => i.level === 'warning');
+  for (const tests of ['test("prints the total", () => { expect(typeof scope.total, "type of total").toBe("function"); });', 'test("prints the total", () => { requireFunction("total"); });', 'test("prints the total", () => { expect(scope.total).toBeTypeOf("function"); });']) {
+    const found = warningsFor(tests);
+    assert.equal(found.length, 1, tests);
+    assert.match(found[0].message, /rule 33/);
+  }
+  // Unguarded checks really do report "… is not a function" after a load crash.
+  assert.deepEqual(warningsFor('test("prints the total", () => { expect(scope.total(2)).toBe(2); });'), []);
+  assert.deepEqual(warningsFor('test("prints the total", () => { expect(typeof scope.total(2)).toBe("number"); });'), []);
+});
