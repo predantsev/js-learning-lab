@@ -14,9 +14,11 @@ const abortError = () => Object.assign(new Error('Aborted'), { name: 'AbortError
 // plan: per call — a status number, 'offline', 'silent', or { status, body } for a custom body.
 function fakeFetch(plan) {
   const calls = [];
+  const times = [];
   const fn = (url, { signal } = {}) => {
     const step = plan[Math.min(calls.length, plan.length - 1)];
     calls.push(signal);
+    times.push(performance.now());
     return new Promise((resolve, reject) => {
       if (signal?.aborted) return reject(abortError());
       signal?.addEventListener('abort', () => reject(abortError()));
@@ -26,7 +28,7 @@ function fakeFetch(plan) {
       setTimeout(() => resolve(new Response(typeof body === 'string' ? body : JSON.stringify(body), { status })), 5);
     });
   };
-  return { fn, calls };
+  return { fn, calls, times };
 }
 function within(promise, ms) {
   return Promise.race([promise, sleep(ms).then(() => ({ status: `still waiting after ${ms} ms` }))]);
@@ -50,6 +52,9 @@ test('the validator accepts departures and rejects anything else', () => {
   expect(isValidTimetable([{ id: 'd-01', route: '7', destination: L.station }]), 'a departure without departs').toBe(false);
   expect(isValidTimetable([{ id: 'd-01', route: '7', destination: L.station, departs: '8 am' }]), "departs: '8 am'").toBe(false);
   expect(isValidTimetable([{ id: 'd-01', route: 7, destination: L.station, departs: '08:05' }]), 'route as a number').toBe(false);
+  expect(isValidTimetable([{ id: 'd-01', route: '7', destination: '', departs: '08:05' }]), 'an empty destination').toBe(false);
+  expect(isValidTimetable([{ id: 'd-01', route: '7', destination: L.station, departs: '24:00' }]), "departs: '24:00'").toBe(false);
+  expect(isValidTimetable([{ id: 'd-01', route: '7', destination: L.station, departs: '23:59' }]), "departs: '23:59'").toBe(true);
 });
 
 test('a valid answer gives fresh departures', async () => {
@@ -86,6 +91,15 @@ test('an invalid body is not retried and never reaches the screen', async () => 
   expect(outcome.departures, 'departures in an invalid outcome').toBeUndefined();
   const notJson = await run([{ status: 200, body: '<html>oops</html>' }]);
   expect(notJson.outcome.status, 'status for a body that is not JSON').toBe('invalid');
+});
+
+test('the pause before each next attempt grows', async () => {
+  const fake = fakeFetch([503, 503, 200]);
+  const outcome = await within(loadTimetable(URL_, { ...fast, baseDelayMs: 60, fetchFn: fake.fn }), 1500);
+  expect([outcome.status, fake.calls.length], 'status and attempts for 503, 503, 200').toEqual(['fresh', 3]);
+  const first = fake.times[1] - fake.times[0];
+  const second = fake.times[2] - fake.times[1];
+  expect(second, `second pause (ms) compared with the first one (${Math.round(first)} ms, baseDelayMs: 60)`).toBeGreaterThan(first + 30);
 });
 
 test('an outer abort rejects with AbortError and stops', async () => {
