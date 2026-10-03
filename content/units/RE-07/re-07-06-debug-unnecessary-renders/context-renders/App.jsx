@@ -11,7 +11,7 @@ const HabitCard = memo(function HabitCard({ habit }) {
   return (
     <li>
       {habit.name}{" "}
-      <button aria-pressed={doneToday} onClick={() => markDone(habit.id)}>
+      <button onClick={() => markDone(habit.id)}>
         {doneToday ? "%%doneToday%%" : "%%markToday%%"}
       </button>
     </li>
@@ -25,7 +25,10 @@ export default function HabitBoard() {
   const today = "2026-03-01";
 
   function markDone(id) {
-    setHabits((current) => current.map((habit) => (habit.id === id ? { ...habit, completions: [...habit.completions, today] } : habit)));
+    // A second press on the same day changes nothing.
+    setHabits((current) =>
+      current.map((habit) => (habit.id === id && !habit.completions.includes(today) ? { ...habit, completions: [...habit.completions, today] } : habit)),
+    );
   }
 
   return (
