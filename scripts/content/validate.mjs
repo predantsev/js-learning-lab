@@ -11,6 +11,8 @@
 //                                                     and real execution of every isolated-node block
 //   node scripts/content/validate.mjs --json out.json machine-readable report
 //   node scripts/content/validate.mjs --capstone wishlist   capstone steps of one capstone only
+//   node scripts/content/validate.mjs --locale uk-UA  run the browser under that locale (Chrome
+//                                                     --lang and the page locale; default: Chrome's en-US)
 // Capstone steps (content/capstones) are selected with their unit (--unit) or step lesson (--lesson).
 // When this machine cannot run the isolated Node executor, its blocks are reported as UNVERIFIED
 // (a note, or an error with --release) — never as passed.
@@ -21,6 +23,7 @@ import { ROOT } from '../../server/config.mjs';
 import { consoleLines, localizeFiles, localizeText, runInputForBlock } from '../../shared/exercise.js';
 import { NODE_RUN_PATH, isLearnerSyntaxError, nodeRunRequest, parseUncaughtError, readNdjson, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
 import { unitOfLesson } from '../../shared/content-schema.js';
+import { localeArg, localeOptions } from './browser-locale.mjs';
 import { buildContent, exerciseFileSets } from './lib.mjs';
 
 const args = process.argv.slice(2);
@@ -30,6 +33,13 @@ const onlyUnits = new Set(values('--unit').map((u) => u.toUpperCase()));
 const onlyLessons = new Set(values('--lesson'));
 const jsonOut = values('--json')[0] ?? null;
 const release = flag('--release');
+let locale;
+try {
+  locale = localeArg(args);
+} catch (e) {
+  console.error(e.message);
+  process.exit(2);
+}
 const selected = (lessonId) => (onlyUnits.size === 0 && onlyLessons.size === 0) || onlyUnits.has(unitOfLesson(lessonId)) || onlyLessons.has(lessonId);
 
 const errors = [];
@@ -72,12 +82,12 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
   const browserPage = async () => {
     if (page) return page;
     try {
-      browser = await chromium.launch({ channel: 'chrome', headless: true });
+      browser = await chromium.launch({ channel: 'chrome', headless: true, ...localeOptions(locale).launch });
     } catch (e) {
       console.error(`Cannot launch Google Chrome for fixture execution: ${String(e.message).split('\n')[0]}`);
       process.exit(2);
     }
-    page = await browser.newPage();
+    page = await browser.newPage(localeOptions(locale).page);
     await page.goto(`http://js-learning-lab.localhost:${server.port}/harness.html`);
     await page.waitForFunction(() => document.documentElement.dataset.harness === 'ready');
     return page;
@@ -333,7 +343,7 @@ if (release) {
 }
 
 await fs.rm(tmpOut, { recursive: true, force: true });
-const report = { ok: errors.length === 0, verified: executed.nodeUnverified === 0, lessons: lessons.length, capstoneSteps: capstoneSteps.length, executed, errors, warnings, notes, contentVersion: index.contentVersion };
+const report = { locale: locale ?? 'default', ok: errors.length === 0, verified: executed.nodeUnverified === 0, lessons: lessons.length, capstoneSteps: capstoneSteps.length, executed, errors, warnings, notes, contentVersion: index.contentVersion };
 if (jsonOut) await fs.writeFile(jsonOut, JSON.stringify(report, null, 2));
 for (const e of errors) console.error(`✖ ${e.where} — ${e.message}`);
 for (const w of warnings) console.error(`⚠ ${w.where} — warning: ${w.message}`);
@@ -341,5 +351,5 @@ for (const n of notes) console.error(`· ${n.where} — ${n.message}`);
 const nodeSummary = `${executed.nodeRuns} isolated-node run(s)${executed.nodeUnverified > 0 ? ` (${executed.nodeUnverified} isolated-node block(s) UNVERIFIED: executor unavailable)` : ''}`;
 // Blocks that could not be executed are never reported as valid (a note now; an error with --release).
 const verdict = errors.length > 0 ? 'CONTENT INVALID' : executed.nodeUnverified > 0 ? 'CONTENT UNVERIFIED' : 'CONTENT VALID';
-console.log(`${verdict}: ${lessons.length} lesson(s), ${executed.examples} example run(s), ${executed.fixtures} exercise fixture run(s), ${executed.predictions} verified prediction(s), ${nodeSummary}, ${capstoneSteps.length} capstone step variant(s) with ${executed.capstoneRuns} capstone run(s), ${errors.length} error(s)${warnings.length > 0 ? `, ${warnings.length} warning(s)` : ''}`);
+console.log(`${verdict}${locale ? ` (locale ${locale})` : ''}: ${lessons.length} lesson(s), ${executed.examples} example run(s), ${executed.fixtures} exercise fixture run(s), ${executed.predictions} verified prediction(s), ${nodeSummary}, ${capstoneSteps.length} capstone step variant(s) with ${executed.capstoneRuns} capstone run(s), ${errors.length} error(s)${warnings.length > 0 ? `, ${warnings.length} warning(s)` : ''}`);
 process.exit(errors.length === 0 ? 0 : 1);

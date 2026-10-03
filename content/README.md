@@ -30,10 +30,12 @@ Names that the repository's `.gitignore` drops (`dist/`, `build/`, `coverage/`, 
 npm run build                                        # once, and after platform changes
 node scripts/content/validate.mjs --unit JS-03       # static checks + real execution of every fixture
 node scripts/content/validate.mjs --lesson <id>
+node scripts/content/validate.mjs --unit JS-12 --locale uk-UA   # browser under another locale (default: en-US)
+node scripts/content/smoke.mjs --unit JS-12 --locale uk-UA      # every lesson page in the real app
 npm start                                            # read your lesson as a learner (http://localhost:7300)
 ```
 
-The validator runs every example, every exercise fixture and every verifiable prediction in headless Chrome through the same sandbox the learner uses, in both languages. A lesson is not done until it passes.
+The validator runs every example, every exercise fixture and every verifiable prediction in headless Chrome through the same sandbox the learner uses, in both languages. A lesson is not done until it passes. Headless Chrome reports the locale `en-US` unless `--locale` names another one (Chrome `--lang` plus the page locale: `Intl`, `navigator.language`, `localeCompare` and `toLocaleString` follow it); validate Intl-dependent lessons under `--locale uk-UA` and `--locale en-US`.
 
 ## Teaching rules
 
