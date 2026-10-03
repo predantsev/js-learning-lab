@@ -50,7 +50,11 @@ export async function buildSandbox({ quiet = false } = {}) {
         // CommonJS packages `require("react")`; this turns external requires into ESM imports.
         plugins: [esmExternalRequirePlugin({ external: lib.external })],
         platform: 'browser',
-        transform: { define: { 'process.env.NODE_ENV': '"development"' } },
+        // `global` is the React Native (and Node.js) name of the global object; browsers have only
+        // globalThis. react-native-web's Animated drivers call `global.cancelAnimationFrame` when an
+        // animation stops, so the libraries get it replaced at build time. Learner code still has
+        // no `global`, exactly as in a browser (content/README.md, "Runtimes").
+        transform: { define: { 'process.env.NODE_ENV': '"development"', global: 'globalThis' } },
         logLevel: 'silent',
       });
       await bundle.write({ file: path.join(outDir, 'libs', lib.file), format: 'esm', minify: false });

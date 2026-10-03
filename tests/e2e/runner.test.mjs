@@ -290,6 +290,35 @@ test('React components render and respond to events (browser-react)', async () =
   assert.deepEqual(r.tests.map((t) => t.status), ['pass']);
 });
 
+test('an Animated animation in the preview can be stopped and unmounted without an error; learner code still has no `global`', async () => {
+  const r = await run({
+    runtime: 'concept-preview',
+    entry: 'main.jsx',
+    files: {
+      'main.jsx': [
+        'import { createRoot } from "react-dom/client";',
+        'import { Animated, Pressable, Text, View } from "react-native";',
+        'import { useEffect, useRef, useState } from "react";',
+        'function Fade() {',
+        '  const opacity = useRef(new Animated.Value(0)).current;',
+        '  useEffect(() => { const animation = Animated.timing(opacity, { toValue: 1, duration: 5000, useNativeDriver: false }); animation.start(); return () => animation.stop(); }, [opacity]);',
+        '  return <Animated.View style={{ opacity }}><Text>Fading</Text></Animated.View>;',
+        '}',
+        'function App() {',
+        '  const [shown, setShown] = useState(true);',
+        '  return <View><Pressable accessibilityRole="button" onPress={() => setShown(false)}><Text>Hide</Text></Pressable>{shown ? <Fade /> : <Text>Hidden</Text>}</View>;',
+        '}',
+        'createRoot(document.getElementById("root")).render(<App />);',
+        'console.log(typeof global);',
+      ].join('\n'),
+    },
+    tests: { path: '__tests__.js', source: 'test("stop on unmount", async () => { await waitFor(() => screen.byText("Fading")); await sleep(50); await user.click(screen.byRole("button")); await waitFor(() => screen.byText("Hidden")); expect(loadError()).toBeNull(); });' },
+  });
+  assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+  assert.deepEqual(r.tests.map((t) => [t.status, t.message ?? '']), [['pass', '']]);
+  assert.deepEqual(logs(r), ['undefined'], 'the RN global name is not added to learner code (as in a browser)');
+});
+
 test('React Native components render through the labeled web preview (concept-preview)', async () => {
   const r = await run({
     runtime: 'concept-preview',
