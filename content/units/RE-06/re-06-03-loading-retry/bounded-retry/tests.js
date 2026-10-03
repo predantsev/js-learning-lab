@@ -77,6 +77,21 @@ test('try again after a failure loads the list', async () => {
   } finally { settings.failNext = 0; copy.finish(); }
 });
 
+test('a success resets the count of failed attempts', async () => {
+  prepare(1);
+  const copy = await mount();
+  try {
+    await answered();
+    await user.click(button(copy.host));
+    await answered();
+    settings.failNext = 1;
+    await user.click(button(copy.host));
+    await answered();
+    expect(labels(copy.host), 'list items after a success and then a failed refresh').toEqual(ALL());
+    expect(statusText(copy.host), 'the role="status" text: failed first load, successful Try again, then a failed refresh').toBe(failedText(1));
+  } finally { settings.failNext = 0; copy.finish(); }
+});
+
 test('three failed attempts stop the retries', async () => {
   prepare(10);
   const before = requests.length;
