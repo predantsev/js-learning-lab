@@ -1,0 +1,745 @@
+id: re-04-03-reducers-typed
+unit: RE-04
+title:
+  uk: "Reducers і типізовані actions"
+  en: "Reducers and typed actions"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Перенести розкидані виклики setter у reducer `(state, action) => nextState` і надсилати actions з обробників через `dispatch`."
+    en: "Move scattered setter calls into a reducer `(state, action) => nextState` and dispatch actions from the handlers."
+  - uk: "Типізувати actions як discriminated union з вичерпним `switch`, щоб одруківка в `type` чи неправильні дані action ставали помилкою компіляції."
+    en: "Type the actions as a discriminated union with an exhaustive switch so that a misspelled type or a wrong payload fails at compile time."
+  - uk: "Намалювати reducer як автомат станів і відхилити неможливий перехід, наприклад збереження, коли нічого не редагується."
+    en: "Draw the reducer as a state machine and reject an invalid transition, such as saving while nothing is being edited."
+prerequisites: [re-04-02-where-state-lives, js-14-03-unions-narrowing]
+subskills:
+  - { family: R-03, skill: "reducer state transitions", depth: intro }
+  - { family: P-05, skill: "typed reducers/context", depth: intro }
+glossary: [use-reducer, dispatch, reducer-action]
+selfCheck: [predict-next-state, habit-list]
+
+blocks:
+  - id: setters-to-reducer
+    kind: explanation
+    title:
+      uk: "Усі зміни — в одній функції"
+      en: "All changes in one function"
+    body:
+      uk: |
+        Коли список має кілька операцій, виклики `setTasks(…)` розповзаються по обробниках: один додає, інший прибирає, третій позначає. Щоб зрозуміти, як список **може** змінюватися, доводиться читати весь компонент.
+
+        [[use-reducer|useReducer]] збирає всі зміни в одну чисту функцію поза компонентом — reducer:
+
+        ```jsx
+        function tasksReducer(tasks, action) {
+          switch (action.type) {
+            case "added":
+              return [...tasks, action.task];
+            case "removed":
+              return tasks.filter((task) => task.id !== action.id);
+            default:
+              return tasks;
+          }
+        }
+
+        const [tasks, dispatch] = useReducer(tasksReducer, START_TASKS);
+        ```
+
+        Обробник більше не обчислює новий список — він лише повідомляє, **що сталося**: `dispatch({ type: "removed", id: task.id })`. Такий об’єкт — [[reducer-action|action]], а [[dispatch]] передає його React. React викликає reducer з поточним станом і цим action, а те, що reducer повернув, стає новим станом і дає новий рендер.
+      en: |
+        When a list has several operations, `setTasks(…)` calls spread across the handlers: one adds, another removes, a third marks. To understand how the list **can** change, you have to read the whole component.
+
+        [[use-reducer|useReducer]] gathers every change into one pure function outside the component — the reducer:
+
+        ```jsx
+        function tasksReducer(tasks, action) {
+          switch (action.type) {
+            case "added":
+              return [...tasks, action.task];
+            case "removed":
+              return tasks.filter((task) => task.id !== action.id);
+            default:
+              return tasks;
+          }
+        }
+
+        const [tasks, dispatch] = useReducer(tasksReducer, START_TASKS);
+        ```
+
+        A handler no longer computes the new list — it only reports **what happened**: `dispatch({ type: "removed", id: task.id })`. Such an object is an [[reducer-action|action]], and [[dispatch]] hands it to React. React calls the reducer with the current state and this action, and whatever the reducer returns becomes the new state and causes a new render.
+
+  - id: recall-reduce
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: fold-actions
+        from: js-05-04-reduce
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          const actions = [{ type: "add", amount: 5 }, { type: "add", amount: 3 }, { type: "reset" }, { type: "add", amount: 2 }];
+          const total = actions.reduce((sum, action) => (action.type === "reset" ? 0 : sum + action.amount), 10);
+          console.log(total);
+        verify:
+          logs: ["2"]
+        answer:
+          type: choice
+          options:
+            - id: two
+              code: "2"
+            - id: twenty
+              code: "20"
+              why:
+                uk: "`reduce` іде по елементах по черзі: після двох `add` сума 18, `reset` повертає 0, і лише тоді додається 2."
+                en: "`reduce` goes through the items in turn: after two `add`s the sum is 18, `reset` returns 0, and only then 2 is added."
+            - id: ten
+              code: "10"
+              why:
+                uk: "10 — лише початкове значення акумулятора. Кожен виклик функції повертає нове значення, і наступний виклик отримує саме його."
+                en: "10 is only the accumulator's starting value. Every call of the function returns a new value, and the next call receives exactly that."
+          correct: [two]
+        explanation:
+          uk: "Функція `(sum, action) => …` за кожним action повертає нову суму з попередньої. Reducer у React влаштований так само — `(state, action) => nextState`, — тільки actions приходять не з масиву, а один за одним, коли користувач щось робить. Звідси й назва."
+          en: "The function `(sum, action) => …` returns a new sum from the previous one for every action. A React reducer works the same way — `(state, action) => nextState` — except that the actions arrive not from an array but one by one, as the user does things. Hence the name."
+
+  - id: pure-reducer
+    kind: explanation
+    title:
+      uk: "Reducer повертає новий стан, а не змінює старий"
+      en: "A reducer returns new state instead of changing the old one"
+    body:
+      uk: |
+        Reducer — чиста функція: ті самі `state` і `action` завжди дають той самий результат, і нічого поза собою він не змінює. Зокрема — **сам `state`**.
+
+        Якщо reducer виконає `tasks.push(action.task)` і поверне той самий масив, React порівняє новий стан зі старим (`Object.is`), побачить **той самий** масив і вирішить, що нічого не змінилося: екран не оновиться. Перевірено в пісочниці з React 19.3: після кліку компонент іще раз виконується, але на сторінці лишається старе число. А в `<StrictMode>` React викликає reducer двічі, і `push` додає запис **двічі**.
+
+        Тож кожна гілка повертає новий масив чи об’єкт (`[...tasks, …]`, `map`, `filter`, `{ ...task, … }`), а гілка, якій нічого міняти, — той самий `state`. Тоді React справді пропускає рендер.
+      en: |
+        A reducer is a pure function: the same `state` and `action` always give the same result, and it changes nothing outside itself. In particular — **`state` itself**.
+
+        If a reducer runs `tasks.push(action.task)` and returns the same array, React compares the new state with the old one (`Object.is`), sees **the same** array and decides that nothing changed: the screen does not update. Checked in the sandbox with React 19.3: after a click the component runs once more, but the page keeps the old number. And under `<StrictMode>` React calls the reducer twice, so `push` adds the record **twice**.
+
+        So every branch returns a new array or object (`[...tasks, …]`, `map`, `filter`, `{ ...task, … }`), and a branch with nothing to change returns the same `state`. Then React really does skip the render.
+
+  - id: predict-next-state
+    kind: prediction
+    prompt:
+      uk: "Що надрукує цей код?"
+      en: "What does this code print?"
+    code: |
+      function doneReducer(done, action) {
+        switch (action.type) {
+          case "added":
+            return { ...done, [action.id]: false };
+          case "statusToggled":
+            return { ...done, [action.id]: !done[action.id] };
+          default:
+            return done;
+        }
+      }
+
+      const start = { "t-01": false };
+      const a = doneReducer(start, { type: "added", id: "t-02" });
+      const b = doneReducer(a, { type: "statusToggled", id: "t-02" });
+      const c = doneReducer(b, { type: "statusToggle", id: "t-01" });
+      console.log(JSON.stringify(b), c === b, JSON.stringify(start));
+    verify:
+      logs: ['{"t-01":false,"t-02":true} true {"t-01":false}']
+    answer:
+      type: choice
+      options:
+        - id: correct
+          code: '{"t-01":false,"t-02":true} true {"t-01":false}'
+        - id: typo-toggles
+          code: '{"t-01":false,"t-02":true} false {"t-01":false}'
+          why:
+            uk: "`\"statusToggle\"` без `d` не збігається з жодним `case` і потрапляє в `default`, а той повертає **той самий** об’єкт `b`. Одруківка мовчки нічого не робить — помилки під час виконання немає."
+            en: "`\"statusToggle\"` without the `d` matches no `case` and lands in `default`, which returns **the same** object `b`. The typo silently does nothing — there is no runtime error."
+        - id: start-changed
+          code: '{"t-01":false,"t-02":true} true {"t-01":false,"t-02":true}'
+          why:
+            uk: "`{ ...done, … }` створює **новий** об’єкт із копією полів. `start` ніхто не змінював — так і має працювати reducer."
+            en: "`{ ...done, … }` creates a **new** object with a copy of the fields. Nobody changed `start` — that is how a reducer should work."
+      correct: [correct]
+    explanation:
+      uk: "`added` і `statusToggled` повертають нові об’єкти, тож `start` лишається `{\"t-01\":false}`, а `b` має обидва записи. Action з одруківкою потрапляє в `default` і повертає `b` без змін — `c === b`. Під час виконання цю одруківку не видно взагалі. Її помітить `tsc`, якщо actions мають точний тип: з ним `dispatch` з `\"statusToggle\"` не скомпілюється."
+      en: "`added` and `statusToggled` return new objects, so `start` stays `{\"t-01\":false}` while `b` has both entries. The misspelled action lands in `default` and returns `b` unchanged — `c === b`. At runtime this typo is not visible at all. `tsc` notices it if the actions have a precise type: with it, a `dispatch` with `\"statusToggle\"` does not compile."
+
+  - id: typed-actions
+    kind: explanation
+    title:
+      uk: "Actions як discriminated union"
+      en: "Actions as a discriminated union"
+    body:
+      uk: |
+        Тип `{ type: string; payload?: any }` дозволяє будь-що: і `"aded"` замість `"added"`, і текст там, де чекали об’єкт. `tsc` мовчить — перевірено з TypeScript 7.0.2.
+
+        Точний тип описує кожен action окремим варіантом [[discriminated-union|discriminated union]] з полем-дискримінантом `type`:
+
+        ```ts
+        type EditorAction =
+          | { type: "editStarted"; id: string }
+          | { type: "draftChanged"; text: string }
+          | { type: "saveRequested" }
+          | { type: "editCanceled" };
+        ```
+
+        Тепер у кожному `case` `tsc` звужує `action` до одного варіанта: у `case "draftChanged"` є `action.text`, а `action.id` — помилка. Одруківку в `type`, забуте поле чи зайве поле `tsc` відхиляє ще в `dispatch`. А в `default` стоїть [[exhaustiveness-check|перевірка never]] з розділу про TypeScript: якщо додати новий action і забути його `case`, `tsc` назве саме його.
+      en: |
+        The type `{ type: string; payload?: any }` allows anything: `"aded"` instead of `"added"`, and text where an object was expected. `tsc` stays silent — checked with TypeScript 7.0.2.
+
+        A precise type describes each action as a separate member of a [[discriminated-union|discriminated union]] with the discriminant field `type`:
+
+        ```ts
+        type EditorAction =
+          | { type: "editStarted"; id: string }
+          | { type: "draftChanged"; text: string }
+          | { type: "saveRequested" }
+          | { type: "editCanceled" };
+        ```
+
+        Now in every `case` `tsc` narrows `action` to one member: in `case "draftChanged"` there is `action.text`, and `action.id` is an error. A typo in `type`, a missing field or an extra field is rejected by `tsc` right at the `dispatch`. And `default` holds the [[exhaustiveness-check|never check]] from the TypeScript unit: if you add a new action and forget its `case`, `tsc` names exactly that action.
+
+  - id: recall-narrowing
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: narrow-by-type
+        from: js-14-03-unions-narrowing
+        prompt:
+          uk: "`type Shape = { kind: \"circle\"; radius: number } | { kind: \"square\"; side: number }`. У якому місці `shape.radius` `tsc` пропустить без помилки?"
+          en: "`type Shape = { kind: \"circle\"; radius: number } | { kind: \"square\"; side: number }`. Where does `tsc` accept `shape.radius` without an error?"
+        answer:
+          type: choice
+          options:
+            - id: inside
+              text: { uk: "Усередині `if (shape.kind === \"circle\") { … }`", en: "Inside `if (shape.kind === \"circle\") { … }`" }
+            - id: anywhere
+              text: { uk: "Будь-де: `radius` є в одному з варіантів", en: "Anywhere: `radius` exists in one of the members" }
+              why:
+                uk: "Поки варіант невідомий, `shape` може бути квадратом без `radius`. `tsc` дозволяє поле лише там, де воно є в **кожному** можливому варіанті."
+                en: "While the member is unknown, `shape` may be a square without `radius`. `tsc` allows a field only where it exists in **every** possible member."
+            - id: else
+              text: { uk: "У гілці `else` після `if (shape.kind === \"square\")`", en: "In the `else` branch after `if (shape.kind === \"square\")`" }
+              why:
+                uk: "Це теж працює: після відсіювання квадрата лишається коло. Але питання про одне місце, і найпряміше — перевірка на `\"circle\"`."
+                en: "That works too: once the square is filtered out, the circle remains. But the question asks for one place, and the most direct one is the check for `\"circle\"`."
+          correct: [inside]
+        explanation:
+          uk: "Перевірка дискримінанта `kind` звужує union до одного варіанта, і в цій гілці його поля доступні. `switch (action.type)` у reducer робить те саме для кожного `case`."
+          en: "Checking the discriminant `kind` narrows the union to one member, and in that branch its fields are available. `switch (action.type)` in a reducer does the same for every `case`."
+
+  - id: editor-machine
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Reducer редактора як автомат станів"
+      en: "The editor reducer as a state machine"
+    textEquivalent:
+      uk: "Редактор звичок має три режими: browsing (перегляд), editing (редагування) і saveFailed (збереження не вдалося). editStarted переводить browsing в editing. draftChanged лишає editing в editing. saveRequested з порожньою назвою переводить editing у saveFailed, а з непорожньою — назад у browsing, і назва звички змінюється. draftChanged із saveFailed повертає в editing, а editCanceled з editing чи saveFailed — у browsing. Зі стану browsing стрілки saveRequested немає: reducer повертає той самий стан, тобто відхиляє дію, і React нічого не перемальовує."
+      en: "The habit editor has three modes: browsing, editing and saveFailed. editStarted takes browsing to editing. draftChanged keeps editing in editing. saveRequested with an empty name takes editing to saveFailed, and with a non-empty one back to browsing, and the habit's name changes. draftChanged from saveFailed returns to editing, and editCanceled from editing or saveFailed returns to browsing. From browsing there is no saveRequested arrow: the reducer returns the same state, which means it rejects the action, and React re-renders nothing."
+    spec:
+      layout: grid
+      nodes:
+        - { id: browsing, label: "browsing", shape: round, col: 0, row: 0, w: 120 }
+        - { id: editing, label: "editing", shape: round, col: 1, row: 0, w: 120 }
+        - { id: failed, label: "saveFailed", shape: round, col: 1, row: 1, w: 120 }
+        - { id: rejected, label: { uk: "saveRequested: відхилено", en: "saveRequested: rejected" }, shape: note, col: 0, row: 1, w: 160 }
+      edges:
+        - { id: start, from: browsing, to: editing, label: "editStarted" }
+        - { id: save, from: editing, to: browsing, label: "saveRequested" }
+        - { id: fail, from: editing, to: failed }
+        - { id: retry, from: failed, to: editing }
+        - { id: cancel, from: failed, to: browsing, kind: dashed }
+        - { id: reject, from: rejected, to: browsing, kind: dashed }
+      hidden: [rejected, reject]
+      steps:
+        - caption:
+            uk: "Три режими редактора. Кожна стрілка — action, який reducer **приймає** в цьому режимі."
+            en: "The three modes of the editor. Every arrow is an action the reducer **accepts** in that mode."
+        - caption:
+            uk: "`editStarted` у режимі `browsing` відкриває редагування: новий стан — `editing` з `id` і чернеткою."
+            en: "`editStarted` in `browsing` opens editing: the new state is `editing` with an `id` and a draft."
+          highlight: [browsing, start, editing]
+        - caption:
+            uk: "`saveRequested` з порожньою чернеткою веде в `saveFailed`: чернетка лишається, на екрані — попередження."
+            en: "`saveRequested` with an empty draft leads to `saveFailed`: the draft stays, the screen shows a warning."
+          highlight: [editing, fail, failed]
+          annotate:
+            - { id: fail, text: { uk: "saveRequested, порожньо", en: "saveRequested, empty" } }
+        - caption:
+            uk: "`draftChanged` повертає в `editing`; `editCanceled` (пунктир) — назад у `browsing` без змін."
+            en: "`draftChanged` returns to `editing`; `editCanceled` (dashed) goes back to `browsing` without changes."
+          highlight: [failed, retry, editing, cancel, browsing]
+          annotate:
+            - { id: retry, text: "draftChanged" }
+            - { id: cancel, text: "editCanceled" }
+        - caption:
+            uk: "`saveRequested` з назвою повертає в `browsing` з новим списком: звичку перейменовано."
+            en: "`saveRequested` with a name returns to `browsing` with a new list: the habit is renamed."
+          highlight: [editing, save, browsing]
+        - caption:
+            uk: "`saveRequested` у `browsing`: стрілки немає. Reducer повертає **той самий** стан — action відхилено, і React нічого не перемальовує."
+            en: "`saveRequested` in `browsing`: there is no arrow. The reducer returns **the same** state — the action is rejected, and React re-renders nothing."
+          show: [rejected, reject]
+          highlight: [rejected, reject, browsing]
+
+  - id: habit-editor
+    kind: example
+    runtime: browser-react
+    dir: habit-editor
+    entry: main.tsx
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      mode: { uk: "Режим:", en: "Mode:" }
+      edit: { uk: "Змінити", en: "Edit" }
+      name: { uk: "Назва", en: "Name" }
+      empty: { uk: "Назва не може бути порожньою.", en: "The name cannot be empty." }
+      cancel: { uk: "Скасувати", en: "Cancel" }
+      save: { uk: "Зберегти", en: "Save" }
+    title:
+      uk: "Автомат редактора в дії"
+      en: "The editor machine at work"
+    body:
+      uk: |
+        `editorReducer.ts` — reducer з візуалізації: типи режимів і actions, `switch` з перевіркою `never`. `App.tsx` викликає `useReducer` і друкує в **Консоль** кожен `dispatch`, а після кожного commit з новим станом — рядок `→ mode: …`. Кнопку **Зберегти** навмисно видно завжди, щоб можна було спробувати неможливий перехід.
+
+        Натисни **Запустити** й на **Сторінці** натисни **Зберегти**, ще нічого не редагуючи: у консолі `dispatch saveRequested (mode: browsing)` — і жодного `→ mode`. Reducer повернув той самий стан, тож React навіть не перемальовував.
+      en: |
+        `editorReducer.ts` is the reducer from the visual: the types of the modes and actions, a `switch` with the `never` check. `App.tsx` calls `useReducer` and prints every `dispatch` to the **Console**, and after every commit with a new state a `→ mode: …` line. The **Save** button is visible all the time on purpose, so that you can try an impossible transition.
+
+        Press **Run** and on the **Page** press **Save** before editing anything: the console shows `dispatch saveRequested (mode: browsing)` — and no `→ mode` at all. The reducer returned the same state, so React did not even re-render.
+    tryIt:
+      uk: |
+        1. Натисни **Змінити** біля «Читати 20 хвилин», зітри назву й натисни **Зберегти**: `→ mode: saveFailed` і попередження. Введи іншу назву (`→ mode: editing`) і збережи: `→ mode: browsing`, звичку перейменовано.
+        2. У `editorReducer.ts` у гілці `case "saveRequested"` закоментуй рядок `if (state.mode !== "editing") return state;` і запусти знову. Натисни **Зберегти** в режимі перегляду: сторінка зникає, а картка помилки показує `TypeError: Cannot read properties of undefined (reading 'trim')` у `editorReducer.ts` — у стані `browsing` немає поля `draft`. Саме від цього захищає відхилений перехід. Поверни рядок.
+        3. Заміни в `App.tsx` `type: "editCanceled"` на `type: "editCancelled"`, запусти, натисни **Змінити** й **Скасувати**: сторінка зникає з `Error: Unknown action: {"type":"editCancelled"}`. Це спрацював `throw` у `default` — але лише під час виконання й лише після кліку, бо пісочниця типи тільки прибирає. `tsc` знайшов би одруківку до запуску — у локальному завданні нижче. Поверни як було.
+      en: |
+        1. Press **Edit** next to “Read for 20 minutes”, erase the name and press **Save**: `→ mode: saveFailed` and a warning. Type another name (`→ mode: editing`) and save: `→ mode: browsing`, the habit is renamed.
+        2. In `editorReducer.ts`, in the `case "saveRequested"` branch, comment out the line `if (state.mode !== "editing") return state;` and run again. Press **Save** in browsing mode: the page disappears, and the error card shows `TypeError: Cannot read properties of undefined (reading 'trim')` in `editorReducer.ts` — a `browsing` state has no `draft` field. This is exactly what the rejected transition protects against. Put the line back.
+        3. In `App.tsx` replace `type: "editCanceled"` with `type: "editCancelled"`, run, press **Edit** and **Cancel**: the page disappears with `Error: Unknown action: {"type":"editCancelled"}`. That is the `throw` in `default` at work — but only at runtime and only after a click, because the sandbox only removes types. `tsc` would find the typo before running — in the local task below. Put it back.
+
+  - id: check-actions-with-tsc
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Хай tsc перевірить actions"
+      en: "Let tsc check the actions"
+    intro:
+      uk: |
+        Працюєш у лабораторії `~/js-course/ts-lab` з розділу про TypeScript. Цьому файлу React не потрібен — лише `tsc`. Команди перевірено в macOS з Node.js v25.2.1, npm 11.6.2 і TypeScript 7.0.2; у Linux і Windows їх не запускали.
+
+        **Якщо теки `ts-lab` немає**, створи її так, а тоді створи в ній `tsconfig.json` із вмістом нижче. Перший рядок потрібен, лише якщо немає й самої теки `~/js-course`; якщо вона є, `mkdir` скаже, що тека існує, — це не завадить.
+
+        ```sh
+        mkdir ~/js-course
+        mkdir ~/js-course/ts-lab
+        cd ~/js-course/ts-lab
+        npm init -y
+        npm pkg set type=module
+        ```
+
+        **`tsconfig.json`** (якщо створюєш теку заново):
+
+        ```json
+        {
+          "compilerOptions": {
+            "strict": true,
+            "target": "es2023",
+            "lib": ["es2023", "dom"],
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "moduleDetection": "force",
+            "verbatimModuleSyntax": true,
+            "rewriteRelativeImportExtensions": true,
+            "rootDir": "src",
+            "outDir": "out",
+            "types": []
+          },
+          "include": ["src"]
+        }
+        ```
+
+        **Файл `src/re04/editorReducer.ts` для кроку 2** — reducer із прикладу та два рядки коду для перевірки в кінці:
+
+        ```ts
+        export type Habit = { id: string; name: string; active: boolean };
+        
+        // Three modes of the habit editor. Each mode carries only the fields it needs.
+        export type EditorState =
+          | { mode: "browsing"; habits: Habit[] }
+          | { mode: "editing"; habits: Habit[]; id: string; draft: string }
+          | { mode: "saveFailed"; habits: Habit[]; id: string; draft: string };
+        
+        // Every action the editor understands: a discriminated union on `type`.
+        export type EditorAction =
+          | { type: "editStarted"; id: string }
+          | { type: "draftChanged"; text: string }
+          | { type: "saveRequested" }
+          | { type: "editCanceled" };
+        
+        export function editorReducer(state: EditorState, action: EditorAction): EditorState {
+          switch (action.type) {
+            case "editStarted": {
+              if (state.mode !== "browsing") return state;
+              const habit = state.habits.find((item) => item.id === action.id);
+              if (habit === undefined) return state;
+              return { mode: "editing", habits: state.habits, id: habit.id, draft: habit.name };
+            }
+            case "draftChanged": {
+              if (state.mode === "browsing") return state;
+              return { mode: "editing", habits: state.habits, id: state.id, draft: action.text };
+            }
+            case "saveRequested": {
+              // Saving is possible only while editing: from any other mode the action is rejected.
+              if (state.mode !== "editing") return state;
+              const name = state.draft.trim();
+              if (name === "") return { mode: "saveFailed", habits: state.habits, id: state.id, draft: state.draft };
+              const habits = state.habits.map((item) => (item.id === state.id ? { ...item, name: name } : item));
+              return { mode: "browsing", habits: habits };
+            }
+            case "editCanceled": {
+              if (state.mode === "browsing") return state;
+              return { mode: "browsing", habits: state.habits };
+            }
+            default: {
+              const unhandled: never = action;
+              throw new Error(`Unknown action: ${JSON.stringify(unhandled)}`);
+            }
+          }
+        }
+        
+        const start: EditorState = { mode: "browsing", habits: [{ id: "h-01", name: "Ранкова зарядка", active: true }] };
+        export const afterEdit = editorReducer(start, { type: "editStarted", id: "h-01" });
+        ```
+
+        **Три рядки коду для кроку 3** (додай їх у кінець файла):
+
+        ```ts
+        export const typo = editorReducer(start, { type: "saveRequsted" });
+        export const noId = editorReducer(start, { type: "editStarted" });
+        export const wrongField = editorReducer(start, { type: "draftChanged", name: "Прогулянка" });
+        ```
+
+        **Що показує `tsc` на кроці 4:**
+
+        ```text
+        src/re04/editorReducer.ts(49,44): error TS2820: Type '"saveRequsted"' is not assignable to type '"draftChanged" | "editCanceled" | "editStarted" | "saveRequested"'. Did you mean '"saveRequested"'?
+        src/re04/editorReducer.ts(50,42): error TS2345: Argument of type '{ type: "editStarted"; }' is not assignable to parameter of type 'EditorAction'.
+          Property 'id' is missing in type '{ type: "editStarted"; }' but required in type '{ type: "editStarted"; id: string; }'.
+        src/re04/editorReducer.ts(51,72): error TS2353: Object literal may only specify known properties, and 'name' does not exist in type '{ type: "draftChanged"; text: string; }'.
+        ```
+
+        **Що показує `tsc` на кроці 6:**
+
+        ```text
+        src/re04/editorReducer.ts(37,13): error TS2322: Type '{ type: "editCanceled"; }' is not assignable to type 'never'.
+        ```
+      en: |
+        You work in the lab `~/js-course/ts-lab` from the TypeScript unit. This file needs no React — only `tsc`. The commands were checked on macOS with Node.js v25.2.1, npm 11.6.2 and TypeScript 7.0.2; they were not run on Linux or Windows.
+
+        **If there is no `ts-lab` folder**, create it like this, then create a `tsconfig.json` in it with the contents below. The first line is needed only when there is no `~/js-course` folder either; if it exists, `mkdir` says the folder exists — that does no harm.
+
+        ```sh
+        mkdir ~/js-course
+        mkdir ~/js-course/ts-lab
+        cd ~/js-course/ts-lab
+        npm init -y
+        npm pkg set type=module
+        ```
+
+        **`tsconfig.json`** (if you create the folder anew):
+
+        ```json
+        {
+          "compilerOptions": {
+            "strict": true,
+            "target": "es2023",
+            "lib": ["es2023", "dom"],
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "moduleDetection": "force",
+            "verbatimModuleSyntax": true,
+            "rewriteRelativeImportExtensions": true,
+            "rootDir": "src",
+            "outDir": "out",
+            "types": []
+          },
+          "include": ["src"]
+        }
+        ```
+
+        **The file `src/re04/editorReducer.ts` for step 2** — the reducer from the example and two test lines of code at the end:
+
+        ```ts
+        export type Habit = { id: string; name: string; active: boolean };
+        
+        // Three modes of the habit editor. Each mode carries only the fields it needs.
+        export type EditorState =
+          | { mode: "browsing"; habits: Habit[] }
+          | { mode: "editing"; habits: Habit[]; id: string; draft: string }
+          | { mode: "saveFailed"; habits: Habit[]; id: string; draft: string };
+        
+        // Every action the editor understands: a discriminated union on `type`.
+        export type EditorAction =
+          | { type: "editStarted"; id: string }
+          | { type: "draftChanged"; text: string }
+          | { type: "saveRequested" }
+          | { type: "editCanceled" };
+        
+        export function editorReducer(state: EditorState, action: EditorAction): EditorState {
+          switch (action.type) {
+            case "editStarted": {
+              if (state.mode !== "browsing") return state;
+              const habit = state.habits.find((item) => item.id === action.id);
+              if (habit === undefined) return state;
+              return { mode: "editing", habits: state.habits, id: habit.id, draft: habit.name };
+            }
+            case "draftChanged": {
+              if (state.mode === "browsing") return state;
+              return { mode: "editing", habits: state.habits, id: state.id, draft: action.text };
+            }
+            case "saveRequested": {
+              // Saving is possible only while editing: from any other mode the action is rejected.
+              if (state.mode !== "editing") return state;
+              const name = state.draft.trim();
+              if (name === "") return { mode: "saveFailed", habits: state.habits, id: state.id, draft: state.draft };
+              const habits = state.habits.map((item) => (item.id === state.id ? { ...item, name: name } : item));
+              return { mode: "browsing", habits: habits };
+            }
+            case "editCanceled": {
+              if (state.mode === "browsing") return state;
+              return { mode: "browsing", habits: state.habits };
+            }
+            default: {
+              const unhandled: never = action;
+              throw new Error(`Unknown action: ${JSON.stringify(unhandled)}`);
+            }
+          }
+        }
+        
+        const start: EditorState = { mode: "browsing", habits: [{ id: "h-01", name: "Morning exercise", active: true }] };
+        export const afterEdit = editorReducer(start, { type: "editStarted", id: "h-01" });
+        ```
+
+        **Three lines of code for step 3** (add them at the end of the file):
+
+        ```ts
+        export const typo = editorReducer(start, { type: "saveRequsted" });
+        export const noId = editorReducer(start, { type: "editStarted" });
+        export const wrongField = editorReducer(start, { type: "draftChanged", name: "Walk" });
+        ```
+
+        **What `tsc` shows in step 4:**
+
+        ```text
+        src/re04/editorReducer.ts(49,44): error TS2820: Type '"saveRequsted"' is not assignable to type '"draftChanged" | "editCanceled" | "editStarted" | "saveRequested"'. Did you mean '"saveRequested"'?
+        src/re04/editorReducer.ts(50,42): error TS2345: Argument of type '{ type: "editStarted"; }' is not assignable to parameter of type 'EditorAction'.
+          Property 'id' is missing in type '{ type: "editStarted"; }' but required in type '{ type: "editStarted"; id: string; }'.
+        src/re04/editorReducer.ts(51,72): error TS2353: Object literal may only specify known properties, and 'name' does not exist in type '{ type: "draftChanged"; text: string; }'.
+        ```
+
+        **What `tsc` shows in step 6:**
+
+        ```text
+        src/re04/editorReducer.ts(37,13): error TS2322: Type '{ type: "editCanceled"; }' is not assignable to type 'never'.
+        ```
+    tools:
+      - { name: "Node.js", version: "22 or newer", note: { uk: "перевірено з v25.2.1", en: "checked with v25.2.1" } }
+      - { name: "TypeScript", version: "7.x", note: { uk: "у теці `ts-lab`; дає команду `tsc`", en: "in the `ts-lab` folder; provides the `tsc` command" } }
+    steps:
+      - text:
+          uk: "Перейди в лабораторію. Якщо термінал каже, що такої теки немає, спершу створи її командами з початку завдання."
+          en: "Go to the lab. If the terminal says there is no such folder, create it first with the commands at the start of the task."
+        command: "cd ~/js-course/ts-lab"
+      - text:
+          uk: "Створи теку `src/re04`, а в ній файл `editorReducer.ts` із вмістом для кроку 2. Запусти перевірку."
+          en: "Create the folder `src/re04` and in it the file `editorReducer.ts` with the contents for step 2. Run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Нічого: помилок немає, і `tsc` повертає запрошення терміналу. Якщо в лабораторії є файли з інших уроків з помилками, вони теж будуть у списку."
+          en: "Nothing: there are no errors, and `tsc` returns to the terminal prompt. If the lab has files from other lessons with errors, they appear in the list too."
+      - text:
+          uk: "Додай у кінець файла три рядки коду для кроку 3 і збережи. Це три типові помилки: одруківка в `type`, забуте поле `id` і поле з чужою назвою."
+          en: "Add the three lines of code for step 3 at the end of the file and save. They are three typical mistakes: a typo in `type`, a forgotten `id` field and a field with the wrong name."
+      - text:
+          uk: "Запусти перевірку."
+          en: "Run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Три помилки, як на початку завдання: `TS2820` з підказкою `Did you mean '\"saveRequested\"'?`, `TS2345` про відсутній `id` і `TS2353` про поле `name`, якого немає у варіанті `draftChanged`. Числа в дужках — рядок і стовпчик."
+          en: "Three errors, as at the start of the task: `TS2820` with the hint `Did you mean '\"saveRequested\"'?`, `TS2345` about the missing `id` and `TS2353` about the field `name`, which the `draftChanged` member does not have. The numbers in parentheses are the line and the column."
+      - text:
+          uk: "Видали три додані рядки коду, а потім видали весь блок `case \"editCanceled\": { … }` — чотири рядки коду від `case` до його закривної дужки."
+          en: "Delete the three added lines of code, then delete the whole `case \"editCanceled\": { … }` block — four lines of code from `case` to its closing brace."
+      - text:
+          uk: "Запусти перевірку."
+          en: "Run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Одна помилка `TS2322` на рядку `const unhandled: never = action;`: варіант `{ type: \"editCanceled\"; }` дійшов до `default`. `tsc` назвав саме той action, якому бракує `case`."
+          en: "One error, `TS2322`, on the line `const unhandled: never = action;`: the member `{ type: \"editCanceled\"; }` reached `default`. `tsc` named exactly the action that lacks a `case`."
+      - text:
+          uk: "Поверни блок `case \"editCanceled\"` і запусти перевірку ще раз."
+          en: "Put the `case \"editCanceled\"` block back and run the check once more."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Нічого: помилок немає."
+          en: "Nothing: there are no errors."
+    verify:
+      - id: saw-three
+        text:
+          uk: "Я побачив `TS2820`, `TS2345` і `TS2353` для трьох неправильних `dispatch`."
+          en: "I saw `TS2820`, `TS2345` and `TS2353` for the three wrong dispatches."
+      - id: saw-never
+        text:
+          uk: "Без `case \"editCanceled\"` `tsc` повідомив `TS2322` про `never`, а з ним перевірка чиста."
+          en: "Without `case \"editCanceled\"` `tsc` reported `TS2322` about `never`, and with it the check is clean."
+    troubleshooting:
+      - problem:
+          uk: "`npx tsc` пропонує встановити пакет `tsc` (`Need to install the following packages`)."
+          en: "`npx tsc` offers to install a package `tsc` (`Need to install the following packages`)."
+        fix:
+          uk: "Ти не в теці `ts-lab` або в ній ще немає TypeScript. Відмов (`n`), перейди в `~/js-course/ts-lab` і, якщо треба, виконай `npm install --save-dev typescript`."
+          en: "You are not in the `ts-lab` folder, or it has no TypeScript yet. Decline (`n`), go to `~/js-course/ts-lab` and, if needed, run `npm install --save-dev typescript`."
+      - problem:
+          uk: "Номери рядків у помилках інші, ніж у завданні."
+          en: "The line numbers in the errors differ from the task."
+        fix:
+          uk: "У файлі більше чи менше рядків, ніж у вмісті для кроку 2 (наприклад, зайвий порожній рядок). Це не страшно: важливі коди помилок і їхній текст."
+          en: "The file has more or fewer lines than the contents for step 2 (for example, an extra empty line). That is fine: what matters is the error codes and their text."
+    recovery:
+      uk: "Усе це живе лише в `~/js-course/ts-lab/src/re04`. Якщо файл заплутався, видали його й створи знову з вмісту для кроку 2."
+      en: "All of this lives only in `~/js-course/ts-lab/src/re04`. If the file gets tangled, delete it and create it again from the contents for step 2."
+
+  - id: habit-list
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: habit-list
+    entry: main.tsx
+    editable: [habitsReducer.ts]
+    strings:
+      heading: { uk: "Мої звички", en: "My habits" }
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      words: { uk: "Вчити англійські слова", en: "Learn English words" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+      stretch: { uk: "Розтяжка", en: "Stretching" }
+      remove: { uk: "Прибрати", en: "Remove" }
+      newHabit: { uk: "Нова звичка", en: "New habit" }
+      add: { uk: "Додати", en: "Add" }
+      which: { uk: "Яку звичку", en: "Which habit" }
+      newName: { uk: "Нова назва", en: "New name" }
+      rename: { uk: "Перейменувати", en: "Rename" }
+    title:
+      uk: "Типізований reducer для звичок"
+      en: "A typed reducer for habits"
+    instructions:
+      uk: |
+        `App.tsx` (лише для читання) уже викликає `useReducer(habitsReducer, START_HABITS)` і надсилає чотири actions:
+
+        | `type` | Інші поля | Що має статися |
+        |---|---|---|
+        | `"added"` | `habit` — уся нова звичка | звичка з’являється в кінці списку |
+        | `"updated"` | `id`, `name` | звичка з цим `id` отримує нову назву, решта її полів — як були |
+        | `"removed"` | `id` | звичка з цим `id` зникає |
+        | `"activeToggled"` | `id` | у звички з цим `id` `active` змінюється на протилежне |
+
+        У `habitsReducer.ts` опиши ці actions типом `HabitAction` — discriminated union — і напиши `habitsReducer`. Кожен action повертає **новий** масив, а масив, який reducer отримав, і звички в ньому лишаються незмінними.
+
+        Перевірки викликають `habitsReducer` напряму із замороженим списком (зміна такого списку кидає `TypeError`), порівнюють список до й після виклику і проходять сценарій на сторінці. Типи пісочниця лише прибирає; щоб їх перевірити, скопіюй файли в `ts-lab` і запусти `npx tsc --noEmit` — це не обов’язково.
+      en: |
+        `App.tsx` (read-only) already calls `useReducer(habitsReducer, START_HABITS)` and dispatches four actions:
+
+        | `type` | Other fields | What must happen |
+        |---|---|---|
+        | `"added"` | `habit` — the whole new habit | the habit appears at the end of the list |
+        | `"updated"` | `id`, `name` | the habit with this `id` gets the new name, its other fields stay as they were |
+        | `"removed"` | `id` | the habit with this `id` disappears |
+        | `"activeToggled"` | `id` | the habit with this `id` gets the opposite `active` |
+
+        In `habitsReducer.ts` describe these actions with the type `HabitAction` — a discriminated union — and write `habitsReducer`. Every action returns a **new** array, and the array the reducer received and the habits in it stay unchanged.
+
+        The checks call `habitsReducer` directly with a frozen list (changing such a list throws a `TypeError`), compare the list before and after the call and go through a scenario on the page. The sandbox only removes types; to check them, copy the files into `ts-lab` and run `npx tsc --noEmit` — that is optional.
+    testTitles:
+      "added puts the new habit at the end":
+        uk: "`added` ставить нову звичку в кінець"
+        en: "`added` puts the new habit at the end"
+      "updated renames only that habit and keeps its other fields":
+        uk: "`updated` перейменовує лише цю звичку й зберігає решту її полів"
+        en: "`updated` renames only that habit and keeps its other fields"
+      "removed drops only that habit":
+        uk: "`removed` прибирає лише цю звичку"
+        en: "`removed` drops only that habit"
+      "activeToggled flips active of that habit only":
+        uk: "`activeToggled` змінює `active` лише цієї звички"
+        en: "`activeToggled` flips `active` of that habit only"
+      "every action returns a new list and leaves the old one unchanged":
+        uk: "Кожен action повертає новий список і не змінює старий"
+        en: "Every action returns a new list and leaves the old one unchanged"
+      "the page adds, toggles, renames and removes through the reducer":
+        uk: "Сторінка додає, перемикає, перейменовує й прибирає через reducer"
+        en: "The page adds, toggles, renames and removes through the reducer"
+    hints:
+      nudge:
+        uk: "Почни з типу: чотири варіанти, у кожного свій `type` і свої поля з таблиці. Потім `switch (action.type)` з одним `case` на варіант. Який метод масиву повертає новий масив для кожної з чотирьох дій?"
+        en: "Start with the type: four members, each with its own `type` and its own fields from the table. Then `switch (action.type)` with one `case` per member. Which array method returns a new array for each of the four actions?"
+      explanation:
+        uk: |
+          Додати в кінець без зміни — розгорнути старий масив у новий. Прибрати — `filter`. Змінити одне поле одного запису — `map`, який для потрібного `id` повертає **копію** запису зі зміненим полем (`{ ...record, field: … }`), а для решти — той самий запис. Копія без `...record` загубить інші поля.
+
+          Схожий приклад з іншою задачею: reducer кошика, що змінює кількість товару, — `case "quantitySet": return items.map((item) => (item.sku === action.sku ? { ...item, quantity: action.quantity } : item));`.
+        en: |
+          Adding at the end without a change means spreading the old array into a new one. Removing is `filter`. Changing one field of one record is a `map` that returns a **copy** of the record with the changed field (`{ ...record, field: … }`) for the matching `id`, and the same record for the rest. A copy without `...record` loses the other fields.
+
+          A similar example with a different task: a cart reducer that sets an item's quantity — `case "quantitySet": return items.map((item) => (item.sku === action.sku ? { ...item, quantity: action.quantity } : item));`.
+    solutionNote:
+      uk: "`HabitAction` — union з чотирьох варіантів, тож у кожному `case` `tsc` знає, які поля має `action`. Жодна гілка не змінює `habits`: розгортання, `filter` і `map` повертають нові масиви, а `{ ...habit, … }` — нову звичку з усіма старими полями. Тому React бачить новий стан і перемальовує сторінку. Перевірка `never` у `default` змусить `tsc` нагадати про `case`, коли з’явиться п’ятий action."
+      en: "`HabitAction` is a union of four members, so in every `case` `tsc` knows which fields `action` has. No branch changes `habits`: spreading, `filter` and `map` return new arrays, and `{ ...habit, … }` returns a new habit with all the old fields. So React sees new state and re-renders the page. The `never` check in `default` will make `tsc` remind you of the `case` once a fifth action appears."
+    feedback:
+      - when: { test: "added puts the new habit at the end" }
+        message:
+          uk: "Ця перевірка надсилає `added` зі звичкою `h-09` у заморожений список і очікує п’ять звичок, з `h-09` останньою. Якщо бачиш `TypeError` про `object is not extensible`, reducer змінює отриманий масив (`push`) — поверни новий."
+          en: "This check sends `added` with the habit `h-09` to a frozen list and expects five habits, with `h-09` last. If you see a `TypeError` about `object is not extensible`, the reducer changes the array it received (`push`) — return a new one."
+      - when: { test: "updated renames only that habit and keeps its other fields" }
+        message:
+          uk: "Ця перевірка перейменовує `h-02` і очікує, що змінилася лише її назва, а `frequency`, `active` і `completions` — як були. Нова звичка має містити всі поля старої."
+          en: "This check renames `h-02` and expects only its name to change, with `frequency`, `active` and `completions` as they were. The new habit must contain all fields of the old one."
+      - when: { test: "removed drops only that habit" }
+        message:
+          uk: "Ця перевірка прибирає `h-04` і очікує `h-01`, `h-02`, `h-05` у тому самому порядку."
+          en: "This check removes `h-04` and expects `h-01`, `h-02`, `h-05` in the same order."
+      - when: { test: "activeToggled flips active of that habit only" }
+        message:
+          uk: "Ця перевірка перемикає `h-05` (усі чотири стають активними), а потім `h-01` (лише вона стає неактивною). Змінюватися має лише звичка з переданим `id`."
+          en: "This check toggles `h-05` (all four become active), then `h-01` (only it becomes inactive). Only the habit with the given `id` may change."
+      - when: { test: "every action returns a new list and leaves the old one unchanged" }
+        message:
+          uk: "Ця перевірка надсилає кожен із чотирьох actions і очікує, що повернувся **інший** масив, а переданий лишився таким, як був. Повернути той самий масив після зміни — значить, React не побачить змін."
+          en: "This check sends each of the four actions and expects a **different** array back, while the one passed in stays as it was. Returning the same array after a change means React will not see the change."
+      - when: { test: "the page adds, toggles, renames and removes through the reducer" }
+        message:
+          uk: "Ця перевірка на сторінці додає «Прогулянка», вмикає четверту звичку, перейменовує другу на «Розтяжка» й прибирає першу, перевіряючи список після кожного кроку. Якщо reducer правильний у решті перевірок, а тут ні, звір назви полів action з таблицею."
+          en: "This check, on the page, adds “Go for a walk”, switches on the fourth habit, renames the second one to “Stretching” and removes the first, checking the list after each step. If the reducer passes the other checks but not this one, compare the action field names with the table."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` з `Cannot assign to read only property` чи `object is not extensible` означає, що reducer змінює отриманий список чи звичку. Створюй нові масиви й об’єкти замість змін."
+          en: "A `TypeError` with `Cannot assign to read only property` or `object is not extensible` means the reducer changes the list or habit it received. Create new arrays and objects instead of changing them."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-04
+    body:
+      uk: "У кроці проєкту цього розділу список твого проєкту переїде в типізований reducer: для списку бажань — `itemsReducer` з actions `added`, `updated`, `removed`, `acquiredToggled`, для решти проєктів — подібний набір. Тип actions і перевірка `never` змусять `tsc` нагадати про кожну забуту гілку."
+      en: "In this unit's project step your project's list moves into a typed reducer: for the wishlist an `itemsReducer` with the actions `added`, `updated`, `removed`, `acquiredToggled`, for the other projects a similar set. The action type and the `never` check make `tsc` remind you of every forgotten branch."
