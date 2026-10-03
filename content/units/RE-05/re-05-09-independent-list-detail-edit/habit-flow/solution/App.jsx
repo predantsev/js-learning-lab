@@ -179,18 +179,29 @@ function HabitEdit({ habit }) {
         </select>
       </p>
       <button>%%save%%</button>
-      {blocker.blocked && (
-        <div role="alertdialog" aria-labelledby="leave-text">
-          <p id="leave-text">%%unsaved%%</p>
-          <button type="button" autoFocus onClick={blocker.stay}>
-            %%stay%%
-          </button>{" "}
-          <button type="button" onClick={blocker.proceed}>
-            %%leave%%
-          </button>
-        </div>
-      )}
+      {blocker.blocked && <LeaveDialog onStay={blocker.stay} onLeave={blocker.proceed} />}
     </form>
+  );
+}
+
+// The in-page question while a navigation waits: Stay gets focus, and after Stay focus goes back to the opener.
+function LeaveDialog({ onStay, onLeave }) {
+  const stayRef = useRef(null);
+  useEffect(() => {
+    const opener = document.activeElement;
+    stayRef.current.focus();
+    return () => opener.focus();
+  }, []);
+  return (
+    <div role="alertdialog" aria-labelledby="leave-text">
+      <p id="leave-text">%%unsaved%%</p>
+      <button type="button" ref={stayRef} onClick={onStay}>
+        %%stay%%
+      </button>{" "}
+      <button type="button" onClick={onLeave}>
+        %%leave%%
+      </button>
+    </div>
   );
 }
 

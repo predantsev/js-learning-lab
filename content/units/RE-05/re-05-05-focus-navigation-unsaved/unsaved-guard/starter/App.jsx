@@ -68,7 +68,11 @@ function HabitEdit({ id }) {
 
 function LeaveDialog({ onStay, onLeave }) {
   const stayRef = useRef(null);
-  useEffect(() => stayRef.current.focus(), []);
+  useEffect(() => {
+    const opener = document.activeElement; // the control that started the navigation
+    stayRef.current.focus();
+    return () => opener.focus(); // after Stay, focus goes back there instead of falling to body
+  }, []);
   return (
     <div role="alertdialog" aria-labelledby="leave-text">
       <p id="leave-text">%%unsaved%%</p>

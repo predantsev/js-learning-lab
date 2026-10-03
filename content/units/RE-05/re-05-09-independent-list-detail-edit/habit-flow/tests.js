@@ -1,13 +1,15 @@
 import { createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
-import { setNextOutcome } from './habitsApi.js';
+import { setNextOutcome, holdAnswers } from './habitsApi.js';
 
 document.getElementById('root')?.remove();
 
-// Every check mounts its own copy of the app; the fake server answers after 300 ms.
+// Every check mounts its own copy of the app; the fake server holds its answers until the check lets it answer,
+// so no check depends on the real 300 ms delay or on the computer's speed.
 async function mount(outcome = 'ok', initialPath) {
   setNextOutcome(outcome);
+  const server = holdAnswers();
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
@@ -23,7 +25,9 @@ async function mount(outcome = 'ok', initialPath) {
     listNames: () => all('ul a').map((a) => a.textContent),
     field: (id) => host.querySelector(`#${id}`),
     async loaded() {
-      await waitFor(() => copy.statusText() !== L.loading, { timeout: 2500 }).catch(() => {});
+      server.answerNow();
+      await sleep(0);
+      await settle();
     },
     async click(selector, text) {
       const el = all(selector).find((candidate) => candidate.textContent.includes(text));
@@ -39,7 +43,7 @@ async function mount(outcome = 'ok', initialPath) {
       await copy.click('ul a', name);
       await copy.click('main a', L.edit);
     },
-    finish: () => { root.unmount(); host.remove(); setNextOutcome('ok'); },
+    finish: () => { root.unmount(); host.remove(); server.release(); setNextOutcome('ok'); },
   };
   return copy;
 }
