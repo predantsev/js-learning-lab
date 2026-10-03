@@ -7,6 +7,12 @@ import { startTasks } from "./tasks";
 // What the starting tasks looked like before any check ran.
 const original = JSON.stringify(startTasks);
 
+// Puts the starting tasks back as they were, so that a change one check made to the startTasks
+// array (push, splice, sort, a changed field) cannot spill over into the next check.
+function restoreTasks() {
+  startTasks.splice(0, startTasks.length, ...JSON.parse(original));
+}
+
 // Every check shows its own fresh copy of App.
 function mount() {
   const host = document.createElement("div");
@@ -39,6 +45,7 @@ async function fillForm(app, title, due, priority) {
 }
 
 test("a valid task is added at the end and the form is cleared", async () => {
+  restoreTasks();
   const app = mount();
   expect(app.form()?.querySelector("button"), "the submit button before editing").toHaveTextContent(L.add);
   await fillForm(app, L.dentist, "2026-03-10", "high");
@@ -54,13 +61,16 @@ test("a valid task is added at the end and the form is cleared", async () => {
 });
 
 test("an empty due date adds a task without a due date", async () => {
+  restoreTasks();
   const app = mount();
   await fillForm(app, L.wardrobe, "");
   await user.submit(app.form());
   expect(app.part(app.rows().at(-1), "due"), "due date of the new row").toBe(L.noDue);
+  expect(app.part(app.rows().at(-1), "priority"), "priority of the new row (the field was not touched)").toBe("normal");
 });
 
 test("an empty title and a wrong date show their messages and add nothing", async () => {
+  restoreTasks();
   const app = mount();
   await fillForm(app, "", "2026-3-5");
   await user.submit(app.form());
@@ -70,6 +80,7 @@ test("an empty title and a wrong date show their messages and add nothing", asyn
 });
 
 test("submitting does not reload the page", async () => {
+  restoreTasks();
   const app = mount();
   await fillForm(app, L.dentist, "");
   const { prevented } = await user.submit(app.form());
@@ -77,6 +88,7 @@ test("submitting does not reload the page", async () => {
 });
 
 test("Edit fills the form, and switching tasks mid-edit shows the other task", async () => {
+  restoreTasks();
   const app = mount();
   await user.click(app.rowButton(L.waterPlants, L.edit));
   expect(app.title(), "the title field after Edit").toHaveValue(L.waterPlants);
@@ -89,6 +101,7 @@ test("Edit fills the form, and switching tasks mid-edit shows the other task", a
 });
 
 test("saving an edit changes only that task, keeps its status and empties the form", async () => {
+  restoreTasks();
   const app = mount();
   await user.click(app.rowButton(L.payBill, L.edit));
   await user.fill(app.title(), L.payBillOnline);
@@ -99,6 +112,7 @@ test("saving an edit changes only that task, keeps its status and empties the fo
 });
 
 test("quick toggles in one go are not lost", async () => {
+  restoreTasks();
   const app = mount();
   const toggleWater = app.rowButton(L.waterPlants, L.toggle);
   toggleWater.click();
@@ -112,6 +126,7 @@ test("quick toggles in one go are not lost", async () => {
 });
 
 test("the status filter keeps its choice while editing and follows changes", async () => {
+  restoreTasks();
   const app = mount();
   await user.click(app.filter(L.pending));
   expect(app.titles(), "rows under the Pending filter").toEqual([L.waterPlants, L.libraryBooks, L.grandma]);
@@ -124,6 +139,7 @@ test("the status filter keeps its choice while editing and follows changes", asy
 });
 
 test("sorting by due date moves the rows without replacing them", async () => {
+  restoreTasks();
   const app = mount();
   const rowsBefore = new Map(app.rows().map((row) => [app.part(row, "title"), row]));
   await user.click(app.sort());
@@ -131,20 +147,29 @@ test("sorting by due date moves the rows without replacing them", async () => {
   for (const row of app.rows()) {
     expect(row === rowsBefore.get(app.part(row, "title")), `the row of “${app.part(row, "title")}” is the same element as before sorting`).toBe(true);
   }
+  await user.click(app.sort());
+  expect(app.titles(), "titles after turning sorting off").toEqual([L.waterPlants, L.libraryBooks, L.grandma, L.payBill]);
 });
 
 test("Delete removes only that task", async () => {
+  restoreTasks();
   const app = mount();
   await user.click(app.rowButton(L.libraryBooks, L.delete));
   expect(app.titles(), "titles of the rows").toEqual([L.waterPlants, L.grandma, L.payBill]);
 });
 
 test("the starting tasks stay unchanged", async () => {
-  const app = mount();
-  await user.click(app.rowButton(L.waterPlants, L.toggle));
-  await user.click(app.rowButton(L.payBill, L.edit));
-  await user.fill(app.title(), L.payBillOnline);
-  await user.submit(app.form());
-  await user.click(app.rowButton(L.grandma, L.delete));
+  restoreTasks();
+  // Each action starts from a fresh copy, so each one works on the startTasks array itself.
+  const deleting = mount();
+  await user.click(deleting.rowButton(L.grandma, L.delete));
+  const sorting = mount();
+  await user.click(sorting.sort());
+  const toggling = mount();
+  await user.click(toggling.rowButton(L.waterPlants, L.toggle));
+  const editing = mount();
+  await user.click(editing.rowButton(L.payBill, L.edit));
+  await user.fill(editing.title(), L.payBillOnline);
+  await user.submit(editing.form());
   expect(JSON.stringify(startTasks), "the startTasks array and its task objects").toBe(original);
 });
