@@ -9,10 +9,8 @@ const LISTS = [
 function ListSync({ listId }) {
   useEffect(() => {
     const connection = connect(listId);
-    return () => {
-      // Disconnects only on a "real" unmount, never in between.
-      if (listId === "work") connection.disconnect();
-    };
+    // Calls disconnect right away instead of returning a function that calls it later.
+    return connection.disconnect();
   }, [listId]);
 
   return <p>%%syncing%% {listId}</p>;
