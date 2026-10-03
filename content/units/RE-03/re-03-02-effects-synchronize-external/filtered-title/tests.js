@@ -19,7 +19,7 @@ async function mount() {
   });
   const root = createRoot(host);
   root.render(createElement(App));
-  await waitFor(() => host.querySelector('p'));
+  await waitFor(() => host.querySelector('p') !== null);
   await settle();
   return { host, sets };
 }
