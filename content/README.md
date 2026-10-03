@@ -31,10 +31,13 @@ npm run build                                        # once, and after platform 
 node scripts/content/validate.mjs --unit JS-03       # static checks + real execution of every fixture
 node scripts/content/validate.mjs --lesson <id>
 node scripts/content/validate.mjs --lesson <id> --verbose      # also every run and every check: ✔/✖ per check of each fixture
+node scripts/content/validate.mjs --since main                 # execute only what changed since a git ref (see below)
 node scripts/content/validate.mjs --unit JS-12 --locale uk-UA   # browser under another locale (default: en-US)
 node scripts/content/smoke.mjs --unit JS-12 --locale uk-UA      # every lesson page in the real app
 npm start                                            # read your lesson as a learner (http://localhost:7300)
 ```
+
+A full run with execution takes more than half an hour. `--since <git-ref>` (a branch, tag, commit or `HEAD~N`) executes only what changed since that ref — committed, staged, unstaged and untracked files alike: a change inside an example or exercise folder runs only that block; a changed `lesson.yaml` (predictions and review questions live there) or any other file of the lesson runs the whole lesson; a changed capstone step runs that step and the next one (its "state before"), and a change to the capstone start project or `domains.yaml` runs every step. Static checks still cover all content, because a glossary or syllabus edit can break a lesson whose files did not change; such files are listed in a note. When files that execute content changed (`sandbox/`, `shared/`, `server/`, `scripts/content/`, `app/src/harness*`), the validator says so and runs everything. It combines with `--unit`/`--lesson` (both must match). A full run is still required before a release (`--release`).
 
 `--verbose` prints, under a `▸ <lesson> › <block>` header, one line per run (example, prediction, fixture, capstone state, per language) and, for a fixture, one `✔`/`✖` line per check with the failure message: you see which checks each `wrong*` fixture fails (rule 54: a wrong fixture should break only the rule it models) and that `solution` and every `alt*` pass all of them. A line starts with `✖` when that run breaks the validator's rule; the errors are still listed at the end. Without `--verbose` the output is unchanged.
 

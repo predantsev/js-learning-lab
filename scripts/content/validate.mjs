@@ -13,6 +13,9 @@
 //   node scripts/content/validate.mjs --capstone wishlist   capstone steps of one capstone only
 //   node scripts/content/validate.mjs --locale uk-UA  run the browser under that locale (Chrome
 //                                                     --lang and the page locale; default: Chrome's en-US)
+//   node scripts/content/validate.mjs --since main    execute only lessons, blocks and capstone steps whose
+//                                                     files changed since the git ref (committed or not,
+//                                                     untracked included); static checks cover all content
 //   node scripts/content/validate.mjs --verbose       also print every executed run as it happens: each
 //                                                     fixture's checks one by one (✔/✖ with the failure
 //                                                     message), so you can see which checks a wrong
@@ -28,7 +31,8 @@ import { consoleLines, localizeFiles, localizeText, runInputForBlock } from '../
 import { NODE_RUN_PATH, isLearnerSyntaxError, nodeRunRequest, parseUncaughtError, readNdjson, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
 import { unitOfLesson } from '../../shared/content-schema.js';
 import { localeArg, localeOptions } from './browser-locale.mjs';
-import { buildContent, exerciseFileSets } from './lib.mjs';
+import { CONTENT_DIR, buildContent, exerciseFileSets } from './lib.mjs';
+import { changedFilesSince, selectionFromChanges } from './since.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -45,7 +49,16 @@ try {
   console.error(e.message);
   process.exit(2);
 }
-const selected = (lessonId) => (onlyUnits.size === 0 && onlyLessons.size === 0) || onlyUnits.has(unitOfLesson(lessonId)) || onlyLessons.has(lessonId);
+const sinceRef = values('--since')[0] ?? null;
+if (flag('--since') && !sinceRef) {
+  console.error('--since needs a git ref, for example --since main or --since HEAD~3');
+  process.exit(2);
+}
+// --since: only lessons (and only the blocks) whose files changed since the ref; null = no filter.
+let since = null;
+const explicitlySelected = (lessonId) => (onlyUnits.size === 0 && onlyLessons.size === 0) || onlyUnits.has(unitOfLesson(lessonId)) || onlyLessons.has(lessonId);
+const selected = (lessonId) => explicitlySelected(lessonId) && (since === null || since.lessons.has(lessonId));
+const blockSelected = (lessonId, blockId) => since === null || since.lessons.get(lessonId) === null || since.lessons.get(lessonId)?.has(blockId) === true;
 
 const errors = [];
 const notes = [];
@@ -75,9 +88,28 @@ function fixtureSummary(name, lang, tests, { starterPasses = false } = {}) {
 const tmpOut = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-content-'));
 const warnings = [];
 const { issues, warnings: contentWarnings, all, index } = await buildContent({ outDir: tmpOut, quiet: true, release });
+if (sinceRef) {
+  let selection;
+  try {
+    const { top, files } = changedFilesSince(sinceRef, ROOT);
+    const stepUnits = all.competencies.unitOrder.map((u) => u.unit).filter((u) => Object.values(all.capstoneBuild?.capstones ?? {}).some((c) => c.steps.some((s) => s.unit === u)));
+    selection = selectionFromChanges(files, { contentRel: path.relative(top, CONTENT_DIR), lessons: all.lessons, stepUnits });
+  } catch (e) {
+    console.error(`--since ${sinceRef}: ${e.message}`);
+    process.exit(2);
+  }
+  if (selection.all) notes.push({ where: `--since ${sinceRef}`, message: `${selection.reason}; validating every selected lesson` });
+  else {
+    since = selection;
+    const partial = [...since.lessons.values()].filter((b) => b !== null).length;
+    notes.push({ where: `--since ${sinceRef}`, message: `${since.lessons.size} changed lesson(s)${partial > 0 ? ` (${partial} of them only in some example/exercise folders: only those blocks run)` : ''}, capstone steps of ${since.stepUnits.size} unit(s)${since.other.length > 0 ? `; other changed content files are checked statically only: ${since.other.slice(0, 3).join(', ')}${since.other.length > 3 ? ` and ${since.other.length - 3} more` : ''}` : ''}` });
+  }
+}
 for (const issue of [...issues, ...contentWarnings]) {
   const lessonId = /lesson ([a-z0-9-]+)/.exec(issue.path)?.[1];
-  if (lessonId && !selected(lessonId)) continue;
+  // With --since the static checks still cover every explicitly selected lesson: a changed glossary
+  // or syllabus file can break a lesson whose own files did not change. Warnings follow the selection.
+  if (lessonId && !(since !== null && issue.level !== 'warning' ? explicitlySelected(lessonId) : selected(lessonId))) continue;
   const where = issue.file ? `${issue.file} · ${issue.path}` : issue.path;
   if (issue.level === 'warning') warnings.push({ where, message: issue.message });
   else error(where, issue.message);
@@ -89,7 +121,8 @@ const onlyCapstones = new Set(values('--capstone'));
 const capstoneSteps = Object.entries(all.capstoneBuild?.capstones ?? {})
   .filter(([id]) => onlyCapstones.size === 0 || onlyCapstones.has(id))
   .flatMap(([id, c]) => c.steps.map((step) => ({ id, step })))
-  .filter(({ step }) => (onlyUnits.size === 0 && onlyLessons.size === 0) || onlyUnits.has(step.unit) || (step.lesson !== null && onlyLessons.has(step.lesson)));
+  .filter(({ step }) => (onlyUnits.size === 0 && onlyLessons.size === 0) || onlyUnits.has(step.unit) || (step.lesson !== null && onlyLessons.has(step.lesson)))
+  .filter(({ step }) => since === null || since.stepUnits.has(step.unit));
 
 if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
   const needBuild = !(await fs.access(path.join(ROOT, 'dist', 'app', 'harness.html')).then(() => true, () => false)) || !(await fs.access(path.join(ROOT, 'dist', 'sandbox', 'frame.html')).then(() => true, () => false));
@@ -220,6 +253,7 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
 
   for (const [id, lesson] of lessons) {
     for (const block of lesson.source.blocks ?? []) {
+      if (!blockSelected(id, block.id)) continue;
       const where = `${id} › ${block.id}`;
       const assets = lesson.assets[block.id];
       if (block.kind === 'prediction' || block.kind === 'review') {
