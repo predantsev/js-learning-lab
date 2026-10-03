@@ -1,0 +1,456 @@
+id: rn-09-05-deny-revoke-unavailable
+unit: RN-09
+title:
+  uk: "Відмова, відкликання й недоступність"
+  en: "Deny, revoke and unavailable"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Змоделювати стани можливості (ще не питали, дозволено, відмовлено, заблоковано, відкликано, обладнання немає) і назвати інтерфейс, який потрібен кожному."
+    en: "Model capability states (not asked, granted, denied, blocked, revoked, unavailable hardware) and name the UI each state needs."
+  - uk: "Перечитувати стан дозволу й можливості, коли застосунок повертається на передній план, замість довіряти збереженому дозволу."
+    en: "Re-check permission and capability state when the app returns to the foreground instead of trusting a cached grant."
+prerequisites: [rn-09-04-auth-deep-link-boundaries, rn-06-06-permissions-capability-checks]
+subskills:
+  - { family: N-07, skill: "permission request/deny/revoke", depth: practice }
+  - { family: N-07, skill: "capability/platform checks", depth: practice }
+glossary: [permission-revocation, blocked-permission]
+selfCheck: [predict-second-ask, capability-reducer]
+
+blocks:
+  - id: six-states
+    kind: explanation
+    title:
+      uk: "Шість станів і шість екранів"
+      en: "Six states and six screens"
+    body:
+      uk: |
+        У RN-06 ти питав дозвіл у момент використання. Тепер — що робити з кожною відповіддю. Expo повідомляє дозвіл камери як `{ status, granted, canAskAgain }`, де `status` — `undetermined`, `granted` або `denied`. Разом із перевіркою обладнання це дає шість станів:
+
+        | Стан | Звідки видно | Що показати |
+        |---|---|---|
+        | Ще не питали | `undetermined` | пояснення й кнопку, що питає |
+        | Дозволено | `granted` | саму функцію |
+        | Відмовлено | `denied`, `canAskAgain: true` | чому це потрібно й «Спитати ще раз» |
+        | [[blocked-permission\|Заблоковано]] | `denied`, `canAskAgain: false` | «Відкрити налаштування» (`Linking.openSettings()`) |
+        | [[permission-revocation\|Відкликано]] | був `granted`, нове читання — `denied` | те саме, що «відмовлено» чи «заблоковано» |
+        | Обладнання немає | перевірка можливості | обхідний шлях, **без** запиту |
+
+        Два правила. Відсутня камера — **не** відмова: людині, у якої камери немає, «Відкрити налаштування» не допоможе, тож повідомлення різні. І **жодного циклу запитів**: на Android 11+ після другого «Не дозволяти» система, за документацією Android, більше не показує діалогу, а на iOS діалог з’являється лише один раз. Повторний запит просто одразу повертає `denied`.
+      en: |
+        In RN-06 you asked for a permission at the moment of use. Now — what to do with each answer. Expo reports the camera permission as `{ status, granted, canAskAgain }`, where `status` is `undetermined`, `granted` or `denied`. Together with the hardware check this gives six states:
+
+        | State | How it shows | What to show |
+        |---|---|---|
+        | Not asked yet | `undetermined` | an explanation and a button that asks |
+        | Granted | `granted` | the feature itself |
+        | Denied | `denied`, `canAskAgain: true` | why it is needed, and “Ask again” |
+        | [[blocked-permission\|Blocked]] | `denied`, `canAskAgain: false` | “Open settings” (`Linking.openSettings()`) |
+        | [[permission-revocation\|Revoked]] | was `granted`, a new read says `denied` | the same as “denied” or “blocked” |
+        | No hardware | the capability check | a workaround, **with no** request |
+
+        Two rules. A missing camera is **not** a denial: “Open settings” does not help a person who has no camera, so the messages differ. And **no request loop**: on Android 11+, after a second “Don't allow”, the system, according to the Android documentation, no longer shows the dialog, and on iOS the dialog appears only once. A repeated request simply returns `denied` at once.
+
+  - id: predict-second-ask
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Android 13. Людина двічі натиснула «Не дозволяти» на діалозі камери. Застосунок показує кнопку «Спитати ще раз», і людина натискає її втретє. Що станеться?"
+      en: "Android 13. The person pressed “Don't allow” on the camera dialog twice. The app shows an “Ask again” button, and the person presses it a third time. What happens?"
+    answer:
+      type: choice
+      options:
+        - id: no-dialog
+          text:
+            uk: "Діалог не з’явиться: запит одразу поверне `denied` з `canAskAgain: false`, і кнопка виглядатиме зламаною"
+            en: "No dialog appears: the request returns `denied` with `canAskAgain: false` at once, and the button looks broken"
+        - id: dialog-again
+          text:
+            uk: "Діалог з’явиться втретє — можливо, цього разу людина погодиться"
+            en: "The dialog appears a third time — maybe this time the person agrees"
+          why:
+            uk: "Документація Android: після повторної відмови система більше не показує діалогу цього дозволу. Запити в циклі нічого не дають — після другої відмови лишається лише шлях через налаштування."
+            en: "The Android documentation: after a repeated denial the system no longer shows that permission's dialog. Requests in a loop achieve nothing — after the second denial only the way through Settings remains."
+        - id: settings-open
+          text:
+            uk: "Система сама відкриє налаштування застосунку"
+            en: "The system opens the app's settings by itself"
+          why:
+            uk: "Налаштування відкриває застосунок, коли людина натискає кнопку на кшталт «Відкрити налаштування» (`Linking.openSettings()`). Сам по собі запит їх не відкриває."
+            en: "The app opens Settings when the person presses a button like “Open settings” (`Linking.openSettings()`). A request does not open them by itself."
+      correct: [no-dialog]
+    explanation:
+      uk: "Після другої відмови `canAskAgain` стає `false`, і правильний екран — «Відкрити налаштування» з поясненням, а не «Спитати ще раз». На iOS так стається вже після першої відмови. Саме тому інтерфейс обирають за `canAskAgain`, а не за номером спроби."
+      en: "After the second denial `canAskAgain` becomes `false`, and the right screen is “Open settings” with an explanation, not “Ask again”. On iOS it happens after the very first denial. That is why the UI is chosen by `canAskAgain`, not by the attempt number."
+
+  - id: grant-is-not-forever
+    kind: explanation
+    title:
+      uk: "Дозвіл не назавжди"
+      en: "A grant is not forever"
+    body:
+      uk: |
+        Людина може будь-коли відкрити системні налаштування й забрати дозвіл — поки застосунок у фоні. Що стається далі, залежить від платформи: документація Android каже, що після відкликання дозволу процес застосунку завершується, тож наступний запуск починається заново. Чи залишиться процес живим на iOS, ми не перевіряли на пристрої — але дизайн від цього не залежить.
+
+        Правило одне: **стан дозволу читають в операційної системи**, а не зі збереженої змінної. Застосунок перечитує його:
+
+        - під час запуску екрана;
+        - щоразу, коли застосунок повертається на передній план (`AppState` стає `active`, як у RN-04);
+        - перед кожною дією, що потребує дозволу.
+
+        Збережене `granted: true` у стані чи, ще гірше, у сховищі — це [[permission-revocation|відкликаний дозвіл]], якого застосунок не помітив.
+      en: |
+        The person can open the system settings at any moment and take the permission away — while the app is in the background. What happens next depends on the platform: the Android documentation says that revoking a permission terminates the app's process, so the next launch starts from scratch. Whether the process stays alive on iOS we have not checked on a device — but the design does not depend on it.
+
+        There is one rule: **the permission state is read from the operating system**, not from a saved variable. The app reads it again:
+
+        - when the screen starts;
+        - every time the app returns to the foreground (`AppState` becomes `active`, as in RN-04);
+        - before every action that needs the permission.
+
+        A saved `granted: true` in state or, worse, in storage is a [[permission-revocation|revoked permission]] the app has not noticed.
+
+  - id: two-runs
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Відмова, блокування, відкликання — і телефон без камери"
+      en: "Deny, block, revoke — and a phone without a camera"
+    textEquivalent:
+      uk: "Перший прогін — телефон Android із камерою. Людина торкається «Додати фото». Застосунок перевіряє, що камера є, і просить дозвіл; система показує діалог. Людина відмовляє, система повертає denied з canAskAgain true, і застосунок показує пояснення з кнопкою «Спитати ще раз». Людина питає ще раз і знову відмовляє; тепер canAskAgain false, і застосунок показує «Відкрити налаштування». Людина дозволяє камеру в налаштуваннях і повертається; застосунок перечитує стан під час повернення й показує камеру. Пізніше людина відкликає дозвіл у налаштуваннях; повернувшись, застосунок перечитує стан, бачить denied і знову показує «Відкрити налаштування», а не застарілу камеру. Другий прогін — ціль без камери: перевірка можливості повертає «камери немає», застосунок одразу показує обхідний шлях і не питає дозволу взагалі."
+      en: "The first run is an Android phone with a camera. The person taps “Add photo”. The app checks that a camera exists and requests the permission; the system shows the dialog. The person denies, the system returns denied with canAskAgain true, and the app shows an explanation with an “Ask again” button. The person asks again and denies again; now canAskAgain is false, and the app shows “Open settings”. The person allows the camera in Settings and comes back; the app reads the state again on return and shows the camera. Later the person revokes the permission in Settings; on return the app reads the state again, sees denied and shows “Open settings” again, not a stale camera. The second run is a target without a camera: the capability check returns “no camera”, the app shows the workaround at once and never requests the permission."
+    spec:
+      actors:
+        - { id: person, label: { uk: "Людина", en: "Person" } }
+        - { id: app, label: { uk: "Застосунок", en: "App" } }
+        - { id: os, label: { uk: "ОС: діалог і налаштування", en: "OS: dialog and Settings" } }
+      messages:
+        - from: person
+          to: app
+          label: { uk: "«Додати фото»", en: "“Add photo”" }
+          caption:
+            uk: "Перший прогін — Android із камерою. Людина торкається кнопки, що потребує камери."
+            en: "The first run — Android with a camera. The person taps a button that needs the camera."
+        - from: app
+          to: os
+          label: { uk: "камера є? → так; запит", en: "camera? → yes; request" }
+          caption:
+            uk: "Спершу перевірка можливості, потім запит. Система показує діалог."
+            en: "First the capability check, then the request. The system shows the dialog."
+        - from: os
+          to: app
+          kind: return
+          label: "denied · canAskAgain: true"
+          caption:
+            uk: "Перша відмова. Режим — **rationale**: пояснення, навіщо камера, і «Спитати ще раз»."
+            en: "The first denial. Mode — **rationale**: why the camera is needed, and “Ask again”."
+        - from: os
+          to: app
+          kind: return
+          label: "denied · canAskAgain: false"
+          caption:
+            uk: "Друга відмова: Android більше не покаже діалогу. Режим — **open-settings**, кнопки «Спитати ще раз» більше немає."
+            en: "The second denial: Android will not show the dialog again. Mode — **open-settings**, there is no “Ask again” button any more."
+        - from: person
+          to: os
+          label: { uk: "дозволяє в налаштуваннях", en: "allows in Settings" }
+          caption:
+            uk: "Людина відкриває налаштування з екрана застосунку й дозволяє камеру."
+            en: "The person opens Settings from the app's screen and allows the camera."
+        - from: app
+          to: os
+          label: { uk: "active → прочитати стан", en: "active → read the state" }
+          caption:
+            uk: "Повернення на передній план — застосунок перечитує дозвіл: `granted`. Режим — **ready**."
+            en: "Back to the foreground — the app reads the permission again: `granted`. Mode — **ready**."
+        - from: person
+          to: os
+          label: { uk: "відкликає в налаштуваннях", en: "revokes in Settings" }
+          caption:
+            uk: "Пізніше людина забирає дозвіл. На Android процес застосунку при цьому завершується."
+            en: "Later the person takes the permission away. On Android the app's process is terminated at that point."
+        - from: os
+          to: app
+          kind: return
+          label: "denied · canAskAgain: false"
+          caption:
+            uk: "Наступне читання (під час повернення чи нового запуску) каже `denied`. Режим — знову **open-settings**, а не камера з учорашнього дозволу."
+            en: "The next read (on return or at a new launch) says `denied`. Mode — **open-settings** again, not a camera from yesterday's grant."
+        - from: app
+          to: app
+          kind: note
+          label: { uk: "без камери → fallback, без запиту", en: "no camera → fallback, no request" }
+          caption:
+            uk: "Другий прогін — ціль без камери. Перевірка можливості зупиняє все до запиту: режим **fallback**, діалогу немає зовсім."
+            en: "The second run — a target without a camera. The capability check stops everything before the request: mode **fallback**, no dialog at all."
+
+  - id: os-panel
+    kind: example
+    runtime: concept-preview
+    dir: os-panel
+    entry: main.jsx
+    strings:
+      habit: { uk: "Ранкова зарядка — фото прогресу", en: "Morning exercise — progress photo" }
+      explain: { uk: "Щоб додати фото прогресу, застосунку потрібна камера.", en: "To add a progress photo, the app needs the camera." }
+      addPhoto: { uk: "Додати фото", en: "Add photo" }
+      rationale: { uk: "Без камери фото не зробити. Відмітку можна зберегти й без фото.", en: "Without the camera there is no photo. The check-in can be saved without one." }
+      askAgain: { uk: "Спитати ще раз", en: "Ask again" }
+      blocked: { uk: "Камеру вимкнено в налаштуваннях. Увімкни її там або збережи відмітку без фото.", en: "The camera is turned off in Settings. Turn it on there, or save the check-in without a photo." }
+      ready: { uk: "Камера готова.", en: "The camera is ready." }
+      noCamera: { uk: "На цьому пристрої немає камери. Відмітку можна зберегти без фото.", en: "This device has no camera. The check-in can be saved without a photo." }
+      osTitle: { uk: "Симульована ОС", en: "Simulated OS" }
+      dialogs: { uk: "діалогів показано", en: "dialogs shown" }
+      dialogText: { uk: "Дозволити застосунку доступ до камери?", en: "Allow the app to access the camera?" }
+      allow: { uk: "Дозволити", en: "Allow" }
+      dontAllow: { uk: "Не дозволяти", en: "Don't allow" }
+      settingsAllow: { uk: "Налаштування: дозволити", en: "Settings: allow" }
+      settingsRevoke: { uk: "Налаштування: відкликати", en: "Settings: revoke" }
+      leaveReturn: { uk: "Вийти й повернутися", en: "Leave and return" }
+    title:
+      uk: "Симульована ОС під екраном"
+      en: "A simulated OS under the screen"
+    body:
+      uk: |
+        Угорі — екран лабораторії звичок `PhotoGate.jsx`, унизу — панель симульованої ОС: діалог дозволу, налаштування і вихід із застосунку з поверненням. `osSim.js` відтворює задокументовані правила: на Android після другої відмови діалог більше не з’являється, на iOS — після першої.
+
+        Натисни **Запустити**, потім **Додати фото** і відповідай у діалозі на панелі **Не дозволяти** — двічі. Подивись, як змінюються екран і лічильник діалогів.
+      en: |
+        At the top is the habit lab screen `PhotoGate.jsx`, at the bottom the simulated OS panel: the permission dialog, Settings, and leaving the app and returning. `osSim.js` reproduces the documented rules: on Android the dialog no longer appears after the second denial, on iOS after the first.
+
+        Press **Run**, then **Add photo**, and answer **Don't allow** in the dialog on the panel — twice. Watch how the screen and the dialog counter change.
+    tryIt:
+      uk: |
+        1. Після двох відмов натисни **Налаштування: дозволити**, потім **Вийти й повернутися**. Екран досі каже, що камеру вимкнено: `PhotoGate` пам’ятає останню відповідь і не перечитує її.
+        2. Розкоментуй у `PhotoGate.jsx` ефект під коментарем «Re-read the permission…» і запусти знову. Повтори дві відмови, дозволь у налаштуваннях і поверни застосунок: тепер «Камера готова». Натисни **Налаштування: відкликати** й **Вийти й повернутися** — екран знову веде в налаштування.
+        3. У `main.jsx` зміни `platform: 'android'` на `'ios'` і запусти: після **першої** відмови кнопки «Спитати ще раз» уже немає.
+        4. Зміни `hasCamera: true` на `false` і запусти: обхідний шлях одразу, а лічильник діалогів лишається `0`.
+      en: |
+        1. After the two denials press **Settings: allow**, then **Leave and return**. The screen still says the camera is turned off: `PhotoGate` remembers the last answer and does not read it again.
+        2. In `PhotoGate.jsx` uncomment the effect under the “Re-read the permission…” comment and run again. Repeat the two denials, allow in Settings and bring the app back: now “The camera is ready.” Press **Settings: revoke** and **Leave and return** — the screen sends you to Settings again.
+        3. In `main.jsx` change `platform: 'android'` to `'ios'` and run: after the **first** denial there is no “Ask again” button any more.
+        4. Change `hasCamera: true` to `false` and run: the workaround at once, and the dialog counter stays at `0`.
+    limits:
+      uk: "Це перегляд у браузері через react-native-web, а не нативний застосунок. Діалог, налаштування й `AppState` тут намальовані й керовані `osSim.js`: він відтворює задокументовані правила Android і iOS, але не саму ОС. Тут немає справжнього діалогу дозволів, камери, завершення процесу після відкликання, нативних модулів, жестів, крім миші й клавіатури, вигляду платформи й продуктивності телефона. Справжню поведінку перевіряють на твоїй цілі в наступному уроці."
+      en: "This is a browser preview through react-native-web, not a native app. The dialog, Settings and `AppState` here are drawn and driven by `osSim.js`: it reproduces the documented Android and iOS rules, but not the OS itself. There is no real permission dialog, camera, process termination after a revoke, native modules, gestures beyond mouse and keyboard, platform look or phone performance. The real behavior is checked on your target in the next lesson."
+
+  - id: predict-cached-grant
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Екран тримає `const [granted, setGranted] = useState(false)`, ставить `true` після дозволу й більше ніколи не питає ОС. Людина дозволила камеру, згорнула застосунок, відкликала дозвіл у налаштуваннях, а процес застосунку вижив. Що покаже екран, коли людина повернеться, і що станеться, коли вона натисне «Зробити фото»?"
+      en: "A screen keeps `const [granted, setGranted] = useState(false)`, sets `true` after a grant and never asks the OS again. The person allowed the camera, put the app in the background, revoked the permission in Settings, and the app's process survived. What does the screen show when the person comes back, and what happens when they press “Take photo”?"
+    answer:
+      type: choice
+      options:
+        - id: stale
+          text:
+            uk: "Кнопку камери, ніби дозвіл є; натискання впирається в камеру, до якої вже немає доступу"
+            en: "The camera button, as if the permission were there; the press runs into a camera that is no longer accessible"
+        - id: settings
+          text:
+            uk: "«Відкрити налаштування»: React перемалює екран, коли дозвіл зміниться"
+            en: "“Open settings”: React re-renders the screen when the permission changes"
+          why:
+            uk: "React перемальовує екран, коли змінюється **стан React**. Дозвіл змінився в ОС, а `granted` — ні: ніхто не викликав `setGranted`."
+            en: "React re-renders when **React state** changes. The permission changed in the OS, but `granted` did not: nobody called `setGranted`."
+        - id: dialog
+          text:
+            uk: "Система сама покаже діалог дозволу знову"
+            en: "The system shows the permission dialog again by itself"
+          why:
+            uk: "Діалог з’являється лише у відповідь на запит застосунку. А цей застосунок вважає, що дозвіл має, і не питає."
+            en: "The dialog appears only in response to the app's request. This app believes it has the permission and does not ask."
+      correct: [stale]
+    explanation:
+      uk: "Збережений дозвіл — знімок минулого. Щойно ОС змінила стан, знімок бреше. Ліки — перечитувати стан при поверненні на передній план і перед дією, як у другому кроці прикладу."
+      en: "A saved grant is a snapshot of the past. As soon as the OS changed the state, the snapshot lies. The cure is to read the state again on return to the foreground and before the action, as in the example's second step."
+
+  - id: recall-permissions
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: ask-when
+        from: rn-06-06-permissions-capability-checks
+        prompt:
+          uk: "Застосунку для витрат камера потрібна лише для фото чека. Коли просити дозвіл?"
+          en: "An expense app needs the camera only for receipt photos. When should it ask for the permission?"
+        answer:
+          type: choice
+          options:
+            - id: at-use
+              text:
+                uk: "Коли людина вперше торкається «Сфотографувати чек», після перевірки, що камера є, і з поясненням"
+                en: "When the person first taps “Photograph receipt”, after checking that a camera exists, and with an explanation"
+            - id: at-launch
+              text:
+                uk: "Під час першого запуску, разом з усіма іншими дозволами"
+                en: "At first launch, together with all the other permissions"
+              why:
+                uk: "Без контексту людина не розуміє, навіщо дозвіл, і частіше відмовляє — а відмова на iOS остаточна вже з першого разу."
+                en: "Without context the person does not understand why the permission is needed and denies more often — and on iOS a denial is final from the very first time."
+            - id: never
+              text:
+                uk: "Ніколи: якщо дозволу немає, просто сховати кнопку"
+                en: "Never: if there is no permission, just hide the button"
+              why:
+                uk: "Тоді людина, що ще жодного разу не бачила діалогу, не має як увімкнути функцію. Потрібен запит у момент використання й обхідний шлях."
+                en: "Then a person who has never seen the dialog has no way to turn the feature on. A request at the moment of use and a workaround are both needed."
+          correct: [at-use]
+        explanation:
+          uk: "Запит у момент використання дає контекст. Цей урок додає, що буде **після** відповіді: окремий екран для кожного стану й жодного циклу."
+          en: "A request at the moment of use gives context. This lesson adds what comes **after** the answer: a separate screen for each state and no loop."
+      - id: foreground-return
+        from: rn-04-04-app-foreground-background
+        prompt:
+          uk: "Людина переходить з твого застосунку в інший, а за хвилину повертається. Яку подію застосунок отримує під час повернення?"
+          en: "The person switches from your app to another one and comes back a minute later. Which event does the app get on return?"
+        answer:
+          type: choice
+          options:
+            - id: active
+              text:
+                uk: "`AppState` змінюється на `active`; ефект, підписаний на `change`, бачить це"
+                en: "`AppState` changes to `active`; an effect subscribed to `change` sees it"
+            - id: mount
+              text:
+                uk: "Екран монтується заново, і його `useEffect` з порожнім списком залежностей запускається ще раз"
+                en: "The screen mounts again, and its `useEffect` with an empty dependency list runs once more"
+              why:
+                uk: "Поки процес живий, екран лишається змонтованим: перехід в інший застосунок його не демонтує. Повернення помічають через `AppState`."
+                en: "While the process lives, the screen stays mounted: switching to another app does not unmount it. A return is noticed through `AppState`."
+            - id: nothing
+              text:
+                uk: "Жодної: застосунок просто продовжує з того місця"
+                en: "None: the app simply continues where it was"
+              why:
+                uk: "Продовжує — так, але `AppState` повідомляє про перехід `background` → `active`, і саме на ньому перечитують те, що могло змінитися ззовні."
+                en: "It continues — yes, but `AppState` reports the `background` → `active` change, and that is where everything that could have changed outside is read again."
+          correct: [active]
+        explanation:
+          uk: "Повернення на передній план — момент перечитати те, що могло змінитися поза застосунком: сьогоднішню дату (RN-04) і тепер — дозволи."
+          en: "Returning to the foreground is the moment to read again whatever could have changed outside the app: today's date (RN-04) and now — permissions."
+
+  - id: capability-reducer
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: capability-reducer
+    entry: index.js
+    editable: [capability.ts]
+    title:
+      uk: "Reducer можливості: стан → режим інтерфейсу"
+      en: "A capability reducer: state → UI mode"
+    instructions:
+      uk: |
+        У `capability.ts` напиши дві чисті функції для екрана фото прогресу. Типи вже описано.
+
+        **`uiModeOf(state)`** обирає режим інтерфейсу:
+
+        - камери немає (`hasCamera: false`) — `'fallback'`, що б не казав дозвіл;
+        - камеру ще не перевірили або дозвіл ще не прочитали — `'checking'`;
+        - діалог відкритий (`requesting: true`) — `'waiting'`;
+        - `granted` — `'ready'`; `undetermined` — `'request'`;
+        - `denied` з `canAskAgain: true` — `'rationale'`, з `canAskAgain: false` — `'open-settings'`.
+
+        **`capabilityReducer(state, event)`** повертає **новий** стан і ніколи не змінює старого:
+
+        - `capability-checked` записує `hasCamera`;
+        - `permission-read` записує свіжий `permission` від ОС — навіть якщо раніше був `granted`;
+        - `request-started` ставить `requesting: true` **лише** тоді, коли режим зараз `'request'` або `'rationale'`; інакше повертає стан без змін (так немає циклу запитів);
+        - `request-finished` записує `permission` і ставить `requesting: false`.
+
+        `index.js` прокручує одну історію й друкує режим після кожної події.
+      en: |
+        In `capability.ts` write two pure functions for the progress-photo screen. The types are already described.
+
+        **`uiModeOf(state)`** picks the UI mode:
+
+        - no camera (`hasCamera: false`) — `'fallback'`, whatever the permission says;
+        - camera not checked yet or permission not read yet — `'checking'`;
+        - a dialog is open (`requesting: true`) — `'waiting'`;
+        - `granted` — `'ready'`; `undetermined` — `'request'`;
+        - `denied` with `canAskAgain: true` — `'rationale'`, with `canAskAgain: false` — `'open-settings'`.
+
+        **`capabilityReducer(state, event)`** returns a **new** state and never changes the old one:
+
+        - `capability-checked` records `hasCamera`;
+        - `permission-read` records the fresh `permission` from the OS — even if it was `granted` before;
+        - `request-started` sets `requesting: true` **only** when the mode is currently `'request'` or `'rationale'`; otherwise it returns the state unchanged (that is how there is no request loop);
+        - `request-finished` records `permission` and sets `requesting: false`.
+
+        `index.js` runs one story through it and prints the mode after each event.
+    testTitles:
+      "nothing checked yet is checking":
+        uk: "Поки нічого не перевірено — `checking`"
+        en: "Nothing checked yet is `checking`"
+      "a missing camera is the fallback, whatever the permission says":
+        uk: "Без камери — `fallback`, що б не казав дозвіл"
+        en: "A missing camera is `fallback`, whatever the permission says"
+      "each permission answer maps to its own mode":
+        uk: "Кожна відповідь про дозвіл має свій режим"
+        en: "Each permission answer maps to its own mode"
+      "a request shows waiting, then the answer":
+        uk: "Запит показує `waiting`, а потім відповідь"
+        en: "A request shows `waiting`, then the answer"
+      "a request is ignored where the screen offers no request button":
+        uk: "Запит ігнорується там, де екран не пропонує кнопки запиту"
+        en: "A request is ignored where the screen offers no request button"
+      "a fresh read replaces an earlier grant":
+        uk: "Свіже читання замінює попередній дозвіл"
+        en: "A fresh read replaces an earlier grant"
+      "the reducer returns new states and never changes the old one":
+        uk: "Reducer повертає нові стани й не змінює старого"
+        en: "The reducer returns new states and never changes the old one"
+    hints:
+      nudge:
+        uk: "Порядок перевірок в `uiModeOf` важить: що має перемогти, якщо камери немає, а дозвіл `granted`? А в reducer: як дізнатися, чи можна зараз починати запит, не повторюючи правил вибору режиму?"
+        en: "The order of checks in `uiModeOf` matters: what must win if there is no camera but the permission is `granted`? And in the reducer: how do you find out whether a request may start now without repeating the mode rules?"
+      explanation:
+        uk: "У `uiModeOf` спершу йдуть перевірки, що не залежать від дозволу (обладнання, «ще не відомо», відкритий діалог), а вже потім — відповідь ОС. Reducer може викликати `uiModeOf(state)` сам: режим — це вже готова відповідь на питання «чи є на екрані кнопка, що питає». Новий стан роблять розгортанням: наприклад, для лічильника `{ ...counter, value: counter.value + 1 }` — старий об’єкт лишається тим самим. Подія, яку треба проігнорувати, просто повертає `state`."
+        en: "In `uiModeOf` the checks that do not depend on the permission come first (hardware, “not known yet”, an open dialog), and only then the OS's answer. The reducer may call `uiModeOf(state)` itself: the mode already answers “is there a button on screen that asks”. A new state is made by spreading: for a counter, say, `{ ...counter, value: counter.value + 1 }` — the old object stays the same. An event that must be ignored simply returns `state`."
+    solutionNote:
+      uk: "Уся платформна різниця — у даних: iOS після першої відмови й Android після другої просто повертають `canAskAgain: false`, і той самий код показує «Відкрити налаштування». Відсутня камера перемагає все інше, тож людина без камери ніколи не бачить ні діалогу, ні поради йти в налаштування. `request-started` дивиться на поточний режим — тому повторні натискання, відкритий діалог чи заблокований дозвіл не породжують запитів. А `permission-read` завжди довіряє ОС, тож відкликання помічається при першому ж поверненні."
+      en: "All platform differences live in the data: iOS after the first denial and Android after the second simply return `canAskAgain: false`, and the same code shows “Open settings”. A missing camera beats everything else, so a person without a camera never sees either a dialog or advice to go to Settings. `request-started` looks at the current mode — that is why repeated presses, an open dialog or a blocked permission produce no requests. And `permission-read` always trusts the OS, so a revoke is noticed on the very first return."
+    feedback:
+      - when: { test: "nothing checked yet is checking" }
+        message:
+          uk: "Ця перевірка очікує `'checking'` для початкового стану й для стану, де камеру вже перевірено, а дозвіл ще не прочитано."
+          en: "This check expects `'checking'` for the initial state and for a state where the camera was checked but the permission was not read yet."
+      - when: { test: "a missing camera is the fallback, whatever the permission says" }
+        message:
+          uk: "Ця перевірка очікує `'fallback'` для `hasCamera: false` — і без дозволу, і з `granted`, і з заблокованим дозволом, і після `request-started`. Перевірка камери має йти в `uiModeOf` раніше за дозвіл."
+          en: "This check expects `'fallback'` for `hasCamera: false` — without a permission, with `granted`, with a blocked permission and after `request-started`. The camera check must come before the permission in `uiModeOf`."
+      - when: { test: "each permission answer maps to its own mode" }
+        message:
+          uk: "Ця перевірка очікує: `undetermined` — `'request'`, `granted` — `'ready'`, `denied` з `canAskAgain: true` — `'rationale'`, `denied` з `canAskAgain: false` — `'open-settings'`."
+          en: "This check expects: `undetermined` — `'request'`, `granted` — `'ready'`, `denied` with `canAskAgain: true` — `'rationale'`, `denied` with `canAskAgain: false` — `'open-settings'`."
+      - when: { test: "a request shows waiting, then the answer" }
+        message:
+          uk: "Ця перевірка очікує `'waiting'` одразу після `request-started`, а після `request-finished` — режим за новою відповіддю: `'rationale'`, `'open-settings'` чи `'ready'`."
+          en: "This check expects `'waiting'` right after `request-started`, and after `request-finished` the mode for the new answer: `'rationale'`, `'open-settings'` or `'ready'`."
+      - when: { test: "a request is ignored where the screen offers no request button" }
+        message:
+          uk: "Ця перевірка очікує, що `request-started` нічого не змінює в режимах `'open-settings'`, `'ready'` і `'checking'`, а другий `request-started` під час відкритого діалогу не починає нового запиту — одна відповідь його завершує."
+          en: "This check expects `request-started` to change nothing in the modes `'open-settings'`, `'ready'` and `'checking'`, and a second `request-started` while a dialog is open not to start a new request — one answer ends it."
+      - when: { test: "a fresh read replaces an earlier grant" }
+        message:
+          uk: "Ця перевірка очікує, що `permission-read` завжди записує нову відповідь ОС: після `granted` і читання `denied` режим — `'open-settings'` чи `'rationale'`, а після заблокованого й читання `granted` — `'ready'`."
+          en: "This check expects `permission-read` to always record the OS's new answer: after `granted` and a `denied` read the mode is `'open-settings'` or `'rationale'`, and after blocked and a `granted` read it is `'ready'`."
+      - when: { test: "the reducer returns new states and never changes the old one" }
+        message:
+          uk: "Ця перевірка передає reducer один і той самий стан кілька разів і очікує, що він лишився незмінним, а `request-started` повернув новий об’єкт. Будуй новий стан через `{ ...state, … }`, а не присвоєнням у `state`."
+          en: "This check passes the same state to the reducer several times and expects it to stay unchanged, and `request-started` to return a new object. Build the new state with `{ ...state, … }`, not by assigning into `state`."
+      - when: { error: TypeError }
+        message:
+          uk: "Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі. Часта причина — читання `state.permission.status`, коли `permission` ще `null`."
+          en: "If every check fails at once, fix the first console error first. A common cause is reading `state.permission.status` while `permission` is still `null`."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-RN
+    body:
+      uk: "Твій проєкт дозволів пристрою не потребує, і на контрольній точці CP-RN це треба лише підтвердити: застосунок не просить жодного дозволу. А підхід цього уроку — читати стан у джерела під час повернення на передній план, а не з учорашньої змінної — той самий, яким проєкт з RN-04 оновлює сьогоднішню дату для `countDueTasks` чи `summarizeHabit`."
+      en: "Your project needs no device permissions, and at the CP-RN checkpoint you only have to confirm it: the app asks for no permission. And this lesson's approach — read the state from its source on return to the foreground, not from yesterday's variable — is the same one the project from RN-04 uses to refresh today's date for `countDueTasks` or `summarizeHabit`."
