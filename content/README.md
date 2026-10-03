@@ -131,7 +131,7 @@ blocks: [ … ]                     # read top to bottom; every example/exercise
 
 ### Block kinds
 
-Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are plain text (no backticks or other Markdown); exercise `testTitles` are inline Markdown (code spans are fine, no block markup). All other text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts).
+Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are plain text (no backticks or other Markdown); exercise `testTitles` are inline Markdown (code spans are fine, no block markup). All other text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts). Raw HTML is not markup: a tag written in prose (`<ul>`, “<name>”) is shown literally as text, so quote tags freely, preferably in a code span; links are kept only for `https:`, `http:`, `mailto:`, relative and `#` addresses.
 
 ```yaml
 - id: keep-what-matters

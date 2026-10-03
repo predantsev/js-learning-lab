@@ -84,8 +84,15 @@ export function createMarkdown(glossary) {
         if (m) return `<aside class="callout callout-${m[1].toLowerCase()}">${html.replace(m[0], '<p>')}</aside>\n`;
         return `<blockquote>${html}</blockquote>\n`;
       },
+      // Raw HTML in authored Markdown is shown as text, never inserted as markup: prose quotes tags
+      // (`<ul>`, “<name>”) far more often than it means them, and markup from content must not run.
+      html({ text }) {
+        return escapeHtml(text);
+      },
       link({ href, title, tokens }) {
         const text = this.parser.parseInline(tokens);
+        // Only web, mail, relative and in-page addresses become links (no javascript: or data: URLs).
+        if (/^\s*[a-z][a-z0-9+.-]*:/i.test(href) && !/^(https?|mailto):/i.test(href.trim())) return text;
         const external = /^https?:/i.test(href);
         return `<a href="${escapeHtml(href)}"${title ? ` title="${escapeHtml(title)}"` : ''}${external ? ' target="_blank" rel="noopener noreferrer" data-external="true"' : ''}>${text}</a>`;
       },

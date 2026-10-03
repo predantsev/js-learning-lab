@@ -78,3 +78,19 @@ test('review questions share the review block strings; strings on a question are
   assert.ok(misplaced.includes('put strings on the review block: its questions share one table'), misplaced.join('\n'));
   assert.ok(misplaced.some((m) => /placeholder %%hi%% has no entry in strings \(the review block's strings/.test(m)), misplaced.join('\n'));
 });
+
+test('raw HTML in Markdown prose is shown as text, never as markup (block, inline and text equivalents)', async () => {
+  const sample = 'Look: <img src=x onerror="alert(1)"> and <b>bold</b>';
+  for (const html of [md.block(sample), md.inline(sample), md.block(`<div>\n${sample}\n</div>`)]) {
+    assert.doesNotMatch(html, /<img|<b>|<div>/, html);
+    assert.match(html, /&lt;img src=x onerror=&quot;alert\(1\)&quot;&gt;/);
+  }
+  // Intended Markdown keeps working, and code spans and fences still show tags as code.
+  assert.equal(md.inline('**a** `<ul>` [[closure]]'), '<strong>a</strong> <code>&lt;ul&gt;</code> <button type="button" class="term" data-term="closure">closure</button>');
+  assert.match(md.block('```html\n<ul></ul>\n```'), /<pre class="code" data-lang="html"><code>.*&lt;/s);
+  const visual = await compiledBlock({ id: 'pic', kind: 'visual', visual: 'diagram', title: pair('Т', 'T'), textEquivalent: pair(sample), spec: {} });
+  assert.doesNotMatch(visual.textEquivalent.uk, /<img/);
+  // Links: web, relative and in-page addresses only.
+  assert.match(md.inline('[ok](https://example.com) [rel](./a.html) [top](#x)'), /href="https:\/\/example.com".*href=".\/a.html".*href="#x"/);
+  assert.equal(md.inline('[click](javascript:alert(1))'), 'click');
+});
