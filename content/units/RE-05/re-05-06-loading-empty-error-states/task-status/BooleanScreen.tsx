@@ -7,20 +7,15 @@ export function BooleanScreen() {
   const [error, setError] = useState<string | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
 
-  async function load() {
-    setIsLoading(true);
-    try {
-      setTasks(await loadTasks());
-    } catch {
-      setError("%%loadFailed%%");
-    } finally {
-      setIsLoading(false);
-    }
-  }
+  const [attempt, setAttempt] = useState(0); // Refresh bumps it, and the effect loads again
 
   useEffect(() => {
-    load();
-  }, []);
+    setIsLoading(true);
+    loadTasks()
+      .then((loaded) => setTasks(loaded))
+      .catch(() => setError("%%loadFailed%%"))
+      .finally(() => setIsLoading(false));
+  }, [attempt]);
 
   if (isLoading) return <p>%%loading%%</p>;
   return (
@@ -35,7 +30,7 @@ export function BooleanScreen() {
           ))}
         </ul>
       )}
-      <button onClick={load}>%%refresh%%</button>
+      <button onClick={() => setAttempt(attempt + 1)}>%%refresh%%</button>
     </section>
   );
 }

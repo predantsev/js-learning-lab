@@ -15,19 +15,19 @@ function assertNever(value: never): never {
 export function StatusScreen() {
   const [status, setStatus] = useState<Status>({ kind: "loading" });
 
-  async function load() {
-    setStatus({ kind: "loading" });
-    try {
-      const tasks = await loadTasks();
-      setStatus(tasks.length === 0 ? { kind: "empty" } : { kind: "ready", tasks });
-    } catch {
-      setStatus({ kind: "error", message: "%%loadFailed%%" });
-    }
-  }
+  const [attempt, setAttempt] = useState(0); // Refresh and Try again bump it
 
   useEffect(() => {
-    load();
-  }, []);
+    loadTasks().then(
+      (tasks) => setStatus(tasks.length === 0 ? { kind: "empty" } : { kind: "ready", tasks }),
+      () => setStatus({ kind: "error", message: "%%loadFailed%%" }),
+    );
+  }, [attempt]);
+
+  function load() {
+    setStatus({ kind: "loading" });
+    setAttempt(attempt + 1);
+  }
 
   switch (status.kind) {
     case "loading":
