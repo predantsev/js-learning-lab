@@ -94,6 +94,8 @@ test('unsafe or broken note links are refused with their reason', () => {
     ['jsll-notes://notes/n-12', 'invalid-id'],
     ['jsll-notes://notes/%E0%A4%A', 'invalid-id'],
     ['notes/n-012', 'malformed-url'],
+    ['jsll-notes://notes/n-12?token=tok_x', 'credential-param'],
+    ['https://attacker.example/notes/n-012?token=tok_x', 'unknown-origin'],
   ];
   for (const [url, reason] of cases) expect(link(url), url).toEqual({ ok: false, reason });
 });

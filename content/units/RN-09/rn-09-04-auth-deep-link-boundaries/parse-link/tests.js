@@ -34,6 +34,7 @@ test('a link from another scheme or host is refused', () => {
     'https://attacker.example/lab.jsll.example/records/planner/t-05',
     'http://lab.jsll.example/records/planner/t-05',
     'other-app://records/planner/t-05',
+    'https://lab.jsll.example.attacker.example/records/planner/t-05?token=tok_x',
   ]) {
     expect(parse(url), url).toEqual(refused('unknown-origin'));
   }
@@ -47,6 +48,7 @@ test('a link with a credential-like parameter is refused, whatever its case', ()
     'https://lab.jsll.example/records/planner/t-05?SessionId=abc',
     'jsll-lab://records/planner/t-05?view=full&apiKey=k',
     'jsll-lab://records/planner/t-05?Password=1',
+    'jsll-lab://records/planner/t-5?token=tok_x',
   ]) {
     expect(parse(url), url).toEqual(refused('credential-param'));
   }
