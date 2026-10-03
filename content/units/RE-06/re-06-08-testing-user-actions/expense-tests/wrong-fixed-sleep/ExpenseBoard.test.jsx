@@ -10,7 +10,7 @@ test("%%testAdd%%", async () => {
   await user.type(screen.getByLabelText("%%amountField%%"), "210.50");
   await user.click(screen.getByRole("button", { name: "%%save%%" }));
 
-  await sleep(700); // "long enough" for the server
+  await sleep(500); // "long enough" for the server
   expect(screen.getByText("%%lunch%% — 210.50") !== null, "%%mInList%%").toBe(true);
   expect(screen.getByRole("status").textContent, "%%mStatus%%").toBe("%%saved%%");
 });
@@ -24,7 +24,7 @@ test("%%testFail%%", async () => {
   await user.type(screen.getByLabelText("%%amountField%%"), "210.50");
   await user.click(screen.getByRole("button", { name: "%%save%%" }));
 
-  await sleep(700);
+  await sleep(500);
   expect(screen.getByRole("alert").textContent, "%%mAlert%%").toBe("%%saveFailed%%");
   expect(screen.queryAllByRole("listitem").length, "%%mCount%%").toBe(2);
   expect(screen.queryByText("%%lunch%% — 210.50"), "%%mNotAdded%%").toBe(null);

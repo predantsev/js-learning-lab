@@ -7,11 +7,15 @@ import { searchWishes, updateWish } from './api.js';
 
 async function runSuite(replacement) {
   testing.restoreComponents();
-  if (replacement) testing.replaceComponent(WishBoard, replacement);
+  if (replacement) {
+    testing.replaceComponent(WishBoard, replacement);
+    testing.setDefaultTimeout(800);
+  }
   try {
-    return await testing.run({ print: false, beforeEach: resetServer });
+    return await testing.run({ print: false, beforeEach: resetServer, bail: Boolean(replacement) });
   } finally {
     testing.restoreComponents();
+    testing.setDefaultTimeout(2000);
   }
 }
 const failing = (results) => results.filter((result) => !result.passed).map((result) => `${result.name} — ${result.message}`);

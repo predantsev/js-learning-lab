@@ -7,8 +7,8 @@ const START = [
 ];
 
 export const settings = {
-  readDelayMs: 150, // how long reading the list takes
-  saveDelayMs: 300, // how long saving takes (the course checks also try a much slower save)
+  readDelayMs: 80, // how long reading the list takes
+  saveDelayMs: 200, // how long saving takes (the course checks also try a much slower save)
   failNext: 0, // how many of the next saves answer 503
 };
 

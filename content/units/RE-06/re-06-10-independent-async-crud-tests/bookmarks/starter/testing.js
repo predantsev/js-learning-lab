@@ -103,12 +103,12 @@ function nameOf(node) {
   return textOf(node);
 }
 
-// The deepest element whose whole text is exactly `text`.
-function findText(text) {
-  return [...area().querySelectorAll("*")].find((node) => textOf(node) === text && ![...node.children].some((child) => textOf(child) === text)) ?? null;
+// The deepest element inside `root` whose whole text is exactly `text`.
+function findText(root, text) {
+  return [...root.querySelectorAll("*")].find((node) => textOf(node) === text && ![...node.children].some((child) => textOf(child) === text)) ?? null;
 }
-function findRole(role, name) {
-  return [...area().querySelectorAll("*")].filter((node) => roleOf(node) === role && (name === undefined || nameOf(node) === name));
+function findRole(root, role, name) {
+  return [...root.querySelectorAll("*")].filter((node) => roleOf(node) === role && (name === undefined || nameOf(node) === name));
 }
 function required(found, what) {
   if (!found) throw new AssertionError(`${WORDS.notFound} ${what}`);
@@ -131,19 +131,29 @@ export async function waitFor(check, { timeout = defaultTimeoutMs } = {}) {
   }
 }
 
-export const screen = {
-  // query… — what is on the screen now, or null / [].
-  queryByText: (text) => findText(text),
-  queryByRole: (role, { name } = {}) => findRole(role, name)[0] ?? null,
-  queryAllByRole: (role, { name } = {}) => findRole(role, name),
-  // get… — what is on the screen now; a test fails if it is not there.
-  getByText: (text) => required(findText(text), JSON.stringify(text)),
-  getByRole: (role, { name } = {}) => required(findRole(role, name)[0], `role="${role}"${name ? ` "${name}"` : ""}`),
-  getByLabelText: (text) => required([...area().querySelectorAll("label")].find((label) => textOf(label) === text)?.control, `label ${JSON.stringify(text)}`),
-  // find… — waits until it appears (2 s at most); use it after anything asynchronous.
-  findByText: (text, options) => waitFor(() => screen.getByText(text), options),
-  findByRole: (role, query, options) => waitFor(() => screen.getByRole(role, query), options),
-};
+// The same queries, looking inside the element `getRoot()` returns.
+function queriesIn(getRoot) {
+  const queries = {
+    // query… — what is there now, or null / [].
+    queryByText: (text) => findText(getRoot(), text),
+    queryByRole: (role, { name } = {}) => findRole(getRoot(), role, name)[0] ?? null,
+    queryAllByRole: (role, { name } = {}) => findRole(getRoot(), role, name),
+    // get… — what is there now; a test fails if it is not there.
+    getByText: (text) => required(findText(getRoot(), text), JSON.stringify(text)),
+    getByRole: (role, { name } = {}) => required(findRole(getRoot(), role, name)[0], `role="${role}"${name ? ` "${name}"` : ""}`),
+    getByLabelText: (text) => required([...getRoot().querySelectorAll("label")].find((label) => textOf(label) === text)?.control, `label ${JSON.stringify(text)}`),
+    // find… — waits until it appears (2 s at most); use it after anything asynchronous.
+    findByText: (text, options) => waitFor(() => queries.getByText(text), options),
+    findByRole: (role, query, options) => waitFor(() => queries.getByRole(role, query), options),
+  };
+  return queries;
+}
+
+// Queries over what was rendered last.
+export const screen = queriesIn(area);
+
+// Queries inside one element, for example one row of a list: within(row).getByRole("button", { name: "…" }).
+export const within = (element) => queriesIn(() => element);
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const setValue = (input, value) => Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, value);

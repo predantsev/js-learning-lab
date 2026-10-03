@@ -5,15 +5,23 @@ import { settings, resetServer } from './fakeServer.js';
 
 // The learner's tests were registered when main.jsx imported ExpenseBoard.test.jsx; here they run
 // again with print: false, sometimes against a broken copy of ExpenseBoard put in its place.
+// Against a broken copy the run stops at the first failing test, and waiting is shortened.
 async function runSuite({ replacement, slow = false } = {}) {
   testing.restoreComponents();
-  if (replacement) testing.replaceComponent(ExpenseBoard, replacement);
-  settings.saveDelayMs = slow ? 1000 : 300;
+  if (replacement) {
+    testing.replaceComponent(ExpenseBoard, replacement);
+    testing.setDefaultTimeout(800);
+  }
+  const prepare = () => {
+    resetServer();
+    settings.saveDelayMs = slow ? 1000 : 200;
+  };
   try {
-    return await testing.run({ print: false, beforeEach: resetServer });
+    return await testing.run({ print: false, beforeEach: prepare, bail: Boolean(replacement) });
   } finally {
     testing.restoreComponents();
-    settings.saveDelayMs = 300;
+    testing.setDefaultTimeout(2000);
+    settings.saveDelayMs = 200;
   }
 }
 const failing = (results) => results.filter((result) => !result.passed).map((result) => `${result.name} — ${result.message}`);

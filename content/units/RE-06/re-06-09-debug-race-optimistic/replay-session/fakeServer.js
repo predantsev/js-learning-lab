@@ -30,11 +30,17 @@ export function resetServer() {
   settings.failNext = 0;
 }
 
-// Resolves once no request is on its way and React has had a moment to show the answers:
-// a deterministic way to wait even for a late response.
+// Resolves once no request has been on its way for 30 ms, so React has had a moment to show
+// the answers and to start any follow-up request: a deterministic way to wait even for a late response.
 export function whenIdle() {
   return new Promise((resolve) => {
-    const check = () => (pending === 0 ? setTimeout(resolve, 30) : setTimeout(check, 10));
+    let quietSince = null;
+    const check = () => {
+      if (pending > 0) quietSince = null;
+      else if (quietSince === null) quietSince = Date.now();
+      else if (Date.now() - quietSince >= 30) return resolve();
+      setTimeout(check, 10);
+    };
     check();
   });
 }

@@ -115,7 +115,9 @@ function required(found, what) {
   return found;
 }
 
-export async function waitFor(check, { timeout = 2000 } = {}) {
+let defaultTimeoutMs = 2000;
+
+export async function waitFor(check, { timeout = defaultTimeoutMs } = {}) {
   const started = Date.now();
   for (;;) {
     try {
@@ -165,7 +167,8 @@ export const user = {
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // Runs every registered test, one after another, and prints one line per test.
-export async function run({ print = true, beforeEach } = {}) {
+// `bail: true` stops at the first failing test.
+export async function run({ print = true, beforeEach, bail = false } = {}) {
   const results = [];
   for (const { name, fn } of registered) {
     try {
@@ -178,6 +181,7 @@ export async function run({ print = true, beforeEach } = {}) {
     } finally {
       cleanup();
     }
+    if (bail && !results.at(-1).passed) break;
   }
   if (print) {
     if (results.length === 0) console.log(WORDS.noTests);
@@ -198,4 +202,9 @@ export function replaceComponent(original, replacement) {
 
 export function restoreComponents() {
   replacements.clear();
+}
+
+// For the course checks only: how long find… and waitFor wait when no timeout is given.
+export function setDefaultTimeout(ms) {
+  defaultTimeoutMs = ms;
 }
