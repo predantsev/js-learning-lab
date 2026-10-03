@@ -222,10 +222,14 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are
   kind: review
   title: { uk, en }
   items:
-    - id: scope-of-let
+    - id: scope-of-let            # quote ids YAML would read as another type: id: "null", id: "true"
       from: js-02-03-block-scope  # the earlier lesson being retrieved
       prompt: { uk, en }
-      answer: { … }               # same shapes as prediction; `code`/`verify` allowed
+      code: |                     # optional, as in a prediction (also `lang`, `runnable`)
+        { let n = 1; } console.log(typeof n);
+      verify: { logs: ["undefined"] }   # as in a prediction: runs this question's own `code`, so
+                                  #   verify needs `code` on the same question (never inside `answer`)
+      answer: { … }               # same shapes as prediction
       explanation: { uk, en }
 
 - id: to-project

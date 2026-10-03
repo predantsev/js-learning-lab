@@ -156,6 +156,29 @@ test('a diagram wider than the 450 px lesson column is a warning while authoring
   assert.deepEqual(await compile(narrow, false), []);
 });
 
+test('an id that YAML read as null, a boolean or a number is reported with its cause and path', () => {
+  const issuesOf = (blocks) => staticIssuesForLesson(lessonWith(blocks), ctx).map((i) => `${i.path}: ${i.message}`);
+  const prediction = (options) => ({ id: 'guess', kind: 'prediction', prompt: pair('п', 'p'), explanation: pair('е', 'e'), answer: { type: 'choice', options, correct: ['a'] } });
+  const found = issuesOf([prediction([{ id: 'a', text: pair('а', 'a') }, { id: null, text: pair('н', 'n') }, { id: true, text: pair('т', 't') }])]);
+  assert.ok(found.some((m) => /block "guess"\.answer\.options\[1\]\.id: id is null \(unquoted null or ~\?/.test(m)), found.join('\n'));
+  assert.ok(found.some((m) => /block "guess"\.answer\.options\[2\]\.id: id is the YAML boolean true, not text \(unquoted\? quote it: id: "true"\)/.test(m)), found.join('\n'));
+  const block = issuesOf([{ id: null, kind: 'explanation', title: pair('т', 't'), body: pair('т', 't') }]);
+  assert.ok(block.some((m) => /› blocks\[0\]\.id: id is null/.test(m)), block.join('\n'));
+  const review = issuesOf([{ id: 'recall', kind: 'review', title: pair('П', 'R'), items: [{ id: null, from: 'js-01-01-code-runs', prompt: pair('п', 'p'), answer: { type: 'text', accept: ['1'] }, explanation: pair('е', 'e') }] }]);
+  assert.ok(review.some((m) => /block "recall"\.items\[0\]\.id: id is null/.test(m)), review.join('\n'));
+});
+
+test('verify on a review question needs that question\'s own code; code or verify inside answer is reported', () => {
+  const item = (extra) => ({ id: 'recall', kind: 'review', title: pair('П', 'R'), items: [{ id: 'q', from: 'js-01-01-code-runs', prompt: pair('п', 'p'), answer: { type: 'text', accept: ['1'] }, explanation: pair('е', 'e'), ...extra }] });
+  const issuesOf = (extra) => staticIssuesForLesson(lessonWith([item(extra)]), ctx).map((i) => `${i.path}: ${i.message}`);
+  assert.deepEqual(issuesOf({ code: 'console.log(1);', verify: { logs: ['1'] } }), []);
+  const noCode = issuesOf({ verify: { logs: ['1'] } });
+  assert.equal(noCode.length, 1);
+  assert.match(noCode[0], /items\[0\]\.verify: verify runs this question's own "code" field \(as in a prediction\)/);
+  const nested = issuesOf({ answer: { type: 'text', accept: ['1'], code: 'console.log(1);', verify: { logs: ['1'] } } });
+  assert.ok(nested.some((m) => /items\[0\]\.answer\.verify: "verify" belongs to the question, next to "prompt", not inside "answer"/.test(m)), nested.join('\n'));
+});
+
 test('a local-task tool version is a plain string or bilingual text, compiled as plain text', async () => {
   const task = (version) => ({ id: 'local', kind: 'local-task', runtime: 'local-node', title: pair('Т', 'T'), intro: pair('і', 'i'), tools: [{ name: 'Node.js', version }], steps: [{ text: pair('к', 's') }], verify: [{ id: 'v', text: pair('в', 'v') }], troubleshooting: [{ problem: pair('п', 'p'), fix: pair('ф', 'f') }], recovery: pair('р', 'r') });
   const localized = await compiledBlock(task({ uk: '22.13 або новіший', en: '22.13 or **newer**' }));
