@@ -164,6 +164,16 @@ test('a rejected save is announced and keeps the draft', async () => {
   } finally { app.finish(); }
 });
 
+test('a damaged answer to a write is announced and keeps the draft', async () => {
+  const app = await mountApp();
+  try {
+    server.writeOverride = { id: 'b-03', title: L.bookRiver };
+    await fillForm(app, L.bookRiver, L.authorRiver, '240');
+    expect(app.alerts(), 'texts of role="alert"').toEqual([L.badResponse]);
+    expect(app.field(L.titleLabel), 'the title field').toHaveValue(L.bookRiver);
+  } finally { app.finish(); }
+});
+
 test('marking a book done requests the list again and shows the new status', async () => {
   const app = await mountApp();
   try {
