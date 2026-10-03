@@ -8,5 +8,7 @@ export function median(values) {
 // fn returns the number of operations it made. Returns one row per size, in the order of sizes:
 // { size, operations, medianMs }.
 export function measure(fn, sizes, repeats) {
+  const rows = [];
   // your code here
+  return rows;
 }

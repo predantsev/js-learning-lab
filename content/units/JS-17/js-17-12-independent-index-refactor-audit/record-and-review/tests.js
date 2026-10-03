@@ -4,10 +4,12 @@ const FILE = 'domain/locker.js';
 const lineOf = (line) => (files[`after/${FILE}`] ?? '').split('\n')[line - 1];
 const text = (value, min = 10) => typeof value === 'string' && value.trim().length >= min;
 // The defects of the pull request, by a piece of the line that carries them.
+// A comment may point at the method's first line or at the line inside it that carries the defect.
 const DEFECTS = {
-  'no duplicate check': (line) => line.includes('byCode.set(parcel.code, parcel)'),
-  'undefined instead of null': (line) => line.includes('return byCode.get(code);'),
-  'picked-up parcels stay in the queue': (line) => line.includes('byCode.delete(code)') || line.includes('queue.shift()') || line.includes('return queue.length'),
+  'no duplicate check': (line) => line.includes('arrive(parcel)') || line.includes('byCode.set(parcel.code, parcel)'),
+  'undefined instead of null': (line) => line.includes('findByCode(code)') || line.includes('return byCode.get(code);'),
+  'picked-up parcels stay in the queue': (line) =>
+    ['pickUp(code)', 'byCode.delete(code)', 'nextToReturn()', 'queue.shift()', 'waitingCount()', 'return queue.length', 'oldest(limit)', 'queue.slice(0, limit)'].some((piece) => line.includes(piece)),
 };
 const decision = () => {
   expect(typeof written.decision, 'type of the decision export of record.js').toBe('object');

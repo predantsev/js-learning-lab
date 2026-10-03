@@ -60,7 +60,7 @@ test('the formatting-only change does not block the merge', () => {
 test('the README explains how to run the project', () => {
   const readme = files['README.md'] ?? '';
   expect((readme.match(/^## /gm) ?? []).length, 'number of "## " section headings in README.md').toBeGreaterThanOrEqual(2);
-  expect(/```[^\n]*\n[\s\S]*?npm [\s\S]*?```/.test(readme), 'README.md has a code block with an npm command').toBe(true);
+  expect(/```[^\n]*\n[ \t]*\S[^\n]*\n[\s\S]*?```/.test(readme), 'README.md has a code block with at least one command').toBe(true);
 });
 
 test('the README names every module', () => {

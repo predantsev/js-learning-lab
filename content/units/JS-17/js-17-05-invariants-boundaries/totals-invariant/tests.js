@@ -49,6 +49,14 @@ test('throws when a category of the records has no total', () => {
   expect(thrown(() => assertInvariant(totals)) instanceof Error, 'an Error when transport has records but no total').toBe(true);
 });
 
+test('throws when a category has a total but no records', () => {
+  const assertInvariant = check();
+  const totals = buildTotals(fixtures());
+  totals.byCategory.set('fun', 500);
+  totals.overall = totals.overall + 500;
+  expect(thrown(() => assertInvariant(totals)) instanceof Error, 'an Error when fun has a total of 500 but no records (overall raised to match)').toBe(true);
+});
+
 test('throws when a record is stored under another id', () => {
   const assertInvariant = check();
   const totals = buildTotals(fixtures());
@@ -69,7 +77,7 @@ test('does not change the index', () => {
 // ---- your tests in totals.test.js, run against the real totals.js and against broken ones ----
 const SUITE_FILE = 'totals.test.js';
 const fill = (code) => code.replace(/%%([a-zA-Z0-9_]+)%%/g, (match, key) => L[key] ?? match);
-const REFERENCE_INVARIANT = fill("// assertInvariant(totals) returns nothing when the index is consistent and throws an Error\n// with a clear message when it is not. The invariant of the index:\n// 1. every record is stored under its own id;\n// 2. the total of every category equals the sum of amountMinor of the records in that category,\n//    and every category of the records has a total;\n// 3. overall equals the sum of the category totals.\n// It does not change the index.\nexport function assertInvariant(totals) {\n  const fromRecords = new Map();\n  for (const [id, expense] of totals.records) {\n    if (expense.id !== id) {\n      throw new Error(`%%wrongKey%% ${id} \u2192 ${expense.id}`);\n    }\n    fromRecords.set(expense.category, (fromRecords.get(expense.category) ?? 0) + expense.amountMinor);\n  }\n  for (const [category, sum] of fromRecords) {\n    if (totals.byCategory.get(category) !== sum) {\n      throw new Error(`%%wrongCategory%% ${category}: ${totals.byCategory.get(category)} \u2260 ${sum}`);\n    }\n  }\n  let overall = 0;\n  for (const total of totals.byCategory.values()) {\n    overall = overall + total;\n  }\n  if (overall !== totals.overall) {\n    throw new Error(`%%wrongOverall%% ${totals.overall} \u2260 ${overall}`);\n  }\n}\n");
+const REFERENCE_INVARIANT = fill("// assertInvariant(totals) returns nothing when the index is consistent and throws an Error\n// with a clear message when it is not. The invariant of the index:\n// 1. every record is stored under its own id;\n// 2. the total of every category equals the sum of amountMinor of the records in that category\n//    (a category without records cannot have a total other than 0), and every category of the\n//    records has a total;\n// 3. overall equals the sum of the category totals.\n// It does not change the index.\nexport function assertInvariant(totals) {\n  const fromRecords = new Map();\n  for (const [id, expense] of totals.records) {\n    if (expense.id !== id) {\n      throw new Error(`%%wrongKey%% ${id} \u2192 ${expense.id}`);\n    }\n    fromRecords.set(expense.category, (fromRecords.get(expense.category) ?? 0) + expense.amountMinor);\n  }\n  for (const [category, sum] of fromRecords) {\n    if (totals.byCategory.get(category) !== sum) {\n      throw new Error(`%%wrongCategory%% ${category}: ${totals.byCategory.get(category)} \u2260 ${sum}`);\n    }\n  }\n  for (const [category, total] of totals.byCategory) {\n    if (total !== (fromRecords.get(category) ?? 0)) {\n      throw new Error(`%%wrongCategory%% ${category}: ${total} \u2260 ${fromRecords.get(category) ?? 0}`);\n    }\n  }\n  let overall = 0;\n  for (const total of totals.byCategory.values()) {\n    overall = overall + total;\n  }\n  if (overall !== totals.overall) {\n    throw new Error(`%%wrongOverall%% ${totals.overall} \u2260 ${overall}`);\n  }\n}\n");
 const moduleUrl = (code) => URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
 const real = () => files['totals.js'];
 const swap = (from, to) => {
@@ -78,10 +86,12 @@ const swap = (from, to) => {
   return real().replace(text, fill(to));
 };
 
-async function runSuite(totalsModule) {
+const ALWAYS_THROWS = 'export function assertInvariant() {\n  throw new Error("assertInvariant was called");\n}\n';
+
+async function runSuite(totalsModule, invariantModule = REFERENCE_INVARIANT) {
   const source = files[SUITE_FILE];
   if (typeof source !== 'string') throw new Error(`${SUITE_FILE} is missing`);
-  const urls = { 'testing.js': moduleUrl(files['testing.js']), 'totals.js': moduleUrl(totalsModule), 'invariant.js': moduleUrl(REFERENCE_INVARIANT) };
+  const urls = { 'testing.js': moduleUrl(files['testing.js']), 'totals.js': moduleUrl(totalsModule), 'invariant.js': moduleUrl(invariantModule) };
   const rewritten = source.replace(/(["'])\.\/([\w./-]+)\1/g, (match, quote, path) => JSON.stringify(urls[path] ?? `~/${path}`));
   const hidden = { test: window.test, expect: window.expect };
   delete window.test;
@@ -120,4 +130,10 @@ test('one of your tests fails when addExpense accepts an id that is already ther
 
 test('one of your tests fails when buildTotals stops after 1,000 expenses', async () => {
   await expectSuiteCatches(swap('  for (const expense of expenses) {', '  for (const expense of expenses.slice(0, 1000)) {'));
+});
+
+test('every one of your tests calls assertInvariant', async () => {
+  await expectSuitePasses();
+  const results = await runSuite(real(), ALWAYS_THROWS);
+  expect(results.filter((result) => result.passed).map((result) => result.name), 'your tests that still pass when assertInvariant always throws').toEqual([]);
 });

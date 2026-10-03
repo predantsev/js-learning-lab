@@ -31,7 +31,11 @@ function flattenCategories(tree, maxDepth) {
   return list;
 }
 
-console.log(flattenCategories(categories, 5));
+try {
+  console.log(flattenCategories(categories, 5));
+} catch (error) {
+  console.log(`${error.name}: ${error.message}`);
+}
 
 // An imported tree in which "%%cafe%%" points back to the root.
 const broken = node("k-all", "%%all%%", [node("k-food", "%%food%%", [node("k-cafe", "%%cafe%%")])]);

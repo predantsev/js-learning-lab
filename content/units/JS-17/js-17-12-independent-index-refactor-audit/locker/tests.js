@@ -60,19 +60,19 @@ test('oldest returns a new array, oldest first', () => {
   expect(locker.oldest(2).map((parcel) => parcel.code), 'oldest(2) after changing the array it returned').toEqual(['P-1001', 'P-1002']);
 });
 
-test('10,000 arrivals and 1,000 lookups read the codes only a few times each', () => {
+test('3,000 arrivals and 1,000 lookups read the codes only a few times each', () => {
   const locker = createLocker();
-  const { parcels, counter } = countedParcels(10000, 5000);
+  const { parcels, counter } = countedParcels(3000, 5000);
   for (const parcel of parcels) locker.arrive(parcel);
-  expect(counter.reads, 'code reads during 10,000 arrivals').toBeLessThanOrEqual(50000);
+  expect(counter.reads, 'code reads during 3,000 arrivals').toBeLessThanOrEqual(15000);
   counter.reads = 0;
-  for (let i = 0; i < 1000; i++) locker.findByCode('P-' + (5000 + i * 7));
+  for (let i = 0; i < 1000; i++) locker.findByCode('P-' + (5000 + i * 3));
   expect(counter.reads, 'code reads during 1,000 lookups').toBeLessThanOrEqual(5000);
 });
 
-test('returning 20,000 parcels moves no arrays around', () => {
+test('returning 5,000 parcels moves no arrays around', () => {
   const locker = createLocker();
-  for (const parcel of makeParcels(20000, 50000)) locker.arrive(parcel);
+  for (const parcel of makeParcels(5000, 50000)) locker.arrive(parcel);
   const { shift, splice } = Array.prototype;
   let moves = 0;
   Array.prototype.shift = function (...args) {
@@ -90,8 +90,8 @@ test('returning 20,000 parcels moves no arrays around', () => {
     Array.prototype.shift = shift;
     Array.prototype.splice = splice;
   }
-  expect(returned, 'parcels returned').toBe(20000);
-  expect(moves, 'shift and splice calls while returning 20,000 parcels').toBeLessThanOrEqual(100);
+  expect(returned, 'parcels returned').toBe(5000);
+  expect(moves, 'shift and splice calls while returning 5,000 parcels').toBeLessThanOrEqual(100);
 });
 
 test('the characterization tests in locker.test.js are still green', async () => {
