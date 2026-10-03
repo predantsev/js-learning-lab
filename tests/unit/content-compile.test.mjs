@@ -218,3 +218,14 @@ test('a local-task tool version is a plain string or bilingual text, compiled as
   assert.equal(toolIssues({ en: 'only English' }).length, 1);
   assert.match(toolIssues({ en: 'only English' })[0], /tools\[0\]\.version\.uk: missing or empty translation/);
 });
+
+test('a local-task tool name is a product name (plain string) or bilingual text for a described tool', async () => {
+  const task = (name) => ({ id: 'local', kind: 'local-task', runtime: 'local-web', title: pair('Т', 'T'), intro: pair('і', 'i'), tools: [{ name, version: '1' }], steps: [{ text: pair('к', 's') }], verify: [{ id: 'v', text: pair('в', 'v') }], troubleshooting: [{ problem: pair('п', 'p'), fix: pair('ф', 'f') }], recovery: pair('р', 'r') });
+  assert.deepEqual((await compiledBlock(task({ uk: 'Редактор коду', en: 'A code editor' }))).tools[0].name, { uk: 'Редактор коду', en: 'A code editor' });
+  assert.equal((await compiledBlock(task('Node.js'))).tools[0].name, 'Node.js');
+  const nameIssues = (name) => staticIssuesForLesson(lessonWith([task(name)]), ctx).filter((i) => /tools/.test(i.path)).map((i) => `${i.path}: ${i.message}`);
+  assert.deepEqual(nameIssues('Node.js'), []);
+  assert.deepEqual(nameIssues({ uk: 'Термінал', en: 'A terminal' }), []);
+  assert.match(nameIssues({ en: 'A terminal' })[0], /tools\[0\]\.name\.uk: missing or empty translation/);
+  assert.match(nameIssues(undefined)[0], /tools\[0\]\.name: needs the tool name/);
+});

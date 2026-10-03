@@ -257,7 +257,10 @@ function checkBlock(issues, block, lesson, ctx) {
       if (!LOCAL_RUNTIMES.includes(block.runtime)) issues.add(`${p}.runtime`, `must be one of ${LOCAL_RUNTIMES.join(', ')}`);
       if (!Array.isArray(block.tools) || block.tools.length === 0) issues.add(`${p}.tools`, 'list required tools with versions');
       for (const [i, tool] of (Array.isArray(block.tools) ? block.tools : []).entries()) {
-        if (!isPlainObject(tool) || !nonEmpty(tool.name)) { issues.add(`${p}.tools[${i}].name`, 'needs the tool name'); continue; }
+        if (!isPlainObject(tool) || tool.name === undefined || tool.name === null) { issues.add(`${p}.tools[${i}].name`, 'needs the tool name'); continue; }
+        // A product name is the same text in both languages ("Node.js"); a described tool ("A code
+        // editor") is bilingual text.
+        if (!nonEmpty(tool.name)) checkLocalized(issues, tool.name, `${p}.tools[${i}].name`);
         // A version is the same text in both languages ("22.13 or newer" is not) — or bilingual text.
         if (tool.version !== undefined && !nonEmpty(tool.version)) checkLocalized(issues, tool.version, `${p}.tools[${i}].version`);
         if (tool.note !== undefined) checkLocalized(issues, tool.note, `${p}.tools[${i}].note`);

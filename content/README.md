@@ -248,8 +248,10 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are
   runtime: local-web              # local-web | local-node | local-native
   title: { uk, en }
   intro: { uk, en }
-  tools: [ { name: "Node.js", version: "22.13", note: { uk, en } } ]   # version: a plain string shown in
-                                  #   both languages, or { uk, en } when it has words ("22.13 or newer")
+  tools: [ { name: "Node.js", version: "22.13", note: { uk, en } } ]   # name and version: a plain string
+                                  #   shown in both languages (a product name "Node.js", a version "22.13"),
+                                  #   or { uk, en } when it has words: name { uk: "Редактор коду",
+                                  #   en: "A code editor" }, version { uk: "22.13 або новіший", en: "22.13 or newer" }
   steps: [ { text: { uk, en }, command: "npm test", expect: { uk, en } } ]
   verify: [ { id: tests-green, text: { uk, en } } ]      # what the learner confirms having seen
   troubleshooting: [ { problem: { uk, en }, fix: { uk, en } } ]
