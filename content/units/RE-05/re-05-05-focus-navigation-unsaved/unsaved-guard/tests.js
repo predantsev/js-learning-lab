@@ -99,6 +99,7 @@ test('reloading is guarded only while the form is changed', async () => {
   const copy = await mount();
   try {
     await copy.openEdit();
+    expect(copy.live.size, 'beforeunload listeners while the form is unchanged').toBe(0);
     expect(reloadIsCanceled(), 'beforeunload canceled for an unchanged form').toBe(false);
     await user.type(copy.field(), '!');
     await settle();
@@ -107,6 +108,7 @@ test('reloading is guarded only while the form is changed', async () => {
     await user.type(copy.field(), L.reading);
     await settle();
     expect(reloadIsCanceled(), 'beforeunload canceled after typing the saved name back').toBe(false);
+    expect(copy.live.size, 'beforeunload listeners after typing the saved name back').toBe(0);
   } finally { copy.finish(); }
 });
 
