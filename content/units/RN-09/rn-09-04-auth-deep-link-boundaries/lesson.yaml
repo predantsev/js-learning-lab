@@ -1,0 +1,347 @@
+id: rn-09-04-auth-deep-link-boundaries
+unit: RN-09
+title:
+  uk: "Безпечні межі auth і deep links"
+  en: "Safe auth and deep-link boundaries"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Простежити вхід у стилі OAuth у системному браузері з PKCE і перенаправленням назад у застосунок та позначити, де може зайти посилання, яке контролює нападник."
+    en: "Trace an OAuth-style login in the system browser with PKCE and a redirect back into the app, and mark where an attacker-controlled link could enter."
+  - uk: "Пояснити, чому deep link може обрати екран, але ніколи не переносить і не дає облікових даних, і перевіряти його параметри, перш ніж діяти."
+    en: "Explain why a deep link may select a screen but must never carry or grant credentials, and validate its parameters before acting on them."
+prerequisites: [rn-09-03-privacy-minimum-data, rn-04-06-deep-links]
+subskills:
+  - { family: N-07, skill: "safe auth/deep-link boundaries", depth: intro }
+glossary: [pkce, auth-redirect, verified-app-link]
+selfCheck: [predict-links, parse-link]
+
+blocks:
+  - id: sign-in-in-the-browser
+    kind: explanation
+    title:
+      uk: "Вхід відбувається в браузері, а не в застосунку"
+      en: "Sign-in happens in the browser, not in the app"
+    body:
+      uk: |
+        Застосунок — [[public-client|публічний клієнт]]: секрету в нього немає. Тому вхід у стилі OAuth для нативних застосунків влаштовано так:
+
+        1. Застосунок відкриває сторінку входу сервера в **системному браузері** (у Expo це робить `expo-auth-session` через `expo-web-browser`).
+        2. Людина вводить пароль там — на сторінці сервера, з видимою адресою. Застосунок пароля не бачить.
+        3. Сервер перенаправляє браузер на [[auth-redirect|адресу повернення]] застосунку з **одноразовим кодом**: `jsll-lab://auth?code=…`.
+        4. Застосунок обмінює код на короткоживучий токен і кладе токен у захищене сховище.
+
+        Чому не вбудований web view? У ньому сторінку показує сам застосунок: його код може читати введений пароль і cookie, а людина не має змоги перевірити справжню адресу. Рекомендації OAuth для нативних застосунків тому й вимагають зовнішній браузер.
+
+        Слабке місце — крок 3: власну схему `jsll-lab:` може зареєструвати й інший застосунок, і документація React Native попереджає, що тоді він може перехопити посилання. Від цього захищає [[pkce|PKCE]]: застосунок на початку створює випадковий `code_verifier` і надсилає серверу лише його хеш SHA-256, `code_challenge`. Обмін коду вимагає самого `code_verifier` — а його має лише застосунок, що почав вхід. У `expo-auth-session` PKCE з S256 увімкнено за замовчуванням.
+      en: |
+        An app is a [[public-client|public client]]: it has no secret. That is why an OAuth-style sign-in for native apps works like this:
+
+        1. The app opens the server's sign-in page in the **system browser** (in Expo `expo-auth-session` does it through `expo-web-browser`).
+        2. The person types the password there — on the server's page, with a visible address. The app never sees the password.
+        3. The server redirects the browser to the app's [[auth-redirect|redirect address]] with a **one-time code**: `jsll-lab://auth?code=…`.
+        4. The app exchanges the code for a short-lived token and puts the token into secure storage.
+
+        Why not an embedded web view? In one, the app itself shows the page: its code can read the typed password and the cookies, and the person has no way to check the real address. That is why the OAuth recommendations for native apps require an external browser.
+
+        The weak spot is step 3: another app can register the custom scheme `jsll-lab:` too, and the React Native documentation warns that it can then intercept the link. [[pkce|PKCE]] protects against that: at the start the app creates a random `code_verifier` and sends the server only its SHA-256 hash, the `code_challenge`. Redeeming the code requires the `code_verifier` itself — and only the app that started the sign-in has it. In `expo-auth-session` PKCE with S256 is on by default.
+
+  - id: pkce-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Вхід із PKCE, і що отримує перехоплювач"
+      en: "A sign-in with PKCE, and what an interceptor gets"
+    textEquivalent:
+      uk: "Застосунок створює випадковий code_verifier і рахує його хеш SHA-256 — code_challenge. Він відкриває системний браузер на сторінці /authorize і передає code_challenge. Людина входить у браузері на сторінці сервера; застосунок пароля не бачить. Сервер запам’ятовує code_challenge і перенаправляє браузер на адресу повернення jsll-lab://auth з одноразовим кодом. Це посилання може отримати застосунок-двійник, що зареєстрував ту саму схему. Якщо він спробує обміняти код без code_verifier, сервер відмовить: хеш не збігається. Справжній застосунок отримує код, надсилає його разом із code_verifier, сервер перевіряє, що хеш verifier дорівнює запам’ятованому code_challenge, і повертає короткоживучий токен доступу, який застосунок кладе в захищене сховище."
+      en: "The app creates a random code_verifier and computes its SHA-256 hash — the code_challenge. It opens the system browser on the /authorize page and passes the code_challenge. The person signs in in the browser on the server's page; the app never sees the password. The server remembers the code_challenge and redirects the browser to the redirect address jsll-lab://auth with a one-time code. A look-alike app that registered the same scheme may receive that link. If it tries to redeem the code without the code_verifier, the server refuses: the hash does not match. The real app receives the code, sends it together with the code_verifier, the server checks that the verifier's hash equals the remembered code_challenge and returns a short-lived access token, which the app puts into secure storage."
+    spec:
+      actors:
+        - { id: app, label: { uk: "Твій застосунок", en: "Your app" } }
+        - { id: browser, label: { uk: "Системний браузер", en: "System browser" } }
+        - { id: server, label: { uk: "Сервер входу", en: "Sign-in server" } }
+      messages:
+        - from: app
+          to: app
+          kind: note
+          label: "verifier → SHA-256 → challenge"
+          caption:
+            uk: "Застосунок створює випадковий `code_verifier` і рахує його хеш — `code_challenge`. Verifier нікуди не надсилається."
+            en: "The app creates a random `code_verifier` and computes its hash — the `code_challenge`. The verifier is sent nowhere."
+        - from: app
+          to: browser
+          label: "/authorize?code_challenge=…"
+          caption:
+            uk: "Застосунок відкриває сторінку входу в системному браузері й передає лише `code_challenge`."
+            en: "The app opens the sign-in page in the system browser and passes only the `code_challenge`."
+        - from: browser
+          to: server
+          label: { uk: "людина входить", en: "the person signs in" }
+          caption:
+            uk: "Людина вводить пароль на сторінці сервера, з видимою адресою. Застосунок пароля не бачить."
+            en: "The person types the password on the server's page, with a visible address. The app never sees the password."
+        - from: server
+          to: browser
+          kind: return
+          label: "jsll-lab://auth?code=…"
+          caption:
+            uk: "Сервер запам’ятовує `code_challenge` і перенаправляє браузер на адресу повернення з одноразовим кодом."
+            en: "The server remembers the `code_challenge` and redirects the browser to the redirect address with a one-time code."
+        - from: browser
+          to: browser
+          kind: note
+          label: { uk: "двійник зі схемою jsll-lab:", en: "a look-alike with jsll-lab:" }
+          caption:
+            uk: "Небезпечна мить: власну схему може зареєструвати й інший застосунок, тож посилання з кодом може дістатися йому."
+            en: "The dangerous moment: another app can register the custom scheme too, so the link with the code may reach it."
+        - from: server
+          to: server
+          kind: note
+          label: { uk: "код без verifier → відмова", en: "code without verifier → refused" }
+          caption:
+            uk: "Двійник пробує обміняти код, але `code_verifier` у нього немає. Сервер рахує хеш, бачить розбіжність і відмовляє."
+            en: "The look-alike tries to redeem the code, but it has no `code_verifier`. The server computes the hash, sees the mismatch and refuses."
+        - from: browser
+          to: app
+          label: "code"
+          caption:
+            uk: "Справжній застосунок отримує код через адресу повернення."
+            en: "The real app receives the code through the redirect address."
+        - from: app
+          to: server
+          label: "code + code_verifier"
+          caption:
+            uk: "Застосунок надсилає код разом із `code_verifier`. Хеш verifier дорівнює запам’ятованому `code_challenge` — отже, обмінює той, хто почав вхід."
+            en: "The app sends the code together with the `code_verifier`. The verifier's hash equals the remembered `code_challenge` — so the redeemer is whoever started the sign-in."
+        - from: server
+          to: app
+          kind: return
+          label: { uk: "токен на 15 хв", en: "token for 15 min" }
+          caption:
+            uk: "Сервер повертає короткоживучий токен — він іде в захищене сховище з уроку 1, а не в журнал і не в адресу."
+            en: "The server returns a short-lived token — it goes into the secure storage from lesson 1, not into a log or an address."
+
+  - id: pkce-replay
+    kind: example
+    runtime: browser-js
+    dir: pkce-replay
+    entry: index.js
+    title:
+      uk: "Перехоплення з PKCE і без нього"
+      en: "Interception with and without PKCE"
+    body:
+      uk: |
+        `authServer.js` — синтетичний сервер входу: видає одноразові коди й обмінює кожен код щонайбільше раз. `index.js` відтворює вхід, у якому застосунок-двійник отримує посилання з кодом **першим** і одразу пробує його обміняти. SHA-256 тут справжній — його рахує `crypto.subtle` браузера.
+
+        Натисни **Запустити**: двійник отримує відмову `code_verifier does not match`, а твій застосунок — токен.
+      en: |
+        `authServer.js` is a synthetic sign-in server: it issues one-time codes and redeems each code at most once. `index.js` replays a sign-in in which a look-alike app receives the link with the code **first** and immediately tries to redeem it. The SHA-256 here is real — the browser's `crypto.subtle` computes it.
+
+        Press **Run**: the look-alike gets the refusal `code_verifier does not match`, and your app gets a token.
+    tryIt:
+      uk: |
+        1. Зміни `USE_PKCE` на `false` і запусти: тепер двійник отримує токен від імені людини, а твій застосунок — `unknown or already used code`. Код одноразовий, і першим його використав нападник.
+        2. Поверни `true`. Зверни увагу: у посиланні `server → redirect` немає нічого секретного — код без verifier нічого не дає.
+      en: |
+        1. Change `USE_PKCE` to `false` and run: now the look-alike gets a token in the person's name, and your app gets `unknown or already used code`. The code is one-time, and the attacker used it first.
+        2. Set it back to `true`. Notice: the `server → redirect` link holds nothing secret — a code without the verifier gives nothing.
+
+  - id: links-pick-screens
+    kind: explanation
+    title:
+      uk: "Deep link обирає екран — і нічого більше"
+      en: "A deep link picks a screen — and nothing more"
+    body:
+      uk: |
+        Посилання на кшталт `jsll-lab://records/planner/t-05` може скласти **будь-хто**: вебсторінка, лист, інший застосунок. Тому:
+
+        - **Жодних облікових даних у посиланні.** Документація React Native каже прямо: deep links не захищені, і чутливих даних у них не передають. Токен в адресі осідає в історії браузера, журналах і в застосунку-двійнику. А посилання, що «входить» токеном із самого посилання, дає нападнику ввійти тобою **у свій обліковий запис** — і все, що ти збережеш, дістанеться йому.
+        - **Перевір, звідки посилання.** Власну схему може зареєструвати будь-який застосунок. [[verified-app-link|Перевірене посилання застосунку]] (`https://…`, Android App Links і iOS Universal Links) система відкриває у твоєму застосунку, лише якщо сайт підтвердив зв’язок файлом на своєму домені.
+        - **Перевір параметри**, як у RN-04: відомий маршрут, `id` правильного вигляду. Перевірене посилання — це гарантія, **куди** воно веде, а не **що** в ньому: скласти його так само може будь-хто.
+
+        Вхід — лише через системний браузер із PKCE, як вище. Посилання тільки показує екран, а що на ньому можна робити, вирішує сеанс, який уже є.
+      en: |
+        A link like `jsll-lab://records/planner/t-05` can be composed by **anyone**: a web page, an email, another app. Therefore:
+
+        - **No credentials in a link.** The React Native documentation says it plainly: deep links are not secure, and sensitive data is not passed in them. A token in an address ends up in the browser history, in logs and in a look-alike app. And a link that “signs in” with a token from the link itself lets an attacker sign you in **to their own account** — and everything you save goes to them.
+        - **Check where the link comes from.** Any app can register a custom scheme. The system opens a [[verified-app-link|verified app link]] (`https://…`, Android App Links and iOS Universal Links) in your app only if the website confirmed the connection with a file on its domain.
+        - **Check the parameters**, as in RN-04: a known route, an `id` of the right shape. A verified link guarantees **where** it leads, not **what** it holds: anyone can still compose one.
+
+        Sign-in happens only through the system browser with PKCE, as above. A link only shows a screen, and what can be done there is decided by the session that already exists.
+
+  - id: predict-links
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Маршрутизатор застосунку приймає записи на схемі `jsll-lab:` і на перевіреній адресі `https://lab.jsll.example`; `id` справ — `t-` і дві цифри. Які з чотирьох вхідних посилань він має прийняти?"
+      en: "The app's router accepts records on the `jsll-lab:` scheme and on the verified address `https://lab.jsll.example`; task ids are `t-` and two digits. Which of the four incoming links should it accept?"
+    answer:
+      type: multi
+      options:
+        - id: valid
+          text:
+            uk: "`jsll-lab://records/planner/t-02`"
+            en: "`jsll-lab://records/planner/t-02`"
+        - id: token
+          text:
+            uk: "`jsll-lab://records/planner/t-02?token=tok_9f`"
+            en: "`jsll-lab://records/planner/t-02?token=tok_9f`"
+          why:
+            uk: "Маршрут правильний, але посилання несе токен. Такі посилання відхиляють цілком: токен уже засвітився в адресі, а прийняти його — значить дати будь-кому, хто склав посилання, вирішувати, під чиїм обліковим записом ти працюєш."
+            en: "The route is right, but the link carries a token. Such links are refused entirely: the token has already been exposed in the address, and accepting it lets anyone who composed the link decide whose account you work in."
+        - id: lookalike-host
+          text:
+            uk: "`https://lab.jsll.example.attacker.example/records/planner/t-02`"
+            en: "`https://lab.jsll.example.attacker.example/records/planner/t-02`"
+          why:
+            uk: "Хост лише **починається** так само: насправді це домен `attacker.example`. Порівнюють увесь origin, а не початок рядка."
+            en: "The host only **starts** the same way: it is actually the `attacker.example` domain. The whole origin is compared, not the start of the string."
+        - id: malformed-id
+          text:
+            uk: "`jsll-lab://records/planner/t-2x`"
+            en: "`jsll-lab://records/planner/t-2x`"
+          why:
+            uk: "`t-2x` не має вигляду `id` справи. Параметри посилання — недовірене введення: застосунок не шукає й не показує запис за таким `id`, а відкриває безпечний екран."
+            en: "`t-2x` does not have the shape of a task id. Link parameters are untrusted input: the app does not look up or show a record by such an `id`, and opens a safe screen instead."
+      correct: [valid]
+    explanation:
+      uk: "Лише перше посилання проходить усі три перевірки: відомий origin, жодного параметра, схожого на облікові дані, і `id` правильного вигляду. Решта відхиляють, і кожне — з власної причини. Ці три перевірки ти напишеш у вправі."
+      en: "Only the first link passes all three checks: a known origin, no credential-like parameter and an `id` of the right shape. The others are refused, each for its own reason. You will write these three checks in the exercise."
+
+  - id: recall-untrusted-link
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: link-params-are-input
+        from: rn-04-06-deep-links
+        prompt:
+          uk: "Застосунок отримав deep link на запис зі списку бажань з `id`, якого немає серед записів. Що має статися?"
+          en: "The app received a deep link to a wishlist record with an `id` that matches no record. What should happen?"
+        answer:
+          type: choice
+          options:
+            - id: safe-screen
+              text:
+                uk: "Перевірити параметр і, не знайшовши запису, відкрити безпечний екран (наприклад, список) із зрозумілим повідомленням"
+                en: "Validate the parameter and, finding no record, open a safe screen (the list, say) with a clear message"
+            - id: trust
+              text:
+                uk: "Відкрити екран запису: посилання веде в мій застосунок, тож параметри правильні"
+                en: "Open the record screen: the link leads into my app, so the parameters are right"
+              why:
+                uk: "Посилання веде у твій застосунок, але скласти його міг будь-хто. Екран із неіснуючим записом упаде чи покаже порожнечу."
+                en: "The link leads into your app, but anyone could have composed it. A screen with a non-existent record crashes or shows emptiness."
+            - id: ignore
+              text:
+                uk: "Нічого не робити: застосунок просто відкривається там, де був"
+                en: "Do nothing: the app just opens where it was"
+              why:
+                uk: "Мовчазне ігнорування збиває людину з пантелику. Безпечний екран із поясненням — чесніше."
+                en: "Silently ignoring it confuses the person. A safe screen with an explanation is more honest."
+          correct: [safe-screen]
+        explanation:
+          uk: "Параметри посилання — недовірене введення, як поле форми. Цей урок додає ще дві перевірки до тієї, що з RN-04: звідки посилання і чи не несе воно облікових даних."
+          en: "Link parameters are untrusted input, like a form field. This lesson adds two more checks to the one from RN-04: where the link comes from, and whether it carries credentials."
+
+  - id: parse-link
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: parse-link
+    entry: index.js
+    editable: [parseIncomingLink.ts]
+    title:
+      uk: "parseIncomingLink: маршрут або відмова"
+      en: "parseIncomingLink: a route or a refusal"
+    instructions:
+      uk: |
+        Напиши в `parseIncomingLink.ts` функцію `parseIncomingLink(url)`, яка повертає `{ ok: true, route: { screen: 'record', capstone, id } }` або `{ ok: false, reason }`. Правила й константи — у `linkRules.ts`. Перевіряй у такому порядку:
+
+        1. `malformed-url` — текст не розбирається як URL.
+        2. `unknown-origin` — посилання не на схемі `jsll-lab:` і не з origin `https://lab.jsll.example` (порівнюй origin цілком).
+        3. `credential-param` — якийсь параметр запиту має назву, що в нижньому регістрі містить одне зі слів `CREDENTIAL_WORDS`. Інші параметри (наприклад, `utm_source`) просто ігноруй.
+        4. `unknown-route` — шлях не має вигляду рівно `records/<capstone>/<id>`, де `capstone` — один із чотирьох проєктів.
+        5. `invalid-id` — `id` після `decodeURIComponent` не дорівнює літері свого проєкту, дефісу й двом цифрам, або його неможливо декодувати.
+
+        Пам’ятай, як `URL` розбирає власну схему: у `jsll-lab://records/planner/t-05` слово `records` стає `host`, а `/planner/t-05` — `pathname`. Функція ніколи не кидає винятків. `linkRules.ts` і `index.js` редагувати не можна.
+      en: |
+        Write `parseIncomingLink(url)` in `parseIncomingLink.ts`. It returns `{ ok: true, route: { screen: 'record', capstone, id } }` or `{ ok: false, reason }`. The rules and constants are in `linkRules.ts`. Check in this order:
+
+        1. `malformed-url` — the text does not parse as a URL.
+        2. `unknown-origin` — the link is neither on the `jsll-lab:` scheme nor from the origin `https://lab.jsll.example` (compare the whole origin).
+        3. `credential-param` — some query parameter's name, in lowercase, contains one of the words in `CREDENTIAL_WORDS`. Simply ignore other parameters (`utm_source`, say).
+        4. `unknown-route` — the path is not exactly `records/<capstone>/<id>`, where `capstone` is one of the four projects.
+        5. `invalid-id` — after `decodeURIComponent` the `id` is not its project's letter, a hyphen and two digits, or it cannot be decoded.
+
+        Remember how `URL` parses a custom scheme: in `jsll-lab://records/planner/t-05` the word `records` becomes the `host`, and `/planner/t-05` the `pathname`. The function never throws. `linkRules.ts` and `index.js` cannot be edited.
+    testTitles:
+      "a record link on the custom scheme becomes a route":
+        uk: "Посилання на запис на власній схемі стає маршрутом"
+        en: "A record link on the custom scheme becomes a route"
+      "a record link on the verified app link becomes the same route":
+        uk: "Посилання на запис на перевіреній адресі стає тим самим маршрутом"
+        en: "A record link on the verified app link becomes the same route"
+      "text that is not a URL is refused as malformed":
+        uk: "Текст, що не є URL, відхилено як `malformed-url`"
+        en: "Text that is not a URL is refused as `malformed-url`"
+      "a link from another scheme or host is refused":
+        uk: "Посилання з іншої схеми чи іншого хоста відхилено"
+        en: "A link from another scheme or host is refused"
+      "a link with a credential-like parameter is refused, whatever its case":
+        uk: "Посилання з параметром, схожим на облікові дані, відхилено в будь-якому регістрі"
+        en: "A link with a credential-like parameter is refused, whatever its case"
+      "a path that is not a record route is refused":
+        uk: "Шлях, що не є маршрутом запису, відхилено"
+        en: "A path that is not a record route is refused"
+      "an id that does not match its capstone is refused":
+        uk: "`id`, що не відповідає своєму проєкту, відхилено"
+        en: "An `id` that does not match its capstone is refused"
+    hints:
+      nudge:
+        uk: "Почни з `new URL(url)` у `try`: що в ньому `protocol`, `host`, `origin`, `pathname` і `searchParams` для кожного з посилань у `index.js`? Виведи їх у консоль і порівняй."
+        en: "Start with `new URL(url)` inside `try`: what are its `protocol`, `host`, `origin`, `pathname` and `searchParams` for each of the links in `index.js`? Print them to the console and compare."
+      explanation:
+        uk: "`url.startsWith('https://lab.jsll.example')` пропускає `https://lab.jsll.example.attacker.example` — порівнюй `link.origin` повністю. Для власної схеми origin у Chrome — `\"null\"`, тож її впізнають за `link.protocol`. Назви параметрів дає `link.searchParams.keys()`; перед порівнянням переведи кожну в нижній регістр. Шлях зручно розбити на частини через `split('/')` і перевірити їх кількість. `decodeURIComponent` кидає `URIError` на зламаній послідовності на кшталт `%E0`, тому загорни його в `try`. Для перевірки `id` знадобиться регулярний вираз із літерою саме цього проєкту: наприклад, для кольорів `/^c-\\d{3}$/` приймає `c-042`, але не `c-42`."
+        en: "`url.startsWith('https://lab.jsll.example')` lets `https://lab.jsll.example.attacker.example` through — compare `link.origin` as a whole. For a custom scheme the origin in Chrome is `\"null\"`, so it is recognised by `link.protocol`. `link.searchParams.keys()` gives the parameter names; lowercase each one before comparing. The path is easy to split into parts with `split('/')` and check their count. `decodeURIComponent` throws a `URIError` on a broken sequence such as `%E0`, so wrap it in `try`. Checking the `id` needs a regular expression with this project's own letter: for colours, say, `/^c-\\d{3}$/` accepts `c-042` but not `c-42`."
+    solutionNote:
+      uk: "Порядок перевірок відповідає рівням довіри: спершу — чи це взагалі адреса й чи вона наша, потім — чи не несе вона того, чого посилання нести не може, і лише тоді — чи має сенс маршрут. Функція не кидає винятків, тож обробник посилань у застосунку завжди отримує або маршрут, або причину відмови й може показати безпечний екран."
+      en: "The order of the checks follows the levels of trust: first whether it is an address at all and whether it is ours, then whether it carries something a link may not carry, and only then whether the route makes sense. The function never throws, so the app's link handler always gets either a route or a reason for refusal and can show a safe screen."
+    feedback:
+      - when: { test: "a record link on the custom scheme becomes a route" }
+        message:
+          uk: "Ця перевірка очікує для `jsll-lab://records/planner/t-05` результат `{ ok: true, route: { screen: \"record\", capstone: \"planner\", id: \"t-05\" } }`. Пам’ятай: для власної схеми `records` — це `link.host`, а не частина `pathname`."
+          en: "This check expects `{ ok: true, route: { screen: \"record\", capstone: \"planner\", id: \"t-05\" } }` for `jsll-lab://records/planner/t-05`. Remember: for a custom scheme `records` is `link.host`, not part of the `pathname`."
+      - when: { test: "a record link on the verified app link becomes the same route" }
+        message:
+          uk: "Ця перевірка очікує той самий вигляд маршруту для `https://lab.jsll.example/records/expenses/e-04` і для посилання з додатковим параметром `utm_source`, який треба просто ігнорувати."
+          en: "This check expects the same route shape for `https://lab.jsll.example/records/expenses/e-04` and for a link with an extra `utm_source` parameter, which must simply be ignored."
+      - when: { test: "text that is not a URL is refused as malformed" }
+        message:
+          uk: "Ця перевірка очікує `{ ok: false, reason: \"malformed-url\" }` для тексту без схеми й для порожнього рядка — повернений результат, а не виняток з `new URL`."
+          en: "This check expects `{ ok: false, reason: \"malformed-url\" }` for text without a scheme and for an empty string — a returned result, not an exception from `new URL`."
+      - when: { test: "a link from another scheme or host is refused" }
+        message:
+          uk: "Ця перевірка очікує `unknown-origin` для хоста, що лише починається з `lab.jsll.example`, для `http:` замість `https:` і для чужої схеми. Порівнюй `link.origin` цілком, а не початок рядка."
+          en: "This check expects `unknown-origin` for a host that only starts with `lab.jsll.example`, for `http:` instead of `https:` and for a foreign scheme. Compare `link.origin` as a whole, not the start of the string."
+      - when: { test: "a link with a credential-like parameter is refused, whatever its case" }
+        message:
+          uk: "Ця перевірка очікує `credential-param` для параметрів `token`, `access_token`, `SessionId`, `apiKey` і `Password`. Назву параметра переводять у нижній регістр, а потім шукають у ній кожне слово з `CREDENTIAL_WORDS`."
+          en: "This check expects `credential-param` for the parameters `token`, `access_token`, `SessionId`, `apiKey` and `Password`. The parameter name is lowercased, then searched for each word in `CREDENTIAL_WORDS`."
+      - when: { test: "a path that is not a record route is refused" }
+        message:
+          uk: "Ця перевірка очікує `unknown-route` для чужого розділу, невідомого проєкту, шляху без `id`, шляху із зайвою частиною після `id` і шляху, де `records` стоїть не першим."
+          en: "This check expects `unknown-route` for a foreign section, an unknown project, a path without an `id`, a path with an extra part after the `id` and a path where `records` is not first."
+      - when: { test: "an id that does not match its capstone is refused" }
+        message:
+          uk: "Ця перевірка очікує `invalid-id` для `id` чужого проєкту (`e-05` у планувальнику), для однієї чи трьох цифр, для `id` з дописаним текстом і для зламаної послідовності `%E0%A4%A`, на якій `decodeURIComponent` кидає `URIError`."
+          en: "This check expects `invalid-id` for an `id` of another project (`e-05` in the planner), for one or three digits, for an `id` with text appended and for the broken sequence `%E0%A4%A`, on which `decodeURIComponent` throws a `URIError`."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-RN
+    body:
+      uk: "У RN-04 ти додав до свого проєкту синтетичний deep link на один запис. На контрольній точці CP-RN перевір його обробник проти трьох правил цього уроку: чужа схема чи хост, параметр, схожий на облікові дані, і зламаний `id` ведуть на безпечний екран, а не на запис."
+      en: "In RN-04 you added a synthetic deep link to one record to your project. At the CP-RN checkpoint check its handler against this lesson's three rules: a foreign scheme or host, a credential-like parameter and a broken `id` lead to a safe screen, not to the record."
