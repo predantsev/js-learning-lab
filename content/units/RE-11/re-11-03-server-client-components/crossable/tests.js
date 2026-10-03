@@ -46,6 +46,7 @@ test('finds a function or a class instance inside arrays, objects, Map and Set',
     { actions: [() => {}] },
     { config: { format: (n) => n } },
     { byId: new Map([['e-01', new Budget(1)]]) },
+    { byBudget: new Map([[new Budget(1), 'e-01']]) },
     { handlers: new Set([() => {}]) },
   ];
   for (const props of cases) {
