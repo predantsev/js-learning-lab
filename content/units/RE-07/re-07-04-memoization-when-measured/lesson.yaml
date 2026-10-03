@@ -1,0 +1,402 @@
+id: re-07-04-memoization-when-measured
+unit: RE-07
+title:
+  uk: "memo, useMemo і useCallback — лише після вимірювання"
+  en: "memo/useMemo/useCallback, only when measured"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Застосовувати `memo`, `useMemo` чи `useCallback` лише до компонента чи обчислення, яке Profiler показав повільним, і міряти до й після."
+    en: "Apply memo, useMemo or useCallback only to a component or calculation the Profiler shows is slow, and measure before and after."
+  - uk: "Пояснити, чому `memo` на дитині нічого не дає, коли батько на кожному рендері передає нову вбудовану функцію."
+    en: "Explain why memo on a child does nothing when the parent passes a new inline function on every render."
+  - uk: "Прибрати мемоізацію, яка додає роботи без виміряного виграшу."
+    en: "Remove a memoization that adds cost without a measured gain."
+prerequisites: [re-07-03-stable-identity, js-17-07-measured-improvement]
+subskills:
+  - { family: R-07, skill: "memo/useMemo/useCallback when measured", depth: intro }
+glossary: [react-memo, use-memo, use-callback]
+selfCheck: [predict-memo-inline, memo-rows]
+
+blocks:
+  - id: three-tools
+    kind: explanation
+    title:
+      uk: "Три способи пропустити роботу"
+      en: "Three ways to skip work"
+    body:
+      uk: |
+        Коли запис показав, що рендер повільний, а стабільна ідентичність з минулого уроку не допомогла, React має три інструменти. Кожен порівнює значення через `Object.is`:
+
+        - [[react-memo|memo]] обгортає **компонент**: `const HabitCard = memo(function HabitCard({ habit }) { … })`. Коли батько рендериться, React порівнює кожен prop із попереднім; якщо всі ті самі, картка не рендериться.
+        - [[use-memo|useMemo]] зберігає **результат обчислення**: `const streaks = useMemo(() => computeStreaks(habits), [habits])`. Поки `habits` той самий масив, React віддає збережений результат замість нового обчислення.
+        - [[use-callback|useCallback]] зберігає **функцію**: `const onPause = useCallback((id) => …, [])` повертає ту саму функцію, поки не змінилися залежності.
+
+        `useCallback` сам нічого не прискорює: та сама функція корисна лише тоді, коли її отримує компонент у `memo` або вона стоїть у залежностях ефекту.
+      en: |
+        When a recording showed that a render is slow, and the stable identity of the previous lesson did not help, React has three tools. Each compares values with `Object.is`:
+
+        - [[react-memo|memo]] wraps a **component**: `const HabitCard = memo(function HabitCard({ habit }) { … })`. When the parent renders, React compares every prop with the previous one; if all are the same, the card does not render.
+        - [[use-memo|useMemo]] keeps the **result of a calculation**: `const streaks = useMemo(() => computeStreaks(habits), [habits])`. While `habits` is the same array, React hands back the kept result instead of calculating again.
+        - [[use-callback|useCallback]] keeps a **function**: `const onPause = useCallback((id) => …, [])` returns the same function until the dependencies change.
+
+        `useCallback` speeds up nothing by itself: the same function is useful only when a component in `memo` receives it, or when it is in an effect’s dependencies.
+
+  - id: predict-memo-inline
+    kind: prediction
+    prompt:
+      uk: "`TaskCard` обгорнуто в `memo`. Список справ рендериться знову, бо змінився його власний стан, а масив `tasks` той самий. Скільки разів надрукується `render …`?"
+      en: "`TaskCard` is wrapped in `memo`. The task list renders again because its own state changed, while the `tasks` array is the same. How many times is `render …` printed?"
+    code: |
+      const TaskCard = memo(function TaskCard({ task, onToggle }) {
+        console.log(`render ${task.id}`);
+        return <li>{task.title}</li>;
+      });
+
+      // in the list, which has two tasks:
+      {tasks.map((task) => (
+        <TaskCard key={task.id} task={task} onToggle={() => toggle(task.id)} />
+      ))}
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: two
+          text:
+            uk: "Двічі: обидві картки рендеряться"
+            en: "Twice: both cards render"
+        - id: zero
+          text:
+            uk: "Жодного разу: `memo` пропускає картки, бо `task` той самий"
+            en: "Never: `memo` skips the cards because `task` is the same"
+          why:
+            uk: "`memo` порівнює **всі** props. `task` той самий, але `() => toggle(task.id)` — нова функція на кожному рендері, тож `onToggle` змінився."
+            en: "`memo` compares **all** props. `task` is the same, but `() => toggle(task.id)` is a new function on every render, so `onToggle` changed."
+        - id: one
+          text:
+            uk: "Один раз: React рендерить лише першу картку"
+            en: "Once: React renders only the first card"
+          why:
+            uk: "Нову стрілкову функцію отримує кожна картка, не лише перша."
+            en: "Every card gets a new arrow function, not only the first."
+      correct: [two]
+    explanation:
+      uk: "Перевірено в пісочниці з React 19.3: після рендеру списку — `render t-01` і `render t-02`. `memo` з вбудованою функцією в props лише додає порівняння: картка все одно рендериться. На доріжці Components ⚛ у деталях такої картки видно `Changed Props: onToggle` з приміткою, що це інша функція."
+      en: "Checked in the sandbox with React 19.3: after the list renders — `render t-01` and `render t-02`. `memo` with an inline function in the props only adds a comparison: the card renders anyway. On the Components ⚛ track the details of such a card show `Changed Props: onToggle` with a note that it is a different function."
+
+  - id: three-recordings
+    kind: visual
+    visual: render-timeline
+    title:
+      uk: "Одне перемикання, три записи"
+      en: "One toggle, three recordings"
+    textEquivalent:
+      uk: "Список із 2 000 бажань, у кожного картка з позначкою «отримано». Перший запис — без memo: клік на позначці другого бажання викликає setWishes, список рендериться через власний стан, а всі 2 000 карток — через рендер батька; у пісочниці 8–22 мс. Другий запис — картку обгорнуто в memo, але список передає функцію, створену на кожному рендері: в усіх карток змінився prop onToggle, тож рендеряться знову всі 2 000, а час той самий, 8–21 мс. Третій запис — memo і функція з useCallback, що оновлює стан через функцію-оновлювач і тому не має залежностей: onToggle той самий, wish змінився лише в другого бажання, тож рендериться одна картка, близько 1,6 мс."
+      en: "A list of 2,000 wishes, each with a card with an “acquired” checkbox. The first recording has no memo: a click on the second wish’s checkbox calls setWishes, the list renders because of its own state, and all 2,000 cards because of the parent render; 8–22 ms in the sandbox. The second recording wraps the card in memo, but the list passes a function created on every render: every card’s onToggle prop changed, so all 2,000 render again and the time is the same, 8–21 ms. The third recording has memo and a function from useCallback that updates the state through an updater function and therefore has no dependencies: onToggle is the same, wish changed only for the second wish, so one card renders, about 1.6 ms."
+    spec:
+      component: WishList
+      code: |
+        const WishCard = memo(function WishCard({ wish, onToggle }) { /* … */ });
+
+        function WishList() {
+          const [wishes, setWishes] = useState(WISHES); // 2,000 wishes
+          // recordings 1 and 2: const toggle = (id) => setWishes(wishes.map(…));
+          const toggle = useCallback((id) => setWishes((current) => current.map(…)), []);
+          return <ul>{wishes.map((wish) => <WishCard key={wish.id} wish={wish} onToggle={toggle} />)}</ul>;
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 3
+          reason: { uk: "перший показ", en: "first display" }
+          snapshot: { state: { acquired: 0 } }
+          caption:
+            uk: "Перший показ: 2 000 карток, жодне бажання не отримано."
+            en: "First display: 2,000 cards, no wish acquired."
+        - phase: commit
+          render: 1
+          dom: "<ul>2000 × <li><input type=checkbox></li></ul>"
+          caption:
+            uk: "Commit створює весь список."
+            en: "The commit creates the whole list."
+        - phase: event
+          name: click
+          line: 5
+          sees: { acquired: 0 }
+          actions: ["setWishes(wishes.map(…))"]
+          queued: { acquired: 1 }
+          caption:
+            uk: "**Запис 1, без `memo`.** Клік на позначці другого бажання."
+            en: "**Recording 1, no `memo`.** A click on the second wish’s checkbox."
+        - phase: render
+          render: 2
+          line: 3
+          reason: { uk: "власний стан; картки — рендер батька", en: "own state; the cards — parent render" }
+          snapshot: { state: { acquired: 1 } }
+          caption:
+            uk: "Рендеряться список і **всі 2 000** карток. У пісочниці — 8–22 мс."
+            en: "The list and **all 2,000** cards render. In the sandbox, 8–22 ms."
+        - phase: commit
+          render: 2
+          dom: "<ul>… <li><input checked></li> …</ul>"
+          caption:
+            uk: "У DOM змінюється одна позначка."
+            en: "One checkbox changes in the DOM."
+        - phase: event
+          name: click
+          line: 5
+          sees: { acquired: 1 }
+          actions: ["setWishes(wishes.map(…))"]
+          queued: { acquired: 2 }
+          caption:
+            uk: "**Запис 2, `memo` на картці, але функція створюється на кожному рендері.** Клік на позначці третього бажання."
+            en: "**Recording 2, `memo` on the card, but the function is created on every render.** A click on the third wish’s checkbox."
+        - phase: render
+          render: 3
+          line: 3
+          reason: { uk: "власний стан; у карток змінився onToggle", en: "own state; the cards’ onToggle changed" }
+          snapshot: { state: { acquired: 2 } }
+          caption:
+            uk: "`memo` порівнює props: `wish` у більшості той самий, але `onToggle` — нова функція в **кожної**. Знову 2 000 рендерів, 8–21 мс: виграшу немає, а порівнянь стало більше."
+            en: "`memo` compares props: `wish` is mostly the same, but `onToggle` is a new function for **every** card. 2,000 renders again, 8–21 ms: no gain, and more comparisons."
+        - phase: commit
+          render: 3
+          dom: "<ul>… <li><input checked></li> …</ul>"
+          caption:
+            uk: "У DOM знову змінюється одна позначка."
+            en: "Again one checkbox changes in the DOM."
+        - phase: event
+          name: click
+          line: 6
+          sees: { acquired: 2 }
+          actions: ["setWishes((current) => current.map(…))"]
+          queued: { acquired: 3 }
+          caption:
+            uk: "**Запис 3, `memo` і `useCallback`.** Функція-оновлювач читає поточний список, тож залежностей немає, і `toggle` той самий на кожному рендері."
+            en: "**Recording 3, `memo` and `useCallback`.** The updater function reads the current list, so there are no dependencies, and `toggle` is the same on every render."
+        - phase: render
+          render: 4
+          line: 3
+          reason: { uk: "власний стан; змінився wish однієї картки", en: "own state; one card’s wish changed" }
+          snapshot: { state: { acquired: 3 } }
+          caption:
+            uk: "Рендериться список і **одна** картка — та, чий `wish` новий. Близько 1,6 мс."
+            en: "The list and **one** card render — the one whose `wish` is new. About 1.6 ms."
+        - phase: commit
+          render: 4
+          dom: "<ul>… <li><input checked></li> …</ul>"
+          caption:
+            uk: "Результат на екрані той самий в усіх трьох записах. Різниця лише в роботі, яку довелося зробити, — і її показало вимірювання."
+            en: "The result on screen is the same in all three recordings. The only difference is the work it took — and the measurement showed it."
+
+  - id: not-free
+    kind: explanation
+    title:
+      uk: "Не безкоштовно і не назавжди"
+      en: "Not free and not forever"
+    body:
+      uk: |
+        Кожна мемоізація коштує: React зберігає старі значення й на кожному рендері порівнює залежності чи props. Коли рендер і так дешевий, ця робота лише додається. А ще — це код, у якому легко помилитися: пропущена залежність дає застарілий результат.
+
+        `useMemo` — кеш, а не обіцянка. Обчислення повториться, щойно будь-яка залежність стала іншим об’єктом, — а масив, створений на кожному рендері, «змінюється» завжди. React також може викинути збережене значення, тож код має працювати правильно й без нього.
+
+        Тому порядок той самий, що в JS-17: **виміряй → знайди одну причину → зміни одне → виміряй знову → залиш або прибери**. Інколи найкраще виправлення — зробити саме обчислення дешевшим, і тоді мемоізація не потрібна.
+      en: |
+        Every memoization has a cost: React keeps old values and compares dependencies or props on every render. When the render is cheap anyway, that work only adds up. It is also code that is easy to get wrong: a missing dependency gives a stale result.
+
+        `useMemo` is a cache, not a promise. The calculation runs again as soon as any dependency is a different object — and an array created on every render “changes” always. React may also throw a kept value away, so the code must work correctly without it.
+
+        So the order is the same as in JS-17: **measure → find one cause → change one thing → measure again → keep or remove**. Sometimes the best fix is to make the calculation itself cheaper, and then no memoization is needed.
+
+  - id: predict-usememo-recalc
+    kind: prediction
+    prompt:
+      uk: "Сторінка витрат рендериться знову, бо користувач набрав літеру в полі нотатки; `category` і `expenses` не змінилися. Що надрукує консоль після цього рендеру?"
+      en: "The expense page renders again because the user typed a letter into the note field; `category` and `expenses` did not change. What does the console print after this render?"
+    code: |
+      const visible = expenses.filter((expense) => expense.category === category);
+      const sum = useMemo(() => {
+        console.log("total computed");
+        return visible.reduce((total, expense) => total + expense.amountMinor, 0);
+      }, [visible]);
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: computed
+          code: "total computed"
+        - id: nothing
+          text:
+            uk: "Нічого: дані ті самі, тож `useMemo` віддає збережену суму"
+            en: "Nothing: the data is the same, so `useMemo` hands back the kept total"
+          why:
+            uk: "`useMemo` дивиться не на дані, а на залежності. `visible` — новий масив від `.filter()` на кожному рендері, тож залежність щоразу «змінилася»."
+            en: "`useMemo` looks not at the data but at the dependencies. `visible` is a new array from `.filter()` on every render, so the dependency “changed” every time."
+      correct: [computed]
+    explanation:
+      uk: "Перевірено в пісочниці: після кожної літери — `total computed`. Такий `useMemo` нічого не зберігає, лише порівнює. Залежностями мають бути стабільні значення, з яких рахують: `[expenses, category]`, а фільтр — усередині функції."
+      en: "Checked in the sandbox: after every letter — `total computed`. Such a `useMemo` keeps nothing and only compares. The dependencies must be the stable values the result is computed from: `[expenses, category]`, with the filter inside the function."
+
+  - id: monthly-totals
+    kind: example
+    runtime: browser-react
+    dir: monthly-totals
+    entry: main.jsx
+    strings:
+      currency: { uk: "грн", en: "UAH" }
+      compact: { uk: "Коротко", en: "Compact" }
+      addCoffee: { uk: "Додати каву", en: "Add a coffee" }
+      count: { uk: "Скільки записів?", en: "How many records?" }
+      records: { uk: "Записів:", en: "Records:" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+    title:
+      uk: "Місячні підсумки 20 000 витрат"
+      en: "Monthly totals of 20,000 expenses"
+    body:
+      uk: |
+        `ExpenseSummary` рахує підсумки за місяцями для 20 000 синтетичних витрат. `main.jsx` обгортає сторінку в `<Profiler>` **ззовні**: він міряє лише те, що всередині нього, а обчислення живе в тілі самого компонента.
+
+        Натисни **Запустити** й кілька разів перемкни «Коротко» на **Сторінці**. Дані не змінюються, а консоль щоразу показує близько 45 мс (у пісочниці; твої числа будуть інші). Запис на панелі Performance покаже, що майже весь цей час — `monthlyTotals`, а в ній — сортування, яке для кожного порівняння розбирає дві дати.
+      en: |
+        `ExpenseSummary` computes monthly totals for 20,000 synthetic expenses. `main.jsx` wraps the page in `<Profiler>` **from outside**: it measures only what is inside it, and the calculation lives in the component’s own body.
+
+        Press **Run** and toggle “Compact” a few times on the **Page**. The data does not change, yet the console shows about 45 ms every time (in the sandbox; your numbers will differ). A Performance recording shows that almost all of this time is `monthlyTotals`, and inside it the sort, which parses two dates for every comparison.
+    tryIt:
+      uk: |
+        1. **Мемоізуй виміряне.** Заміни рядок `const totals = monthlyTotals(expenses);` на `const totals = useMemo(() => monthlyTotals(expenses), [expenses]);` і додай `useMemo` до імпорту з `react`. Запусти: «Коротко» тепер коштує менше за мілісекунду, а «Додати каву» — знову близько 45 мс. Так і треба: `expenses` став новим масивом, і підсумки мусять перерахуватися.
+        2. **Прибери те, що не дало виграшу.** Кнопка «Скільки записів?» отримує `logCount` з `useCallback`. Заміни його на звичайну функцію `function logCount() { console.log(…); }` з тим самим тілом і прибери `useCallback` з імпорту. Числа в консолі не змінилися: `<button>` — не компонент у `memo`, і жоден ефект від `logCount` не залежить. Код став простішим без жодної втрати.
+        3. **Спробуй дешевше обчислення.** Прибери `useMemo` (поверни рядок із кроку 1) і в `expenses.js` заміни порівняння на `(a, b) => b.date.localeCompare(a.date)`: дати у форматі `YYYY-MM-DD` сортуються як текст. У пісочниці рендер упав приблизно до 5 мс — уже без мемоізації.
+      en: |
+        1. **Memoize what you measured.** Replace the line `const totals = monthlyTotals(expenses);` with `const totals = useMemo(() => monthlyTotals(expenses), [expenses]);` and add `useMemo` to the import from `react`. Run: “Compact” now costs less than a millisecond, while “Add a coffee” is about 45 ms again. That is how it should be: `expenses` became a new array, and the totals must be recalculated.
+        2. **Remove what gave no gain.** The “How many records?” button gets `logCount` from `useCallback`. Replace it with a plain function `function logCount() { console.log(…); }` with the same body and remove `useCallback` from the import. The numbers in the console did not change: `<button>` is not a component in `memo`, and no effect depends on `logCount`. The code got simpler at no cost.
+        3. **Try a cheaper calculation.** Remove `useMemo` (bring back the line from step 1) and in `expenses.js` replace the comparison with `(a, b) => b.date.localeCompare(a.date)`: dates in the `YYYY-MM-DD` format sort as text. In the sandbox the render dropped to about 5 ms — with no memoization at all.
+
+  - id: recall-measure-loop
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: loop-order
+        from: js-17-07-measured-improvement
+        prompt:
+          uk: "Розстав кроки виправлення повільного місця в правильному порядку."
+          en: "Put the steps of fixing a slow spot in the right order."
+        answer:
+          type: order
+          items:
+            - { id: baseline, text: { uk: "Виміряти й записати базове число з розміром даних", en: "Measure and write down a baseline with the data size" } }
+            - { id: hypothesis, text: { uk: "Назвати одну причину, на яку вказує запис", en: "Name one cause the recording points to" } }
+            - { id: change, text: { uk: "Змінити одну річ", en: "Change one thing" } }
+            - { id: remeasure, text: { uk: "Виміряти знову на тих самих даних", en: "Measure again on the same data" } }
+            - { id: decide, text: { uk: "Залишити зміну або відкотити її й перевірити поведінку", en: "Keep the change or revert it, and check the behavior" } }
+        explanation:
+          uk: "Без базового числа немає з чим порівнювати, а дві зміни одночасно не скажуть, яка з них допомогла. Мемоізація — одна з таких змін: її залишають лише тоді, коли повторне вимірювання показало виграш."
+          en: "Without a baseline there is nothing to compare with, and two changes at once will not tell you which one helped. A memoization is one such change: it is kept only when the second measurement showed a gain."
+
+  - id: memo-rows
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: memo-rows
+    entry: main.jsx
+    editable: [App.jsx, evidence.js]
+    strings:
+      newTask: { uk: "Нова справа", en: "New task" }
+      add: { uk: "Додати", en: "Add" }
+      typed: { uk: "Купити квитки", en: "Buy tickets" }
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки", en: "Return books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+    title:
+      uk: "Одна виміряна мемоізація для 2 000 справ"
+      en: "One measured memoization for 2,000 tasks"
+    instructions:
+      uk: |
+        Дошка має 2 000 справ. Позначити одну справу виконаною — і рендеряться всі 2 000 рядків `TaskRow` (рядок рахує свої рендери в `TaskRow.jsx`; цей файл змінювати не можна). Консоль після кожного commit друкує час рендеру.
+
+        1. Запусти, позначи кілька справ і запиши в `evidence.js` число `beforeMs` з одного рядка `update`.
+        2. Зміни `App.jsx` так, щоб позначення однієї справи рендерило **лише її рядок**, а набір назви нової справи не рендерив жодного рядка. Позначення двох справ поспіль має лишати виконаними обидві, а додавання — працювати як раніше.
+        3. Запусти знову, позначи справу й запиши `afterMs` і `rowsAfter` — скільки рядків рендериться на одне позначення тепер.
+
+        Перевірка рахує рендери рядків і порівнює твої два числа між собою; лиши в коді лише те, що ці числа виправдовують.
+      en: |
+        The board has 2,000 tasks. Mark one task done — and all 2,000 `TaskRow` rows render (a row counts its renders in `TaskRow.jsx`; this file cannot be changed). After every commit the console prints the render time.
+
+        1. Run it, mark a few tasks and write `beforeMs` from one `update` line into `evidence.js`.
+        2. Change `App.jsx` so that marking one task renders **only its row**, and typing a new task’s title renders no row at all. Marking two tasks in a row must leave both done, and adding must work as before.
+        3. Run again, mark a task and write down `afterMs` and `rowsAfter` — how many rows render per mark now.
+
+        The check counts row renders and compares your two numbers with each other; keep in the code only what those numbers justify.
+    testTitles:
+      "toggling two tasks marks both done":
+        uk: "Позначення двох справ поспіль лишає виконаними обидві"
+        en: "Toggling two tasks in a row marks both done"
+      "toggling one task renders only that row":
+        uk: "Позначення однієї справи рендерить лише її рядок"
+        en: "Toggling one task renders only that row"
+      "typing a new title renders no rows":
+        uk: "Набір назви нової справи не рендерить жодного рядка"
+        en: "Typing a new title renders no rows"
+      "adding a task puts it at the end of the list":
+        uk: "Додана справа з’являється в кінці списку"
+        en: "An added task appears at the end of the list"
+      "the note shows a measured gain":
+        uk: "Записка показує виміряний виграш: `afterMs` менше за `beforeMs`"
+        en: "The note shows a measured gain: `afterMs` is less than `beforeMs`"
+      "the note says how many rows render after the change":
+        uk: "Записка каже, скільки рядків рендериться після зміни"
+        en: "The note says how many rows render after the change"
+    hints:
+      nudge:
+        uk: "Чому рядок рендериться, коли змінилася інша справа? Подивись, які props він отримує, і для кожного спитай: це той самий об’єкт, що й минулого разу?"
+        en: "Why does a row render when a different task changed? Look at the props it receives, and for each one ask: is it the same object as last time?"
+      explanation:
+        uk: "Щоб рядок пропускав рендер, його треба обгорнути в `memo` — це можна зробити й з імпортованим компонентом: `const MemoHabitCard = memo(HabitCard)`. Але `memo` допоможе, лише коли **всі** props стабільні: `task` у незмінених справ той самий, а функція позначення зараз нова на кожному рендері. Зроби її стабільною через `useCallback`. Обережно з залежностями: функція з `[]`, що читає `tasks` із замикання, назавжди бачитиме перший список і зітре попередні позначки. Оновлювач `setX((current) => …)` читає поточне значення й залежностей не потребує — так, як у прикладі з бажаннями з цього уроку."
+        en: "For a row to skip rendering it must be wrapped in `memo` — that works with an imported component too: `const MemoHabitCard = memo(HabitCard)`. But `memo` helps only when **all** props are stable: `task` of the unchanged tasks is the same, but the toggle function is currently new on every render. Make it stable with `useCallback`. Careful with the dependencies: a function with `[]` that reads `tasks` from its closure will see the first list forever and wipe out earlier marks. An updater `setX((current) => …)` reads the current value and needs no dependencies — as in this lesson’s wish example."
+    solutionNote:
+      uk: "Вимірювання показало, що одне позначення рендерить 2 000 рядків, тож мемоізація тут виправдана. `memo(TaskRow)` пропускає рядок, коли його props ті самі. `task` у незмінених справ той самий об’єкт (оновлення створює новий лише для однієї справи), а `toggle` з `useCallback` і порожніми залежностями — та сама функція, бо оновлювач читає поточний список. Без `useCallback` `memo` нічого не дає; без `memo` `useCallback` нічого не дає. Інший робочий варіант — `useReducer`: `dispatch` стабільний сам."
+      en: "The measurement showed one mark renders 2,000 rows, so memoization is justified here. `memo(TaskRow)` skips a row when its props are the same. `task` of the unchanged tasks is the same object (the update creates a new one for one task only), and `toggle` from `useCallback` with empty dependencies is the same function, because the updater reads the current list. Without `useCallback`, `memo` gains nothing; without `memo`, `useCallback` gains nothing. Another working way is `useReducer`: `dispatch` is stable by itself."
+    feedback:
+      - when: { test: "toggling two tasks marks both done" }
+        message:
+          uk: "Ця перевірка позначає другу, потім третю справу й очікує, що обидві виконані, а перша — ні. Функція з порожніми залежностями, що читає `tasks` із замикання, бачить перший список і скасовує попередню позначку; оновлювач `setTasks((current) => …)` читає поточний."
+          en: "This check marks the second, then the third task and expects both done and the first not. A function with empty dependencies that reads `tasks` from its closure sees the first list and undoes the earlier mark; an updater `setTasks((current) => …)` reads the current one."
+      - when: { test: "toggling one task renders only that row" }
+        message:
+          uk: "Ця перевірка позначає одну справу й очікує рівно один рендер `TaskRow`. Рядок пропускає рендер лише в `memo` і лише коли всі його props ті самі — і `task`, і `onToggle`."
+          en: "This check marks one task and expects exactly one `TaskRow` render. A row skips rendering only inside `memo`, and only when all of its props are the same — both `task` and `onToggle`."
+      - when: { test: "typing a new title renders no rows" }
+        message:
+          uk: "Ця перевірка набирає дві літери в полі «Нова справа» й очікує нуль рендерів `TaskRow`. Набір змінює стан дошки; рядки мають отримати ті самі props, що й раніше."
+          en: "This check types two letters into the “New task” field and expects zero `TaskRow` renders. Typing changes the board’s state; the rows must get the same props as before."
+      - when: { test: "adding a task puts it at the end of the list" }
+        message:
+          uk: "Ця перевірка вводить «Купити квитки», надсилає форму й очікує 2 001 справу з новою в кінці."
+          en: "This check types “Buy tickets”, submits the form and expects 2,001 tasks with the new one at the end."
+      - when: { test: "the note shows a measured gain" }
+        message:
+          uk: "Ця перевірка очікує в `evidence.js` два числа більші за нуль (без лапок), де `afterMs` менше за `beforeMs`. Обидва — з рядків `update` після позначення справи: до зміни й після."
+          en: "This check expects two numbers greater than zero in `evidence.js` (without quotes), with `afterMs` less than `beforeMs`. Both come from `update` lines after marking a task: before the change and after."
+      - when: { test: "the note says how many rows render after the change" }
+        message:
+          uk: "Ця перевірка очікує в `rowsAfter` кількість рядків, що рендеряться на одне позначення після твоєї зміни."
+          en: "This check expects in `rowsAfter` the number of rows that render per mark after your change."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-07
+    body:
+      uk: "У кроці проєкту ти виправиш одну виміряну причину. Якщо це мемоізація — лиши в коді коментар із двома числами «до» і «після» та розміром даних, а кожен `useMemo` чи `useCallback`, що не дав виграшу, прибери."
+      en: "In the project step you will fix one measured cause. If the fix is a memoization, leave a comment in the code with the two numbers, “before” and “after”, and the data size, and remove every `useMemo` or `useCallback` that gave no gain."

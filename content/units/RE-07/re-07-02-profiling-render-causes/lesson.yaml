@@ -1,0 +1,404 @@
+id: re-07-02-profiling-render-causes
+unit: RE-07
+title:
+  uk: "Профілювання: чому цей компонент рендерився?"
+  en: "Profiling: why did this render?"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Записати взаємодію інструментами профілювання React і для кожного компонента, що рендерився, назвати причину: власний стан, рендер батька чи зміна context."
+    en: "Record an interaction with React's profiling tools and name, for each re-rendered component, why it rendered (own state, parent render, context change)."
+  - uk: "Відрізнити повільний рендер від повільного commit чи повільного ефекту за записом, а не за здогадкою."
+    en: "Tell a slow render from a slow commit or a slow effect using the recording, not intuition."
+prerequisites: [re-07-01-keyboard-crud, re-01-06-render-vs-commit, js-17-06-devtools-performance-memory]
+subskills:
+  - { family: R-07, skill: "profiling/render causes", depth: intro }
+glossary: [react-profiler, render-cause, commit-duration]
+selfCheck: [predict-who-renders, predict-slow-phase]
+
+blocks:
+  - id: three-causes
+    kind: explanation
+    title:
+      uk: "Три причини рендеру"
+      en: "Three reasons to render"
+    body:
+      uk: |
+        React викликає функцію компонента знову лише з однієї з трьох [[render-cause|причин рендеру]]:
+
+        - **власний стан** — у компоненті викликали сеттер `useState` чи `dispatch` з новим значенням;
+        - **рендер батька** — батько рендерився, і React знову викликає **всіх** його дітей, навіть якщо їхні props ті самі;
+        - **зміна context** — змінилося значення context, який компонент читає.
+
+        Props у цьому списку немає. Нові props з’являються лише тоді, коли рендериться батько, — тож «рендериться лише той, у кого змінилися props» хибно двічі: дитина рендериться й з тими самими props.
+
+        І другий висновок: рендер сам по собі — не біда. React викликає функції й порівнює результат; якщо нічого не змінилося, DOM не чіпають. Біда — коли рендер **виміряно** повільний: за 60 кадрів на секунду на кадр є близько 16 мс, і робота понад це на кожну клавішу робить набір тексту в’язким.
+      en: |
+        React calls a component’s function again for only one of three [[render-cause|render causes]]:
+
+        - **own state** — a `useState` setter or `dispatch` was called in the component with a new value;
+        - **parent render** — the parent rendered, and React calls **all** of its children again, even when their props are the same;
+        - **context change** — the value of a context the component reads changed.
+
+        Props are not on this list. New props appear only when the parent renders — so “only the component whose props changed renders” is wrong twice over: a child renders with the same props too.
+
+        And a second conclusion: a render by itself is not a problem. React calls functions and compares the result; if nothing changed, the DOM is not touched. The problem is a render **measured** to be slow: at 60 frames per second a frame has about 16 ms, and more work than that on every key press makes typing feel sticky.
+
+  - id: predict-who-renders
+    kind: prediction
+    prompt:
+      uk: "Сторінка бажань тримає чернетку пошуку в стані самої сторінки. Користувач набирає одну літеру в полі пошуку. Які компоненти рендеряться знову?"
+      en: "A wish page keeps the search draft in the page’s own state. The user types one letter into the search field. Which components render again?"
+    code: |
+      export default function WishPage() {
+        const [draft, setDraft] = useState("");
+        const [query, setQuery] = useState("");
+        const visible = WISHES.filter((wish) => wish.name.includes(query)); // 2,000 wishes
+        return (
+          <>
+            <SearchField value={draft} onChange={setDraft} />
+            <Summary count={visible.length} />
+            <WishList wishes={visible} /> {/* renders a WishCard for every wish */}
+          </>
+        );
+      }
+    lang: jsx
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: field
+          code: "SearchField"
+        - id: summary
+          code: "Summary"
+        - id: list
+          code: "WishList"
+        - id: cards
+          text:
+            uk: "кожен `WishCard` — усі 2 000"
+            en: "every `WishCard` — all 2,000"
+      correct: [field, summary, list, cards]
+    explanation:
+      uk: "`setDraft` змінює стан `WishPage` — це власний стан. `WishPage` рендериться, і React знову викликає всіх його дітей, а ті — своїх: `SearchField`, `Summary`, `WishList` і всі 2 000 `WishCard`. У `Summary` і карток props ті самі — причина їхнього рендеру не props, а рендер батька. Виміряно в пісочниці з React 19.3: кожна літера — 2 004 виклики компонентів і 40–60 мс рендеру."
+      en: "`setDraft` changes `WishPage`’s state — that is own state. `WishPage` renders, and React calls all of its children again, and they call theirs: `SearchField`, `Summary`, `WishList` and all 2,000 `WishCard`. `Summary` and the cards have the same props — the reason they render is not props but the parent render. Measured in the sandbox with React 19.3: every letter means 2,004 component calls and 40–60 ms of rendering."
+
+  - id: who-renders
+    kind: visual
+    visual: render-timeline
+    strings:
+      shown: { uk: "Показано:", en: "Shown:" }
+    title:
+      uk: "Одна літера в полі пошуку над 2 000 бажань"
+      en: "One letter in the search field above 2,000 wishes"
+    textEquivalent:
+      uk: "Рендер 1 — перший показ: WishPage, SearchField, Summary, WishList і 2 000 WishCard, близько 70 мс. Commit 1 створює весь список. Подія: користувач набирає «л», обробник поля викликає setDraft. Рендер 2: причина — власний стан WishPage (draft змінився). Разом із ним рендеряться SearchField (рендер батька, props value змінився), Summary і WishList (рендер батька), і всі 2 000 WishCard (рендер батька, props ті самі) — 40–60 мс у пісочниці. Commit 2 змінює в DOM лише значення поля; список і підсумок лишаються тими самими вузлами. Власних ефектів сторінка не має, тож майже весь час цієї взаємодії — рендер."
+      en: "Render 1 — first display: WishPage, SearchField, Summary, WishList and 2,000 WishCard, about 70 ms. Commit 1 creates the whole list. Event: the user types “l”, the field’s handler calls setDraft. Render 2: the cause is WishPage’s own state (draft changed). With it render SearchField (parent render, the value prop changed), Summary and WishList (parent render), and all 2,000 WishCard (parent render, same props) — 40–60 ms in the sandbox. Commit 2 changes only the field’s value in the DOM; the list and the summary stay the same nodes. The page has no effects of its own, so almost all the time of this interaction is render."
+    spec:
+      component: WishPage
+      code: |
+        export default function WishPage() {
+          const [draft, setDraft] = useState("");
+          const [query, setQuery] = useState("");
+          const visible = WISHES.filter((wish) => wish.name.includes(query));
+          return (
+            <>
+              <SearchField value={draft} onChange={setDraft} />
+              <Summary count={visible.length} />
+              <WishList wishes={visible} />
+            </>
+          );
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 1
+          reason: { uk: "перший показ", en: "first display" }
+          snapshot: { state: { draft: "", query: "" } }
+          caption:
+            uk: "Рендер 1: React викликає `WishPage`, `SearchField`, `Summary`, `WishList` і 2 000 `WishCard`. У пісочниці — близько 70 мс."
+            en: "Render 1: React calls `WishPage`, `SearchField`, `Summary`, `WishList` and 2,000 `WishCard`. In the sandbox, about 70 ms."
+        - phase: commit
+          render: 1
+          dom: "<input value=\"\"> <p>%%shown%% 2000</p> <ul>2000 × <li></ul>"
+          caption:
+            uk: "Commit 1 створює поле, підсумок і весь список."
+            en: "Commit 1 creates the field, the summary and the whole list."
+        - phase: event
+          name: input
+          line: 7
+          sees: { draft: "" }
+          actions: ["setDraft(\"l\")"]
+          queued: { draft: "l" }
+          caption:
+            uk: "Подія: користувач набирає літеру, обробник поля викликає `setDraft`. Оновлюється стан `WishPage`."
+            en: "Event: the user types a letter, the field’s handler calls `setDraft`. `WishPage`’s state is updated."
+        - phase: render
+          render: 2
+          line: 1
+          reason: { uk: "власний стан: draft змінився", en: "own state: draft changed" }
+          snapshot: { state: { draft: "l", query: "" } }
+          caption:
+            uk: "Рендер 2. `WishPage` — через власний стан. `SearchField`, `Summary`, `WishList` і **всі 2 000** `WishCard` — через рендер батька, хоча в карток props ті самі. 40–60 мс на одну літеру."
+            en: "Render 2. `WishPage` — because of its own state. `SearchField`, `Summary`, `WishList` and **all 2,000** `WishCard` — because of the parent render, even though the cards’ props are the same. 40–60 ms per letter."
+        - phase: commit
+          render: 2
+          dom: "<input value=\"l\"> <p>%%shown%% 2000</p> <ul>2000 × <li></ul>"
+          caption:
+            uk: "Commit 2 змінює лише значення поля. Майже вся робота була рендером, після якого в DOM нічого не змінилося, крім однієї літери."
+            en: "Commit 2 changes only the field’s value. Almost all the work was render, after which nothing changed in the DOM except one letter."
+
+  - id: two-tools
+    kind: explanation
+    title:
+      uk: "Чим міряти"
+      en: "What to measure with"
+    body:
+      uk: |
+        [[react-profiler|Профілювальник React]] — це два інструменти, і обидва працюють із пісочницею:
+
+        - **Компонент `<Profiler id onRender>`** з пакета `react`. Після кожного commit усередині нього React викликає `onRender(id, phase, actualDuration, …)`: `phase` — `"mount"` чи `"update"`, `actualDuration` — скільки мілісекунд React **рендерив** цю частину. Час commit і ефектів сюди не входить.
+        - **Панель Performance у Chrome DevTools**, яку ти знаєш із JS-17. Розробницька збірка React 19.2+ додає до запису власні доріжки: **Scheduler ⚛** — для кожного оновлення смужки `Render`, `Commit` і `Remaining Effects` (ефекти), і **Components ⚛** — смужка кожного компонента з його часом; для оновлення в деталях є список **Changed Props**.
+
+        Пісочниця запускає саме розробницьку збірку (перевірено: React 19.3.0) без обгортки `StrictMode`, тож кожне оновлення — один рендер, і лічильники рахують справжні рендери. Розробницька збірка повільніша за робочу, тож порівнюй «до» і «після» на одній збірці, а не абсолютні числа. Розширення React Developer Tools має ще й вкладку Profiler — зручну, але необов’язкову; у цьому курсі її не перевіряли.
+      en: |
+        The [[react-profiler|React profiler]] is two tools, and both work with the sandbox:
+
+        - **The `<Profiler id onRender>` component** from the `react` package. After every commit inside it, React calls `onRender(id, phase, actualDuration, …)`: `phase` is `"mount"` or `"update"`, `actualDuration` is how many milliseconds React spent **rendering** this part. Commit and effect time are not included.
+        - **The Performance panel of Chrome DevTools**, which you know from JS-17. The development build of React 19.2+ adds its own tracks to the recording: **Scheduler ⚛** — for every update, `Render`, `Commit` and `Remaining Effects` (effects) bars, and **Components ⚛** — a bar for each component with its time; for an update the details list **Changed Props**.
+
+        The sandbox runs exactly the development build (checked: React 19.3.0) without a `StrictMode` wrapper, so every update is one render and the counters count real renders. The development build is slower than the production one, so compare “before” and “after” on the same build, not the absolute numbers. The React Developer Tools extension also has a Profiler tab — handy but optional; this course did not check it.
+
+  - id: search-profile
+    kind: example
+    runtime: browser-react
+    dir: search-profile
+    entry: main.jsx
+    strings:
+      search: { uk: "Пошук", en: "Search" }
+      find: { uk: "Знайти", en: "Find" }
+      shown: { uk: "Показано:", en: "Shown:" }
+      locale: { uk: "uk-UA", en: "en-GB" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+    title:
+      uk: "Записуємо набір у полі пошуку"
+      en: "Recording typing in the search field"
+    body:
+      uk: |
+        `profile.jsx` обгортає сторінку в `<Profiler>` і після кожного commit друкує один рядок: фазу, час рендеру й хто рендерився. Щоб знати «хто», кожен компонент на початку викликає `countRender("…")` — це лише лічильник для вимірювання, як `console.log` у рендері з RE-01.
+
+        Натисни **Запустити** й набери три літери в полі «Пошук» на **Сторінці**. На кожну літеру консоль друкує рядок на зразок `⏱ WishPage · update · 41.2 ms · WishPage, SearchField, Summary, WishList, WishCard ×2000`. Твої мілісекунди будуть іншими.
+      en: |
+        `profile.jsx` wraps the page in `<Profiler>` and after every commit prints one line: the phase, the render time and who rendered. To know “who”, every component calls `countRender("…")` at its start — only a counter for measuring, like `console.log` in render in RE-01.
+
+        Press **Run** and type three letters into the “Search” field on the **Page**. For every letter the console prints a line like `⏱ WishPage · update · 41.2 ms · WishPage, SearchField, Summary, WishList, WishCard ×2000`. Your milliseconds will differ.
+    tryIt:
+      uk: |
+        1. **Запиши взаємодію в DevTools.** Відкрий панель **Performance**, як у JS-17, натисни запис, набери дві літери, зупини запис. Знайди доріжки **Scheduler ⚛** і **Components ⚛**: на першій для кожної літери видно довгий `Render`, а за ним короткі `Commit` і `Remaining Effects` (кілька мілісекунд, хоча власних ефектів сторінка не має: тут працює, зокрема, `onRender`); на другій — `WishPage`, а під ним `WishList` і стовпчик із дві тисячі карток. Якщо доріжок немає, перевір, що записуєш вкладку платформи в Chrome і що пісочниця запущена.
+        2. **Перенеси чернетку вниз.** Чернетка потрібна лише полю, тож нехай вона живе поруч із ним. Додай над `WishPage` компонент `SearchForm`: він викликає `countRender("SearchForm")`, тримає `const [draft, setDraft] = useState("")`, а по надсиланню форми викликає `onSearch(draft.trim())`. Перенеси в нього всю `<form>…</form>`. У `WishPage` прибери стан `draft` і функцію `search`, а форму заміни на `<SearchForm onSearch={setQuery} />`.
+        3. Запусти й набери літери знову: тепер рядок — `⏱ WishPage · update · 0.6 ms · SearchForm, SearchField`. Натисни «Знайти»: рендериться вся сторінка, бо змінився стан `query`, і це вже потрібна робота.
+      en: |
+        1. **Record the interaction in DevTools.** Open the **Performance** panel as in JS-17, start recording, type two letters, stop. Find the **Scheduler ⚛** and **Components ⚛** tracks: on the first, every letter shows a long `Render`, followed by a short `Commit` and `Remaining Effects` (a few milliseconds, although the page has no effects of its own: `onRender` runs there, among others); on the second, `WishPage` with `WishList` under it and a column of two thousand cards. If the tracks are missing, check that you record the platform’s tab in Chrome and that the sandbox is running.
+        2. **Move the draft down.** Only the field needs the draft, so let it live next to the field. Add a `SearchForm` component above `WishPage`: it calls `countRender("SearchForm")`, holds `const [draft, setDraft] = useState("")`, and on submit calls `onSearch(draft.trim())`. Move the whole `<form>…</form>` into it. In `WishPage` remove the `draft` state and the `search` function, and replace the form with `<SearchForm onSearch={setQuery} />`.
+        3. Run it and type again: the line is now `⏱ WishPage · update · 0.6 ms · SearchForm, SearchField`. Press “Find”: the whole page renders, because the `query` state changed, and that is work that is needed.
+
+  - id: recall-profile
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: self-time
+        from: js-17-06-devtools-performance-memory
+        prompt:
+          uk: "У таблиці Bottom-up профілю функція `renderPage` має Total time 120 мс і Self time 2 мс, а `formatPrice` — Total time 95 мс і Self time 90 мс. Де виконується повільний код?"
+          en: "In a profile’s Bottom-up table, `renderPage` has a Total time of 120 ms and a Self time of 2 ms, while `formatPrice` has a Total time of 95 ms and a Self time of 90 ms. Where does the slow code run?"
+        answer:
+          type: choice
+          options:
+            - id: format
+              code: "formatPrice"
+            - id: render
+              code: "renderPage"
+              why:
+                uk: "Total time `renderPage` великий, бо включає тих, кого вона викликала. Власних мілісекунд у неї лише 2."
+                en: "`renderPage`’s Total time is large because it includes the functions it called. It has only 2 ms of its own."
+          correct: [format]
+        explanation:
+          uk: "Self time — час у самій функції без тих, кого вона викликала. 90 мс із 95 `formatPrice` витрачає сама, тож саме її код варто роздивитися. На доріжці Components ⚛ так само: смужка батька охоплює дітей, а дорогий той, під ким немає нічого великого."
+          en: "Self time is the time in the function itself, without the ones it called. `formatPrice` spends 90 of its 95 ms itself, so its code is the one to look at. On the Components ⚛ track it is the same: a parent’s bar spans its children, and the expensive one is the one with nothing big under it."
+
+  - id: render-commit-effects
+    kind: explanation
+    title:
+      uk: "Рендер, commit чи ефект"
+      en: "Render, commit or effect"
+    body:
+      uk: |
+        Повільна взаємодія може бути повільною в трьох різних місцях, і виправлення в кожному своє:
+
+        | Що довге на Scheduler ⚛ | Що це означає | Де шукати |
+        |---|---|---|
+        | `Render` | React довго викликає компоненти | хто рендерився і навіщо — Components ⚛ і `<Profiler>` |
+        | `Commit` | довго змінюється сам DOM: тисячі вставлених чи видалених вузлів | скільки вузлів змінює одне оновлення |
+        | `Remaining Effects` | довго працюють ефекти після commit | код у `useEffect` |
+
+        [[commit-duration|Тривалість commit]] — це час, коли React застосовує зміни до DOM. Але `actualDuration` у `onRender` міряє лише рендер. Ефект, що працює 40 мс, дасть `onRender` близько нуля — тому висновок «де повільно» роблять із запису, де видно всі три фази.
+      en: |
+        A slow interaction can be slow in three different places, and each has its own fix:
+
+        | What is long on Scheduler ⚛ | What it means | Where to look |
+        |---|---|---|
+        | `Render` | React takes long to call components | who rendered and why — Components ⚛ and `<Profiler>` |
+        | `Commit` | the DOM itself takes long to change: thousands of nodes inserted or removed | how many nodes one update changes |
+        | `Remaining Effects` | effects run long after the commit | the code in `useEffect` |
+
+        [[commit-duration|Commit duration]] is the time React spends applying changes to the DOM. But `actualDuration` in `onRender` measures only render. An effect that runs for 40 ms gives an `onRender` of about zero — so the conclusion “where is it slow” comes from a recording that shows all three phases.
+
+  - id: predict-slow-phase
+    kind: prediction
+    prompt:
+      uk: "Після кліку «Зберегти» сторінка звичок підвисає. `<Profiler>` навколо сторінки надрукував `update · 0.4 ms`, а на доріжці Scheduler ⚛ для цього кліку видно: `Render` 0,5 мс, `Commit` 0,2 мс, `Remaining Effects` 40 мс. Де шукати причину?"
+      en: "After clicking “Save” the habit page hangs. A `<Profiler>` around the page printed `update · 0.4 ms`, and the Scheduler ⚛ track shows for this click: `Render` 0.5 ms, `Commit` 0.2 ms, `Remaining Effects` 40 ms. Where do you look for the cause?"
+    answer:
+      type: choice
+      options:
+        - id: effects
+          text:
+            uk: "У коді ефекту, який запускається після цього оновлення"
+            en: "In the code of an effect that runs after this update"
+        - id: render
+          text:
+            uk: "У рендері: треба зменшити кількість компонентів, що рендеряться"
+            en: "In render: the number of rendering components must be reduced"
+          why:
+            uk: "Рендер триває пів мілісекунди — `<Profiler>` і доріжка це підтверджують. Менше рендерів тут нічого не дасть."
+            en: "Render takes half a millisecond — `<Profiler>` and the track agree. Fewer renders gain nothing here."
+        - id: nowhere
+          text:
+            uk: "Ніде: `<Profiler>` показав 0,4 мс, отже React швидкий, а підвисає браузер"
+            en: "Nowhere: `<Profiler>` showed 0.4 ms, so React is fast and the browser is what hangs"
+          why:
+            uk: "`actualDuration` міряє лише рендер. Час ефектів у нього не входить, а запис показує 40 мс саме там."
+            en: "`actualDuration` measures only render. Effect time is not part of it, and the recording shows 40 ms exactly there."
+      correct: [effects]
+    explanation:
+      uk: "Це числа з реального запису в пісочниці: компонент з ефектом, що працює 40 мс після кожного кліку. `onRender` дав 0,4 мс, бо ефекти в нього не входять, а `Remaining Effects` на Scheduler ⚛ — 40 мс. На доріжці Components ⚛ під назвою цього компонента з’являється ще одна смужка на ті самі 40 мс."
+      en: "These are numbers from a real recording in the sandbox: a component with an effect that runs for 40 ms after every click. `onRender` gave 0.4 ms because effects are not part of it, while `Remaining Effects` on Scheduler ⚛ was 40 ms. On the Components ⚛ track one more bar of the same 40 ms appears under this component’s name."
+
+  - id: evidence-note
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: evidence-note
+    entry: main.jsx
+    editable: [evidence.js]
+    strings:
+      note: { uk: "Нотатка до місяця", en: "Note for the month" }
+      locale: { uk: "uk-UA", en: "en-GB" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+    title:
+      uk: "Записка з доказами: чому набір нотатки гальмує"
+      en: "An evidence note: why typing the note lags"
+    instructions:
+      uk: |
+        Сторінка витрат показує поле «Нотатка до місяця», підсумки за категоріями й таблицю витрат. Набирати нотатку незручно: поле відстає. Код сторінки змінювати не треба — спершу зібери докази.
+
+        Запусти, набери кілька літер у полі й подивись у консоль: `profile.jsx` друкує час рендеру кожної з трьох частин. Запиши ту саму взаємодію на панелі **Performance** і подивись на доріжку Scheduler ⚛.
+
+        Заповни в `evidence.js` записку **зі своїх вимірювань**:
+
+        - `interaction` — що ти робив під час запису;
+        - `records` — скільки витрат показує сторінка (подивись у `expenses.js`);
+        - `slowest` — частина з найдовшим рендером: `"NoteField"`, `"CategoryTotals"` чи `"ExpenseTable"`;
+        - `cause` — чому ця частина рендериться, коли ти набираєш: `"state"`, `"parent"` чи `"context"`;
+        - `renderMs` — її час рендеру в одному оновленні, з консолі;
+        - `phase` — що найдовше на Scheduler ⚛ для однієї літери: `"render"`, `"commit"` чи `"effects"`.
+
+        Числа на кожній машині свої. Перевірка дивиться, чи записка повна й чи вона узгоджена з тим, що робить сторінка.
+      en: |
+        The expense page shows a “Note for the month” field, category totals and a table of expenses. Typing the note is unpleasant: the field lags. Do not change the page’s code — collect the evidence first.
+
+        Run it, type a few letters into the field and look at the console: `profile.jsx` prints the render time of each of the three parts. Record the same interaction in the **Performance** panel and look at the Scheduler ⚛ track.
+
+        Fill in the note in `evidence.js` **from your own measurements**:
+
+        - `interaction` — what you did while recording;
+        - `records` — how many expenses the page shows (look in `expenses.js`);
+        - `slowest` — the part with the longest render: `"NoteField"`, `"CategoryTotals"` or `"ExpenseTable"`;
+        - `cause` — why that part renders when you type: `"state"`, `"parent"` or `"context"`;
+        - `renderMs` — its render time in one update, from the console;
+        - `phase` — what is longest on Scheduler ⚛ for one letter: `"render"`, `"commit"` or `"effects"`.
+
+        Numbers differ from machine to machine. The check looks at whether the note is complete and consistent with what the page does.
+    testTitles:
+      "the note says what was recorded":
+        uk: "`interaction` описує, що записано"
+        en: "`interaction` says what was recorded"
+      "records is the number of expenses on the page":
+        uk: "`records` — кількість витрат на сторінці"
+        en: "`records` is the number of expenses on the page"
+      "slowest is the part with the longest render":
+        uk: "`slowest` — частина з найдовшим рендером"
+        en: "`slowest` is the part with the longest render"
+      "cause says why that part rendered":
+        uk: "`cause` пояснює, чому ця частина рендерилася"
+        en: "`cause` says why that part rendered"
+      "renderMs is a measured number of milliseconds":
+        uk: "`renderMs` — виміряне число мілісекунд"
+        en: "`renderMs` is a measured number of milliseconds"
+      "phase names where the update spent most time":
+        uk: "`phase` називає, де оновлення витратило найбільше часу"
+        en: "`phase` names where the update spent most time"
+    hints:
+      nudge:
+        uk: "Не вгадуй за кодом — читай консоль. Яке з трьох чисел в одному оновленні найбільше? А в чиєму стані живе нотатка?"
+        en: "Do not guess from the code — read the console. Which of the three numbers in one update is the largest? And in whose state does the note live?"
+      explanation:
+        uk: "Найдорожча частина — та, у якої найбільше мілісекунд у рядках `update`, а не та, чий код виглядає складним: цикл по чотирьох категоріях — це кілька тисяч порівнянь, а створення форматувальника для кожного рядка таблиці — дві тисячі дорогих об’єктів. Причину шукай так: сеттер, який змінюється від набору, викликається в якомусь компоненті — для нього це власний стан, а для всіх, кого він рендерить, — рендер батька. Схожий приклад з уроку: у сторінці бажань чернетка жила в `WishPage`, тож картки рендерилися через батька."
+        en: "The most expensive part is the one with the most milliseconds in the `update` lines, not the one whose code looks complex: a loop over four categories is a few thousand comparisons, while creating a formatter for every table row is two thousand expensive objects. Find the cause like this: the setter that typing changes is called in some component — for it that is own state, and for everyone it renders it is a parent render. A similar example from the lesson: on the wish page the draft lived in `WishPage`, so the cards rendered because of their parent."
+    solutionNote:
+      uk: "Нотатка — стан `ExpensePage`. Кожна літера рендерить `ExpensePage` (власний стан) і всіх його дітей (рендер батька). `CategoryTotals` з подвійним циклом коштує десяті частки мілісекунди, а `ExpenseTable` — десятки: дві тисячі рядків, і кожен створює новий `Intl.NumberFormat`. На Scheduler ⚛ довгий саме `Render`, а `Commit` короткий: у DOM змінюється лише значення поля. З таких доказів видно, що лікувати: не «оптимізувати підсумки», а не рендерити таблицю, коли змінюється нотатка."
+      en: "The note is `ExpensePage`’s state. Every letter renders `ExpensePage` (own state) and all of its children (parent render). `CategoryTotals` with its double loop costs tenths of a millisecond, while `ExpenseTable` costs tens: two thousand rows, each creating a new `Intl.NumberFormat`. On Scheduler ⚛ it is `Render` that is long, and `Commit` is short: only the field’s value changes in the DOM. Evidence like this shows what to treat: not “optimize the totals”, but not rendering the table when the note changes."
+    feedback:
+      - when: { test: "the note says what was recorded" }
+        message:
+          uk: "Ця перевірка очікує в `interaction` кілька слів про те, що ти робив під час запису, наприклад «набрав три літери в полі нотатки»."
+          en: "This check expects a few words in `interaction` about what you did while recording, for example “typed three letters into the note field”."
+      - when: { test: "records is the number of expenses on the page" }
+        message:
+          uk: "Ця перевірка порівнює `records` з довжиною масиву `EXPENSES` з `expenses.js`. Запиши число, без лапок."
+          en: "This check compares `records` with the length of the `EXPENSES` array in `expenses.js`. Write a number, without quotes."
+      - when: { test: "slowest is the part with the longest render" }
+        message:
+          uk: "Ця перевірка очікує назву частини, у якої в рядках `update` консолі найбільше мілісекунд. Код, що виглядає складним, не обов’язково повільний — порівнюй числа."
+          en: "This check expects the name of the part with the most milliseconds in the console’s `update` lines. Code that looks complex is not necessarily slow — compare the numbers."
+      - when: { test: "cause says why that part rendered" }
+        message:
+          uk: "Ця перевірка очікує одну з трьох причин: `\"state\"`, `\"parent\"` чи `\"context\"`. Props серед причин немає: подумай, у якому компоненті живе стан нотатки і ким для таблиці є цей компонент."
+          en: "This check expects one of three causes: `\"state\"`, `\"parent\"` or `\"context\"`. Props are not a cause: think about which component holds the note’s state and what that component is to the table."
+      - when: { test: "renderMs is a measured number of milliseconds" }
+        message:
+          uk: "Ця перевірка очікує в `renderMs` число більше за нуль (без лапок) — час рендеру найповільнішої частини з одного рядка `update`."
+          en: "This check expects in `renderMs` a number greater than zero (without quotes) — the render time of the slowest part from one `update` line."
+      - when: { test: "phase names where the update spent most time" }
+        message:
+          uk: "Ця перевірка очікує `\"render\"`, `\"commit\"` чи `\"effects\"` — те, що найдовше на доріжці Scheduler ⚛ для однієї літери."
+          en: "This check expects `\"render\"`, `\"commit\"` or `\"effects\"` — whatever is longest on the Scheduler ⚛ track for one letter."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-07
+    body:
+      uk: "У кроці проєкту ти згенеруєш тисячі синтетичних записів, запишеш одну взаємодію свого застосунку й запишеш такі самі докази: що робив, на скількох записах, хто найповільніший, чому він рендериться і де йде час."
+      en: "In the project step you will generate thousands of synthetic records, record one interaction of your app and write down the same evidence: what you did, on how many records, who is slowest, why it renders and where the time goes."
