@@ -313,6 +313,9 @@ export function staticIssuesForLesson(lesson, ctx) {
   return issues;
 }
 
+/** Natural width limit of a compiled `diagram` (content/VISUALS.md, section 6). */
+export const DIAGRAM_MAX_WIDTH = 450;
+
 // Names the repository's .gitignore drops (used when the content root is not inside a git work tree).
 const IGNORED_SEGMENT = /(^|\/)(dist|build|coverage|node_modules|\.idea|\.vscode)\//;
 const IGNORED_NAME = /(^|\/)(\.env(\.(?!example$)[^/]*)?|\.DS_Store|[^/]*\.log)$/;
@@ -373,6 +376,12 @@ export async function compileLesson(lesson, ctx) {
           const out = await ctx.visuals.compileVisual(block.visual, spec, { readFile: (rel) => fs.readFile(path.join(dir, rel), 'utf8'), mdInline: md.inline, langs: LANGS, strings: block.strings });
           compiled.spec = out.spec;
           for (const i of out.issues ?? []) issues.push({ path: `lesson ${source.id} › block "${block.id}".spec${i.path ? ` › ${i.path}` : ''}`, message: i.message });
+          // The lesson column leaves a diagram about 450 px (content/VISUALS.md, section 6): wider ones
+          // make the panel scroll. A warning while authoring, an error for a release.
+          for (const [lang, variant] of out.spec?.byLang ? Object.entries(out.spec.byLang) : [[null, out.spec]]) {
+            const width = variant?.kind === 'diagram' ? variant.layout?.width : undefined;
+            if (width > DIAGRAM_MAX_WIDTH) issues.push({ path: `lesson ${source.id} › block "${block.id}".spec${lang ? ` (${lang})` : ''}`, message: `the diagram is ${width} px wide; the lesson column fits ${DIAGRAM_MAX_WIDTH} px (content/VISUALS.md, section 6: narrower nodes, fewer columns or shorter labels)`, ...(ctx.release ? {} : { level: 'warning' }) });
+          }
         } catch (error) {
           issues.push({ path: `lesson ${source.id} › block "${block.id}".spec`, message: `visual failed to compile: ${error.message}` });
           compiled.spec = null;
@@ -441,7 +450,7 @@ export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content')
     warnings.push(...staticIssues.filter((i) => i.level === 'warning'));
     try {
       const { lesson: compiled, issues: compileIssues } = await compileLesson(lesson, ctx);
-      issues.push(...compileIssues.map((i) => ({ ...i, file: path.relative(ROOT, lesson.dir) })));
+      for (const i of compileIssues) (i.level === 'warning' ? warnings : issues).push({ ...i, file: path.relative(ROOT, lesson.dir) });
       const text = JSON.stringify(compiled);
       hash.update(text);
       await fs.writeFile(path.join(outDir, 'lessons', `${id}.json`), text);

@@ -666,8 +666,9 @@ player. Keep the **natural width** of `diagram`, `sequence` and `memory-graph` p
   at ~9.8 px, the smallest 11 px labels at ~8.3 px). 450 px × 75 % ≈ 338 px still fits the 345 px.
 - Only a picture whose 75 % is wider than the panel makes the panel scroll sideways — avoid that:
   the learner then sees part of the picture at a time.
-- Natural widths: `diagram` — `compile-visual-samples.mjs` prints it and warns above 450 px; the
-  compiled spec has `layout.width` (section 4.5 has the rules of thumb). `sequence` — about
+- Natural widths: `diagram` — `compile-visual-samples.mjs` prints it and warns above 450 px, and the
+  content validator warns about every lesson diagram whose compiled `layout.width` is above 450 px
+  (an error with `--release`); the compiled spec has `layout.width` (section 4.5 has the rules of thumb). `sequence` — about
   40 + n × (actor width) + (n − 1) × 40 px, actor width 96–150 px (section 4.6). `memory-graph` —
   the columns follow their texts and never get wider than the panel allows at 75 % (section 4.2).
 - Code panels (in every kind) need no width planning: they shrink the font and wrap long lines.

@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
+import * as visuals from '../../shared/visuals/index.js';
 import { CONTENT_DIR, compileLesson, createMarkdown, gitIgnoredLessonFiles, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
 
 const md = createMarkdown(new Map([['closure', { id: 'closure', term: 'closure' }]]));
@@ -139,4 +140,18 @@ test('TypeError feedback that quotes "is not a function" is a rule-33 warning wh
   // Unguarded checks really do report "… is not a function" after a load crash.
   assert.deepEqual(warningsFor('test("prints the total", () => { expect(scope.total(2)).toBe(2); });'), []);
   assert.deepEqual(warningsFor('test("prints the total", () => { expect(typeof scope.total(2)).toBe("number"); });'), []);
+});
+
+test('a diagram wider than the 450 px lesson column is a warning while authoring and an error for a release', async () => {
+  const wide = { id: 'wide', kind: 'visual', visual: 'diagram', title: pair('Т', 'T'), textEquivalent: pair('т', 't'), spec: { layout: 'grid', nodes: ['a', 'b', 'c', 'd', 'e'].map((id, col) => ({ id, label: `node ${id}`, w: 140, col, row: 0 })), steps: [{ caption: pair('к', 'c') }] } };
+  const narrow = { ...wide, id: 'narrow', spec: { nodes: [{ id: 'a', label: 'A' }], steps: [{ caption: pair('к', 'c') }] } };
+  const compile = async (block, release) => (await compileLesson(lessonWith([block]), { ...ctx, visuals, release })).issues.filter((i) => /px wide/.test(i.message));
+  const authoring = await compile(wide, false);
+  assert.equal(authoring.length, 1);
+  assert.equal(authoring[0].level, 'warning');
+  assert.match(authoring[0].message, /the diagram is \d+ px wide; the lesson column fits 450 px/);
+  const release = await compile(wide, true);
+  assert.equal(release.length, 1);
+  assert.equal(release[0].level, undefined, 'an error for a release');
+  assert.deepEqual(await compile(narrow, false), []);
 });
