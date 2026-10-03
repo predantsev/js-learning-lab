@@ -1,0 +1,348 @@
+id: rn-06-06-permissions-capability-checks
+unit: RN-06
+title:
+  uk: "Дозволи й перевірка можливостей"
+  en: "Permissions and capability checks"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Перевіряти, що можливість є на заявленій цілі й версії ОС, перш ніж пропонувати функцію, і ховати чи пояснювати функцію, коли її немає."
+    en: "Check that a capability exists on the declared target and OS version before offering a feature, and hide or explain the feature when it does not."
+  - uk: "Запитувати дозвіл лише в момент використання й зі зрозумілим поясненням і обробляти наслідки: дозволено, відмовлено, відмовлено назавжди й згодом відкликано."
+    en: "Request a permission only at the moment of use with a clear rationale, and handle granted, denied, permanently denied and later revoked outcomes."
+prerequisites: [rn-06-05-transport-tls-config, rn-04-04-app-foreground-background]
+subskills:
+  - { family: N-07, skill: "permission request/deny/revoke", depth: intro }
+  - { family: N-07, skill: "capability/platform checks", depth: intro }
+glossary: [runtime-permission, capability-check, permission-rationale]
+selfCheck: [predict-permission, permission-gate]
+
+blocks:
+  - id: capability-then-permission
+    kind: explanation
+    title:
+      uk: "Спершу «чи є», потім «чи можна»"
+      en: "First “is it there”, then “is it allowed”"
+    body:
+      uk: |
+        Камера, геолокація, сповіщення — доступ до них дає не застосунок, а система, і користувач може сказати «ні». Порядок такий:
+
+        1. **[[capability-check|Перевірка можливості]].** Чи є це на пристрої й чи підтримує це версія системи? В емуляторі може не бути камери, старіша версія ОС може не мати потрібної функції (`Platform.OS` і `Platform.Version` підкажуть платформу й версію). Немає можливості — функцію ховають або пояснюють чому, а дозволу не просять.
+        2. **Перевірка дозволу без діалогу.** Бібліотеки Expo повертають відповідь виду `{ status, canAskAgain }`, де `status` — `'granted'`, `'denied'` чи `'undetermined'` (такий тип має `expo-modules-core` у SDK 57).
+        3. **[[runtime-permission|Запит дозволу]] — лише в момент використання**: людина натиснула «Додати фото», і саме тепер — коротке [[permission-rationale|пояснення]], навіщо камера, а потім системний діалог.
+
+        Просити все на старті «про запас» погано: людина ще не бачила функції, тож відмовляє — а повторно система може вже й не спитати.
+      en: |
+        Camera, location, notifications — access to them is given not by the app but by the system, and the user may say “no”. The order is:
+
+        1. **[[capability-check|Capability check]].** Is it on the device, and does the system version support it? An emulator may have no camera, an older OS version may lack the needed feature (`Platform.OS` and `Platform.Version` tell the platform and version). No capability — the feature is hidden or explained, and no permission is asked for.
+        2. **A permission check without a dialog.** Expo libraries return an answer of the form `{ status, canAskAgain }`, where `status` is `'granted'`, `'denied'` or `'undetermined'` (that is the type in `expo-modules-core` in SDK 57).
+        3. **A [[runtime-permission|permission request]] — only at the moment of use**: the person pressed “Add photo”, and only now comes a short [[permission-rationale|rationale]] for the camera, then the system dialog.
+
+        Asking for everything at launch “just in case” is bad: the person has not seen the feature yet, so they refuse — and the system may not ask a second time.
+
+  - id: four-outcomes
+    kind: explanation
+    title:
+      uk: "Чотири наслідки й що робити з кожним"
+      en: "Four outcomes and what to do with each"
+    body:
+      uk: |
+        | Наслідок | Як виглядає | Що робить екран |
+        |---|---|---|
+        | дозволено | `status: 'granted'` | користується функцією |
+        | відмовлено | `'denied'`, `canAskAgain: true` | пояснює, що без дозволу не вийде, і дає спробувати ще раз пізніше |
+        | відмовлено назавжди | `'denied'`, `canAskAgain: false` | діалогу більше не буде: пропонує відкрити налаштування (`Linking.openSettings()` у React Native) |
+        | відкликано згодом | у налаштуваннях вимкнули те, що було дозволено | помічає це, коли застосунок повертається на передній план, і ховає функцію |
+
+        Звідки «назавжди»: за документацією Android, якщо людина двічі натиснула «Не дозволяти», система більше не показує діалог; в iOS діалог з’являється лише один раз. А відкликання дозволу в налаштуваннях Android завершує процес застосунку, тож наступний запуск теж має перевірити все наново. Тому перевірка живе не лише в момент монтування: вона повторюється щоразу, коли застосунок повертається на передній план.
+      en: |
+        | Outcome | What it looks like | What the screen does |
+        |---|---|---|
+        | granted | `status: 'granted'` | uses the feature |
+        | denied | `'denied'`, `canAskAgain: true` | explains it cannot work without permission and lets the person try again later |
+        | denied permanently | `'denied'`, `canAskAgain: false` | there will be no more dialog: offers to open the settings (`Linking.openSettings()` in React Native) |
+        | revoked later | what was allowed was switched off in the settings | notices it when the app returns to the foreground and hides the feature |
+
+        Where “permanently” comes from: per the Android documentation, if the person taps “Don't allow” twice, the system no longer shows the dialog; on iOS the dialog appears only once. And revoking a permission in Android's settings ends the app's process, so the next start must also check everything anew. That is why the check does not live only at mount: it repeats every time the app returns to the foreground.
+
+  - id: permission-flow
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Від натискання до налаштувань і назад"
+      en: "From a press to the settings and back"
+    textEquivalent:
+      uk: "Користувач натискає «Додати фото». Екран перевіряє, чи є камера, і показує пояснення. Потім просить дозвіл; система показує діалог, користувач відмовляє, і екран отримує denied з canAskAgain: true. Наступного разу система вже не показує діалогу й відповідає denied з canAskAgain: false — екран пропонує відкрити налаштування. Користувач вмикає камеру в налаштуваннях і повертається; екран при поверненні на передній план перевіряє дозвіл ще раз і бачить granted. Якщо згодом дозвіл відкликати в налаштуваннях, наступна перевірка після повернення його не знайде, і екран сховає камеру."
+      en: "The user presses “Add photo”. The screen checks there is a camera and shows a rationale. Then it requests the permission; the system shows a dialog, the user refuses, and the screen gets denied with canAskAgain: true. The next time the system no longer shows the dialog and answers denied with canAskAgain: false — the screen offers to open the settings. The user turns the camera on in the settings and comes back; on the return to the foreground the screen checks the permission again and sees granted. If the permission is later revoked in the settings, the next check after a return does not find it, and the screen hides the camera."
+    spec:
+      actors:
+        - { id: user, label: { uk: "Користувач", en: "User" } }
+        - { id: screen, label: { uk: "Екран", en: "Screen" } }
+        - { id: os, label: { uk: "Система", en: "System" } }
+      messages:
+        - from: user
+          to: screen
+          label: { uk: "«Додати фото»", en: "“Add photo”" }
+          caption:
+            uk: "Людина хоче скористатися функцією — це і є момент використання."
+            en: "The person wants to use the feature — this is the moment of use."
+        - from: screen
+          to: screen
+          kind: note
+          label: { uk: "камера є? → пояснення", en: "camera there? → rationale" }
+          caption:
+            uk: "Екран перевіряє можливість і коротко пояснює, навіщо камера."
+            en: "The screen checks the capability and briefly explains what the camera is for."
+        - from: screen
+          to: os
+          label: "requestPermission()"
+          caption:
+            uk: "Запит дозволу. Система показує свій діалог."
+            en: "A permission request. The system shows its dialog."
+        - from: os
+          to: screen
+          kind: return
+          label: "denied, canAskAgain: true"
+          caption:
+            uk: "Людина відмовила. Ще можна спитати пізніше — екран пояснює, без чого функція не працює."
+            en: "The person refused. It is still possible to ask later — the screen explains what the feature lacks."
+        - from: screen
+          to: os
+          label: { uk: "requestPermission() ще раз", en: "requestPermission() again" }
+          caption:
+            uk: "Друга відмова (на Android) — і система більше не показує діалогу."
+            en: "A second refusal (on Android) — and the system no longer shows the dialog."
+        - from: os
+          to: screen
+          kind: return
+          label: "denied, canAskAgain: false"
+          caption:
+            uk: "Тепер кнопка «Зробити фото» нічого не дасть. Екран пропонує відкрити налаштування."
+            en: "Now a “Take photo” button would achieve nothing. The screen offers to open the settings."
+        - from: user
+          to: os
+          label: { uk: "вмикає в налаштуваннях", en: "turns it on in settings" }
+          caption:
+            uk: "Людина вмикає камеру в налаштуваннях і повертається в застосунок."
+            en: "The person turns the camera on in the settings and returns to the app."
+        - from: os
+          to: screen
+          kind: return
+          label: { uk: "знову на передньому плані", en: "foreground again" }
+          note: { uk: "перевірка → granted", en: "check → granted" }
+          caption:
+            uk: "Повернення на передній план запускає перевірку: дозвіл є, функція доступна."
+            en: "The return to the foreground starts a check: the permission is there, the feature is available."
+        - from: os
+          to: screen
+          kind: return
+          label: { uk: "згодом відкликано", en: "revoked later" }
+          note: { uk: "перевірка → denied", en: "check → denied" }
+          caption:
+            uk: "Якщо дозвіл згодом вимкнути, наступна перевірка це помітить, і екран сховає камеру."
+            en: "If the permission is switched off later, the next check notices, and the screen hides the camera."
+
+  - id: predict-permission
+    kind: prediction
+    prompt:
+      uk: "Навчальна функція «фото до бажання» (не частина проєкту). Як має повестися екран у чотирьох випадках: (а) на пристрої немає камери; (б) людина щойно відмовила вперше; (в) система відповідає `denied` з `canAskAgain: false`; (г) дозвіл вимкнули в налаштуваннях, поки застосунок був у фоні?"
+      en: "A lab feature “a photo for a wish” (not part of the project). How should the screen behave in four cases: (a) the device has no camera; (b) the person has just refused for the first time; (c) the system answers `denied` with `canAskAgain: false`; (d) the permission was switched off in the settings while the app was in the background?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: right
+          text:
+            uk: "(а) сховати чи пояснити функцію без запиту; (б) пояснити й дозволити спробувати пізніше; (в) запропонувати налаштування; (г) перевірити при поверненні й сховати камеру"
+            en: "(a) hide or explain the feature without asking; (b) explain and allow a later try; (c) offer the settings; (d) check on return and hide the camera"
+        - id: ask-always
+          text:
+            uk: "У всіх чотирьох — показати кнопку «Зробити фото», яка просить дозвіл: людина завжди може сказати «ні»"
+            en: "In all four — show a “Take photo” button that asks for permission: the person can always say “no”"
+          why:
+            uk: "Без камери просити нема чого, а з `canAskAgain: false` система діалогу вже не покаже — кнопка нічого не робитиме."
+            en: "Without a camera there is nothing to ask for, and with `canAskAgain: false` the system no longer shows the dialog — the button would do nothing."
+        - id: once-granted
+          text:
+            uk: "(а)–(в) як слід, а (г) нічого не змінює: дозвіл дали раніше, він діє далі"
+            en: "(a)–(c) as they should be, and (d) changes nothing: the permission was given earlier and still applies"
+          why:
+            uk: "Дозвіл можна відкликати будь-коли. Застосунок, що не перевіряє його знову, спробує скористатися камерою без дозволу."
+            en: "A permission can be revoked at any time. An app that does not check it again tries to use the camera without permission."
+      correct: [right]
+    explanation:
+      uk: "Можливість перевіряють до запиту, дозвіл — до кожного використання й після кожного повернення, а просять — лише тоді, коли діалог ще може з’явитися."
+      en: "The capability is checked before a request, the permission before every use and after every return, and the request is made only while the dialog can still appear."
+
+  - id: recall-foreground
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: appstate-active
+        from: rn-04-04-app-foreground-background
+        prompt:
+          uk: "Як застосунок React Native дізнається, що людина повернулася до нього з іншого застосунку?"
+          en: "How does a React Native app learn that the person came back to it from another app?"
+        answer:
+          type: choice
+          options:
+            - id: appstate
+              text:
+                uk: "Через `AppState`: стан змінюється на `'active'`"
+                en: "Through `AppState`: the state changes to `'active'`"
+            - id: remount
+              text:
+                uk: "Екран монтується заново, і ефекти запускаються знову"
+                en: "The screen mounts again, and the effects run again"
+              why:
+                uk: "Повернення з фону не монтує екран наново — він весь час був змонтований. Тому ефект з `[]` про повернення не дізнається."
+                en: "A return from the background does not mount the screen again — it was mounted all along. So an effect with `[]` does not learn about the return."
+            - id: focus
+              text:
+                uk: "Через `onPress` будь-якої кнопки"
+                en: "Through the `onPress` of any button"
+              why:
+                uk: "Натискання — дія людини в застосунку, а не подія системи про передній план."
+                en: "A press is the person's action in the app, not the system's foreground event."
+          correct: [appstate]
+        explanation:
+          uk: "Саме на зміну `AppState` на `'active'` і підписують повторну перевірку дозволу."
+          en: "That change of `AppState` to `'active'` is exactly what the repeated permission check subscribes to."
+
+  - id: wish-photo
+    kind: example
+    runtime: concept-preview
+    dir: wish-photo
+    entry: main.jsx
+    strings:
+      heading: { uk: "Фото до бажання", en: "A photo for a wish" }
+      rationale: { uk: "Камера потрібна лише щоб сфотографувати річ для бажання. Фото лишається на пристрої.", en: "The camera is needed only to take a picture of the item for a wish. The photo stays on the device." }
+      takePhoto: { uk: "Зробити фото", en: "Take photo" }
+      blockedHint: { uk: "Доступ до камери вимкнено. Увімкни його в налаштуваннях, щоб додати фото.", en: "Camera access is off. Turn it on in the settings to add a photo." }
+      photos: { uk: "Фото", en: "Photos" }
+      requests: { uk: "Запитів дозволу", en: "Permission requests" }
+    title:
+      uk: "Кнопка, що вже нічого не може"
+      en: "A button that can no longer do anything"
+    body:
+      uk: |
+        `permissionSim.js` симулює камеру й системний діалог; рядок `sim.nextAnswer` у `main.jsx` вибирає, що «натисне» людина в діалозі. Екран перевіряє дозвіл під час монтування без діалогу, а просить — лише в `takePhoto`.
+
+        Натисни **Запустити** і натисни «Зробити фото»: відмова, `canAskAgain: true` — кнопка лишається, і це правильно.
+      en: |
+        `permissionSim.js` simulates the camera and the system dialog; the line `sim.nextAnswer` in `main.jsx` chooses what the person “taps” in the dialog. The screen checks the permission at mount without a dialog, and asks only in `takePhoto`.
+
+        Press **Run** and press “Take photo”: a refusal, `canAskAgain: true` — the button stays, and that is right.
+    tryIt:
+      uk: |
+        1. Зміни `sim.nextAnswer` на `'denied-forever'`, запусти й натисни «Зробити фото» двічі: після першого натискання `canAskAgain: false`, а друге лише збільшує лічильник запитів — діалогу немає, фото немає. Це вада.
+        2. Заміни `const showCamera = true;` на `const showCamera = !(permission?.status === 'denied' && permission?.canAskAgain === false);`, запусти й натисни «Зробити фото» один раз: замість кнопки з’являється підказка про налаштування.
+        3. Зміни `sim.nextAnswer` на `'granted'` і запусти: кожне натискання додає фото.
+      en: |
+        1. Change `sim.nextAnswer` to `'denied-forever'`, run and press “Take photo” twice: after the first press `canAskAgain: false`, and the second only increases the request counter — no dialog, no photo. That is the defect.
+        2. Replace `const showCamera = true;` with `const showCamera = !(permission?.status === 'denied' && permission?.canAskAgain === false);`, run and press “Take photo” once: a hint about the settings appears instead of the button.
+        3. Change `sim.nextAnswer` to `'granted'` and run: every press adds a photo.
+    limits:
+      uk: "Це перегляд у браузері через react-native-web, а не нативний застосунок: камери, системного діалогу й налаштувань тут немає, їх симулює `permissionSim.js`, а відповіді лише мають форму відповідей Expo. Справжні діалоги, їхні тексти й поведінка після відмов з’являються лише на заявленій цілі."
+      en: "This is a browser preview through react-native-web, not a native app: there is no camera, system dialog or settings here, `permissionSim.js` simulates them, and the answers only have the shape of Expo's answers. Real dialogs, their texts and the behavior after refusals appear only on your declared target."
+
+  - id: permission-gate
+    kind: exercise
+    mode: guided
+    runtime: concept-preview
+    dir: permission-gate
+    entry: main.jsx
+    editable: [usePermissionGate.js]
+    strings:
+      heading: { uk: "Лабораторія фото", en: "Photo lab" }
+      ask: { uk: "Додати фото", en: "Add photo" }
+      simulation: { uk: "Симуляція: людина й система", en: "Simulation: the person and the system" }
+      nextAnswer: { uk: "Наступна відповідь", en: "Next answer" }
+      revoke: { uk: "Вимкнути в налаштуваннях і повернутися", en: "Turn off in settings and come back" }
+    title:
+      uk: "Хук usePermissionGate"
+      en: "The usePermissionGate hook"
+    instructions:
+      uk: |
+        Допиши `usePermissionGate(adapter, subscribeForeground)` у `usePermissionGate.js`. Він повертає `{ state, request }`.
+
+        - **Перевірка** — під час монтування **і** щоразу, коли `subscribeForeground` повідомляє про повернення на передній план:
+          - `adapter.isAvailable()` дає `false` → `'unavailable'`;
+          - інакше відповідь `adapter.getPermission()`: `'granted'` → `'granted'`; `'denied'` з `canAskAgain: true` → `'denied'`; `'denied'` з `canAskAgain: false` → `'blocked'`; `'undetermined'` → `'ask'`.
+        - **`request()`** — єдине місце, де викликається `adapter.requestPermission()`; його відповідь перетворюється на стан за тими самими правилами.
+        - Відкриття екрана не просить дозволу.
+
+        Підписку на передній план, як і будь-яку в ефекті, знімай у cleanup — так, як ти робив у розділі про навігацію.
+
+        Кнопки під лінією в перегляді грають людину й систему.
+      en: |
+        Complete `usePermissionGate(adapter, subscribeForeground)` in `usePermissionGate.js`. It returns `{ state, request }`.
+
+        - **A check** — at mount **and** every time `subscribeForeground` reports a return to the foreground:
+          - `adapter.isAvailable()` gives `false` → `'unavailable'`;
+          - otherwise the answer of `adapter.getPermission()`: `'granted'` → `'granted'`; `'denied'` with `canAskAgain: true` → `'denied'`; `'denied'` with `canAskAgain: false` → `'blocked'`; `'undetermined'` → `'ask'`.
+        - **`request()`** is the only place that calls `adapter.requestPermission()`; its answer becomes a state by the same rules.
+        - Opening the screen does not ask for permission.
+
+        Remove the foreground subscription in the cleanup, like any subscription in an effect — as you did in the navigation unit.
+
+        The buttons below the line in the preview play the person and the system.
+    limits:
+      uk: "`permissionSim.js` симулює дозвіл камери, а `returnToForeground()` — подію `AppState`. Справжній `AppState`, системний діалог і налаштування телефона працюють лише на заявленій цілі; перевірки дивляться, як хук реагує на симульовані відповіді."
+      en: "`permissionSim.js` simulates the camera permission, and `returnToForeground()` an `AppState` event. The real `AppState`, the system dialog and the phone's settings work only on your declared target; the checks look at how the hook reacts to the simulated answers."
+    testTitles:
+      "opening the screen checks but does not ask":
+        uk: "Відкриття екрана перевіряє дозвіл, але не просить його"
+        en: "Opening the screen checks the permission but does not ask for it"
+      "a first denial gives denied, a final one gives blocked":
+        uk: "Перша відмова дає `denied`, остаточна — `blocked`"
+        en: "A first refusal gives `denied`, a final one gives `blocked`"
+      "a grant gives granted":
+        uk: "Дозвіл дає `granted`"
+        en: "A grant gives `granted`"
+      "a change in the settings is noticed on return to the foreground":
+        uk: "Зміну в налаштуваннях видно після повернення на передній план"
+        en: "A change in the settings is noticed on return to the foreground"
+      "a device without a camera gives unavailable":
+        uk: "Пристрій без камери дає `unavailable`"
+        en: "A device without a camera gives `unavailable`"
+    hints:
+      nudge:
+        uk: "Тут дві різні дії: «перевірити» (без діалогу) і «попросити» (з діалогом). Яку з них треба повторювати після повернення на передній план, а яку — лише після натискання?"
+        en: "There are two different actions here: “check” (no dialog) and “ask” (with a dialog). Which one repeats after a return to the foreground, and which only after a press?"
+      explanation:
+        uk: |
+          Зручно мати одну функцію, що перетворює відповідь `{ status, canAskAgain }` на стан, і викликати її і після перевірки, і після запиту.
+
+          Підписка, яку треба зняти, пишеться як і будь-яка в ефекті: функція, що повертає «відписку», і `return` цієї відписки з ефекту. Наприклад, `useEffect(() => clock.onTick(updateTime), [])` повертає відписку від годинника, бо `onTick` її повертає. Те, що запускається і під час монтування, і з підписки, винеси в одну функцію перевірки.
+        en: |
+          It is convenient to have one function that turns an answer `{ status, canAskAgain }` into a state, and to call it both after a check and after a request.
+
+          A subscription that must be removed is written like any in an effect: a function that returns an “unsubscribe”, and that unsubscribe `return`ed from the effect. For example, `useEffect(() => clock.onTick(updateTime), [])` returns the unsubscribe from the clock, because `onTick` returns it. Whatever runs both at mount and from the subscription goes into one check function.
+    solutionNote:
+      uk: "Перевірка й запит розділені: перевірка ніколи не показує діалог і тому може повторюватися скільки завгодно — під час монтування й після кожного повернення. Запит живе лише в `request()`, тобто в момент використання. `canAskAgain` відрізняє «можна спитати ще» від «лише налаштування»."
+      en: "The check and the request are separate: the check never shows a dialog and can therefore repeat as often as needed — at mount and after every return. The request lives only in `request()`, at the moment of use. `canAskAgain` tells “may ask again” from “settings only”."
+    feedback:
+      - when: { test: "opening the screen checks but does not ask" }
+        message:
+          uk: "Ця перевірка чекає, що після відкриття екрана стан — `ask`, а `requestPermission()` не викликано жодного разу. Під час монтування — лише `isAvailable()` і `getPermission()`."
+          en: "This check expects the state to be `ask` after the screen opens, and `requestPermission()` not to be called even once. At mount only `isAvailable()` and `getPermission()` run."
+      - when: { test: "a first denial gives denied, a final one gives blocked" }
+        message:
+          uk: "Ця перевірка натискає «Додати фото» двічі: після першої відмови чекає `denied`, після остаточної (`canAskAgain: false`) — `blocked`. Зверни увагу на `canAskAgain`."
+          en: "This check presses “Add photo” twice: after the first refusal it expects `denied`, after the final one (`canAskAgain: false`) `blocked`. Look at `canAskAgain`."
+      - when: { test: "a change in the settings is noticed on return to the foreground" }
+        message:
+          uk: "Ця перевірка змінює дозвіл «у налаштуваннях» і викликає `returnToForeground()`, а потім чекає новий стан. Для цього хук має підписатися через `subscribeForeground` і знову перевіряти дозвіл. Якщо падають майже всі перевірки — почни з цієї: кожна з них спершу повертає застосунок на передній план."
+          en: "This check changes the permission “in the settings” and calls `returnToForeground()`, then expects the new state. For that the hook must subscribe through `subscribeForeground` and check the permission again. If almost every check fails, start with this one: each of them first brings the app back to the foreground."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-06
+    body:
+      uk: "Крок проєкту цього розділу дозволів не потребує: завантаження записів з mock-сервісу працює без жодного з них, і просити «про запас» не варто. Якщо згодом додаси функцію з камерою чи сповіщеннями, будуй її на такому самому `usePermissionGate`."
+      en: "This unit's project step needs no permissions: loading records from the mock service works without any of them, and asking “just in case” is not worth it. If you later add a feature with the camera or notifications, build it on the same kind of `usePermissionGate`."
