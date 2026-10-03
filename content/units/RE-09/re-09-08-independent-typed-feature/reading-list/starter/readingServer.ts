@@ -15,6 +15,7 @@ export const server = {
   brokenCovers: [] as string[], // ids whose cover crashes while rendering
   calls: { list: 0, create: 0, status: 0 },
   nextNumber: 3,
+  pending: 0, // requests that have not answered yet (the checks wait for it to reach 0)
 };
 
 export function resetServer(): void {
@@ -28,8 +29,16 @@ export function resetServer(): void {
   server.nextNumber = 3;
 }
 
-const later = <T,>(make: () => T, fail: boolean): Promise<T> =>
-  new Promise((resolve, reject) => setTimeout(() => (fail ? reject(new Error("503 Service Unavailable")) : resolve(make())), 20));
+function later<T>(make: () => T, fail: boolean): Promise<T> {
+  server.pending += 1;
+  return new Promise((resolve, reject) =>
+    setTimeout(() => {
+      server.pending -= 1;
+      if (fail) reject(new Error("503 Service Unavailable"));
+      else resolve(make());
+    }, 20),
+  );
+}
 
 const copy = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
 

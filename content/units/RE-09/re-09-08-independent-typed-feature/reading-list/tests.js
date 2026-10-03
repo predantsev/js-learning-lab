@@ -37,7 +37,9 @@ async function fillForm(app, title, author, pages) {
   await user.fill(app.field(L.authorLabel), author);
   await user.fill(app.field(L.pagesLabel), pages);
   await user.click(app.button(L.add));
-  await sleep(120);
+  // Waits until the fixture server has answered, then lets React finish.
+  await waitFor(() => server.pending === 0);
+  await settle();
 }
 
 test('parseBook turns a valid API book into a Book', () => {
