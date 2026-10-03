@@ -1,0 +1,503 @@
+id: rn-04-07-debug-duplicate-subscriptions
+unit: RN-04
+title:
+  uk: "Налагодження: дубльовані підписки й хибні параметри маршруту"
+  en: "Debug: duplicate subscriptions and wrong route input"
+kind: local-task
+minutes: 20
+contentVersion: 1
+purpose:
+  uk: "Дві вади навігації не видно, доки ходиш застосунком «як розробник»: підписка, яку не знімають, множить обробку кожної події з кожним переходом, а екран, що чекає цілий обʼєкт у параметрах, падає, щойно його відкривають інакше — посиланням. Тут ти спершу знаходиш і лагодиш обидві в перегляді, а потім відтворюєш і перевіряєш на заявленій цілі з лічильником обробок і повторними переходами."
+  en: "Two navigation defects stay invisible while you move through the app “as a developer”: a subscription nobody removes multiplies the handling of every event with every transition, and a screen that expects a whole object in its params crashes as soon as it is opened another way — by a link. Here you first find and repair both in the preview, then reproduce and check them on your declared target with a handler count and repeated navigation."
+objectives:
+  - uk: "Відтворити на заявленій цілі навмисно зіпсований застосунок, у якому після переходів одна подія повернення обробляється кілька разів, а екран деталей падає, коли отримує не той параметр, на який розрахований."
+    en: "Reproduce on the declared target a seeded app in which a background event is handled several times after navigation and the detail screen crashes on route input it does not expect."
+  - uk: "Виправити обидві вади й підтвердити на заявленій цілі лічильником обробок і повторними переходами."
+    en: "Repair both and confirm on the declared target with a handler count and repeated navigation."
+prerequisites: [rn-04-06-deep-links]
+subskills:
+  - { family: N-03, skill: "navigation/routes/params", depth: assess }
+  - { family: N-03, skill: "subscription cleanup", depth: assess }
+glossary: []
+selfCheck: [seeded-habits]
+
+blocks:
+  - id: two-defects
+    kind: explanation
+    title:
+      uk: "Дві вади, які зʼявляються лише з часом і з посиланням"
+      en: "Two defects that show only over time and with a link"
+    body:
+      uk: |
+        Трекер звичок працює, якщо відкрити його й один раз зайти в деталі. Але:
+
+        - **після кількох переходів** одне повернення в застосунок перераховує список кілька разів: ефект фокуса щоразу додає слухача `AppState` і не знімає його;
+        - **посилання на звичку** валить екран деталей: список передає йому весь обʼєкт `{ habit }`, а посилання знає лише id. Хтось «полагодив» помилку типів приведенням `as never` — і `tsc` замовк, а екран читає `habit.name` в `undefined`.
+
+        Порядок роботи той самий: відтворити → знайти причину → виправити причину, а не симптом → перевірити тим самим способом. «Виправлення» на кшталт `route.params.habit?.name` прибирає падіння, але посилання й далі не відкриває звичку: екран просто мовчить.
+      en: |
+        The habit tracker works if you open it and go into the details once. But:
+
+        - **after several transitions** one return to the app recomputes the list several times: the focus effect adds an `AppState` listener every time and never removes it;
+        - **a link to a habit** crashes the detail screen: the list passes it the whole object `{ habit }`, while a link knows only the id. Someone “fixed” the type error with an `as never` cast — `tsc` went quiet, and the screen reads `habit.name` on `undefined`.
+
+        The routine is the same: reproduce → find the cause → fix the cause, not the symptom → check the same way. A “fix” such as `route.params.habit?.name` removes the crash, but the link still does not open the habit: the screen simply says nothing.
+
+  - id: seeded-habits
+    kind: exercise
+    mode: debug
+    runtime: concept-preview
+    dir: seeded-habits
+    entry: main.jsx
+    editable: [HabitScreens.jsx]
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      doneDays: { uk: "Виконано днів:", en: "Days done:" }
+      notFound: { uk: "Такої звички немає", en: "There is no such habit" }
+      logRefresh: { uk: "Список перераховано, разів:", en: "List recomputed, times:" }
+      simHeaderBack: { uk: "Назад", en: "Back" }
+      simStack: { uk: "Стек (імітація)", en: "Stack (simulated)" }
+      simHardwareBack: { uk: "Android: «Назад»", en: "Android: Back" }
+      simSwipeBack: { uk: "iOS: свайп назад", en: "iOS: swipe back" }
+      simAppState: { uk: "Стан застосунку (імітація)", en: "App state (simulated)" }
+      simLeaveIos: { uk: "iOS: піти з застосунку", en: "iOS: leave the app" }
+      simLeaveAndroid: { uk: "Android: піти з застосунку", en: "Android: leave the app" }
+      simReturn: { uk: "Повернутися", en: "Come back" }
+      simLinks: { uk: "Посилання (імітація)", en: "Links (simulated)" }
+      simSendRunning: { uk: "Надіслати в запущений застосунок", en: "Send to the running app" }
+      simColdStart: { uk: "Холодний старт з цим посиланням", en: "Cold start with this link" }
+    title:
+      uk: "Трекер звичок з двома вадами"
+      en: "A habit tracker with two defects"
+    instructions:
+      uk: |
+        Перегляд показує трекер звичок з імітованими стеком, станом застосунку й посиланнями. У `HabitScreens.jsx` дві вади:
+
+        - після кількох відвідувань деталей одне повернення в застосунок («Android: піти з застосунку», потім «Повернутися») перераховує список кілька разів — порахуй рядки в консолі;
+        - «Надіслати в запущений застосунок» для посилання `h-01` валить застосунок.
+
+        Знайди причину кожної й виправ її, не ховаючи симптом:
+
+        - одне повернення — одне перерахування, скільки б разів людина не ходила в деталі, і поки деталі накривають список, він не підписаний на `AppState`;
+        - рядок списку кладе на стек `Detail` лише з id, а екран деталей знаходить звичку за id — і з рядка, і з посилання; для невідомого id показує «не знайдено».
+
+        Перевірки рахують перерахування й підписки, читають стек і надсилають посилання. `main.jsx` уже перевіряє посилання й передає в `Detail` лише id.
+      en: |
+        The preview shows a habit tracker with a simulated stack, app state and links. `HabitScreens.jsx` has two defects:
+
+        - after several visits to the details, one return to the app (“Android: leave the app”, then “Come back”) recomputes the list several times — count the console lines;
+        - “Send to the running app” for the `h-01` link crashes the app.
+
+        Find the cause of each and fix it without hiding the symptom:
+
+        - one return — one recomputation, however many times the person went into the details, and while the details cover the list it is not subscribed to `AppState`;
+        - a list row pushes `Detail` with only the id, and the detail screen finds the habit by id — from a row and from a link alike; for an unknown id it shows “not found”.
+
+        The checks count recomputations and subscriptions, read the stack and send a link. `main.jsx` already checks the link and passes only the id to `Detail`.
+    limits:
+      uk: "Стек, `AppState` і `Linking` тут імітовані (`navSim.jsx`, `appStateSim.jsx`, `linkingSim.jsx`) у перегляді react-native-web. Справжній вихід з застосунку, доставку посилання системою й червоний екран помилки перевіряєш у локальному завданні нижче на заявленій цілі."
+      en: "The stack, `AppState` and `Linking` are simulated here (`navSim.jsx`, `appStateSim.jsx`, `linkingSim.jsx`) in the react-native-web preview. Really leaving the app, link delivery by the system and the red error screen are checked in the local task below on your declared target."
+    testTitles:
+      "one return to the app refreshes the list once after several visits":
+        uk: "Після кількох відвідувань одне повернення — одне перерахування"
+        en: "After several visits, one return gives one recomputation"
+      "the list has no AppState subscription while the detail covers it":
+        uk: "Поки деталі накривають список, підписки на `AppState` немає"
+        en: "No `AppState` subscription while the details cover the list"
+      "a row opens Detail with only the habit id":
+        uk: "Рядок відкриває `Detail` лише з id звички"
+        en: "A row opens `Detail` with only the habit's id"
+      "a link with an id opens the habit":
+        uk: "Посилання з id відкриває звичку"
+        en: "A link with an id opens the habit"
+    hints:
+      nudge:
+        uk: "Для кожної вади спитай: що ефект фокуса залишає після себе, коли екран втрачає фокус? І що саме екран деталей чекає в `route.params` — та чи може так його відкрити кожен, хто відкриває?"
+        en: "For each defect ask: what does the focus effect leave behind when the screen loses focus? And what exactly does the detail screen expect in `route.params` — and can everyone who opens it provide that?"
+      explanation:
+        uk: "Підписку `AppState` знімає лише `remove()` її обʼєкта, повернений з ефекту як cleanup; без нього кожен фокус додає ще одну. Параметр — це те, що можуть дати всі, хто відкриває екран: рядок списку, посилання, а пізніше й сповіщення. Усі вони знають id, тож у параметрі має бути id, а звичку екран бере з даних, з окремим станом «не знайдено». Необовʼязкове читання на кшталт `params.habit?.name` лише ховає падіння."
+        en: "Only the `remove()` of the `AppState` subscription object, returned from the effect as its cleanup, removes it; without it every focus adds one more. A param is what everyone who opens the screen can provide: a list row, a link, and later a notification. All of them know the id, so the param must be the id, and the screen takes the habit from the data, with its own “not found” state. An optional read such as `params.habit?.name` only hides the crash."
+    solutionNote:
+      uk: "Ефект фокуса тепер повертає `() => subscription.remove()`: при кожному blur підписка знімається, тож живою лишається щонайбільше одна, і одне повернення — одне перерахування. Рядок кладе на стек `{ id: habit.id }`, а `DetailScreen` знаходить звичку в `habits`, тому посилання з id відкриває ту саму звичку, а невідомий id — «не знайдено»."
+      en: "The focus effect now returns `() => subscription.remove()`: the subscription is removed on every blur, so at most one stays alive, and one return gives one recomputation. The row pushes `{ id: habit.id }`, and `DetailScreen` finds the habit in `habits`, so a link with an id opens the same habit, and an unknown id gives “not found”."
+    feedback:
+      - when: { test: "one return to the app refreshes the list once after several visits" }
+        message:
+          uk: "Ця перевірка тричі відкриває деталі й повертається, а потім чекає рівно одне перерахування за одне повернення в застосунок. Більше — підписки з попередніх фокусів не знято."
+          en: "This check opens the details and comes back three times, then expects exactly one recomputation for one return to the app. More — subscriptions from earlier focuses were not removed."
+      - when: { test: "the list has no AppState subscription while the detail covers it" }
+        message:
+          uk: "Ця перевірка відкриває деталі й чекає 0 підписок на `AppState`. Список змонтований під деталями, тож підписку знімає лише cleanup ефекту фокуса."
+          en: "This check opens the details and expects 0 `AppState` subscriptions. The list is mounted under the details, so only the focus effect's cleanup removes the subscription."
+      - when: { test: "a row opens Detail with only the habit id" }
+        message:
+          uk: "Ця перевірка натискає «Ранкова зарядка» й чекає вгорі стеку `Detail` з параметрами рівно `{ id: 'h-01' }` і назвою звички на екрані."
+          en: "This check presses “Morning exercise” and expects `Detail` on top of the stack with params exactly `{ id: 'h-01' }` and the habit's name on the screen."
+      - when: { test: "a link with an id opens the habit" }
+        message:
+          uk: "Ця перевірка надсилає посилання на `h-01` і чекає на екрані деталей назву звички. «Не знайдено» чи порожній екран означає, що `Detail` досі шукає обʼєкт у параметрах, а не звичку за id. Якщо всі перевірки падають разом, виправ першу помилку в консолі."
+          en: "This check sends a link to `h-01` and expects the habit's name on the detail screen. “Not found” or an empty screen means `Detail` still looks for an object in its params instead of the habit by id. If every check fails at once, fix the first console error."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` на кшталт «Cannot read properties of undefined (reading 'name')» означає, що екран читає поле обʼєкта, якого в параметрах немає: посилання передає лише id."
+          en: "A `TypeError` such as “Cannot read properties of undefined (reading 'name')” means the screen reads a field of an object that is not in its params: a link passes only an id."
+
+  - id: recall-web-debug
+    kind: review
+    title:
+      uk: "Пригадай: застарілі дані й дубльовані ефекти"
+      en: "Recall: stale data and duplicated effects"
+    items:
+      - id: duplicate-effect
+        from: re-03-07-debug-stale-duplicate-effects
+        prompt:
+          uk: "У вебкомпоненті кожне повідомлення чату показується двічі, а після кожного перемикання кімнати — ще на раз більше. Яка причина найімовірніша?"
+          en: "In a web component every chat message shows twice, and one more time after every room switch. What is the most likely cause?"
+        answer:
+          type: choice
+          options:
+            - id: no-cleanup
+              text:
+                uk: "Ефект підписується на повідомлення, але не повертає відписку, тож кожен новий запуск додає ще одного слухача"
+                en: "The effect subscribes to messages but does not return the unsubscribe, so every new run adds one more listener"
+            - id: double-render
+              text:
+                uk: "React рендерить компонент двічі, і кожен рендер показує повідомлення"
+                en: "React renders the component twice, and each render shows the message"
+              why:
+                uk: "Рендер лише описує, що показати; дублікати, що ростуть з кожним перемиканням, дає підписка, яку ніхто не знімає."
+                en: "A render only describes what to show; duplicates that grow with every switch come from a subscription nobody removes."
+            - id: server
+              text:
+                uk: "Сервер надсилає кожне повідомлення кілька разів"
+                en: "The server sends every message several times"
+              why:
+                uk: "Тоді кількість не залежала б від перемикань кімнати. Ріст з кожним перемиканням — ознака слухачів, що накопичуються."
+                en: "Then the count would not depend on room switches. Growth with every switch is the sign of listeners piling up."
+          correct: [no-cleanup]
+        explanation:
+          uk: "Те саме з `AppState` на телефоні, лише «перемикання» тут — кожен фокус екрана: кількість обробок росте з кількістю відвідувань."
+          en: "The same with `AppState` on a phone, only the “switch” here is every screen focus: the number of handlings grows with the number of visits."
+
+  - id: on-device
+    kind: local-task
+    runtime: local-native
+    title:
+      uk: "Ті самі дві вади на твоїй заявленій цілі"
+      en: "The same two defects on your declared target"
+    intro:
+      uk: |
+        Завдання виконується на твоєму компʼютері й на **заявленій цілі** з розділу RN-01 — емуляторі Android, симуляторі iOS або телефоні. Щоб не чіпати твій проєкт, створимо окремий навчальний проєкт `rn04-lab` у теці `~/js-course`.
+
+        Під час підготовки уроку з Node.js v25.2.1 запускали: крок 1 (з прапорцем `--no-install`, після чого пакети встановили окремо через `npm install`), крок 2 і крок 4 — з кодом і кроку 3, і кроку 8. Шаблон дав Expo SDK 57 (`expo` 57.0.26) і React Native 0.86.3; `npx expo install` додав `@react-navigation/native` 7.5.0, `@react-navigation/native-stack` 7.20.0, `react-native-screens` ~4.26.0 і `react-native-safe-area-context` ~5.7.0; `npx tsc --noEmit` (TypeScript 6.0.3) для обох версій `App.tsx` завершився без жодного повідомлення. **Усе, що відбувається на пристрої (крок 5 і далі), під час підготовки не перевірено** — там немає нативних інструментів; ці кроки описано за документацією Expo SDK 57, React Native 0.86 і React Navigation 7.
+
+        Якщо емулятора, симулятора чи телефона немає, натисни **«У мене немає емулятора чи пристрою»** нижче: завдання запишеться як не виконане, і ти зможеш іти далі — вправа вище вже закрила частину в перегляді.
+
+        **Крок 3 — вміст `App.tsx`** (повністю заміни ним файл):
+
+        ```tsx
+        // RN-04 seeded app: two defects on purpose (a leaked AppState subscription, a whole-object screen param).
+        import { useCallback, useEffect } from 'react';
+        import { AppState, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+        import { NavigationContainer, createNavigationContainerRef, useFocusEffect } from '@react-navigation/native';
+        import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
+
+        type Habit = { id: string; name: string; completions: string[] };
+        type RootStackParamList = { List: undefined; Detail: { habit: Habit } };
+
+        const habits: Habit[] = [
+          { id: 'h-01', name: 'Ранкова зарядка', completions: ['2026-02-28', '2026-03-01'] },
+          { id: 'h-02', name: 'Читати 20 хвилин', completions: ['2026-03-01'] },
+        ];
+
+        const Stack = createNativeStackNavigator<RootStackParamList>();
+        const navigationRef = createNavigationContainerRef<RootStackParamList>();
+        let refreshes = 0;
+
+        // Accepts courselab://habit/h-01 and the Expo Go form exp://…/--/habit/h-01.
+        function idFromLink(url: string): string | null {
+          const match = /\/habit\/(h-\d{2})$/.exec(url.split('?')[0]);
+          return match ? match[1] : null;
+        }
+
+        function ListScreen({ navigation }: NativeStackScreenProps<RootStackParamList, 'List'>) {
+          useFocusEffect(
+            useCallback(() => {
+              AppState.addEventListener('change', (next) => {
+                if (next === 'active') {
+                  refreshes += 1;
+                  console.log(`refresh #${refreshes}`);
+                }
+              });
+            }, []),
+          );
+          return (
+            <View style={styles.screen}>
+              {habits.map((habit) => (
+                <Pressable key={habit.id} accessibilityRole="button" style={styles.row} onPress={() => navigation.navigate('Detail', { habit })}>
+                  <Text style={styles.text}>{habit.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          );
+        }
+
+        function DetailScreen({ route }: NativeStackScreenProps<RootStackParamList, 'Detail'>) {
+          const { habit } = route.params;
+          return (
+            <View style={styles.screen}>
+              <Text style={styles.title}>{habit.name}</Text>
+              <Text style={styles.text}>Виконано днів: {habit.completions.length}</Text>
+            </View>
+          );
+        }
+
+        function openFromLink(url: string | null) {
+          const id = url ? idFromLink(url) : null;
+          // "Fixed" a type error with a cast: the link only knows the id.
+          if (id && navigationRef.isReady()) navigationRef.navigate('Detail', { id } as never);
+        }
+
+        export default function App() {
+          useEffect(() => {
+            const subscription = Linking.addEventListener('url', ({ url }) => openFromLink(url));
+            return () => subscription.remove();
+          }, []);
+
+          return (
+            <NavigationContainer ref={navigationRef} onReady={() => Linking.getInitialURL().then(openFromLink)}>
+              <Stack.Navigator>
+                <Stack.Screen name="List" component={ListScreen} options={{ title: 'Звички' }} />
+                <Stack.Screen name="Detail" component={DetailScreen} options={{ title: 'Звичка' }} />
+              </Stack.Navigator>
+            </NavigationContainer>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, padding: 16, gap: 8 },
+          row: { minHeight: 44, justifyContent: 'center', borderBottomWidth: 1, borderColor: '#d4d4d4' },
+          title: { fontSize: 20, fontWeight: '600' },
+          text: { fontSize: 16 },
+        });
+        ```
+
+        **Крок 8 — два виправлення** (заміни відповідні місця в `App.tsx`):
+
+        ```tsx
+        // 1. The list's focus effect: keep the subscription and remove it in the cleanup
+        useFocusEffect(
+          useCallback(() => {
+            const subscription = AppState.addEventListener('change', (next) => {
+              if (next === 'active') {
+                refreshes += 1;
+                console.log(`refresh #${refreshes}`);
+              }
+            });
+            return () => subscription.remove();
+          }, []),
+        );
+
+        // 2. The detail screen gets only an id — from a row and from a link alike
+        type RootStackParamList = { List: undefined; Detail: { id: string } };
+
+        // in ListScreen
+        onPress={() => navigation.navigate('Detail', { id: habit.id })}
+
+        // in DetailScreen, instead of const { habit } = route.params;
+        const habit = habits.find((item) => item.id === route.params.id);
+        if (!habit) return <Text style={styles.text}>Такої звички немає</Text>;
+
+        // in openFromLink: no cast any more — tsc checks the param again
+        if (id && navigationRef.isReady()) navigationRef.navigate('Detail', { id });
+        ```
+      en: |
+        This task runs on your computer and on the **declared target** from unit RN-01 — an Android emulator, an iOS simulator or a phone. To leave your project untouched, we create a separate lab project `rn04-lab` in the `~/js-course` folder.
+
+        While preparing this lesson, with Node.js v25.2.1, these were run: step 1 (with the `--no-install` flag, after which the packages were installed separately with `npm install`), step 2, and step 4 — with the code of both step 3 and step 8. The template gave Expo SDK 57 (`expo` 57.0.26) and React Native 0.86.3; `npx expo install` added `@react-navigation/native` 7.5.0, `@react-navigation/native-stack` 7.20.0, `react-native-screens` ~4.26.0 and `react-native-safe-area-context` ~5.7.0; `npx tsc --noEmit` (TypeScript 6.0.3) on both versions of `App.tsx` finished without any message. **Everything that happens on the device (step 5 onward) was not checked while preparing** — there were no native tools; those steps follow the documentation of Expo SDK 57, React Native 0.86 and React Navigation 7.
+
+        If you have no emulator, simulator or phone, press **“I have no emulator or device”** below: the task is recorded as not performed, and you can move on — the exercise above already covered the preview part.
+
+        **Step 3 — contents of `App.tsx`** (replace the whole file with it):
+
+        ```tsx
+        // RN-04 seeded app: two defects on purpose (a leaked AppState subscription, a whole-object screen param).
+        import { useCallback, useEffect } from 'react';
+        import { AppState, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+        import { NavigationContainer, createNavigationContainerRef, useFocusEffect } from '@react-navigation/native';
+        import { createNativeStackNavigator, type NativeStackScreenProps } from '@react-navigation/native-stack';
+
+        type Habit = { id: string; name: string; completions: string[] };
+        type RootStackParamList = { List: undefined; Detail: { habit: Habit } };
+
+        const habits: Habit[] = [
+          { id: 'h-01', name: 'Morning exercise', completions: ['2026-02-28', '2026-03-01'] },
+          { id: 'h-02', name: 'Read for 20 minutes', completions: ['2026-03-01'] },
+        ];
+
+        const Stack = createNativeStackNavigator<RootStackParamList>();
+        const navigationRef = createNavigationContainerRef<RootStackParamList>();
+        let refreshes = 0;
+
+        // Accepts courselab://habit/h-01 and the Expo Go form exp://…/--/habit/h-01.
+        function idFromLink(url: string): string | null {
+          const match = /\/habit\/(h-\d{2})$/.exec(url.split('?')[0]);
+          return match ? match[1] : null;
+        }
+
+        function ListScreen({ navigation }: NativeStackScreenProps<RootStackParamList, 'List'>) {
+          useFocusEffect(
+            useCallback(() => {
+              AppState.addEventListener('change', (next) => {
+                if (next === 'active') {
+                  refreshes += 1;
+                  console.log(`refresh #${refreshes}`);
+                }
+              });
+            }, []),
+          );
+          return (
+            <View style={styles.screen}>
+              {habits.map((habit) => (
+                <Pressable key={habit.id} accessibilityRole="button" style={styles.row} onPress={() => navigation.navigate('Detail', { habit })}>
+                  <Text style={styles.text}>{habit.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          );
+        }
+
+        function DetailScreen({ route }: NativeStackScreenProps<RootStackParamList, 'Detail'>) {
+          const { habit } = route.params;
+          return (
+            <View style={styles.screen}>
+              <Text style={styles.title}>{habit.name}</Text>
+              <Text style={styles.text}>Days done: {habit.completions.length}</Text>
+            </View>
+          );
+        }
+
+        function openFromLink(url: string | null) {
+          const id = url ? idFromLink(url) : null;
+          // "Fixed" a type error with a cast: the link only knows the id.
+          if (id && navigationRef.isReady()) navigationRef.navigate('Detail', { id } as never);
+        }
+
+        export default function App() {
+          useEffect(() => {
+            const subscription = Linking.addEventListener('url', ({ url }) => openFromLink(url));
+            return () => subscription.remove();
+          }, []);
+
+          return (
+            <NavigationContainer ref={navigationRef} onReady={() => Linking.getInitialURL().then(openFromLink)}>
+              <Stack.Navigator>
+                <Stack.Screen name="List" component={ListScreen} options={{ title: 'Habits' }} />
+                <Stack.Screen name="Detail" component={DetailScreen} options={{ title: 'Habit' }} />
+              </Stack.Navigator>
+            </NavigationContainer>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, padding: 16, gap: 8 },
+          row: { minHeight: 44, justifyContent: 'center', borderBottomWidth: 1, borderColor: '#d4d4d4' },
+          title: { fontSize: 20, fontWeight: '600' },
+          text: { fontSize: 16 },
+        });
+        ```
+
+        **Step 8 — two repairs** (replace the matching places in `App.tsx`):
+
+        ```tsx
+        // 1. The list's focus effect: keep the subscription and remove it in the cleanup
+        useFocusEffect(
+          useCallback(() => {
+            const subscription = AppState.addEventListener('change', (next) => {
+              if (next === 'active') {
+                refreshes += 1;
+                console.log(`refresh #${refreshes}`);
+              }
+            });
+            return () => subscription.remove();
+          }, []),
+        );
+
+        // 2. The detail screen gets only an id — from a row and from a link alike
+        type RootStackParamList = { List: undefined; Detail: { id: string } };
+
+        // in ListScreen
+        onPress={() => navigation.navigate('Detail', { id: habit.id })}
+
+        // in DetailScreen, instead of const { habit } = route.params;
+        const habit = habits.find((item) => item.id === route.params.id);
+        if (!habit) return <Text style={styles.text}>There is no such habit</Text>;
+
+        // in openFromLink: no cast any more — tsc checks the param again
+        if (id && navigationRef.isReady()) navigationRef.navigate('Detail', { id });
+        ```
+    tools:
+      - { name: "Node.js", version: "22.13 or newer", note: { uk: "мінімум для Expo SDK 57 за таблицею версій Expo", en: "the minimum for Expo SDK 57 per Expo's version table" } }
+      - { name: "Expo SDK", version: "57 (React Native 0.86)", note: { uk: "ставиться командою з кроку 1", en: "installed by the command in step 1" } }
+      - { name: "React Navigation", version: "7 (@react-navigation/native 7.5, native-stack 7.20)", note: { uk: "версії підбирає `npx expo install`", en: "`npx expo install` picks the versions" } }
+      - { name: "Declared target", version: "from RN-01", note: { uk: "емулятор Android, симулятор iOS або телефон з Expo Go для SDK 57", en: "an Android emulator, an iOS simulator or a phone with Expo Go for SDK 57" } }
+    steps:
+      - text:
+          uk: "У терміналі перейди в теку `~/js-course` і створи навчальний проєкт з шаблону TypeScript."
+          en: "In the terminal, go to the `~/js-course` folder and create the lab project from the TypeScript template."
+        command: "npx create-expo-app@latest rn04-lab --template blank-typescript"
+        expect:
+          uk: "Зʼявилася тека `rn04-lab` з `App.tsx` і `package.json`, де `expo` ~57 і `react-native` 0.86.x."
+          en: "A folder `rn04-lab` appears with `App.tsx` and a `package.json` listing `expo` ~57 and `react-native` 0.86.x."
+      - text:
+          uk: "Перейди в теку проєкту (`cd rn04-lab`) і додай React Navigation з нативним стеком у версіях, сумісних з SDK."
+          en: "Go into the project folder (`cd rn04-lab`) and add React Navigation with the native stack in the versions that match the SDK."
+        command: "npx expo install @react-navigation/native @react-navigation/native-stack react-native-screens react-native-safe-area-context"
+        expect:
+          uk: "У `dependencies` у `package.json` зʼявилися `@react-navigation/native` ^7, `@react-navigation/native-stack` ^7, `react-native-screens` і `react-native-safe-area-context`."
+          en: "`package.json` lists `@react-navigation/native` ^7, `@react-navigation/native-stack` ^7, `react-native-screens` and `react-native-safe-area-context` under `dependencies`."
+      - text:
+          uk: "Відкрий `App.tsx` у VS Code і заміни весь його вміст кодом «Крок 3» зі вступу до цього завдання. Збережи файл."
+          en: "Open `App.tsx` in VS Code and replace its whole content with the “Step 3” code from this task's introduction. Save the file."
+      - text:
+          uk: "Перевір типи. Зверни увагу: `tsc` мовчить, хоча посилання передає не те, що чекає екран, — приведення `as never` вимкнуло перевірку."
+          en: "Check the types. Notice: `tsc` stays silent even though the link passes something other than what the screen expects — the `as never` cast switched the check off."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Команда завершується без жодного повідомлення."
+          en: "The command finishes without any message."
+      - text:
+          uk: "Запусти dev-сервер і відкрий застосунок на заявленій цілі (`a` — емулятор Android, `i` — симулятор iOS, або QR-код у Expo Go). Запиши адресу з рядка про Metro, що починається з `exp://` — вона знадобиться для посилання. Не перевірено під час підготовки уроку."
+          en: "Start the dev server and open the app on your declared target (`a` for the Android emulator, `i` for the iOS simulator, or the QR code in Expo Go). Note the address from the Metro line that starts with `exp://` — you will need it for the link. Not checked while preparing this lesson."
+        command: "npx expo start"
+        expect:
+          uk: "На цілі видно екран «Звички» («Habits») з двома звичками."
+          en: "The target shows the “Habits” screen with two habits."
+      - text:
+          uk: "Тричі відкрий звичку й повернись назад. Потім вийди на головний екран пристрою й повернись у застосунок через перемикач застосунків. У терміналі з dev-сервером порахуй рядки `refresh #…`, що зʼявилися за одне повернення: більше одного — перша вада. Не перевірено під час підготовки уроку."
+          en: "Open a habit and go back three times. Then go to the device's home screen and return to the app through the app switcher. In the terminal with the dev server, count the `refresh #…` lines that appeared for one return: more than one is the first defect. Not checked while preparing this lesson."
+      - text:
+          uk: "Надішли посилання на звичку `h-01` в Expo Go, підставивши адресу з кроку 5 (наприклад, `exp://192.168.1.20:8081`) і замінивши `--android` на `--ios` для симулятора iOS. Застосунок має показати червоний екран з `TypeError` про читання `name` в `undefined` — це друга вада. Для телефона без емулятора цей крок пропусти. Не перевірено під час підготовки уроку."
+          en: "Send a link to the habit `h-01` into Expo Go, substituting the address from step 5 (for example `exp://192.168.1.20:8081`) and replacing `--android` with `--ios` for the iOS simulator. The app should show a red screen with a `TypeError` about reading `name` of `undefined` — that is the second defect. On a phone without an emulator, skip this step. Not checked while preparing this lesson."
+        command: "npx uri-scheme open \"exp://192.168.1.20:8081/--/habit/h-01\" --android"
+      - text:
+          uk: "Закрий червоний екран і внеси два виправлення з блоку «Крок 8» у вступі. Збережи файл і повтори `npx tsc --noEmit` — без жодного повідомлення."
+          en: "Dismiss the red screen and make the two repairs from the “Step 8” block in the introduction. Save the file and repeat `npx tsc --noEmit` — no message."
+      - text:
+          uk: "Повтори кроки 6 і 7: за одне повернення — рівно один рядок `refresh #…`, скільки б разів ти не ходив у деталі, а посилання відкриває «Ранкова зарядка». Не перевірено під час підготовки уроку."
+          en: "Repeat steps 6 and 7: exactly one `refresh #…` line per return, however many times you went into the details, and the link opens “Morning exercise”. Not checked while preparing this lesson."
+    verify:
+      - { id: duplicates-seen, text: { uk: "Я побачив(-ла) на заявленій цілі, що одне повернення в застосунок давало кілька рядків `refresh #…`", en: "I saw on my declared target that one return to the app gave several `refresh #…` lines" } }
+      - { id: single-refresh, text: { uk: "Після виправлення одне повернення дає рівно один рядок `refresh #…` навіть після кількох переходів", en: "After the repair one return gives exactly one `refresh #…` line even after several transitions" } }
+      - { id: link-opens, text: { uk: "Після виправлення посилання на `h-01` відкриває деталі звички без помилки (або я позначив(-ла), що посилання на телефоні не перевіряв(-ла))", en: "After the repair the link to `h-01` opens the habit's details without an error (or I noted that I did not check the link on a phone)" } }
+    troubleshooting:
+      - problem: { uk: "`npx uri-scheme` пише, що не знаходить пристрій чи симулятор", en: "`npx uri-scheme` says it cannot find a device or simulator" }
+        fix: { uk: "Команда відкриває посилання лише на запущеному емуляторі Android (через `adb`) чи симуляторі iOS (через `xcrun simctl`). Запусти ціль, переконайся, що застосунок на ній відкритий, і повтори. Не перевірено під час підготовки уроку.", en: "The command opens a link only on a running Android emulator (through `adb`) or iOS simulator (through `xcrun simctl`). Start the target, make sure the app is open on it, and repeat. Not checked while preparing this lesson." }
+      - problem: { uk: "Посилання відкриває Expo Go, але не застосунок, або нічого не відбувається", en: "The link opens Expo Go but not the app, or nothing happens" }
+        fix: { uk: "Перевір, що адреса — саме та, яку показав `npx expo start` (з портом), і що після неї стоїть `/--/habit/h-01`. Власна схема `courselab://` в Expo Go не працює — лише в окремій збірці застосунку. Не перевірено під час підготовки уроку.", en: "Check that the address is exactly the one `npx expo start` showed (with the port), and that `/--/habit/h-01` follows it. The custom scheme `courselab://` does not work in Expo Go — only in a separate build of the app. Not checked while preparing this lesson." }
+      - problem: { uk: "У терміналі немає рядків `refresh #…`", en: "There are no `refresh #…` lines in the terminal" }
+        fix: { uk: "Рядки зʼявляються лише при поверненні в застосунок, коли відкритий список. Вийди саме з екрана списку й повернись. Не перевірено під час підготовки уроку.", en: "The lines appear only when returning to the app while the list is open. Leave from the list screen itself and come back. Not checked while preparing this lesson." }
+    recovery:
+      uk: "Навчальний проєкт `rn04-lab` окремий від твого проєкту, тож нічого в `native/` не змінюється. Якщо `App.tsx` зламався, знову встав код «Крок 3» і повтори виправлення. Якщо зламалися залежності, видали лише теку `rn04-lab` і почни з кроку 1."
+      en: "The lab project `rn04-lab` is separate from your project, so nothing in `native/` changes. If `App.tsx` breaks, paste the “Step 3” code again and repeat the repairs. If the dependencies break, delete only the `rn04-lab` folder and start again from step 1."
