@@ -246,6 +246,24 @@
   // While a test re-evaluates the entry module (rerun), its output goes to that rerun only: not to
   // the learner's console and not to logs().
   let rerunSink = null;
+  // Format specifiers in the first argument, as the browser console applies them (Console Standard
+  // "Formatter"; only when there are further arguments): %s text, %d / %i integer, %f number,
+  // %o / %O the value, %c styling (consumed and ignored). Unused arguments follow the text;
+  // specifiers without an argument stay as written.
+  const asText = (v) => (typeof v === 'string' ? v : typeof v === 'symbol' ? String(v) : v !== null && (typeof v === 'object' || typeof v === 'function') ? show(v) : String(v));
+  function formatArgs(args) {
+    if (args.length < 2 || typeof args[0] !== 'string' || !/%[sdifoOc]/.test(args[0])) return args;
+    const rest = args.slice(1);
+    const text = args[0].replace(/%([sdifoOc])/g, (match, spec) => {
+      if (rest.length === 0) return match;
+      const value = rest.shift();
+      if (spec === 'c') return '';
+      if (spec === 'd' || spec === 'i') return typeof value === 'symbol' ? 'NaN' : String(parseInt(value, 10));
+      if (spec === 'f') return typeof value === 'symbol' ? 'NaN' : String(parseFloat(value));
+      return asText(value);
+    });
+    return [text, ...rest];
+  }
   const record = (level, args, shownLevel = level, extra = null) => {
     if (rerunSink) { rerunSink.push({ level, args, ...extra }); return; }
     captured.push({ level, args, ...extra });
@@ -257,7 +275,8 @@
       // Once the console limit is reached, stop feeding the real console too: a flood of native
       // console calls delays this frame's messages and makes a guarded loop look unresponsive.
       if (!consoleSuppressed) original(...args);
-      record(level, args, level === 'dir' || level === 'debug' ? 'log' : level);
+      // console.table and console.dir show their argument itself; the other levels format.
+      record(level, level === 'table' || level === 'dir' ? args : formatArgs(args), level === 'dir' || level === 'debug' ? 'log' : level);
     };
   }
   // console.trace(...args): the arguments (shown after the label "console.trace") and the stack of the call in
@@ -268,13 +287,13 @@
     if (!consoleSuppressed) originalTrace(...args);
     let stack = '';
     try { stack = cleanStack(new Error().stack || '').split('\n').slice(1).map((line) => line.trim()).join('\n'); } catch (e) { stack = ''; }
-    record('trace', args, 'trace', { stack });
+    record('trace', formatArgs(args), 'trace', { stack });
   };
   const printed = (c) => c.level !== 'alert' && c.level !== 'trace';
   const originalAssert = console.assert.bind(console);
   console.assert = (condition, ...args) => {
     originalAssert(condition, ...args);
-    if (!condition) record('error', ['Assertion failed:', ...args]);
+    if (!condition) record('error', ['Assertion failed:', ...formatArgs(args)]);
   };
   console.clear = () => { emitSystem('console-cleared'); };
   window.alert = (message) => { if (rerunSink) rerunSink.push({ level: 'alert', args: [message] }); else { captured.push({ level: 'alert', args: [message] }); emitConsole('alert', [String(message)]); } };

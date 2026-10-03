@@ -42,6 +42,34 @@ test('learner code produces real output and edits change it', async () => {
   assert.deepEqual(b.console[0].args.slice(3).map((x) => x.t), ['null', 'undefined']);
 });
 
+test('console format specifiers are applied like the browser console: %s %d %i %f %o %O, %c styling ignored', async () => {
+  const code = [
+    'console.log("%s has %d items", "Cart", 3.7);',
+    'console.warn("%c styled %s", "color: red", "text");',
+    'console.log("%o and %O", { a: 1 }, [1, 2]);',
+    'console.log("%i/%f", "42px", "2.5kg", "extra", 7);',
+    'console.log("100% sure %s");',
+    'console.log("only %s", "one", "%d");',
+    'console.error("Warning: Each child in a list should have a unique \\"key\\" prop.%s%s", "\\n\\nCheck the render method of `List`.", "");',
+    'console.assert(false, "%s failed", "check");',
+    'console.table(["%s", "x"]);',
+  ].join('\n');
+  const tests = 'test("formatted", () => { globalThis.__logs = logs(); globalThis.__raw = rawLogs(); expect(logs()[0]).toBe("Cart has 3 items"); expect(rawLogs()[0].args).toEqual(["Cart has 3 items"]); });';
+  const r = await run({ files: { 'index.js': code }, tests: { path: '__tests__.js', source: tests } });
+  assert.deepEqual(r.tests.map((t) => [t.status, t.message ?? '']), [['pass', '']]);
+  const shown = logs(r);
+  assert.equal(shown[0], 'Cart has 3 items');
+  assert.equal(shown[1], ' styled text');
+  assert.equal(shown[2], '{"a":1} and [1,2]');
+  assert.equal(shown[3], '42/2.5 extra 7');
+  assert.equal(shown[4], '100% sure %s', 'a single argument is printed as written');
+  assert.equal(shown[5], 'only one %d', 'an argument is not formatted again');
+  assert.equal(shown[6], 'Warning: Each child in a list should have a unique "key" prop.\n\nCheck the render method of `List`.');
+  assert.equal(shown[7], 'Assertion failed: check failed');
+  assert.equal(r.console[8].level, 'table');
+  assert.equal(r.console[8].args[0].t, 'array', 'console.table shows its data unformatted');
+});
+
 test('multi-file ES modules, JSON import and live bindings work natively', async () => {
   const r = await run({
     files: {
