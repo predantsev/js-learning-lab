@@ -45,3 +45,10 @@ test('a link with an id opens the habit', async () => {
   await settle();
   expect(visibleName(), 'name on the detail screen opened from the link').toHaveTextContent(L.exercise);
 });
+
+test('an unknown id shows not found', async () => {
+  await toList();
+  scope.stack.navigate('Detail', { id: 'h-99' });
+  await settle();
+  expect(screen.text(), 'text of the preview with Detail opened for h-99').toContain(L.notFound);
+});
