@@ -17,14 +17,22 @@ async function mount() {
 }
 const rows = (host) => [...host.querySelectorAll('tbody tr')];
 const labelOf = (tr) => tr.querySelector('td').textContent;
-const removeIn = (tr) => [...tr.querySelectorAll('*')].find((n) => n.children.length === 0 && n.textContent.trim() === L.remove);
+// The first control whose text starts with "Delete" ("Delete", or "Delete Weekly groceries 1").
+const removeIn = (tr) => [...tr.querySelectorAll('button, [role="button"], span, div, a')].find((n) => n.textContent.trim().startsWith(L.remove));
 const field = (host, name) => [...host.querySelectorAll('label')].find((l) => l.textContent.includes(name))?.querySelector('input, select');
 const summaryText = (host) => host.querySelector('section').textContent;
+// Puts the whole query into the field with one input event, like a paste: one render instead of
+// one per letter, so a check does not depend on how fast an unoptimized page renders.
+async function paste(input, text) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, text);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  await settle();
+}
 
 test('searching filters the table', async () => {
   const copy = await mount();
   try {
-    await user.type(field(copy.host, L.search), L.cinema);
+    await paste(field(copy.host, L.search), L.cinema);
     const labels = rows(copy.host).map(labelOf);
     expect(labels.length, 'rows shown').toBe(100);
     expect(labels.every((label) => label.includes(L.cinema)), 'every shown label contains the query').toBe(true);
@@ -80,13 +88,31 @@ test('deleting the only shown expense moves focus to the heading', async () => {
     await user.fill(field(copy.host, L.labelField), L.typed);
     await user.fill(field(copy.host, L.amountField), '15');
     await user.press('Enter', field(copy.host, L.amountField));
-    await user.type(field(copy.host, L.search), L.typed);
+    await paste(field(copy.host, L.search), L.typed);
     expect(rows(copy.host).length, 'rows matching the new label').toBe(1);
     const control = removeIn(rows(copy.host)[0]);
     control.focus();
     await user.press('Enter', control);
     expect(rows(copy.host).length, 'rows after deleting').toBe(0);
     expect(document.activeElement, 'focus after deleting the last shown expense').toBe(copy.host.querySelector('h1'));
+  } finally { copy.finish(); }
+});
+
+test('deleting the last of several shown expenses moves focus to the previous Delete', async () => {
+  const copy = await mount();
+  try {
+    for (const amount of ['15', '25']) {
+      await user.fill(field(copy.host, L.labelField), L.typed);
+      await user.fill(field(copy.host, L.amountField), amount);
+      await user.press('Enter', field(copy.host, L.amountField));
+    }
+    await paste(field(copy.host, L.search), L.typed);
+    expect(rows(copy.host).length, 'rows matching the new label').toBe(2);
+    const control = removeIn(rows(copy.host)[1]);
+    control.focus();
+    await user.press('Enter', control);
+    expect(rows(copy.host).length, 'rows after deleting').toBe(1);
+    expect(document.activeElement, 'focus after deleting the last shown expense').toBe(removeIn(rows(copy.host)[0]));
   } finally { copy.finish(); }
 });
 

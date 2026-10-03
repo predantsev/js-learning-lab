@@ -29,6 +29,18 @@ test('typing a new wish name renders no cards', async () => {
   } finally { copy.finish(); }
 });
 
+test('saving a price renders only that card', async () => {
+  const copy = await mount();
+  try {
+    await user.click(button(card(copy.host, 1), L.editPrice));
+    await user.fill(card(copy.host, 1).querySelector('input'), '35');
+    const before = cardRenders();
+    await user.press('Enter', card(copy.host, 1).querySelector('input'));
+    expect(copy.errors, 'errors React reported').toEqual([]);
+    expect(cardRenders() - before, 'WishCard renders for one saved price').toBe(1);
+  } finally { copy.finish(); }
+});
+
 test('selecting a wish marks exactly that card', async () => {
   const copy = await mount();
   try {
