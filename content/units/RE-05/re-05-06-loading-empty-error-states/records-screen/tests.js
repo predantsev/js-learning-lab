@@ -3,15 +3,64 @@ import { createRoot } from 'react-dom/client';
 import { RecordsScreen } from './RecordsScreen';
 import { setNextOutcome } from './tasksApi';
 
-// Every check mounts its own screen; the fake server answers after 300 ms.
+// A fake clock: while a check runs, the fake server's 300 ms timer is only recorded, and the check
+// moves time forward itself, so no check depends on how fast the computer is.
+function useFakeClock() {
+  const real = {
+    setTimeout: window.setTimeout,
+    clearTimeout: window.clearTimeout,
+    setInterval: window.setInterval,
+    clearInterval: window.clearInterval,
+  };
+  const timers = [];
+  let now = 0;
+  let nextId = 1;
+  const add = (fn, ms, args, repeat) => {
+    const id = `fake-${nextId++}`;
+    const wait = Math.max(0, Number(ms) || 0);
+    timers.push({ id, seq: nextId, at: now + wait, fn, args, every: repeat ? Math.max(1, wait) : null });
+    return id;
+  };
+  const remove = (id) => {
+    const index = timers.findIndex((timer) => timer.id === id);
+    if (index !== -1) timers.splice(index, 1);
+    else real.clearTimeout(id);
+  };
+  window.setTimeout = (fn, ms = 0, ...args) => add(fn, ms, args, false);
+  window.setInterval = (fn, ms = 0, ...args) => add(fn, ms, args, true);
+  window.clearTimeout = remove;
+  window.clearInterval = remove;
+  return {
+    advance(ms) {
+      const end = now + ms;
+      for (;;) {
+        timers.sort((a, b) => a.at - b.at || a.seq - b.seq);
+        const next = timers[0];
+        if (!next || next.at > end) break;
+        timers.shift();
+        now = next.at;
+        if (next.every !== null) timers.push({ ...next, seq: nextId++, at: now + next.every });
+        if (typeof next.fn === 'function') next.fn(...next.args);
+      }
+      now = end;
+    },
+    restore() {
+      Object.assign(window, real);
+    },
+  };
+}
+
+// Every check mounts its own screen on the fake clock; the fake server answers when the check moves time 300 ms on.
 async function mount(outcome) {
   setNextOutcome(outcome);
+  const clock = useFakeClock();
   const onCreate = spy();
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host);
   root.render(createElement(RecordsScreen, { onCreate }));
   await waitFor(() => host.childElementCount > 0);
+  await settle();
   return {
     host,
     onCreate,
@@ -20,10 +69,16 @@ async function mount(outcome) {
     items: () => [...host.querySelectorAll('li')].map((li) => li.textContent),
     button: (text) => [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === text),
     buttons: () => host.querySelectorAll('button').length,
-    finish: () => { root.unmount(); host.remove(); setNextOutcome('ok'); },
+    finish: () => { root.unmount(); host.remove(); clock.restore(); setNextOutcome('ok'); },
+    clock,
   };
 }
-const settled = (copy) => waitFor(() => copy.statusText() !== L.loading, { timeout: 2000 }).catch(() => {});
+// Lets the fake server answer, then lets React show the result.
+async function settled(copy) {
+  copy.clock.advance(300);
+  await sleep(0);
+  await settle();
+}
 
 test('while loading only the loading status is shown', async () => {
   const copy = await mount('ok');
