@@ -6,11 +6,12 @@ export type ExpensesState = { expenses: Expense[]; selectedId: string | null };
 
 export const STORAGE_KEY = "jsll.lab.expenses";
 
-export const START_EXPENSES: Expense[] = [
-  { id: "e-01", label: "%%groceries%%", amountMinor: 84550 },
-  { id: "e-02", label: "%%transit%%", amountMinor: 52000 },
-  { id: "e-03", label: "%%coffee%%", amountMinor: 18000 },
-];
+// Frozen: state must never be changed in place, so changing this list throws a TypeError.
+export const START_EXPENSES: Expense[] = Object.freeze([
+  Object.freeze({ id: "e-01", label: "%%groceries%%", amountMinor: 84550 }),
+  Object.freeze({ id: "e-02", label: "%%transit%%", amountMinor: 52000 }),
+  Object.freeze({ id: "e-03", label: "%%coffee%%", amountMinor: 18000 }),
+]) as Expense[];
 
 // "12,5" or "12.5" → 1250; anything that is not a positive amount → null.
 export function toMinor(text: string): number | null {

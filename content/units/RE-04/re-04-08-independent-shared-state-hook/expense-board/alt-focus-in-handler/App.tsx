@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { SubmitEvent } from "react";
 import { STORAGE_KEY, formatAmount, nextExpenseId, toMinor } from "./expenses";
 import type { Expense } from "./expenses";
@@ -14,24 +14,16 @@ function ExpenseList({ expenses, selectedId, onSelect, onRemove }: {
   countRender("ExpenseList");
   const headingRef = useRef<HTMLHeadingElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
-  // Where focus goes after the next commit: an expense id, "heading", or null for nowhere.
-  const focusAfterRemove = useRef<string | null>(null);
 
+  // The next expense's button and the heading are in the DOM before the click, so the handler
+  // moves focus at once; the commit then removes a row that no longer has focus.
   function remove(id: string) {
     const index = expenses.findIndex((expense) => expense.id === id);
     const next = expenses[index + 1];
-    focusAfterRemove.current = next === undefined ? "heading" : next.id;
+    if (next === undefined) headingRef.current?.focus();
+    else listRef.current?.querySelector<HTMLButtonElement>(`[data-id="${next.id}"]`)?.focus();
     onRemove(id);
   }
-
-  // Focus moves after the commit, once React has updated the DOM. (The next button and the
-  // heading are in the DOM before the click too, so the handler could also focus them at once.)
-  useEffect(() => {
-    const target = focusAfterRemove.current;
-    focusAfterRemove.current = null;
-    if (target === "heading") headingRef.current?.focus();
-    else if (target !== null) listRef.current?.querySelector<HTMLButtonElement>(`[data-id="${target}"]`)?.focus();
-  }, [expenses]);
 
   return (
     <section>
