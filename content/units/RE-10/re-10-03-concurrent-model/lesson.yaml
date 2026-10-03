@@ -1,0 +1,431 @@
+id: re-10-03-concurrent-model
+unit: RE-10
+title:
+  uk: "Ментальна модель конкурентного рендерингу"
+  en: "The concurrent rendering mental model"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Пояснити конкурентний рендеринг як роботу React в одному головному потоці: рендер можна готувати шматочками, призупиняти, кидати й починати наново, а на екран потрапляють лише завершені результати."
+    en: "Explain concurrent rendering as React preparing, pausing, abandoning and restarting renders on the single main thread, and committing only finished results."
+  - uk: "Передбачити, чому за конкурентності рендер мусить лишатися чистим: побічний ефект, зроблений під час кинутого рендеру, усе одно стався."
+    en: "Predict why render must stay pure under concurrency: side effects done during an abandoned render still happened."
+prerequisites: [re-10-02-transitions, js-08-04-microtasks-vs-tasks, re-01-07-purity-in-render]
+subskills:
+  - { family: R-08, skill: "concurrent rendering mental model", depth: intro }
+glossary: [concurrent-rendering, interruptible-render]
+selfCheck: [predict-render-lines, shown-queries]
+
+blocks:
+  - id: one-thread
+    kind: explanation
+    title:
+      uk: "Один потік, маленькі шматочки"
+      en: "One thread, small pieces"
+    body:
+      uk: |
+        У JS-08 ти бачив: головний потік браузера виконує **одну задачу за раз**. Поки працює довгий цикл, клік чекає — паралельно нічого не виконується.
+
+        [[concurrent-rendering|Конкурентний рендеринг]] цього правила не порушує. React не запускає компоненти в кількох потоках. Натомість рендер у transition він робить **шматочками** по кілька мілісекунд і між ними віддає потік браузеру. Якщо за цей час надійшло щось термінове — клавіша, клік, — React може:
+
+        - **призупинити** рендер і продовжити його пізніше;
+        - **кинути** недороблений рендер і почати наново з новим станом.
+
+        Такий рендер називають [[interruptible-render|перериваним]]. А от **commit** не переривається ніколи: React записує в DOM лише завершений рендер, і записує його цілком. Тому людина ніколи не бачить напівготового списку — лише старий або новий.
+
+        Термінові рендери, як у полі пошуку, React робить одним махом, без шматочків: їх і так треба показати якнайшвидше.
+      en: |
+        In JS-08 you saw that the browser's main thread runs **one task at a time**. While a long loop runs, a click waits — nothing runs in parallel.
+
+        [[concurrent-rendering|Concurrent rendering]] does not break that rule. React does not run components on several threads. Instead, it does a render in a transition **in small pieces** of a few milliseconds and hands the thread back to the browser between them. If something urgent has arrived meanwhile — a key, a click — React can:
+
+        - **pause** the render and continue it later;
+        - **throw away** the half-made render and start over with the new state.
+
+        Such a render is called an [[interruptible-render]]. A **commit**, however, is never interrupted: React writes only a finished render into the DOM, and writes it whole. That is why a person never sees a half-ready list — only the old one or the new one.
+
+        Urgent renders, like the one of a search field, React does in one go, without pieces: they have to be shown as soon as possible anyway.
+
+  - id: cook
+    kind: analogy
+    body:
+      uk: "Кухар один. Він готує велику тацю канапок на банкет, але щойно надходить термінове замовлення — одна кава, — кидає тацю, подає каву й починає тацю спочатку, вже за новим списком гостей. Гості бачать лише готові страви: ні недоробленої таці, ні двох кухарів, що працюють одночасно."
+      en: "There is one cook. He is preparing a big tray of canapés for a banquet, but as soon as an urgent order comes in — one coffee — he drops the tray, serves the coffee and starts the tray over, now with the new guest list. The guests see only finished dishes: no half-made tray, and no two cooks working at the same time."
+    limits:
+      uk: "Справжній кухар відкладає недороблену тацю, а React може викинути недороблений рендер повністю. І якщо кухар, поки робив кинуту тацю, уже повідомив комусь «таця майже готова», — це повідомлення не повернеш. Так само все, що рендер зробив із зовнішнім світом, не скасовується разом із рендером."
+      en: "A real cook sets the half-made tray aside, while React may throw an unfinished render away entirely. And if the cook, while working on the dropped tray, has already told someone “the tray is almost ready”, that message cannot be taken back. In the same way, anything a render did to the outside world is not undone together with the render."
+
+  - id: predict-render-lines
+    kind: prediction
+    lang: jsx
+    runnable: false
+    prompt:
+      uk: "Список звичок рендериться близько 150 мс і обгорнутий у `memo`. Його запит змінюється в `startTransition`. Кнопка «Набрати швидко» тричі змінює запит із паузами по 50 мс: `r`, `re`, `rea`. Скільки нових рядків `render` і скільки рядків `commit` з’явиться в консолі після кліку?"
+      en: "The habit list takes about 150 ms to render and is wrapped in `memo`. Its query changes inside `startTransition`. The “Type quickly” button changes the query three times with 50 ms pauses: `r`, `re`, `rea`. How many new `render` lines and how many `commit` lines appear in the console after the click?"
+    code: |
+      const HabitList = memo(function HabitList({ query }) {
+        console.log(`render: "${query}"`);
+        useEffect(() => {
+          console.log(`commit: "${query}"`);
+        }, [query]);
+        // … 150 rows, about 1 ms each
+      });
+    answer:
+      type: choice
+      options:
+        - id: three-one
+          text: { uk: "Три `render` і один `commit` — для `rea`", en: "Three `render` and one `commit` — for `rea`" }
+        - id: three-three
+          text: { uk: "Три `render` і три `commit`", en: "Three `render` and three `commit`" }
+          why:
+            uk: "Не кожен рендер, що почався, потрапляє на екран. Рендери для `r` і `re` були перервані новим запитом і викинуті, тож їхні ефекти не виконалися."
+            en: "Not every render that starts reaches the screen. The renders for `r` and `re` were interrupted by a new query and thrown away, so their effects never ran."
+        - id: one-one
+          text: { uk: "Один `render` і один `commit`: React чекає, поки запит перестане змінюватися", en: "One `render` and one `commit`: React waits until the query stops changing" }
+          why:
+            uk: "React нічого не чекає: рендер для `r` починається одразу. Його лише перериває наступна зміна — але рядок `render` він уже встиг надрукувати."
+            en: "React waits for nothing: the render for `r` starts at once. It is only interrupted by the next change — but by then it has already printed its `render` line."
+        - id: parallel
+          text: { uk: "Три `render` упереміш і три `commit`: React рендерить три запити паралельно", en: "Three interleaved `render` lines and three `commit`: React renders the three queries in parallel" }
+          why:
+            uk: "У браузера один головний потік. React може перервати рендер і почати інший, але ніколи не виконує два рендери одночасно."
+            en: "The browser has one main thread. React can interrupt a render and start another, but it never runs two renders at the same time."
+      correct: [three-one]
+    explanation:
+      uk: "Ми запускали це в пісочниці кілька разів — щоразу три рядки `render` («r», «re», «rea») і один `commit: \"rea\"`. Кожен рендер почався й надрукував свій рядок, але два з них були кинуті посередині. На екран потрапив лише останній. Отже, тіло компонента може виконатися частіше, ніж змінюється екран."
+      en: "We ran this in the sandbox several times — every time three `render` lines (“r”, “re”, “rea”) and one `commit: \"rea\"`. Every render started and printed its line, but two of them were dropped midway. Only the last one reached the screen. So a component's body may run more often than the screen changes."
+
+  - id: main-thread-steps
+    kind: visual
+    visual: render-timeline
+    strings:
+      q1: { uk: "п", en: "r" }
+      q2: { uk: "пи", en: "re" }
+      allHabits: { uk: "усі звички", en: "all habits" }
+      matching: { uk: "звички зі збігом", en: "habits matching" }
+    title:
+      uk: "Один потік: перерваний рендер і лічильник, що не відкотився"
+      en: "One thread: an interrupted render and a counter that did not roll back"
+    textEquivalent:
+      uk: >-
+        Компонент під час рендеру збільшує змінну модуля renderCount — це побічний ефект. Рендер 1 показує порожній
+        запит, renderCount дорівнює 1. Людина набирає «%%q1%%»: терміновий рендер 2 одразу показує літеру в полі
+        (renderCount — 2), а потім React у transition починає рендер 3 зі списком, шматочками, і renderCount стає 3.
+        Посеред рендеру 3 приходить клавіша «%%q2%%». React кидає недороблений рендер 3 — він ніколи не потрапить на
+        екран, — але renderCount так і лишився 3. Терміновий рендер 4 показує в полі нову літеру, renderCount — 4. Потім
+        React починає transition наново: рендер 5 для «%%q2%%» доходить до кінця, і commit показує новий список. На екрані
+        побували рендери 1, 2, 4 і 5, а renderCount дорівнює 5: кинутий рендер не відкотив побічного ефекту.
+      en: >-
+        During render the component increments a module variable renderCount — a side effect. Render 1 shows an empty
+        query, renderCount is 1. The person types "%%q1%%": urgent render 2 shows the letter in the field at once
+        (renderCount is 2), and then React starts render 3 with the list in a transition, in pieces, and renderCount
+        becomes 3. In the middle of render 3 the key "%%q2%%" arrives. React throws the half-made render 3 away — it will
+        never reach the screen — but renderCount stays 3. Urgent render 4 shows the new letter in the field; renderCount
+        is 4. Then React starts the transition over: render 5 for "%%q2%%" runs to the end, and the commit shows the new
+        list. Renders 1, 2, 4 and 5 were on the screen, yet renderCount is 5: the dropped render did not roll back its side
+        effect.
+    spec:
+      component: HabitSearch
+      code: |
+        let renderCount = 0;
+
+        function HabitSearch() {
+          const [text, setText] = useState("");
+          const [query, setQuery] = useState("");
+          const [, startTransition] = useTransition();
+          renderCount += 1; // a side effect during render
+          function handleChange(event) {
+            setText(event.target.value);
+            startTransition(() => setQuery(event.target.value));
+          }
+          return (
+            <>
+              <input value={text} onChange={handleChange} />
+              <HabitList query={query} />
+            </>
+          );
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 7
+          reason: { uk: "перший показ", en: "first display" }
+          snapshot: { state: { text: "", query: "" } }
+          caption:
+            uk: "Рендер 1. Рядок 7 збільшує `renderCount` до `1`."
+            en: "Render 1. Line 7 increments `renderCount` to `1`."
+        - phase: commit
+          render: 1
+          line: 14
+          dom: "<input value=\"\"> + %%allHabits%%"
+          caption:
+            uk: "Commit 1: поле порожнє, список повний."
+            en: "Commit 1: the field is empty, the list is full."
+        - phase: event
+          name: input
+          line: 9
+          sees: { text: "", query: "" }
+          actions: ["setText(\"%%q1%%\")", "startTransition(() => setQuery(\"%%q1%%\"))"]
+          caption:
+            uk: "Клавіша «%%q1%%»: одне термінове оновлення й одне в transition."
+            en: "The key “%%q1%%”: one urgent update and one inside a transition."
+        - phase: render
+          render: 2
+          line: 7
+          reason: { uk: "термінове: текст поля", en: "urgent: the field's text" }
+          snapshot: { state: { text: "%%q1%%", query: "" } }
+          caption:
+            uk: "Рендер 2, терміновий, одним махом. `renderCount` — `2`."
+            en: "Render 2, urgent, in one go. `renderCount` is `2`."
+        - phase: commit
+          render: 2
+          line: 14
+          dom: "<input value=\"%%q1%%\"> + %%allHabits%%"
+          caption:
+            uk: "Commit 2: літера в полі, список ще старий."
+            en: "Commit 2: the letter is in the field, the list is still the old one."
+        - phase: render
+          render: 3
+          line: 7
+          reason: { uk: "transition, шматочками", en: "transition, in pieces" }
+          snapshot: { state: { text: "%%q1%%", query: "%%q1%%" } }
+          caption:
+            uk: "Рендер 3 у transition. Рядок 7 уже виконався — `renderCount` дорівнює `3`, — а список ще готується шматочками."
+            en: "Render 3 in the transition. Line 7 has already run — `renderCount` is `3` — and the list is still being prepared in pieces."
+        - phase: event
+          name: input
+          line: 9
+          sees: { text: "%%q1%%", query: "" }
+          actions: ["setText(\"%%q2%%\")", "startTransition(() => setQuery(\"%%q2%%\"))"]
+          caption:
+            uk: "Між шматочками приходить клавіша «%%q2%%». Рендер 3 **кинуто**: на екрані його не буде ніколи. Але `renderCount` лишився `3` — рядок 7 уже виконався."
+            en: "Between two pieces the key “%%q2%%” arrives. Render 3 is **dropped**: it will never be on the screen. But `renderCount` stays `3` — line 7 has already run."
+        - phase: render
+          render: 4
+          line: 7
+          reason: { uk: "термінове: текст поля", en: "urgent: the field's text" }
+          snapshot: { state: { text: "%%q2%%", query: "" } }
+          caption:
+            uk: "Рендер 4, терміновий. `renderCount` — `4`."
+            en: "Render 4, urgent. `renderCount` is `4`."
+        - phase: commit
+          render: 4
+          line: 14
+          dom: "<input value=\"%%q2%%\"> + %%allHabits%%"
+          caption:
+            uk: "Commit 4: нова літера в полі, список досі старий."
+            en: "Commit 4: the new letter is in the field, the list is still the old one."
+        - phase: render
+          render: 5
+          line: 7
+          reason: { uk: "transition почато наново", en: "the transition starts over" }
+          snapshot: { state: { text: "%%q2%%", query: "%%q2%%" } }
+          caption:
+            uk: "Рендер 5: transition наново, тепер без перешкод. `renderCount` — `5`."
+            en: "Render 5: the transition over again, undisturbed now. `renderCount` is `5`."
+        - phase: commit
+          render: 5
+          line: 15
+          dom: "<input value=\"%%q2%%\"> + %%matching%% \"%%q2%%\""
+          caption:
+            uk: "Commit 5. На екрані побували рендери 1, 2, 4 і 5 — чотири. А `renderCount` дорівнює `5`: кинутий рендер свого побічного ефекту не відкотив."
+            en: "Commit 5. Renders 1, 2, 4 and 5 were on the screen — four of them. Yet `renderCount` is `5`: the dropped render did not roll back its side effect."
+
+  - id: render-log
+    kind: example
+    runtime: browser-react
+    dir: render-log
+    entry: main.jsx
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      words: { uk: "Вчити англійські слова", en: "Learn English words" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+      demo: { uk: "пит", en: "rea" }
+      search: { uk: "Пошук", en: "Search" }
+      typeQuickly: { uk: "Набрати швидко", en: "Type quickly" }
+      showSeen: { uk: "Показати seenQueries", en: "Show seenQueries" }
+    title:
+      uk: "Скільки рендерів почалося і скільки дійшло до екрана"
+      en: "How many renders started and how many reached the screen"
+    body:
+      uk: |
+        `HabitList` друкує рядок `render #N` на початку кожного рендеру, а його ефект — рядок `commit`, коли рендер дійшов до екрана. Крім того, рендер додає свій запит у масив модуля `seenQueries` — це побічний ефект, залишений навмисно.
+
+        Кнопка «Набрати швидко» тричі змінює запит із паузами по 50 мс — швидше, ніж список устигає відрендеритися. Запит змінюється в `startTransition`, як у попередньому уроці.
+
+        Натисни **Запустити**, потім «Набрати швидко», а тоді «Показати seenQueries». Порівняй рядки `render` і `commit` у **Консолі**.
+      en: |
+        `HabitList` prints a `render #N` line at the start of every render, and its effect prints a `commit` line when the render has reached the screen. Besides, the render adds its query to the module array `seenQueries` — a side effect, left in on purpose.
+
+        The “Type quickly” button changes the query three times with 50 ms pauses — faster than the list can render. The query changes inside `startTransition`, as in the previous lesson.
+
+        Press **Run**, then “Type quickly”, then “Show seenQueries”. Compare the `render` and `commit` lines in the **Console**.
+    tryIt:
+      uk: |
+        1. Після «Набрати швидко» в консолі три нові рядки `render` і лише один `commit`. А `seenQueries` містить усі три запити — хоча людина бачила тільки останній.
+        2. Перенеси побічний ефект в ефект. У `HabitList.jsx` видали рядок коду `seenQueries.push(query);` з тіла компонента й допиши його всередині `useEffect` перед `console.log`. Запусти й повтори обидва кліки: тепер `seenQueries` має лише порожній запит і останній — кинуті рендери не лишили сліду.
+        3. В `App.jsx` заміни `startTransition(() => setQuery(value));` на `setQuery(value);`. Запусти й натисни «Набрати швидко»: тепер кожен рядок `render` має свій `commit` — термінові рендери не кидаються. Рендерів навіть менше за три: поки головний потік рендерив першу літеру, дві наступні зміни встигли стати в чергу й увійшли в один рендер.
+      en: |
+        1. After “Type quickly” the console has three new `render` lines and only one `commit`. And `seenQueries` contains all three queries — although the person saw only the last one.
+        2. Move the side effect into an effect. In `HabitList.jsx` delete the line of code `seenQueries.push(query);` from the component body and add it inside `useEffect` before `console.log`. Run and repeat both clicks: now `seenQueries` holds only the empty query and the last one — the dropped renders left no trace.
+        3. In `App.jsx` replace `startTransition(() => setQuery(value));` with `setQuery(value);`. Run and press “Type quickly”: now every `render` line has its `commit` — urgent renders are not dropped. There are even fewer than three renders: while the main thread was rendering the first letter, the next two changes got queued and went into a single render.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: потік і чистота"
+      en: "Recall: the thread and purity"
+    items:
+      - id: timer-waits-for-loop
+        from: js-08-04-microtasks-vs-tasks
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          setTimeout(() => console.log("timer"), 0);
+          const start = Date.now();
+          while (Date.now() - start < 100) {}
+          console.log("loop done");
+        verify:
+          logs: ["loop done", "timer"]
+        answer:
+          type: choice
+          options:
+            - id: loop-first
+              text: { uk: "`loop done`, потім `timer`", en: "`loop done`, then `timer`" }
+            - id: timer-first
+              text: { uk: "`timer`, потім `loop done`: таймер на 0 мс спрацьовує одразу", en: "`timer`, then `loop done`: a 0 ms timer fires at once" }
+              why:
+                uk: "Callback таймера — окрема задача. Вона чекає, поки поточна задача (весь цей код разом із циклом) закінчиться, — головний потік виконує одну задачу за раз."
+                en: "The timer's callback is a separate task. It waits until the current task (all of this code, the loop included) has finished — the main thread runs one task at a time."
+          correct: [loop-first]
+        explanation:
+          uk: "Цикл займає головний потік на 100 мс, і за цей час не виконується нічого іншого — ні таймер, ні клік. Тому React і рендерить у transition шматочками: між шматочками потік вільний, і клавіша не чекає, поки весь список дорендериться."
+          en: "The loop keeps the main thread busy for 100 ms, and nothing else runs meanwhile — neither the timer nor a click. That is why React renders a transition in pieces: between the pieces the thread is free, and a key does not wait for the whole list to finish rendering."
+      - id: module-variable-in-render
+        from: re-01-07-purity-in-render
+        prompt:
+          uk: "Компонент під час рендеру робить `visits += 1` зі змінною модуля `visits`. Чому це порушує правило чистого рендеру?"
+          en: "During render a component does `visits += 1` on a module variable `visits`. Why does that break the rule of pure render?"
+        answer:
+          type: choice
+          options:
+            - id: outside-change
+              text: { uk: "Рендер змінює щось поза компонентом, тож результат залежить від того, скільки разів React його викликав", en: "The render changes something outside the component, so the result depends on how many times React called it" }
+            - id: slow
+              text: { uk: "Додавання до змінної уповільнює рендер", en: "Adding to a variable slows the render down" }
+              why:
+                uk: "Одне додавання нічого не важить для швидкості. Біда в тому, що рендер змінює світ поза компонентом."
+                en: "One addition costs nothing in speed. The trouble is that the render changes the world outside the component."
+            - id: syntax
+              text: { uk: "Змінні модуля в компоненті читати не можна", en: "Module variables may not be read in a component" }
+              why:
+                uk: "Читати незмінні значення модуля можна — наприклад, константи чи список даних. Порушення — це **зміна** зовнішньої змінної під час рендеру."
+                en: "Reading unchanging module values is fine — constants or a data list, for example. The violation is **changing** an outer variable during render."
+          correct: [outside-change]
+        explanation:
+          uk: "Чистий рендер нічого не змінює поза компонентом, тож неважливо, скільки разів React його викличе. Конкурентний React викликає компоненти частіше, ніж змінюється екран: кинуті рендери теж виконують своє тіло. Чистота — це те, що робить такі рендери нешкідливими."
+          en: "A pure render changes nothing outside the component, so it does not matter how many times React calls it. Concurrent React calls components more often than the screen changes: dropped renders run their bodies too. Purity is what makes such renders harmless."
+
+  - id: shown-queries
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: shown-queries
+    entry: main.jsx
+    editable: [WishList.jsx]
+    strings:
+      wishesTitle: { uk: "Бажання друзів", en: "Friends' wishes" }
+      searchLabel: { uk: "Пошук за назвою", en: "Search by name" }
+      onlyWanted: { uk: "Лише ще не отримані", en: "Only not yet acquired" }
+      results: { uk: "Результати пошуку", en: "Search results" }
+      found: { uk: "Знайдено", en: "Found" }
+      query: { uk: "лам", en: "lam" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+    title:
+      uk: "Аналітика, яку не обманюють кинуті рендери"
+      en: "Analytics that dropped renders cannot fool"
+    instructions:
+      uk: |
+        `WishList` записує в аналітику (`analytics.js`) кожен пошуковий запит, результати якого людина побачила. Зараз `recordShown(query)` викликається просто в рендері — тож коли людина друкує швидко й рендери в transition кидаються, в аналітику потрапляють запити, яких на екрані не було ніколи.
+
+        Зміни `WishList.jsx` так, щоб:
+
+        - перший показ записував порожній запит один раз;
+        - після швидкого набору трьох літер записувався лише запит, що справді дійшов до екрана, — без проміжних;
+        - зміна галочки «Лише ще не отримані» з тим самим запитом не записувала нічого нового.
+
+        Перевірки друкують літери з паузами по 30 мс, а список рендериться близько 150 мс, тож проміжні рендери справді кидаються.
+      en: |
+        `WishList` records in analytics (`analytics.js`) every search query whose results the person has seen. Right now `recordShown(query)` is called right in render — so when the person types fast and the renders in the transition get dropped, analytics receives queries that were never on the screen.
+
+        Change `WishList.jsx` so that:
+
+        - the first display records the empty query once;
+        - after typing three letters fast, only the query that really reached the screen is recorded — no intermediate ones;
+        - ticking “Only not yet acquired” with the same query records nothing new.
+
+        The checks type letters with 30 ms pauses, and the list takes about 150 ms to render, so the intermediate renders really are dropped.
+    testTitles:
+      "the first display records the empty search once":
+        uk: "Перший показ записує порожній запит один раз"
+        en: "The first display records the empty search once"
+      "fast typing records only the search that reached the screen":
+        uk: "Після швидкого набору записано лише запит, що дійшов до екрана"
+        en: "Fast typing records only the search that reached the screen"
+      "changing the filter with the same search records nothing new":
+        uk: "Зміна галочки з тим самим запитом не записує нічого нового"
+        en: "Changing the filter with the same search records nothing new"
+    hints:
+      nudge:
+        uk: "Яка частина компонента виконується лише тоді, коли рендер уже на екрані? І коли саме вона має виконуватися — після кожного commit чи лише тоді, коли змінився запит?"
+        en: "Which part of a component runs only once the render is on the screen? And when exactly should it run — after every commit or only when the query has changed?"
+      explanation:
+        uk: |
+          Тіло компонента виконується в кожному рендері, і в кинутому теж. Ефект виконується лише після commit, тобто лише для того, що людина побачила. Масив залежностей вирішує, після яких commit ефект запускається знову. Схожий приклад з іншими назвами:
+
+          ```jsx
+          useEffect(() => {
+            reportOpened(tabName);
+          }, [tabName]);
+          ```
+        en: |
+          A component's body runs in every render, the dropped ones included. An effect runs only after a commit — that is, only for what the person saw. The dependency array decides after which commits the effect runs again. A similar example with other names:
+
+          ```jsx
+          useEffect(() => {
+            reportOpened(tabName);
+          }, [tabName]);
+          ```
+    solutionNote:
+      uk: "Ефект запускається після commit, тож кинуті рендери до нього не доходять, а `[query]` обмежує запис саме зміною запиту — галочка рендерить список знову, але запит той самий, і ефект мовчить. Так само працює ефект без масиву залежностей із ref, що пам’ятає останній записаний запит. Під час розробки зі `StrictMode` (RE-03) React запускає ефекти двічі при першому показі — справжня аналітика має це враховувати."
+      en: "An effect runs after the commit, so dropped renders never reach it, and `[query]` limits recording to a change of the query — the checkbox renders the list again, but the query is the same, and the effect stays silent. An effect without a dependency array plus a ref remembering the last recorded query works the same way. During development with `StrictMode` (RE-03) React runs effects twice on the first display — real analytics has to account for that."
+    feedback:
+      - when: { test: "the first display records the empty search once" }
+        message:
+          uk: "Ця перевірка чекає, що після першого показу аналітика містить рівно один запис — порожній запит `\"\"`. Якщо всі перевірки не пройшли разом, спершу виправ першу помилку в консолі."
+          en: "This check expects analytics to hold exactly one entry after the first display — the empty query `\"\"`. If every check fails at once, fix the first error in the console first."
+      - when: { test: "fast typing records only the search that reached the screen" }
+        message:
+          uk: "Ця перевірка друкує «лам» по літері з паузами по 30 мс, чекає, поки список покаже результати для «лам», і чекає в аналітиці `[\"\", \"лам\"]`. Зайві «л» і «ла» з’являються, коли запис стоїть у тілі компонента: кинуті рендери теж його виконують, навіть якщо перевіряти, чи запит змінився."
+          en: "This check types “lam” letter by letter with 30 ms pauses, waits for the list to show the results for “lam”, and expects `[\"\", \"lam\"]` in analytics. Extra “l” and “la” appear when the recording sits in the component body: dropped renders run it too, even if you check whether the query changed."
+      - when: { test: "changing the filter with the same search records nothing new" }
+        message:
+          uk: "Ця перевірка ставить галочку «Лише ще не отримані», чекає оновленого списку й чекає, що аналітика не змінилася. Список рендериться знову, бо змінився інший проп, а запит той самий — запис має залежати лише від зміни запиту."
+          en: "This check ticks “Only not yet acquired”, waits for the updated list and expects analytics to be unchanged. The list renders again because another prop changed, but the query is the same — recording must depend only on a change of the query."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-10
+    body:
+      uk: "Коли в проєкті фільтр почне оновлювати список у transition, деякі рендери списку кидатимуться. Перевір його компоненти: усе, що змінює щось поза компонентом — запис у сховище, лічильник, аналітику, — має бути в обробнику події чи в ефекті, а не в тілі компонента."
+      en: "Once the filter in your project updates the list in a transition, some list renders will be dropped. Check its components: anything that changes something outside the component — writing to storage, a counter, analytics — belongs in an event handler or an effect, not in the component body."
