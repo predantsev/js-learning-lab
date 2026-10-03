@@ -30,6 +30,20 @@ async function addCourse(host) {
   await user.click(buttonIn(host.querySelector('form') ?? host, L.add));
 }
 
+test('the first render says the bookmarks are loading', async () => {
+  resetServer();
+  const host = document.createElement('div');
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    root.render(createElement(Bookmarks));
+    await waitFor(() => host.childNodes.length > 0);
+    expect(roleText(host, 'status'), 'the role="status" text before the list arrives').toBe(L.loading);
+    expect(roleText(host, 'alert'), 'the role="alert" text before the list arrives').toBe('');
+    await whenIdle();
+  } finally { root.unmount(); host.remove(); }
+});
+
 test('the list loads and shows every bookmark as a link', async () => {
   const copy = await mount();
   try {
