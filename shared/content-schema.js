@@ -172,6 +172,7 @@ function checkBlock(issues, block, lesson, ctx) {
       if (!Array.isArray(block.items) || block.items.length === 0) issues.add(`${p}.items`, 'a review block needs at least one question');
       for (const [i, item] of (block.items ?? []).entries()) {
         checkPredictionItem(issues, item, `${p}.items[${i}]`);
+        if (item.strings !== undefined) issues.add(`${p}.items[${i}].strings`, 'put strings on the review block: its questions share one table');
         if (!nonEmpty(item.id) || !BLOCK_ID_PATTERN.test(item.id)) issues.add(`${p}.items[${i}].id`, 'missing or invalid id');
         if (!nonEmpty(item.from) || !LESSON_ID_PATTERN.test(item.from)) issues.add(`${p}.items[${i}].from`, 'must name the earlier lesson id this question retrieves');
         else if (ctx.lessonOrder && ctx.lessonOrder.has(item.from) && ctx.lessonOrder.has(lesson.id) && ctx.lessonOrder.get(item.from) >= ctx.lessonOrder.get(lesson.id)) issues.add(`${p}.items[${i}].from`, 'must be an earlier lesson');
@@ -217,6 +218,12 @@ function checkBlock(issues, block, lesson, ctx) {
       checkLocalized(issues, block.intro, `${p}.intro`);
       if (!LOCAL_RUNTIMES.includes(block.runtime)) issues.add(`${p}.runtime`, `must be one of ${LOCAL_RUNTIMES.join(', ')}`);
       if (!Array.isArray(block.tools) || block.tools.length === 0) issues.add(`${p}.tools`, 'list required tools with versions');
+      for (const [i, tool] of (Array.isArray(block.tools) ? block.tools : []).entries()) {
+        if (!isPlainObject(tool) || !nonEmpty(tool.name)) { issues.add(`${p}.tools[${i}].name`, 'needs the tool name'); continue; }
+        // A version is the same text in both languages ("22.13 or newer" is not) — or bilingual text.
+        if (tool.version !== undefined && !nonEmpty(tool.version)) checkLocalized(issues, tool.version, `${p}.tools[${i}].version`);
+        if (tool.note !== undefined) checkLocalized(issues, tool.note, `${p}.tools[${i}].note`);
+      }
       if (!Array.isArray(block.steps) || block.steps.length === 0) issues.add(`${p}.steps`, 'needs ordered steps');
       for (const [i, step] of (block.steps ?? []).entries()) {
         checkLocalized(issues, step.text, `${p}.steps[${i}].text`);

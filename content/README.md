@@ -22,7 +22,7 @@ content/
     <exercise-dir>/tests.js       behavior tests
 ```
 
-The directory name equals the lesson id. Ids are stable: never rename a published lesson or block id (add a redirect in `content/redirects.yaml` instead).
+Names that the repository's `.gitignore` drops (`dist/`, `build/`, `coverage/`, `.env`, `.env.*`, `*.log`) work while you author but are never committed; the validator warns about them — name such folders differently (`dist-demo/`, `sample.env.txt`). The directory name equals the lesson id. Ids are stable: never rename a published lesson or block id (add a redirect in `content/redirects.yaml` instead).
 
 ## Commands
 
@@ -30,10 +30,12 @@ The directory name equals the lesson id. Ids are stable: never rename a publishe
 npm run build                                        # once, and after platform changes
 node scripts/content/validate.mjs --unit JS-03       # static checks + real execution of every fixture
 node scripts/content/validate.mjs --lesson <id>
+node scripts/content/validate.mjs --unit JS-12 --locale uk-UA   # browser under another locale (default: en-US)
+node scripts/content/smoke.mjs --unit JS-12 --locale uk-UA      # every lesson page in the real app
 npm start                                            # read your lesson as a learner (http://localhost:7300)
 ```
 
-The validator runs every example, every exercise fixture and every verifiable prediction in headless Chrome through the same sandbox the learner uses, in both languages. A lesson is not done until it passes.
+The validator runs every example, every exercise fixture and every verifiable prediction in headless Chrome through the same sandbox the learner uses, in both languages. A lesson is not done until it passes. Headless Chrome reports the locale `en-US` unless `--locale` names another one (Chrome `--lang` plus the page locale: `Intl`, `navigator.language`, `localeCompare` and `toLocaleString` follow it); validate Intl-dependent lessons under `--locale uk-UA` and `--locale en-US`.
 
 ## Teaching rules
 
@@ -54,7 +56,7 @@ The validator runs every example, every exercise fixture and every verifiable pr
 
 - Every learner-facing string is bilingual: `{ uk: …, en: … }`. Ukrainian is the default and must read naturally, not like a translation. Address the learner informally (ти). Keep professional terms in English where developers do (props, state, hook, closure, callback, commit, merge, runtime) and explain them on first use; link them with `[[term-id]]` or `[[term-id|shown text]]` (inside a table cell escape the bar: `[[term-id\|shown text]]`).
 - New terms go to `content/glossary/<UNIT>.yaml` (`id`, `term` = canonical English name, `name` {uk,en}, `definition` {uk,en}, optional `aliases`, `see`, `example.code`). A term is defined once for the whole course; check existing glossary files before adding.
-- **Code:** identifiers and comments are English and shared by both languages. Text the example shows to its user (page headings, labels, printed sentences, sample data names) follows the lesson language: write `%%key%%` in the code and define `strings: { key: { uk: …, en: … } }` on the block. Tests read the same values from the global `L` (`L.key`). Synthetic data comes from `content/capstones/domains.yaml` where it fits.
+- **Code:** identifiers and comments are English and shared by both languages. Text the example shows to its user (page headings, labels, printed sentences, sample data names) follows the lesson language: write `%%key%%` in the code and define `strings: { key: { uk: …, en: … } }` on the block. Tests read the same values from the global `L` (`L.key`). The same `%%key%%` also works in every text field of that block (`instructions`, `testTitles`, hints, `feedback`, `solutionNote`, `body`, `tryIt`, a prediction's `prompt`, options and `explanation`, a visual's `title` and `textEquivalent`): each language gets its own value, so the task can quote the exact text the checks expect. A placeholder with no entry in the block's `strings` is a validation error. A `review` block has one `strings` table for all its questions (not one per question). Synthetic data comes from `content/capstones/domains.yaml` where it fits.
 - No personal data, no real brands' content, nothing copied from other courses.
 
 ## Mistakes found by independent review (check your unit against every line)
@@ -91,7 +93,7 @@ The validator runs every example, every exercise fixture and every verifiable pr
 30. **Browser facts that were written wrong (measured in Chrome):** an input with only a `placeholder` still gets its accessible name from it — write "named only by its placeholder, there is no label", never "has no name"; real Enter in a field fires a click on the form's submit button, while `user.press('Enter', input)` in tests submits without a click; where Tab goes first depends on where navigation starts (after a click or from the top of the page).
 31. **A zoom claim names a window width or is conditional.** The application switches to one column below 1100 CSS px, so the result panel can get wider when the learner zooms in; "zoom to 200 %" alone is not reproducible.
 32. **`alt` fixtures model the practice the unit teaches** (a visible `<label>`, not `aria-label` alone), and a test must require what the lesson teaches rather than what a helper happens to accept (`screen.nameOf` accepts `aria-label`).
-33. **What the checks print after a load crash depends on the test:** a guarded check says `type of X: expected "undefined" to be "function"`, an unguarded one `Cannot read properties of undefined (reading 'X')` — not always "… is not a function" (this refines rule 22). Say "if every check fails at once, fix the first console error". A starter stub must not crash the ready-made demo code (`.join`, `.set`, `.value` on `undefined`): return an empty value of the right type, or wrap each demo part in its own `try`/`catch`.
+33. **What the checks print after a load crash depends on the test:** a guarded check says `type of X: expected "undefined" to be "function"`, an unguarded one `Cannot read properties of undefined (reading 'X')` — not always "… is not a function" (this refines rule 22). Say "if every check fails at once, fix the first console error". The validator warns about a `when: { error: TypeError }` message that quotes "… is not a function" in an exercise whose checks guard the function first. A starter stub must not crash the ready-made demo code (`.join`, `.set`, `.value` on `undefined`): return an empty value of the right type, or wrap each demo part in its own `try`/`catch`.
 34. **`this` in callbacks, measured:** a click listener gets the element, a timer callback gets `window` (on the platform and in a browser tab alike). Never write "called with no object" or "`this` is undefined" for them.
 35. **Visual labels and sample data are localized too:** labels in `sequence`/`diagram` visuals are bilingual objects, and sample strings inside `visuals/*.js` or inside `uk:` code fences go through `strings`, like any example.
 36. **A fake clock in tests replaces the whole family** — `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` — with ids that cannot reach real timers (`fake-N`).
@@ -104,7 +106,7 @@ The validator runs every example, every exercise fixture and every verifiable pr
 43. **DevTools steps describe the default interface state:** collapsed panes, items behind the `»` overflow, saving a snippet before a breakpoint can be set. Never say a server "cannot" answer with an error when the lab can be asked to (`/lab/status/500`).
 44. **Time-zone-sensitive checks run under zones on both sides of UTC** (for example UTC+14 and UTC−11) with a full emulation of the machine's zone — the `Date` constructor and local getters, not only the formatter's default zone (see `withMachineZone` in `content/units/JS-12/js-12-10-intl-locale/`). Prove determinism with fixtures: an `alt-local` solution that is correct in local time must pass, and `wrong-*` solutions that mix local time and UTC must fail on every machine. Running the validator under several `TZ` values does not test learner variants.
 45. **Say "N `console.log` calls", not "N lines of code"**, when the snippet has more lines than outputs. One long synchronous call (a runaway regular expression) is not stopped by the 2-second loop budget; the platform stays responsive and Stop ends the run — describe it only after a timed run (rule 23). Write `[ [k, v] ]` rather than `[[k, v]]` in code spans: the double bracket reads as a glossary link.
-46. **Glossary link text is plain:** `[[id|text]]` renders its text raw, so a code span or bold inside it shows literal backticks or asterisks.
+46. **Glossary link text is inline Markdown:** `[[id|text]]` renders a code span or bold inside `text` (`[[closure|\`makeCounter\` closure]]`); it cannot contain `]` or another link.
 47. **Every troubleshooting row is reproduced** on the current Node and on the course minimum (Node 22) — error texts differ between versions (module-type detection on Node 25, `bad option` on Node 20); a row you cannot reproduce is removed or made conditional. Turning a compiler flag off is not "silent": run such a step on the learner's whole lab folder.
 48. **TypeScript facts:** `import { type X }` is not `import type { X }` under `verbatimModuleSyntax` (the first still emits an import; the sandbox drops it entirely); the sandbox strips types and checks nothing — say that `tsc` in the local task is what checks them. A visual must not trace the function the exercise asks for (rule 13); an `alt` that "returns X" must not pass by returning its raw input.
 49. **Authored memory graphs draw real structures:** an array of N items is an object with `ctor: "Array(N)"` and bracketed keys, never a placeholder `Array(3)`; a module `const` that still points to a removed element is a retainer — do not caption it as unreachable.
@@ -117,6 +119,8 @@ id: js-05-02-filter-find          # = directory name
 unit: JS-05
 title: { uk: …, en: … }
 kind: instructional               # instructional | review | assessment | local-task | capstone-step
+                                  #   (an assessment lesson has no "I know this" and is not skipped with its
+                                  #   unit: it is completed only through its exercises)
 minutes: 10                       # 5–15 for instructional lessons
 contentVersion: 1
 objectives: [ { uk: …, en: … } ]  # observable abilities
@@ -131,7 +135,7 @@ blocks: [ … ]                     # read top to bottom; every example/exercise
 
 ### Block kinds
 
-Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are plain text (no backticks or other Markdown); exercise `testTitles` are inline Markdown (code spans are fine, no block markup). All other text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts).
+Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are plain text (no backticks or other Markdown); exercise `testTitles` are inline Markdown (code spans are fine, no block markup). All other text fields are Markdown (GitHub flavored: lists, tables, fenced code, `> [!note]`, `> [!tip]`, `> [!warning]` callouts). Raw HTML is not markup: a tag written in prose (`<ul>`, “<name>”) is shown literally as text, so quote tags freely, preferably in a code span; links are kept only for `https:`, `http:`, `mailto:`, relative and `#` addresses.
 
 ```yaml
 - id: keep-what-matters
@@ -187,7 +191,8 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are
 - id: keep-affordable
   kind: exercise
   mode: guided                    # guided | debug | independent
-  assessment: true                # optional: gate/assessment tasks
+  assessment: true                # optional: gate/assessment tasks — "Show the solution" is offered only
+                                  #   after every check passed (the solution cannot be used to pass it)
   runtime: browser-js
   dir: keep-affordable
   entry: index.js
@@ -227,7 +232,8 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are
   runtime: local-web              # local-web | local-node | local-native
   title: { uk, en }
   intro: { uk, en }
-  tools: [ { name: "Node.js", version: "22 or newer", note: { uk, en } } ]
+  tools: [ { name: "Node.js", version: "22.13", note: { uk, en } } ]   # version: a plain string shown in
+                                  #   both languages, or { uk, en } when it has words ("22.13 or newer")
   steps: [ { text: { uk, en }, command: "npm test", expect: { uk, en } } ]
   verify: [ { id: tests-green, text: { uk, en } } ]      # what the learner confirms having seen
   troubleshooting: [ { problem: { uk, en }, fix: { uk, en } } ]
@@ -262,9 +268,9 @@ test('keeps only items at or under the limit', () => {
 
 - `test(name, fn)` — `fn` may be async; each test has 4 s.
 - `scope` — top-level bindings of the entry file, even without `export` (`scope.price`, `scope.greet`). `scopeOf('src/app.js')` for other files.
-- `logs()` — printed lines as text (`console.log`, `info`, `warn`, `error`, `debug`, `table`, `dir`; not `alert` and not `console.trace`); `rawLogs()` — `[{ level, args }]` of all of them, a `console.trace` call as `{ level: "trace", args, stack }` (`stack`: one `at …` frame per line, in project paths, as the console shows it); `alerts()`; `loadError()`.
+- `logs()` — printed lines as text (`console.log`, `info`, `warn`, `error`, `debug`, `table`, `dir`; not `alert` and not `console.trace`); `rawLogs()` — `[{ level, args }]` of all of them, a `console.trace` call as `{ level: "trace", args, stack }` (`stack`: one `at …` frame per line, in project paths, as the console shows it); `alerts()`; `loadError()`. Format specifiers in the first argument are applied as in the browser console when more arguments follow (`%s`, `%d`/`%i`, `%f`, `%o`/`%O`; `%c` styling is dropped): `console.log("%s: %d", "Lamp", 3)` gives the line `Lamp: 3` and `rawLogs()` args `["Lamp: 3"]`, in the learner's console too. `console.table` and `console.dir` are not formatted.
 - `expect(value, hint?)` — `toBe`, `toEqual`, `toBeTruthy/Falsy`, `toBeNull/Undefined/Defined/NaN`, `toBeGreaterThan(OrEqual)`, `toBeLessThan(OrEqual)`, `toBeCloseTo`, `toBeInstanceOf`, `toBeTypeOf`, `toContain`, `toContainEqual`, `toHaveLength`, `toHaveProperty`, `toMatch`, `toMatchObject`, `toThrow`, `toHaveBeenCalled(Times|With)`, DOM: `toHaveTextContent`, `toBeVisible`, `toBeInTheDocument`, `toHaveFocus`, `toHaveValue`, `toHaveAttribute`, `toHaveClass`, `toBeDisabled`, `toBeChecked`; plus `.not`, `.resolves`, `.rejects`. The optional `hint` names the checked thing in the failure message.
-- DOM: `screen.$(sel)`, `screen.$$(sel)`, `screen.byRole(role, { name })`, `screen.allByRole`, `screen.byText`, `screen.byLabel`, `screen.nameOf(el)`, `screen.text()`; `await user.click(el)`, `user.type(el, text)`, `user.fill`, `user.clear`, `user.select`, `user.check`, `user.press('Enter', el)`, `user.submit(form)` (returns `{ prevented }`).
+- DOM: `screen.$(sel)`, `screen.$$(sel)`, `screen.byRole(role, { name })`, `screen.allByRole`, `screen.byText`, `screen.byLabel`, `screen.nameOf(el)`, `screen.text()` (the page's text without the content of `<script>` and `<style>`); `byRole`/`allByRole` skip hidden elements (`display: none` or `hidden` on the element or any ancestor, `visibility: hidden` on the element) unless `{ hidden: true }`, and `toBeVisible` uses the same rule; `await user.click(el)`, `user.type(el, text)`, `user.fill`, `user.clear`, `user.select`, `user.check`, `user.press('Enter', el)`, `user.submit(form)` (returns `{ prevented }`).
 - Async: `await sleep(ms)`, `await settle()`, `await waitFor(() => condition)`.
 - `spy(fn?)`, `mockFetch({ '/api/items': { status: 200, body: […] , delay: 50 } })` → `{ calls, restore }`, `storage` (the exercise's `localStorage`), `L` (localized strings), `files`.
 - `await rerun({ globals })` — runs the entry file again as a fresh module (new top-level bindings) with the given values defined as globals, and returns `{ logs, rawLogs, alerts, scope, error }` of that run only (its output does not reach the learner's console or `logs()`; `error` is what it threw, or `null`). Use it to check a top-level script against several inputs, including the boundaries:
@@ -278,6 +284,12 @@ test('keeps only items at or under the limit', () => {
   ```
 
   Only the entry module is evaluated again: modules it imports and the page (DOM) are shared, not reset. Await each `rerun` before the next; injected globals are removed after the test. Only globals can be injected: a value declared in the learner's file (`const temperature = 30`) or imported from another module cannot be replaced, so the starter reads its input from a global, as in the example.
+
+### Feedback and course runners
+
+`feedback` rules `when: { error: Name }` match an error that reaches the platform: one the program throws while it loads (shown with the error card) or one a check in `tests.js` throws itself (shown with that check). When the learner writes their own tests and a check runs them through a course runner (`testing.js`, rule 38), an error inside a learner test — a missing import name (`ReferenceError`), a call of `undefined` — is caught by that runner and becomes a failed learner test; the check then fails with an assertion, and no `error:` rule fires. Per-check feedback (`when: { test }`) is the only path for such failures: name the precondition and say that the runner's own output in the console shows which learner test threw. The validator warns about a `when: { error: ReferenceError }` rule in an exercise whose checks use a course runner; keep such a rule only for errors while the program loads.
+
+The validator gives each browser run — one example, prediction or fixture together with all its checks — 15 s in total and then reports `run ended with status "timeout"`, even when every check stays within its own 4 s. Keep the checks of one exercise well below that sum.
 
 Write failure-proof tests: check observable behavior, cover the boundary cases the lesson teaches, and make each test name a sentence a learner can act on (it is translated in `testTitles`).
 

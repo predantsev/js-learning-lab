@@ -42,6 +42,34 @@ test('learner code produces real output and edits change it', async () => {
   assert.deepEqual(b.console[0].args.slice(3).map((x) => x.t), ['null', 'undefined']);
 });
 
+test('console format specifiers are applied like the browser console: %s %d %i %f %o %O, %c styling ignored', async () => {
+  const code = [
+    'console.log("%s has %d items", "Cart", 3.7);',
+    'console.warn("%c styled %s", "color: red", "text");',
+    'console.log("%o and %O", { a: 1 }, [1, 2]);',
+    'console.log("%i/%f", "42px", "2.5kg", "extra", 7);',
+    'console.log("100% sure %s");',
+    'console.log("only %s", "one", "%d");',
+    'console.error("Warning: Each child in a list should have a unique \\"key\\" prop.%s%s", "\\n\\nCheck the render method of `List`.", "");',
+    'console.assert(false, "%s failed", "check");',
+    'console.table(["%s", "x"]);',
+  ].join('\n');
+  const tests = 'test("formatted", () => { globalThis.__logs = logs(); globalThis.__raw = rawLogs(); expect(logs()[0]).toBe("Cart has 3 items"); expect(rawLogs()[0].args).toEqual(["Cart has 3 items"]); });';
+  const r = await run({ files: { 'index.js': code }, tests: { path: '__tests__.js', source: tests } });
+  assert.deepEqual(r.tests.map((t) => [t.status, t.message ?? '']), [['pass', '']]);
+  const shown = logs(r);
+  assert.equal(shown[0], 'Cart has 3 items');
+  assert.equal(shown[1], ' styled text');
+  assert.equal(shown[2], '{"a":1} and [1,2]');
+  assert.equal(shown[3], '42/2.5 extra 7');
+  assert.equal(shown[4], '100% sure %s', 'a single argument is printed as written');
+  assert.equal(shown[5], 'only one %d', 'an argument is not formatted again');
+  assert.equal(shown[6], 'Warning: Each child in a list should have a unique "key" prop.\n\nCheck the render method of `List`.');
+  assert.equal(shown[7], 'Assertion failed: check failed');
+  assert.equal(r.console[8].level, 'table');
+  assert.equal(r.console[8].args[0].t, 'array', 'console.table shows its data unformatted');
+});
+
 test('multi-file ES modules, JSON import and live bindings work natively', async () => {
   const r = await run({
     files: {
@@ -213,6 +241,22 @@ test('behavior tests see top-level bindings, console output, DOM events and asyn
   assert.deepEqual(r.tests.map((t) => t.status), ['pass', 'pass', 'pass', 'fail', 'pass', 'fail']);
   assert.match(r.tests[3].message, /to have length 5 \(got 1\)/);
   assert.match(r.tests[5].message, /timed out/);
+});
+
+test('test helpers tell the truth about hidden elements and page text', async () => {
+  const files = {
+    'index.html': '<!doctype html><html><body><h1>Shop</h1><div id="panel" style="display:none"><p id="inner">Secret</p><button>Hidden save</button></div><section hidden><button>Attr hidden</button></section><div style="visibility:hidden"><button id="vis">Invisible</button><button style="visibility:visible" id="back">Shown again</button></div><button>Save</button><style>.x { color: red }</style><script type="module" src="index.js"></script></body></html>',
+    'index.js': 'document.querySelector("h1").dataset.ready = "yes";',
+  };
+  const tests = [
+    'test("inner of display none is not visible", () => { expect(screen.$("#inner")).not.toBeVisible(); });',
+    'test("visibility hidden and visible again", () => { expect(screen.$("#vis")).not.toBeVisible(); expect(screen.$("#back")).toBeVisible(); expect(screen.$("h1")).toBeVisible(); });',
+    'test("role queries skip hidden", () => { expect(screen.allByRole("button").map((b) => b.textContent)).toEqual(["Shown again", "Save"]); expect(screen.byRole("button", { name: "Hidden save" })).toBeNull(); expect(screen.byRole("button", { name: "Hidden save", hidden: true })).not.toBeNull(); expect(screen.allByRole("button", { hidden: true })).toHaveLength(5); });',
+    'test("page text has no script or style", () => { expect(screen.text()).not.toMatch(/color: red|querySelector/); expect(screen.text()).toMatch(/^Shop/); });',
+  ].join("\n");
+  const r = await run({ entry: 'index.html', files, tests: { path: '__tests__.js', source: tests } });
+  assert.deepEqual(r.tests.map((t) => [t.name, t.status, t.message ?? '']), r.tests.map((t) => [t.name, 'pass', '']));
+  assert.equal(r.tests.length, 4);
 });
 
 test('a form submitted without preventDefault is explained instead of reloading the sandbox', async () => {

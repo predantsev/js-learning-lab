@@ -246,6 +246,24 @@
   // While a test re-evaluates the entry module (rerun), its output goes to that rerun only: not to
   // the learner's console and not to logs().
   let rerunSink = null;
+  // Format specifiers in the first argument, as the browser console applies them (Console Standard
+  // "Formatter"; only when there are further arguments): %s text, %d / %i integer, %f number,
+  // %o / %O the value, %c styling (consumed and ignored). Unused arguments follow the text;
+  // specifiers without an argument stay as written.
+  const asText = (v) => (typeof v === 'string' ? v : typeof v === 'symbol' ? String(v) : v !== null && (typeof v === 'object' || typeof v === 'function') ? show(v) : String(v));
+  function formatArgs(args) {
+    if (args.length < 2 || typeof args[0] !== 'string' || !/%[sdifoOc]/.test(args[0])) return args;
+    const rest = args.slice(1);
+    const text = args[0].replace(/%([sdifoOc])/g, (match, spec) => {
+      if (rest.length === 0) return match;
+      const value = rest.shift();
+      if (spec === 'c') return '';
+      if (spec === 'd' || spec === 'i') return typeof value === 'symbol' ? 'NaN' : String(parseInt(value, 10));
+      if (spec === 'f') return typeof value === 'symbol' ? 'NaN' : String(parseFloat(value));
+      return asText(value);
+    });
+    return [text, ...rest];
+  }
   const record = (level, args, shownLevel = level, extra = null) => {
     if (rerunSink) { rerunSink.push({ level, args, ...extra }); return; }
     captured.push({ level, args, ...extra });
@@ -257,7 +275,8 @@
       // Once the console limit is reached, stop feeding the real console too: a flood of native
       // console calls delays this frame's messages and makes a guarded loop look unresponsive.
       if (!consoleSuppressed) original(...args);
-      record(level, args, level === 'dir' || level === 'debug' ? 'log' : level);
+      // console.table and console.dir show their argument itself; the other levels format.
+      record(level, level === 'table' || level === 'dir' ? args : formatArgs(args), level === 'dir' || level === 'debug' ? 'log' : level);
     };
   }
   // console.trace(...args): the arguments (shown after the label "console.trace") and the stack of the call in
@@ -268,13 +287,13 @@
     if (!consoleSuppressed) originalTrace(...args);
     let stack = '';
     try { stack = cleanStack(new Error().stack || '').split('\n').slice(1).map((line) => line.trim()).join('\n'); } catch (e) { stack = ''; }
-    record('trace', args, 'trace', { stack });
+    record('trace', formatArgs(args), 'trace', { stack });
   };
   const printed = (c) => c.level !== 'alert' && c.level !== 'trace';
   const originalAssert = console.assert.bind(console);
   console.assert = (condition, ...args) => {
     originalAssert(condition, ...args);
-    if (!condition) record('error', ['Assertion failed:', ...args]);
+    if (!condition) record('error', ['Assertion failed:', ...formatArgs(args)]);
   };
   console.clear = () => { emitSystem('console-cleared'); };
   window.alert = (message) => { if (rerunSink) rerunSink.push({ level: 'alert', args: [message] }); else { captured.push({ level: 'alert', args: [message] }); emitConsole('alert', [String(message)]); } };
@@ -537,7 +556,7 @@
       toHaveBeenCalledTimes: (n) => check(actual && actual.calls && actual.calls.length === n, `to have been called ${n} time(s)${actual && actual.calls ? ` (was called ${actual.calls.length})` : ''}`),
       toHaveBeenCalledWith: (...args) => check(actual && actual.calls && actual.calls.some((c) => deepEqual(c, args)), `to have been called with ${show(args)}`),
       toHaveTextContent: (text) => { const t = actual ? actual.textContent.replace(/\s+/g, ' ').trim() : ''; check(text instanceof RegExp ? text.test(t) : t.includes(text), `to have text ${show(String(text))} (text is ${show(t)})`); },
-      toBeVisible: () => check(Boolean(actual) && actual.isConnected && getComputedStyle(actual).display !== 'none' && getComputedStyle(actual).visibility !== 'hidden' && !actual.closest('[hidden]'), 'to be visible'),
+      toBeVisible: () => check(Boolean(actual) && actual.nodeType === 1 && !isHidden(actual), 'to be visible'),
       toBeInTheDocument: () => check(Boolean(actual) && actual.isConnected, 'to be in the document'),
       toHaveFocus: () => check(document.activeElement === actual, `to have focus (focus is on ${show(document.activeElement)})`),
       toHaveValue: (v) => check(actual && actual.value === v, `to have value ${show(v)}${actual ? ` (value is ${show(actual.value)})` : ''}`),
@@ -640,6 +659,25 @@
     async submit(target) { lastSubmitPrevented = null; el(target).requestSubmit(); await settle(); return { prevented: lastSubmitPrevented === true }; },
   };
   const textOf = (n) => n.textContent.replace(/\s+/g, ' ').trim();
+  /**
+   * Hidden from the user: not in the document, or hidden by the element itself or by any ancestor
+   * (display: none, the hidden attribute); visibility: hidden counts as the element computes it
+   * (it is inherited, and a child may set visibility: visible again).
+   */
+  function isHidden(node) {
+    if (!node.isConnected) return true;
+    if (getComputedStyle(node).visibility === 'hidden' || getComputedStyle(node).visibility === 'collapse') return true;
+    for (let n = node; n && n.nodeType === 1; n = n.parentElement) {
+      if (n.hasAttribute('hidden') || getComputedStyle(n).display === 'none') return true;
+    }
+    return false;
+  }
+  /** Text the page shows: the body's text without the content of script and style elements. */
+  function pageText() {
+    const copy = document.body.cloneNode(true);
+    for (const n of copy.querySelectorAll('script, style, template')) n.remove();
+    return textOf(copy);
+  }
   function accessibleName(node) {
     const labelledby = node.getAttribute('aria-labelledby');
     if (labelledby) return labelledby.split(/\s+/).map((id) => { const n = document.getElementById(id); return n ? textOf(n) : ''; }).join(' ').trim();
@@ -664,14 +702,15 @@
   const screen = {
     $: (sel) => document.querySelector(sel),
     $$: (sel) => [...document.querySelectorAll(sel)],
-    allByRole: (role, opts = {}) => [...document.querySelectorAll('*')].filter((n) => implicitRole(n) === role && (opts.name === undefined || matchText(accessibleName(n), opts.name))),
+    // Like Testing Library: hidden elements are skipped unless { hidden: true }.
+    allByRole: (role, opts = {}) => [...document.querySelectorAll('*')].filter((n) => implicitRole(n) === role && (opts.name === undefined || matchText(accessibleName(n), opts.name)) && (opts.hidden === true || !isHidden(n))),
     byRole: (role, opts) => screen.allByRole(role, opts)[0] || null,
     allByText: (text) => [...document.querySelectorAll('body *')].filter((n) => ![...n.children].some((c) => matchText(textOf(c), text)) && matchText(textOf(n), text) && !['SCRIPT', 'STYLE'].includes(n.tagName)),
     byText: (text) => screen.allByText(text)[0] || null,
     byLabel: (text) => [...document.querySelectorAll('input,select,textarea,button,[role]')].find((n) => matchText(accessibleName(n), text)) || null,
     nameOf: accessibleName,
     roleOf: implicitRole,
-    text: () => textOf(document.body),
+    text: pageText,
   };
   function mockFetch(routes) {
     const calls = [];

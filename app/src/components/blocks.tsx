@@ -172,7 +172,15 @@ export function QuestionView({ question, lang, answered, onAnswer, idPrefix }: Q
   };
   const move = (index: number, delta: number) => setOrder((o) => { const next = [...o]; const j = index + delta; if (j < 0 || j >= next.length) return o; [next[index], next[j]] = [next[j], next[index]]; return next; });
   const optionById = (id: string) => (a.type === 'order' ? a.items : a.type === 'text' ? [] : a.options).find((o) => o.id === id);
-  const optionLabel = (id: string) => { const o = optionById(id); return o?.codeHtml ? <code className="option-code" dangerouslySetInnerHTML={{ __html: o.codeHtml[lang] }} /> : <Html inline html={o?.text?.[lang] ?? ''} lang={lang} />; };
+  // A code option of several lines keeps its lines (a block); a one-line option stays inline code.
+  const optionLabel = (id: string) => {
+    const o = optionById(id);
+    if (!o?.codeHtml) return <Html inline html={o?.text?.[lang] ?? ''} lang={lang} />;
+    const html = o.codeHtml[lang].replace(/\n+$/, '');
+    return html.includes('\n')
+      ? <pre className="code option-code-block"><code dangerouslySetInnerHTML={{ __html: html }} /></pre>
+      : <code className="option-code" dangerouslySetInnerHTML={{ __html: html }} />;
+  };
 
   return (
     <div className="question">
@@ -307,7 +315,10 @@ function Hints({ lesson, block, lang }: { lesson: Lesson; block: ExerciseBlock; 
           ))}
         </>
       ) : <p className="hint-none">{t('hint.none')}</p>}
-      {!p?.solutionViewedAt ? (
+      {/* A skills check (assessment: true) offers its solution only after it passed, so it cannot be passed with it. */}
+      {block.assessment && !p?.passedAt && !p?.solutionViewedAt ? (
+        <p className="hint-none solution-after-pass">{t('hint.solutionAfterPass')}</p>
+      ) : !p?.solutionViewedAt ? (
         <button type="button" className="btn btn-quiet hint-toggle solution-toggle" onClick={() => setConfirming(true)}>{t('hint.solution')}</button>
       ) : (
         <div className="solution">
@@ -376,7 +387,7 @@ function LocalTaskView({ lesson, block }: { lesson: Lesson; block: LocalTaskBloc
       <p className="runtime-note"><Icon name="info" size={13} /> {t(`ws.runtime.${block.runtime}` as Key)}</p>
       <Html html={block.intro[lang]} lang={lang} className="prose" />
       <h4>{t('local.tools')}</h4>
-      <ul className="tool-list">{block.tools.map((tool) => <li key={tool.name}><strong>{tool.name}</strong>{tool.version && <span className="tool-version"> {tool.version}</span>}{tool.note && <> — <Html inline html={tool.note[lang]} lang={lang} /></>}</li>)}</ul>
+      <ul className="tool-list">{block.tools.map((tool) => <li key={tool.name}><strong>{tool.name}</strong>{tool.version && <span className="tool-version"> {typeof tool.version === 'string' ? tool.version : tool.version[lang]}</span>}{tool.note && <> — <Html inline html={tool.note[lang]} lang={lang} /></>}</li>)}</ul>
       <h4>{t('local.steps')}</h4>
       <ol className="local-steps">
         {block.steps.map((step, i) => (

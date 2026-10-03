@@ -35,6 +35,11 @@ test('review: answered retrieval questions come back; due items are counted; pra
     await items.nth(1).getByRole('button', { name: t('uk', 'q.submit') }).click();
     await items.nth(1).locator('.result-no').waitFor();
     assert.match(await items.nth(1).innerText(), /Слово без лапок — це назва/, 'the chosen wrong option explains itself');
+    // A multi-line code option keeps its lines; one-line options stay inline code.
+    const multi = items.nth(1).locator('pre.option-code-block');
+    assert.equal(await multi.count(), 1);
+    assert.equal(await multi.innerText(), 'const yes = 1;\nconsole.log(yes);');
+    assert.equal(await items.nth(1).locator('code.option-code').count(), 2);
     assert.ok(await items.nth(0).getByRole('link', { name: t('uk', 'q.from', { lesson: 'Фікстура: інструкції та вивід' }) }).isVisible(), 'links to the earlier lesson');
     await waitSaved(page);
     const doc = await lab.doc('review');

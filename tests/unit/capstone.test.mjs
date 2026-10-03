@@ -105,6 +105,14 @@ test('the export bundle: learner files unchanged, generated files, manifest with
   assert.equal(JSON.parse(bundle.files['package.json']).scripts.start, 'node serve.mjs');
   assert.match(bundle.files['README.md'], /^# Список бажань — js learning lab/);
   assert.match(bundle.files['README.md'], /npm start -- --port 4301/);
+  // The platform's own minimum (package.json engines), not an older Node.js.
+  assert.match(bundle.files['README.md'], /Node\.js 22\.13 або новіший/);
+  assert.equal(JSON.parse(bundle.files['package.json']).engines.node, '>=22.13');
+  assert.match(bundle.files['serve.mjs'], /Node\.js 22\.13 or newer/);
+  const en = await buildProjectExport({ workspace: { ...workspace, lang: 'en' }, title: 'Wishlist', contentVersion: 'abc' });
+  assert.match(en.files['README.md'], /Node\.js 22\.13 or newer/);
+  assert.match(en.files['README.md'], /`Port 4300 is already in use`/);
+  assert.doesNotMatch(bundle.files['README.md'] + en.files['README.md'], /Node\.js 18/);
   assert.match(bundle.files['tools/restore-data.html'], /const DATA_URL = "\.\.\/data\/exported-storage\.json"/);
 });
 
@@ -172,10 +180,16 @@ test('the generated serve.mjs serves only the project folder on loopback and exp
       assert.doesNotMatch(res.text, /jsll-storage/, host);
     }
     assert.equal((await withHost(`localhost:${port}`)).status, 200);
+    // The browser's own favicon request gets an empty answer, not a 404 in the console.
+    const favicon = await fetch(`http://127.0.0.1:${port}/favicon.ico`);
+    assert.equal(favicon.status, 204);
+    assert.equal((await fetch(`http://127.0.0.1:${port}/missing.png`)).status, 404, 'other missing files are still 404');
     // A second server on the same port explains how to choose another one.
     const busy = startServe(dir, ['--port', String(port)]);
     assert.equal(await busy.exited, 1);
     assert.match(busy.output(), new RegExp(`Порт ${port} уже зайнятий.*--port ${port + 1}`));
+    // The README quotes the message serve.mjs prints in the same language.
+    assert.match(bundle.files['README.md'], /`Порт 4300 уже зайнятий`/);
   } finally {
     run.child.kill();
     await run.exited;
