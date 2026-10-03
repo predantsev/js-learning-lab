@@ -25,7 +25,8 @@ const showsFile = (img, path) => {
   const src = img.getAttribute("src");
   return src === path || src === `data:image/svg+xml;charset=utf-8,${encodeURIComponent(files[path])}`;
 };
-const htmlNameWarnings = () => rawLogs().filter((entry) => entry.level === "error" && String(entry.args[0]).startsWith("Invalid DOM property") && ["class", "for"].includes(entry.args[1]));
+// React formats its warning before it reaches the console, so the name is read from the message text.
+const htmlNameWarnings = () => rawLogs().map((entry) => (entry.level === "error" ? /^Invalid DOM property `(class|for)`/.exec(String(entry.args[0]))?.[1] : undefined)).filter(Boolean);
 
 test("the card is an article with the class habit-card and an h3 with the name", () => {
   withCard((host) => {
@@ -58,7 +59,7 @@ test("the label is tied to the output with the count", () => {
 });
 
 test("JSX attribute names are used: className and htmlFor", () => {
-  expect(htmlNameWarnings().map((entry) => entry.args[1]), "HTML attribute names React warned about").toEqual([]);
+  expect(htmlNameWarnings(), "HTML attribute names React warned about").toEqual([]);
 });
 
 test("every value comes from habit, not copied by hand", () => {
