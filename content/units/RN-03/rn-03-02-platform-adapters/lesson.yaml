@@ -1,0 +1,381 @@
+id: rn-03-02-platform-adapters
+unit: RN-03
+title:
+  uk: "Платформні адаптери"
+  en: "Platform adapters"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Описати невеликі типізовані інтерфейси адаптерів (сховище, форматування, годинник), від яких залежать домен і hooks, з однією вебреалізацією й однією нативною для кожного."
+    en: "Define small typed adapter interfaces (storage, formatting, clock) that the domain and hooks depend on, with one web and one native implementation of each."
+  - uk: "Пояснити, чому адаптер, переданий ззовні (композиція), лишає доменний код придатним для тестів, а підкласи чи перевірки `Platform.OS` усередині доменних функцій — ні."
+    en: "Explain why passing an adapter in (composition) keeps domain code testable, while subclassing or Platform.OS checks inside domain functions do not."
+prerequisites: [rn-03-01-state-hooks-reuse, js-11-07-inheritance-vs-composition]
+subskills:
+  - { family: N-01, skill: "platform adapters", depth: intro }
+glossary: [platform-adapter, adapter-contract]
+selfCheck: [predict-swap-storage, wishlist-adapters]
+
+blocks:
+  - id: three-seams
+    kind: explanation
+    title:
+      uk: "Три шви між доменом і платформою"
+      en: "Three seams between the domain and the platform"
+    body:
+      uk: |
+        Спільний код проєкту майже завжди потребує трьох речей, які на різних платформах влаштовано по-різному:
+
+        - **сховище** — у вебі `localStorage`, на телефоні нативний модуль «ключ — значення» (його ти обереш і встановиш у RN-05);
+        - **форматування** — як показати суму чи дату для мови користувача;
+        - **годинник** — яка сьогодні дата (у проєкті «сьогодні» завжди передають параметром).
+
+        Для кожної — маленький [[adapter-contract|контракт]]: інтерфейс TypeScript, від якого залежить домен і hooks:
+
+        ```ts
+        export interface StorageAdapter {
+          getItem(key: string): Promise<string | null>;
+          setItem(key: string, value: string): Promise<void>;
+        }
+        export interface FormatAdapter { money(amountMinor: number): string; }
+        export interface ClockAdapter { today(): string; } // 'YYYY-MM-DD'
+        ```
+
+        [[platform-adapter|Платформний адаптер]] — реалізація такого контракту для однієї платформи. Методи сховища повертають `Promise`, бо нативні сховища асинхронні; вебверсія просто загортає синхронний `localStorage` в `async`-функції, щоб контракт був один.
+      en: |
+        A project's shared code almost always needs three things that work differently on different platforms:
+
+        - **storage** — `localStorage` on the web, a native key-value module on a phone (you will choose and install it in RN-05);
+        - **formatting** — how to show an amount or a date for the user's language;
+        - **a clock** — what today's date is (in the project, "today" is always passed in as a parameter).
+
+        For each one there is a small [[adapter-contract|contract]]: a TypeScript interface that the domain and the hooks depend on:
+
+        ```ts
+        export interface StorageAdapter {
+          getItem(key: string): Promise<string | null>;
+          setItem(key: string, value: string): Promise<void>;
+        }
+        export interface FormatAdapter { money(amountMinor: number): string; }
+        export interface ClockAdapter { today(): string; } // 'YYYY-MM-DD'
+        ```
+
+        A [[platform-adapter|platform adapter]] is an implementation of such a contract for one platform. The storage methods return a `Promise` because native stores are asynchronous; the web version simply wraps the synchronous `localStorage` in `async` functions so that there is one contract.
+
+  - id: why-not-platform-os
+    kind: explanation
+    title:
+      uk: "Чому не if (Platform.OS === …)"
+      en: "Why not if (Platform.OS === …)"
+    body:
+      uk: |
+        Здається простішим перевірити платформу прямо в доменній функції:
+
+        ```ts
+        import { Platform } from 'react-native';
+        export async function saveExpenses(records: Expense[]) {
+          const text = JSON.stringify({ schemaVersion: 1, records });
+          if (Platform.OS === 'web') localStorage.setItem('jsll.expenses.v1', text);
+          else await nativeStore.setItem('jsll.expenses.v1', text);
+        }
+        ```
+
+        Що з цим не так:
+
+        - домен тепер імпортує `react-native`, тож вебклієнт і тести в Node.js тягнуть за собою мобільну бібліотеку;
+        - щоб перевірити функцію, тест мусить підмінити і `Platform`, і обидва сховища;
+        - нова ціль (тест, ще одна платформа) — ще одна гілка `if` у **доменному** файлі.
+
+        Підклас (`class NativeExpenseStore extends WebExpenseStore`) лікує це гірше: він успадковує все від вебкласу разом із `localStorage` і ламається, коли змінюється базовий клас.
+
+        З [[composition|композицією]] функція отримує `storage: StorageAdapter` параметром і знає лише його два методи. Вебклієнт передає вебадаптер, нативний застосунок — нативний, тест — подвійника в пам’яті. Доменний файл не змінюється ніколи. А `Platform.OS` лишається там, де йому місце: у розмітці, для справжніх відмінностей вигляду.
+      en: |
+        It seems simpler to check the platform right inside the domain function:
+
+        ```ts
+        import { Platform } from 'react-native';
+        export async function saveExpenses(records: Expense[]) {
+          const text = JSON.stringify({ schemaVersion: 1, records });
+          if (Platform.OS === 'web') localStorage.setItem('jsll.expenses.v1', text);
+          else await nativeStore.setItem('jsll.expenses.v1', text);
+        }
+        ```
+
+        What is wrong with it:
+
+        - the domain now imports `react-native`, so the web client and the Node.js tests drag a mobile library along;
+        - to test the function, a test has to replace `Platform` and both stores;
+        - every new target (a test, another platform) is one more `if` branch in the **domain** file.
+
+        A subclass (`class NativeExpenseStore extends WebExpenseStore`) cures this worse: it inherits everything from the web class, `localStorage` included, and breaks when the base class changes.
+
+        With [[composition|composition]] the function receives `storage: StorageAdapter` as a parameter and knows only its two methods. The web client passes the web adapter, the native app the native one, a test an in-memory double. The domain file never changes. And `Platform.OS` stays where it belongs: in the markup, for genuine differences in look.
+
+  - id: adapter-seam
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Один контракт — три реалізації"
+      en: "One contract — three implementations"
+    textEquivalent:
+      uk: "Доменні функції й data hook залежать лише від інтерфейсу StorageAdapter з методами getItem і setItem. Під цей інтерфейс підставляють одну з трьох реалізацій: вебадаптер над localStorage у вебклієнті, нативний адаптер над модулем «ключ — значення» на телефоні й подвійника в пам’яті в тестах. Коли реалізацію замінюють, доменні функції й hook не змінюються: вони так само викликають getItem і setItem. Так само влаштовані FormatAdapter (Intl для мови користувача або фіксований формат у тестах) і ClockAdapter (справжня дата або фіксована дата в тестах)."
+      en: "The domain functions and the data hook depend only on the StorageAdapter interface with its getItem and setItem methods. One of three implementations is plugged into that interface: a web adapter over localStorage in the web client, a native adapter over a key-value module on the phone and an in-memory double in tests. When the implementation is swapped, the domain functions and the hook do not change: they still call getItem and setItem. FormatAdapter (Intl for the user's language, or a fixed format in tests) and ClockAdapter (the real date, or a fixed date in tests) work the same way."
+    spec:
+      layout: grid
+      nodes:
+        - { id: domain, label: { uk: "домен + data hook", en: "domain + data hook" }, col: 0, row: 0, w: 150 }
+        - { id: contract, label: "StorageAdapter", col: 0, row: 1, w: 150, shape: pill }
+        - { id: web, label: { uk: "веб: localStorage", en: "web: localStorage" }, col: 1, row: 0, w: 180 }
+        - { id: native, label: { uk: "native: «ключ — значення»", en: "native: key-value module" }, col: 1, row: 1, w: 180 }
+        - { id: memory, label: { uk: "тест: у пам’яті", en: "test: in memory" }, col: 1, row: 2, w: 180 }
+      edges:
+        - { from: domain, to: contract }
+        - { from: contract, to: web, kind: dashed }
+        - { from: contract, to: native, kind: dashed }
+        - { from: contract, to: memory, kind: dashed }
+      steps:
+        - caption:
+            uk: "Домен і data hook знають лише `StorageAdapter`: два методи й їхні типи. Жодного `localStorage`, жодного `Platform`."
+            en: "The domain and the data hook know only `StorageAdapter`: two methods and their types. No `localStorage`, no `Platform`."
+          highlight: [domain, contract, domain->contract]
+          dim: [web, native, memory]
+        - caption:
+            uk: "У вебклієнті під контракт підставлено вебадаптер, що загортає `localStorage` в `Promise`."
+            en: "In the web client the web adapter, which wraps `localStorage` in a `Promise`, is plugged into the contract."
+          highlight: [web, contract->web]
+          dim: [native, memory]
+        - caption:
+            uk: "На телефоні — нативний адаптер над модулем «ключ — значення». Домен той самий файл."
+            en: "On a phone — the native adapter over a key-value module. The domain is the same file."
+          highlight: [native, contract->native]
+          dim: [web, memory]
+        - caption:
+            uk: "У тестах — подвійник у пам’яті: швидкий, без платформи, свіжий у кожному тесті. Домен знову не змінився."
+            en: "In tests — an in-memory double: fast, platform-free, fresh in every test. The domain did not change again."
+          highlight: [memory, contract->memory]
+          dim: [web, native]
+        - caption:
+            uk: "`FormatAdapter` і `ClockAdapter` влаштовано так само: `Intl` для мови користувача чи фіксований формат, справжня дата чи фіксована."
+            en: "`FormatAdapter` and `ClockAdapter` work the same way: `Intl` for the user's language or a fixed format, the real date or a fixed one."
+          highlight: [contract]
+
+  - id: predict-swap-storage
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Екран витрат отримує `storage: StorageAdapter` і `format: FormatAdapter` від `main.tsx`. У `main.tsx` міняють один рядок: замість вебадаптера над `localStorage` передають подвійника в пам’яті. Що зміниться після запуску?"
+      en: "An expense screen receives `storage: StorageAdapter` and `format: FormatAdapter` from `main.tsx`. One line in `main.tsx` changes: instead of the web adapter over `localStorage`, an in-memory double is passed. What changes after the run?"
+    answer:
+      type: choice
+      options:
+        - id: only-where
+          text:
+            uk: "Ні список на екрані, ні виклики доменних функцій — змінюється лише те, куди лягає збережений текст"
+            en: "Neither the list on the screen nor the domain calls — only where the saved text lands"
+        - id: list-changes
+          text:
+            uk: "Список на екрані: сховище в пам’яті показує записи інакше"
+            en: "The list on the screen: the in-memory storage shows records differently"
+          why:
+            uk: "Сховище не малює нічого — воно лише приймає й віддає текст. Що показати й як, вирішують екран і `FormatAdapter`, а вони не змінилися."
+            en: "Storage draws nothing — it only accepts and returns text. What to show and how is decided by the screen and the `FormatAdapter`, and they did not change."
+        - id: domain-changes
+          text:
+            uk: "Доменні функції: тепер їм потрібна інша гілка для сховища в пам’яті"
+            en: "The domain functions: they now need another branch for the in-memory storage"
+          why:
+            uk: "Так було б із перевірками платформи всередині домену. Тут домен знає лише контракт, тож будь-яка реалізація підходить без жодної правки."
+            en: "That would be the case with platform checks inside the domain. Here the domain knows only the contract, so any implementation fits without a single edit."
+      correct: [only-where]
+    explanation:
+      uk: "Екран і домен викликають ті самі `setItem` з тим самим текстом; різниця лише в тому, що з ним робить реалізація. Приклад нижче дає перевірити це самому: після заміни `localStorage` лишається порожнім, а екран і рядок `domain:` у консолі — ті самі."
+      en: "The screen and the domain call the same `setItem` with the same text; the only difference is what the implementation does with it. The example below lets you check it yourself: after the swap `localStorage` stays empty, while the screen and the `domain:` console line are the same."
+
+  - id: swap-adapters
+    kind: example
+    runtime: concept-preview
+    dir: swap-adapters
+    entry: main.tsx
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      total: { uk: "Разом", en: "Total" }
+      remove: { uk: "Видалити", en: "Remove" }
+      locale: { uk: "uk-UA", en: "en-US" }
+    title:
+      uk: "Заміни адаптер — домен не помітить"
+      en: "Swap an adapter — the domain will not notice"
+    body:
+      uk: |
+        `contracts.ts` — три контракти, `adapters.ts` — реалізації, `expenses.ts` — чистий домен, `ExpenseScreen.tsx` — нативний екран, що отримує адаптери пропсами. Обирає адаптери лише `main.tsx`.
+
+        Натисни **Запустити**. Консоль: рядок `domain:` від доменної функції і `localStorage has jsll.expenses.v1: true` — вебадаптер записав дані в браузер. Видали витрату на **Сторінці**: рядок `domain:` оновиться.
+      en: |
+        `contracts.ts` holds the three contracts, `adapters.ts` the implementations, `expenses.ts` the pure domain, and `ExpenseScreen.tsx` is a native screen that receives the adapters as props. Only `main.tsx` chooses the adapters.
+
+        Press **Run**. The console: a `domain:` line from the domain function and `localStorage has jsll.expenses.v1: true` — the web adapter wrote the data to the browser. Remove an expense on the **Page**: the `domain:` line updates.
+    tryIt:
+      uk: |
+        1. У `main.tsx` закоментуй рядок `const storage = createWebStorage();` і розкоментуй `const storage = new LoggingMemoryStorage();`. Запусти: екран і рядок `domain:` ті самі, з’явився рядок `memory: set …`, а `localStorage has jsll.expenses.v1` тепер `false`.
+        2. Заміни `createMoneyFormat('…')` на подвійника форматування: `` { money: (amountMinor) => `${amountMinor} minor` } ``. Запусти: змінився лише вигляд сум, а рядок `domain:` — ні. Поверни `createMoneyFormat`.
+      en: |
+        1. In `main.tsx` comment out the line `const storage = createWebStorage();` and uncomment `const storage = new LoggingMemoryStorage();`. Run: the screen and the `domain:` line are the same, a `memory: set …` line appeared, and `localStorage has jsll.expenses.v1` is now `false`.
+        2. Replace `createMoneyFormat('…')` with a formatting double: `` { money: (amountMinor) => `${amountMinor} minor` } ``. Run: only how the amounts look changed, not the `domain:` line. Put `createMoneyFormat` back.
+    limits:
+      uk: "Це перегляд у браузері через react-native-web, а не нативний застосунок: нативного сховища тут немає (вебадаптер пише в `localStorage` браузера), як і пристрою, нативних модулів, жестів, крім миші й клавіатури, вигляду платформи й продуктивності телефона. Нативний адаптер сховища перевіряють лише на твоєму пристрої. `tsc` тут не запускається: типи прибирають і не перевіряють."
+      en: "This is a browser preview through react-native-web, not a native app: there is no native storage here (the web adapter writes to the browser's `localStorage`), nor a device, native modules, gestures beyond mouse and keyboard, a platform look or phone performance. The native storage adapter is checked only on your device. `tsc` does not run here: the types are removed, not checked."
+
+  - id: recall-composition
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: delegate-or-extend
+        from: js-11-07-inheritance-vs-composition
+        prompt:
+          uk: "Об’єкт списку бажань має зберігати дані то в браузері, то в пам’яті для тестів. Який підхід дає змогу перевірити його без справжнього сховища, не змінюючи коду списку?"
+          en: "A wishlist object has to save its data sometimes in the browser and sometimes in memory for tests. Which approach lets you test it without real storage and without changing the list's code?"
+        answer:
+          type: choice
+          options:
+            - id: delegate
+              text:
+                uk: "Фабрика `createWishlist(store)`, що делегує збереження переданому об’єкту"
+                en: "A factory `createWishlist(store)` that delegates saving to the object passed in"
+            - id: extend
+              text:
+                uk: "`class TestWishlist extends BrowserWishlist`, що перекриває метод збереження"
+                en: "`class TestWishlist extends BrowserWishlist` that overrides the save method"
+              why:
+                uk: "Підклас тягне за собою все з базового класу; тест перевіряє вже не той код, що працює в застосунку, і ламається, коли базовий клас змінюється."
+                en: "The subclass drags along everything from the base class; the test no longer checks the code that runs in the app, and it breaks when the base class changes."
+            - id: flag
+              text:
+                uk: "Параметр `isTest`, за яким список сам обирає сховище"
+                en: "An `isTest` flag by which the list picks the storage itself"
+              why:
+                uk: "Тоді код списку знає про обидва сховища, і кожне нове — ще одна правка в ньому."
+                en: "Then the list's code knows about both stores, and every new one is another edit inside it."
+          correct: [delegate]
+        explanation:
+          uk: "Делегування: список не знає, яке саме сховище отримав, — лише його методи. Платформний адаптер — та сама композиція, лише контракт записано інтерфейсом TypeScript."
+          en: "Delegation: the list does not know which store it received — only its methods. A platform adapter is the same composition, with the contract written as a TypeScript interface."
+
+  - id: wishlist-adapters
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: wishlist-adapters
+    entry: index.js
+    editable: [adapters.ts]
+    strings:
+      noPrice: { uk: "Без ціни", en: "No price" }
+      locale: { uk: "uk-UA", en: "en-US" }
+    title:
+      uk: "Адаптери для списку бажань"
+      en: "Adapters for the wishlist"
+    instructions:
+      uk: |
+        У `adapters.ts` реалізуй два адаптери за контрактами з `contracts.ts`. Жодного імпорту платформи: ці адаптери мають працювати будь-де, зокрема в тестах.
+
+        **`createMemoryStorage()`** — подвійник `StorageAdapter` у пам’яті:
+
+        - `getItem`, `setItem` і `removeItem` повертають `Promise`, як нативне сховище;
+        - `getItem` ключа, якого не записували, дає `null` — і для назв на кшталт `"toString"` теж;
+        - `setItem`, потім `getItem` повертає той самий текст; `removeItem` прибирає значення;
+        - кожен виклик `createMemoryStorage()` — окреме сховище: два сховища не бачать значень одне одного;
+        - браузерний `localStorage` не змінюється.
+
+        **`createPriceFormat(locale, noPriceLabel)`** — `PriceFormat` для поля `price` (цілі гривні або `null`):
+
+        - число — через `Intl.NumberFormat` для **переданої** мови, валюта `UAH`, без дробової частини: для `uk-UA` `80` стає `80 грн`, для `en-US` `1240` — `UAH 1,240` (так у Chrome);
+        - `null` — це `noPriceLabel`, а `0` — звичайна ціна.
+
+        Демо в `index.js` друкує, що повернули твої адаптери.
+      en: |
+        In `adapters.ts` implement two adapters following the contracts in `contracts.ts`. No platform import: these adapters must work anywhere, tests included.
+
+        **`createMemoryStorage()`** — an in-memory `StorageAdapter` double:
+
+        - `getItem`, `setItem` and `removeItem` return a `Promise`, like a native store;
+        - `getItem` of a key that was never set gives `null` — for names like `"toString"` too;
+        - `setItem` and then `getItem` returns the same text; `removeItem` removes the value;
+        - every call of `createMemoryStorage()` is a separate store: two stores do not see each other's values;
+        - the browser's `localStorage` does not change.
+
+        **`createPriceFormat(locale, noPriceLabel)`** — a `PriceFormat` for the `price` field (whole hryvnias or `null`):
+
+        - a number goes through `Intl.NumberFormat` for the **given** locale, currency `UAH`, no fraction digits: for `uk-UA` `80` becomes `80 грн`, for `en-US` `1240` becomes `UAH 1,240` (in Chrome);
+        - `null` is `noPriceLabel`, while `0` is an ordinary price.
+
+        The demo in `index.js` prints what your adapters returned.
+    testTitles:
+      "every storage method returns a promise":
+        uk: "Кожен метод сховища повертає `Promise`"
+        en: "Every storage method returns a `Promise`"
+      "getItem of a key that was never set gives null":
+        uk: "`getItem` незаписаного ключа дає `null`"
+        en: "`getItem` of a key that was never set gives `null`"
+      "setItem then getItem gives back the same text":
+        uk: "`setItem`, потім `getItem` повертає той самий текст"
+        en: "`setItem` then `getItem` gives back the same text"
+      "removeItem deletes the value":
+        uk: "`removeItem` прибирає значення"
+        en: "`removeItem` deletes the value"
+      "two storages do not share values":
+        uk: "Два сховища не бачать значень одне одного"
+        en: "Two storages do not share values"
+      "the memory storage leaves localStorage untouched":
+        uk: "Сховище в пам’яті не змінює `localStorage`"
+        en: "The memory storage leaves `localStorage` untouched"
+      "price formats whole hryvnias for the given locale":
+        uk: "`price` форматує цілі гривні для переданої мови"
+        en: "`price` formats whole hryvnias for the given locale"
+      "null is the no-price label and 0 is a price":
+        uk: "`null` — це підпис «Без ціни», а `0` — ціна"
+        en: "`null` is the no-price label, and `0` is a price"
+    hints:
+      nudge:
+        uk: "Де житимуть значення так, щоб кожне нове сховище мало свої? І що повертає твій `getItem`, коли ключа немає, — `null` чи щось інше?"
+        en: "Where will the values live so that every new store has its own? And what does your `getItem` return when the key is missing — `null` or something else?"
+      explanation:
+        uk: "Змінна, створена **всередині** фабрики, належить лише одному поверненому об’єкту: це замикання, і кожен виклик фабрики створює нове. `Map` чи об’єкт для значень оголошуй там, а не вгорі модуля. `Map.get` для відсутнього ключа дає `undefined`, а контракт вимагає `null`; у звичайного об’єкта ще й є успадковані назви на кшталт `toString`, тож перевіряй `has` чи `Object.hasOwn`. Позначка `async` перед методом робить так, що він повертає `Promise`. Для форматування в `Intl.NumberFormat` передай мову з параметра і опції валюти; кількість знаків після коми задає `maximumFractionDigits`. Порівнюй з `null` точно (`=== null`), бо `0` теж «хибне»."
+        en: "A variable created **inside** the factory belongs to one returned object only: it is a closure, and every call of the factory creates a new one. Declare the `Map` or object for the values there, not at the top of the module. `Map.get` gives `undefined` for a missing key, while the contract requires `null`; a plain object also has inherited names like `toString`, so check with `has` or `Object.hasOwn`. The `async` keyword before a method makes it return a `Promise`. For formatting, pass the locale from the parameter and the currency options to `Intl.NumberFormat`; the number of fraction digits is set by `maximumFractionDigits`. Compare with `null` exactly (`=== null`), because `0` is “falsy” too."
+    solutionNote:
+      uk: "`Map` створюється в кожному виклику `createMemoryStorage`, тож сховища незалежні, а `has` відрізняє «немає» від значення. `async` дає `Promise`, як у нативного сховища. `Intl.NumberFormat` створюється один раз на адаптер із переданою мовою й `maximumFractionDigits: 0`, а `price === null` відокремлює «без ціни» від нуля. Жоден рядок не залежить від платформи, тому ці адаптери годяться і для вебу, і для native, і для тестів."
+      en: "A `Map` is created in every call of `createMemoryStorage`, so the stores are independent, and `has` tells “missing” from a value. `async` gives a `Promise`, as a native store does. `Intl.NumberFormat` is created once per adapter with the given locale and `maximumFractionDigits: 0`, and `price === null` separates “no price” from zero. No line depends on the platform, which is why these adapters fit the web, native and tests alike."
+    feedback:
+      - when: { test: "every storage method returns a promise" }
+        message:
+          uk: "Ця перевірка очікує, що `getItem`, `setItem` і `removeItem` повертають `Promise` (щось із методом `then`), навіть коли робота синхронна: так контракт збігається з нативним сховищем."
+          en: "This check expects `getItem`, `setItem` and `removeItem` to return a `Promise` (something with a `then` method), even when the work is synchronous: that way the contract matches a native store."
+      - when: { test: "getItem of a key that was never set gives null" }
+        message:
+          uk: "Ця перевірка очікує `null` (не `undefined`) для ключа, якого не записували, зокрема для `\"toString\"`. Якщо бачиш `undefined` чи функцію — перевір, чи ключ справді є, перш ніж повертати значення."
+          en: "This check expects `null` (not `undefined`) for a key that was never set, `\"toString\"` included. If you see `undefined` or a function, check that the key really exists before returning a value."
+      - when: { test: "two storages do not share values" }
+        message:
+          uk: "Ця перевірка записує значення в одне сховище й очікує `null` у другому. Якщо друге його бачить — значення зберігаються в одному місці на весь модуль, а не в кожному сховищі окремо."
+          en: "This check writes a value into one store and expects `null` in the other. If the second one sees it, the values are kept in one place for the whole module rather than in each store separately."
+      - when: { test: "the memory storage leaves localStorage untouched" }
+        message:
+          uk: "Ця перевірка очікує, що після `setItem` у `localStorage` немає жодного ключа. Подвійник у пам’яті не повинен звертатися до браузерного сховища."
+          en: "This check expects no key in `localStorage` after `setItem`. An in-memory double must not touch the browser storage."
+      - when: { test: "price formats whole hryvnias for the given locale" }
+        message:
+          uk: "Ця перевірка очікує для `uk-UA` і `80` текст `80 грн`, а для `en-US` і `1240` — `UAH 1,240`: мова з параметра, валюта `UAH`, без дробової частини. Якщо обидві мови дають однаковий вигляд, мову з параметра не передано."
+          en: "This check expects `80 грн` for `uk-UA` and `80`, and `UAH 1,240` for `en-US` and `1240`: the locale from the parameter, currency `UAH`, no fraction digits. If both locales look the same, the locale from the parameter was not passed on."
+      - when: { test: "null is the no-price label and 0 is a price" }
+        message:
+          uk: "Ця перевірка очікує для `null` саме `noPriceLabel`, а для `0` — відформатовані `0 грн`. Нуль — справжня ціна, тож порівнюй точно з `null`."
+          en: "This check expects exactly `noPriceLabel` for `null`, and a formatted `0 грн` for `0`. Zero is a real price, so compare exactly with `null`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-03
+    body:
+      uk: "У кроці проєкту ти напишеш для `native/` нативні адаптери сховища, форматування й годинника за тими самими контрактами, що й вебверсії, і передаси їх у data hook. Доменні функції (`summarizeItems`, `countDueTasks`, `summarizeHabit` чи `summarizeExpenses`) не зміняться ні на рядок."
+      en: "In the project step you will write native storage, formatting and clock adapters for `native/` following the same contracts as the web versions, and pass them into the data hook. The domain functions (`summarizeItems`, `countDueTasks`, `summarizeHabit` or `summarizeExpenses`) will not change by a single line."
