@@ -1,0 +1,802 @@
+id: rn-05-06-debug-corrupt-schema
+unit: RN-05
+title:
+  uk: "Налагодження: пошкоджена схема під час завантаження"
+  en: "Debug: corrupt schema on load"
+kind: local-task
+minutes: 20
+contentVersion: 1
+purpose:
+  uk: "Пошкоджені й застарілі дані в сховищі не видно, доки застосунок не спробує їх прочитати: тоді він зависає, падає або тихо показує неправду, а наступне збереження знищує докази. Тут ти спершу лагодиш навмисно зламаний шлях завантаження в перегляді, а потім відтворюєш ті самі збої на своїй заявленій цілі з нативним сховищем і перевіряєш ремонт перезапуском."
+  en: "Damaged and outdated data in the store stays invisible until the app tries to read it: then it hangs, crashes or quietly shows something untrue, and the next save destroys the evidence. Here you first repair a deliberately broken load path in the preview, then reproduce the same failures on your declared target with the native store and check the repair with a restart."
+objectives:
+  - uk: "Відтворити на заявленій цілі навмисне падіння чи зависання запуску через пошкоджений знімок і неправильні дані через застарілий."
+    en: "Reproduce on the declared target a seeded launch crash or hang caused by a corrupt snapshot and wrong data caused by an outdated one."
+  - uk: "Полагодити шлях завантаження: пошкоджені дані відкладено з видимим повідомленням, застарілий знімок мігровано, і нічого не перезаписано мовчки."
+    en: "Repair the load path so the corrupt data is set aside with a visible notice, the outdated snapshot migrates and nothing is silently overwritten."
+prerequisites: [rn-05-05-restart-recovery-shared-models]
+subskills:
+  - { family: N-05, skill: "async loading/failure", depth: assess }
+  - { family: N-05, skill: "schema migration", depth: assess }
+glossary: []
+selfCheck: [predict-evidence-gone, seeded-load]
+
+blocks:
+  - id: four-snapshots
+    kind: explanation
+    title:
+      uk: "Чотири знімки й один шлях завантаження"
+      en: "Four snapshots and one load path"
+    body:
+      uk: |
+        Хук планувальника `useTasks` читає знімок так, ніби в сховищі завжди лежить правильний JSON поточної версії. Колега вже написав `restoreSnapshot` (розбір, міграція, перевірка), але хук його не викликає. Запусти застосунок з чотирма різними знімками:
+
+        - **valid** — поточна версія, усе гаразд;
+        - **outdated** — знімок v0 зі старої збірки: замість `done: true` там `status: 'done'`;
+        - **truncated** — текст, обірваний посередині (наприклад, запис перервало завершення процесу);
+        - **wrongShape** — правильний JSON, але `records` — об’єкт, а не список.
+
+        Порядок роботи той самий, що й раніше: відтворити → записати, що бачиш → знайти причину → виправити причину → перевірити тим самим способом. Зверни увагу на третю ваду, яку легко пропустити: effect збереження пише ще до кінця читання, тож пошкоджений текст зникає раніше, ніж ти встигаєш його розглянути.
+      en: |
+        The planner hook `useTasks` reads the snapshot as if the store always held correct JSON of the current version. A teammate has already written `restoreSnapshot` (parse, migrate, check), but the hook does not call it. Launch the app with four different snapshots:
+
+        - **valid** — the current version, all fine;
+        - **outdated** — a v0 snapshot from an old build: it has `status: 'done'` instead of `done: true`;
+        - **truncated** — text cut off in the middle (for example, a write interrupted by process death);
+        - **wrongShape** — valid JSON, but `records` is an object, not a list.
+
+        The routine is the same as before: reproduce → write down what you see → find the cause → fix the cause → check the same way. Watch for the third defect, which is easy to miss: the save effect writes before the read finishes, so the damaged text disappears before you get to look at it.
+
+  - id: predict-evidence-gone
+    kind: prediction
+    prompt:
+      uk: "У сховищі лежить обірваний текст `{\"schemaVersion\":1,\"records\":[{\"id\":\"t-03\",…`. Застосунок запускається з хуком, у якому немає ні `restoreSnapshot`, ні запобіжника збереження. Що лежатиме під ключем `jsll.planner.v1` після цього запуску?"
+      en: "The store holds the cut-off text `{\"schemaVersion\":1,\"records\":[{\"id\":\"t-03\",…`. The app launches with a hook that has neither `restoreSnapshot` nor a save guard. What will be under the key `jsll.planner.v1` after this launch?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: same-text
+          text:
+            uk: "Той самий обірваний текст: застосунок же не зміг його прочитати"
+            en: "The same cut-off text: the app could not read it, after all"
+          why:
+            uk: "Effect збереження виконався після першого кадру, ще до того, як `JSON.parse` упав. Він записав свій порожній список поверх тексту."
+            en: "The save effect ran after the first frame, before `JSON.parse` failed. It wrote its empty list over the text."
+        - id: empty-snapshot
+          text:
+            uk: "Знімок з порожнім списком справ"
+            en: "A snapshot with an empty task list"
+        - id: backup
+          text:
+            uk: "Нічого: текст переїхав під резервний ключ"
+            en: "Nothing: the text moved under the backup key"
+          why:
+            uk: "Резервний ключ сам не з’являється: його записує лише код, який ти напишеш. У цьому хуку такого коду немає."
+            en: "The backup key does not appear by itself: only code you write puts it there. This hook has no such code."
+      correct: [empty-snapshot]
+    explanation:
+      uk: "Запис порожнього списку стався раніше за невдалий розбір. Тепер у сховищі немає ні справ, ні пошкодженого тексту, з якого їх можна було б витягти вручну. Тому ремонт має дві частини: відкласти сирий текст, перш ніж щось перезаписати, і не зберігати до вдалого завантаження."
+      en: "The write of an empty list happened before the failed parse. Now the store holds neither the tasks nor the damaged text they could have been recovered from by hand. That is why the repair has two parts: set the raw text aside before anything is overwritten, and do not save before a successful load."
+
+  - id: seeded-load
+    kind: exercise
+    mode: debug
+    runtime: concept-preview
+    dir: seeded-load
+    entry: main.jsx
+    editable: [useTasks.js]
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      loading: { uk: "Завантажую справи…", en: "Loading tasks…" }
+      failed: { uk: "Не вдалося прочитати справи.", en: "Could not read the tasks." }
+      empty: { uk: "Справ немає", en: "No tasks" }
+      recovered: { uk: "Збережені справи не вдалося прочитати. Копію збережено; починаємо з порожнього списку.", en: "Saved tasks could not be read. A copy was kept; starting with an empty list." }
+      crashed: { uk: "Застосунок упав:", en: "The app crashed:" }
+      launchWith: { uk: "Запустити з", en: "Launch with" }
+    title:
+      uk: "Шлях завантаження з трьома вадами"
+      en: "A load path with three defects"
+    instructions:
+      uk: |
+        Під рамкою «телефона» — чотири кнопки, що кладуть у сховище один зі знімків з пояснення й перезапускають застосунок. Запусти з кожним і запиши, що бачиш на екрані й у консолі. Потім полагодь `useTasks.js` (решту файлів не змінюй):
+
+        - знімок **valid** показує свої справи без повідомлення;
+        - знімок **outdated** показує правильні позначки виконаного;
+        - знімки **truncated** і **wrongShape** не валять застосунок: видно повідомлення про відновлення, а точний текст знімка лежить під `BACKUP_KEY`;
+        - до завершення читання під `KEY` нічого не записується.
+
+        `restoreSnapshot` з `restore.js` уже вміє розбирати, мігрувати й перевіряти — і ніколи не кидає помилку.
+      en: |
+        Below the “phone” frame are four buttons that put one of the snapshots from the explanation into the store and relaunch the app. Launch with each and write down what you see on screen and in the console. Then repair `useTasks.js` (leave the other files unchanged):
+
+        - the **valid** snapshot shows its tasks without a notice;
+        - the **outdated** snapshot shows the correct done marks;
+        - the **truncated** and **wrongShape** snapshots do not bring the app down: the recovery notice is visible, and the exact text of the snapshot is under `BACKUP_KEY`;
+        - nothing is written under `KEY` before the read finishes.
+
+        `restoreSnapshot` from `restore.js` can already parse, migrate and check — and it never throws.
+    testTitles:
+      "a valid snapshot shows its tasks without a notice":
+        uk: "Правильний знімок показує справи без повідомлення"
+        en: "A valid snapshot shows its tasks without a notice"
+      "an outdated v0 snapshot shows the right done marks":
+        uk: "Застарілий знімок v0 показує правильні позначки виконаного"
+        en: "An outdated v0 snapshot shows the right done marks"
+      "a truncated snapshot is set aside with a notice":
+        uk: "Обірваний знімок відкладено з повідомленням"
+        en: "A truncated snapshot is set aside with a notice"
+      "a snapshot of the wrong shape is set aside with a notice":
+        uk: "Знімок неправильної форми відкладено з повідомленням"
+        en: "A snapshot of the wrong shape is set aside with a notice"
+      "nothing is written to the planner key before the load settles":
+        uk: "До кінця завантаження під ключ планувальника нічого не записано"
+        en: "Nothing is written to the planner key before the load settles"
+    hints:
+      nudge:
+        uk: "Для кожного знімка спитай: на якому рядку хука дані вперше використовуються так, ніби вони правильні? І що встигає статися зі сховищем до цього рядка?"
+        en: "For each snapshot ask: on which line of the hook is the data first used as if it were correct? And what happens to the store before that line?"
+      explanation:
+        uk: "Сирий текст зі сховища — це `unknown`: перш ніж класти його в стан, його треба провести через розбір, міграцію й перевірку, а для цього вже є готова функція. Якщо вона каже «не вдалося», текст ще цінний: запиши його під окремий ключ, і лише потім показуй повідомлення й порожній список. А effect збереження має чекати на стан, який каже «завантаження завершено» — як у машині станів з уроку про асинхронне завантаження."
+        en: "Raw text from the store is `unknown`: before it goes into state it must pass parsing, migration and checking, and there is already a ready function for that. If it says “failed”, the text is still valuable: write it under a separate key, and only then show the notice and an empty list. And the save effect has to wait for the state that says “loading finished” — as in the state machine from the async loading lesson."
+    solutionNote:
+      uk: "Хук тепер віддає сирий текст `restoreSnapshot` і кладе в стан лише перевірені записи. Невдача — не «порожньо»: точний текст спершу йде під `BACKUP_KEY`, а вже потім з’являється повідомлення. Effect збереження чекає на `ready`, тож пошкоджений текст не затирається до того, як його відкладено. Інший правильний шлях — зберігати лише в обробнику `toggle`."
+      en: "The hook now hands the raw text to `restoreSnapshot` and puts only checked records into state. A failure is not “empty”: the exact text goes under `BACKUP_KEY` first, and only then does the notice appear. The save effect waits for `ready`, so the damaged text is not overwritten before it has been set aside. Another correct route is to save only in the `toggle` handler."
+    feedback:
+      - when: { test: "an outdated v0 snapshot shows the right done marks" }
+        message:
+          uk: "Ця перевірка запускає застосунок зі знімком v0 і чекає «✓» біля оплати інтернету. Знімок v0 має `status`, а не `done`: його треба мігрувати перед використанням."
+          en: "This check launches the app with a v0 snapshot and expects “✓” next to the internet bill. A v0 snapshot has `status`, not `done`: it has to be migrated before use."
+      - when: { test: "a truncated snapshot is set aside with a notice" }
+        message:
+          uk: "Ця перевірка запускає застосунок з обірваним текстом і чекає повідомлення про відновлення на екрані й той самий текст під `BACKUP_KEY`. Якщо застосунок висить на завантаженні, `JSON.parse` кинув помилку всередині `.then`."
+          en: "This check launches the app with cut-off text and expects the recovery notice on screen and the same text under `BACKUP_KEY`. If the app hangs on loading, `JSON.parse` threw inside `.then`."
+      - when: { test: "a snapshot of the wrong shape is set aside with a notice" }
+        message:
+          uk: "Ця перевірка дає правильний JSON, у якому `records` — об’єкт, і чекає повідомлення та той самий текст під `BACKUP_KEY`. `try`/`catch` навколо `JSON.parse` такого не зловить: форму перевіряє лише валідація."
+          en: "This check gives valid JSON in which `records` is an object, and expects the notice and the same text under `BACKUP_KEY`. A `try`/`catch` around `JSON.parse` does not catch this: only validation checks the shape."
+      - when: { test: "nothing is written to the planner key before the load settles" }
+        message:
+          uk: "Ця перевірка рахує записи, поки читання ще триває, і чекає нуль, а під `KEY` — незмінений текст. Effect збереження має чекати, доки статус стане `ready`."
+          en: "This check counts the writes while the read is still running and expects zero, with the text under `KEY` unchanged. The save effect has to wait until the status is `ready`."
+    limits:
+      uk: "Перевірки запускають екран у перегляді react-native-web з імітованим сховищем у пам’яті. Справжній AsyncStorage, червоний екран помилки в debug-режимі, завершення процесу й холодний старт перевіряєш у локальному завданні нижче на заявленій цілі."
+      en: "The checks start the screen in the react-native-web preview with an imitation store in memory. The real AsyncStorage, the red error screen in debug mode, process death and a cold start are checked in the local task below on your declared target."
+
+  - id: recall-swallowed
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: empty-catch
+        from: js-07-09-debug-swallowed-errors
+        prompt:
+          uk: "Завантажувач записів виглядає так: `try { return JSON.parse(text).records; } catch { return []; }`. Що з ним не так?"
+          en: "A record loader looks like this: `try { return JSON.parse(text).records; } catch { return []; }`. What is wrong with it?"
+        answer:
+          type: choice
+          options:
+            - id: hides
+              text:
+                uk: "Він ховає збій: людина бачить порожній список, ніхто не знає про помилку, а сирий текст ніде не збережено"
+                en: "It hides the failure: the person sees an empty list, nobody learns about the error, and the raw text is kept nowhere"
+            - id: fine
+              text:
+                uk: "Нічого: застосунок не падає, а це головне"
+                en: "Nothing: the app does not crash, and that is what matters"
+              why:
+                uk: "Не впасти — мало. Порожній список виглядає як «записів немає», і наступне збереження назавжди затре пошкоджені дані."
+                en: "Not crashing is not enough. An empty list looks like “no records”, and the next save overwrites the damaged data for good."
+            - id: too-broad
+              text:
+                uk: "Лише те, що `catch` без змінної — так писати не можна"
+                en: "Only that `catch` has no variable — that is not allowed"
+              why:
+                uk: "`catch` без змінної — дозволений синтаксис. Проблема не в синтаксисі, а в тому, що помилку проковтнуто."
+                en: "`catch` without a variable is valid syntax. The problem is not the syntax but that the error is swallowed."
+          correct: [hides]
+        explanation:
+          uk: "Порожній `catch` перетворює збій на «нормальний» результат. Чесний шлях: повернути причину, зберегти сирий текст під резервним ключем і показати повідомлення."
+          en: "An empty `catch` turns a failure into a “normal” result. The honest way: return the reason, keep the raw text under a backup key and show a notice."
+
+  - id: on-device
+    kind: local-task
+    runtime: local-native
+    title:
+      uk: "Ті самі чотири знімки на твоїй заявленій цілі"
+      en: "The same four snapshots on your declared target"
+    intro:
+      uk: |
+        Це завдання виконується на твоєму комп’ютері й на **заявленій цілі** з розділу RN-01. Щоб не чіпати проєкт, створимо окремий навчальний проєкт `rn05-lab` у теці `~/js-course`. Дані на ціль кладе маленький модуль `seed.ts`: перед завантаженням екрана він записує в AsyncStorage обраний знімок.
+
+        Кроки 1–4 виконано під час підготовки уроку на macOS з Node.js v25.2.1 і npm 11.6.2: шаблон дав Expo SDK 57 (`expo` ~57.0.26, `react-native` 0.86.3), `npx expo install` надрукував `› Installing 1 SDK 57.0.0 compatible native module using npm` і записав у `package.json` `"@react-native-async-storage/async-storage": "2.2.0"`, а `npx tsc --noEmit` для коду з кроку 3 завершився без жодного повідомлення. **Кроки на цілі (5 і далі) під час підготовки не перевірено** — там немає нативних інструментів; їх описано за документацією Expo SDK 57 і React Native 0.86. Точний текст помилок на цілі запиши сам.
+
+        Якщо емулятора, симулятора чи телефона немає, натисни **«У мене немає емулятора чи пристрою»** нижче: завдання запишеться як не виконане, і ти зможеш іти далі — вправа вище вже закрила частину в перегляді.
+
+        **Крок 3 — файл `storage.ts`:**
+
+        ```ts
+        // The storage contract from RN-03 and its native implementation on top of AsyncStorage.
+        import AsyncStorage from '@react-native-async-storage/async-storage';
+
+        export interface StorageAdapter {
+          getItem(key: string): Promise<string | null>;
+          setItem(key: string, value: string): Promise<void>;
+          removeItem(key: string): Promise<void>;
+        }
+
+        export const nativeStorage: StorageAdapter = {
+          getItem: (key) => AsyncStorage.getItem(key),
+          setItem: (key, value) => AsyncStorage.setItem(key, value),
+          removeItem: (key) => AsyncStorage.removeItem(key),
+        };
+        ```
+
+        **Крок 3 — файл `restore.ts`:**
+
+        ```ts
+        // Restore step for the planner: parse, migrate (v0 status → v1 done), validate. Never throws.
+        export type Task = { id: string; title: string; dueDate: string | null; done: boolean; priority: 'low' | 'normal' | 'high' };
+        export type Restored = { ok: true; records: Task[] } | { ok: false; reason: string };
+
+        const PRIORITIES = ['low', 'normal', 'high'];
+
+        function migrate(snapshot: unknown): { ok: true; records: unknown[] } | { ok: false; reason: string } {
+          const s = snapshot as { schemaVersion?: unknown; records?: unknown } | null;
+          if (typeof s?.schemaVersion !== 'number' || !Array.isArray(s.records)) return { ok: false, reason: 'invalid' };
+          if (s.schemaVersion > 1) return { ok: false, reason: 'newer' };
+          if (s.schemaVersion === 0) {
+            return {
+              ok: true,
+              records: s.records.map((item) => {
+                const { status, ...task } = item as { status?: unknown };
+                return { ...task, done: status === 'done' };
+              }),
+            };
+          }
+          return { ok: true, records: s.records };
+        }
+
+        function validateTask(input: unknown): Task | null {
+          const t = input as Partial<Task> | null;
+          if (typeof t !== 'object' || t === null) return null;
+          const valid =
+            typeof t.id === 'string' && t.id !== '' &&
+            typeof t.title === 'string' && t.title.trim() !== '' &&
+            (t.dueDate === null || typeof t.dueDate === 'string') &&
+            typeof t.done === 'boolean' &&
+            PRIORITIES.includes(t.priority as string);
+          return valid ? { id: t.id!, title: t.title!.trim(), dueDate: t.dueDate!, done: t.done!, priority: t.priority! } : null;
+        }
+
+        export function restoreSnapshot(raw: string | null): Restored {
+          if (raw === null) return { ok: true, records: [] };
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            return { ok: false, reason: 'unparsable' };
+          }
+          const migrated = migrate(parsed);
+          if (!migrated.ok) return migrated;
+          const records: Task[] = [];
+          for (const item of migrated.records) {
+            const task = validateTask(item);
+            if (task === null) return { ok: false, reason: 'invalid-record' };
+            records.push(task);
+          }
+          return { ok: true, records };
+        }
+        ```
+
+        **Крок 3 — файл `useTasks.ts` (з навмисними вадами):**
+
+        ```ts
+        // RN-05 seeded load path: three defects on purpose (no validation, no migration, early save).
+        import { useEffect, useState } from 'react';
+        import type { StorageAdapter } from './storage';
+        import type { Task } from './restore';
+
+        export const KEY = 'jsll.planner.v1';
+        export const BACKUP_KEY = 'jsll.planner.v1.backup';
+
+        type State = { status: 'loading' | 'ready' | 'failed'; tasks: Task[]; notice: 'recovered' | null };
+
+        export function useTasks(storage: StorageAdapter) {
+          const [state, setState] = useState<State>({ status: 'loading', tasks: [], notice: null });
+
+          useEffect(() => {
+            storage.getItem(KEY).then((text) => {
+              const snapshot = text === null ? { schemaVersion: 1, records: [] } : JSON.parse(text);
+              setState({ status: 'ready', tasks: snapshot.records, notice: null });
+            });
+          }, [storage]);
+
+          useEffect(() => {
+            storage.setItem(KEY, JSON.stringify({ schemaVersion: 1, records: state.tasks }));
+          }, [storage, state.tasks]);
+
+          const toggle = (id: string) =>
+            setState({ ...state, tasks: state.tasks.map((task) => (task.id === id ? { ...task, done: !task.done } : task)) });
+
+          return { ...state, toggle };
+        }
+        ```
+
+        **Крок 3 — файл `seed.ts`:**
+
+        ```ts
+        // Dev-only seeding script: writes one prepared snapshot into the app's storage before the screen loads.
+        import type { StorageAdapter } from './storage';
+        import { BACKUP_KEY, KEY } from './useTasks';
+
+        export type SeedName = 'valid' | 'outdated' | 'truncated' | 'wrongShape';
+
+        const seeds: Record<SeedName, string> = {
+          valid: JSON.stringify({
+            schemaVersion: 1,
+            records: [
+              { id: 't-01', title: 'Полити квіти', dueDate: '2026-03-02', done: false, priority: 'normal' },
+              { id: 't-06', title: 'Розібрати шафу', dueDate: '2026-03-05', done: true, priority: 'low' },
+            ],
+          }),
+          outdated: JSON.stringify({
+            schemaVersion: 0,
+            records: [
+              { id: 't-02', title: 'Здати книжки в бібліотеку', dueDate: '2026-03-01', status: 'open', priority: 'high' },
+              { id: 't-04', title: 'Оплатити інтернет', dueDate: '2026-02-27', status: 'done', priority: 'high' },
+            ],
+          }),
+          truncated: '{"schemaVersion":1,"records":[{"id":"t-03","title":"Написати бабусі","dueD',
+          wrongShape: JSON.stringify({ schemaVersion: 1, records: { 't-05': { title: 'Записатися до стоматолога', done: false } } }),
+        };
+
+        export async function applySeed(storage: StorageAdapter, name: SeedName | null) {
+          if (name === null) return;
+          await storage.removeItem(BACKUP_KEY);
+          await storage.setItem(KEY, seeds[name]);
+        }
+        ```
+
+        **Крок 3 — файл `App.tsx`** (повністю заміни ним файл шаблону):
+
+        ```tsx
+        import { useEffect, useState } from 'react';
+        import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+        import { applySeed, type SeedName } from './seed';
+        import { nativeStorage } from './storage';
+        import { useTasks } from './useTasks';
+
+        // Which seeded snapshot to write before the screen loads; null = keep what is stored.
+        const SEED: SeedName | null = 'valid';
+
+        function TasksScreen() {
+          const { status, tasks, notice, toggle } = useTasks(nativeStorage);
+          if (status === 'loading') return <ActivityIndicator style={styles.screen} />;
+          if (status === 'failed') return <Text style={styles.screen}>Не вдалося прочитати справи.</Text>;
+          return (
+            <View style={styles.screen}>
+              {notice === 'recovered' ? (
+                <Text style={styles.notice}>Збережені справи не вдалося прочитати. Копію збережено; починаємо з порожнього списку.</Text>
+              ) : null}
+              {tasks.map((task) => (
+                <Pressable key={task.id} accessibilityRole="checkbox" accessibilityState={{ checked: task.done }} style={styles.row} onPress={() => toggle(task.id)}>
+                  <Text>{`${task.done ? '✓' : '○'} ${task.title}`}</Text>
+                </Pressable>
+              ))}
+            </View>
+          );
+        }
+
+        export default function App() {
+          const [seeded, setSeeded] = useState(false);
+          useEffect(() => {
+            applySeed(nativeStorage, SEED).then(() => setSeeded(true));
+          }, []);
+          return seeded ? <TasksScreen /> : <ActivityIndicator style={styles.screen} />;
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, paddingTop: 64, paddingHorizontal: 16, gap: 8 },
+          notice: { padding: 8, backgroundColor: '#fef3c7', color: '#713f12', borderRadius: 6 },
+          row: { minHeight: 48, justifyContent: 'center', borderBottomWidth: 1, borderColor: '#d4d4d4' },
+        });
+        ```
+
+        **Крок 10 — полагоджений `useTasks.ts`** (повністю заміни ним файл):
+
+        ```ts
+        // RN-05 repaired load path: restore with validation and migration, set damaged text aside, save only after a load.
+        import { useEffect, useState } from 'react';
+        import type { StorageAdapter } from './storage';
+        import { restoreSnapshot, type Task } from './restore';
+
+        export const KEY = 'jsll.planner.v1';
+        export const BACKUP_KEY = 'jsll.planner.v1.backup';
+
+        type State = { status: 'loading' | 'ready' | 'failed'; tasks: Task[]; notice: 'recovered' | null };
+
+        export function useTasks(storage: StorageAdapter) {
+          const [state, setState] = useState<State>({ status: 'loading', tasks: [], notice: null });
+
+          useEffect(() => {
+            let active = true;
+            storage.getItem(KEY).then(
+              async (text) => {
+                const result = restoreSnapshot(text);
+                if (result.ok) {
+                  if (active) setState({ status: 'ready', tasks: result.records, notice: null });
+                  return;
+                }
+                if (text !== null) await storage.setItem(BACKUP_KEY, text);
+                if (active) setState({ status: 'ready', tasks: [], notice: 'recovered' });
+              },
+              () => {
+                if (active) setState({ status: 'failed', tasks: [], notice: null });
+              },
+            );
+            return () => {
+              active = false;
+            };
+          }, [storage]);
+
+          const ready = state.status === 'ready';
+          useEffect(() => {
+            if (!ready) return;
+            storage.setItem(KEY, JSON.stringify({ schemaVersion: 1, records: state.tasks }));
+          }, [storage, ready, state.tasks]);
+
+          const toggle = (id: string) =>
+            setState({ ...state, tasks: state.tasks.map((task) => (task.id === id ? { ...task, done: !task.done } : task)) });
+
+          return { ...state, toggle };
+        }
+        ```
+      en: |
+        This task runs on your computer and on the **declared target** from unit RN-01. To leave your project untouched, we create a separate lab project `rn05-lab` in the `~/js-course` folder. A small script `seed.ts` puts the data on the target: before the screen loads, it writes the chosen snapshot into AsyncStorage.
+
+        Steps 1–4 were run while preparing this lesson on macOS with Node.js v25.2.1 and npm 11.6.2: the template gave Expo SDK 57 (`expo` ~57.0.26, `react-native` 0.86.3), `npx expo install` printed `› Installing 1 SDK 57.0.0 compatible native module using npm` and wrote `"@react-native-async-storage/async-storage": "2.2.0"` into `package.json`, and `npx tsc --noEmit` on the code from step 3 finished without any message. **The steps on the target (5 onward) were not checked while preparing** — there were no native tools; they follow the Expo SDK 57 and React Native 0.86 documentation. Write down the exact error texts on the target yourself.
+
+        If you have no emulator, simulator or phone, press **“I have no emulator or device”** below: the task is recorded as not performed, and you can move on — the exercise above already covered the preview part.
+
+        **Step 3 — the file `storage.ts`:**
+
+        ```ts
+        // The storage contract from RN-03 and its native implementation on top of AsyncStorage.
+        import AsyncStorage from '@react-native-async-storage/async-storage';
+
+        export interface StorageAdapter {
+          getItem(key: string): Promise<string | null>;
+          setItem(key: string, value: string): Promise<void>;
+          removeItem(key: string): Promise<void>;
+        }
+
+        export const nativeStorage: StorageAdapter = {
+          getItem: (key) => AsyncStorage.getItem(key),
+          setItem: (key, value) => AsyncStorage.setItem(key, value),
+          removeItem: (key) => AsyncStorage.removeItem(key),
+        };
+        ```
+
+        **Step 3 — the file `restore.ts`:**
+
+        ```ts
+        // Restore step for the planner: parse, migrate (v0 status → v1 done), validate. Never throws.
+        export type Task = { id: string; title: string; dueDate: string | null; done: boolean; priority: 'low' | 'normal' | 'high' };
+        export type Restored = { ok: true; records: Task[] } | { ok: false; reason: string };
+
+        const PRIORITIES = ['low', 'normal', 'high'];
+
+        function migrate(snapshot: unknown): { ok: true; records: unknown[] } | { ok: false; reason: string } {
+          const s = snapshot as { schemaVersion?: unknown; records?: unknown } | null;
+          if (typeof s?.schemaVersion !== 'number' || !Array.isArray(s.records)) return { ok: false, reason: 'invalid' };
+          if (s.schemaVersion > 1) return { ok: false, reason: 'newer' };
+          if (s.schemaVersion === 0) {
+            return {
+              ok: true,
+              records: s.records.map((item) => {
+                const { status, ...task } = item as { status?: unknown };
+                return { ...task, done: status === 'done' };
+              }),
+            };
+          }
+          return { ok: true, records: s.records };
+        }
+
+        function validateTask(input: unknown): Task | null {
+          const t = input as Partial<Task> | null;
+          if (typeof t !== 'object' || t === null) return null;
+          const valid =
+            typeof t.id === 'string' && t.id !== '' &&
+            typeof t.title === 'string' && t.title.trim() !== '' &&
+            (t.dueDate === null || typeof t.dueDate === 'string') &&
+            typeof t.done === 'boolean' &&
+            PRIORITIES.includes(t.priority as string);
+          return valid ? { id: t.id!, title: t.title!.trim(), dueDate: t.dueDate!, done: t.done!, priority: t.priority! } : null;
+        }
+
+        export function restoreSnapshot(raw: string | null): Restored {
+          if (raw === null) return { ok: true, records: [] };
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(raw);
+          } catch {
+            return { ok: false, reason: 'unparsable' };
+          }
+          const migrated = migrate(parsed);
+          if (!migrated.ok) return migrated;
+          const records: Task[] = [];
+          for (const item of migrated.records) {
+            const task = validateTask(item);
+            if (task === null) return { ok: false, reason: 'invalid-record' };
+            records.push(task);
+          }
+          return { ok: true, records };
+        }
+        ```
+
+        **Step 3 — the file `useTasks.ts` (with deliberate defects):**
+
+        ```ts
+        // RN-05 seeded load path: three defects on purpose (no validation, no migration, early save).
+        import { useEffect, useState } from 'react';
+        import type { StorageAdapter } from './storage';
+        import type { Task } from './restore';
+
+        export const KEY = 'jsll.planner.v1';
+        export const BACKUP_KEY = 'jsll.planner.v1.backup';
+
+        type State = { status: 'loading' | 'ready' | 'failed'; tasks: Task[]; notice: 'recovered' | null };
+
+        export function useTasks(storage: StorageAdapter) {
+          const [state, setState] = useState<State>({ status: 'loading', tasks: [], notice: null });
+
+          useEffect(() => {
+            storage.getItem(KEY).then((text) => {
+              const snapshot = text === null ? { schemaVersion: 1, records: [] } : JSON.parse(text);
+              setState({ status: 'ready', tasks: snapshot.records, notice: null });
+            });
+          }, [storage]);
+
+          useEffect(() => {
+            storage.setItem(KEY, JSON.stringify({ schemaVersion: 1, records: state.tasks }));
+          }, [storage, state.tasks]);
+
+          const toggle = (id: string) =>
+            setState({ ...state, tasks: state.tasks.map((task) => (task.id === id ? { ...task, done: !task.done } : task)) });
+
+          return { ...state, toggle };
+        }
+        ```
+
+        **Step 3 — the file `seed.ts`:**
+
+        ```ts
+        // Dev-only seeding script: writes one prepared snapshot into the app's storage before the screen loads.
+        import type { StorageAdapter } from './storage';
+        import { BACKUP_KEY, KEY } from './useTasks';
+
+        export type SeedName = 'valid' | 'outdated' | 'truncated' | 'wrongShape';
+
+        const seeds: Record<SeedName, string> = {
+          valid: JSON.stringify({
+            schemaVersion: 1,
+            records: [
+              { id: 't-01', title: 'Water the plants', dueDate: '2026-03-02', done: false, priority: 'normal' },
+              { id: 't-06', title: 'Tidy the wardrobe', dueDate: '2026-03-05', done: true, priority: 'low' },
+            ],
+          }),
+          outdated: JSON.stringify({
+            schemaVersion: 0,
+            records: [
+              { id: 't-02', title: 'Return library books', dueDate: '2026-03-01', status: 'open', priority: 'high' },
+              { id: 't-04', title: 'Pay the internet bill', dueDate: '2026-02-27', status: 'done', priority: 'high' },
+            ],
+          }),
+          truncated: '{"schemaVersion":1,"records":[{"id":"t-03","title":"Write to grandma","dueD',
+          wrongShape: JSON.stringify({ schemaVersion: 1, records: { 't-05': { title: 'Book a dentist visit', done: false } } }),
+        };
+
+        export async function applySeed(storage: StorageAdapter, name: SeedName | null) {
+          if (name === null) return;
+          await storage.removeItem(BACKUP_KEY);
+          await storage.setItem(KEY, seeds[name]);
+        }
+        ```
+
+        **Step 3 — the file `App.tsx`** (replace the template's file with it completely):
+
+        ```tsx
+        import { useEffect, useState } from 'react';
+        import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+        import { applySeed, type SeedName } from './seed';
+        import { nativeStorage } from './storage';
+        import { useTasks } from './useTasks';
+
+        // Which seeded snapshot to write before the screen loads; null = keep what is stored.
+        const SEED: SeedName | null = 'valid';
+
+        function TasksScreen() {
+          const { status, tasks, notice, toggle } = useTasks(nativeStorage);
+          if (status === 'loading') return <ActivityIndicator style={styles.screen} />;
+          if (status === 'failed') return <Text style={styles.screen}>Could not read the tasks.</Text>;
+          return (
+            <View style={styles.screen}>
+              {notice === 'recovered' ? (
+                <Text style={styles.notice}>Saved tasks could not be read. A copy was kept; starting with an empty list.</Text>
+              ) : null}
+              {tasks.map((task) => (
+                <Pressable key={task.id} accessibilityRole="checkbox" accessibilityState={{ checked: task.done }} style={styles.row} onPress={() => toggle(task.id)}>
+                  <Text>{`${task.done ? '✓' : '○'} ${task.title}`}</Text>
+                </Pressable>
+              ))}
+            </View>
+          );
+        }
+
+        export default function App() {
+          const [seeded, setSeeded] = useState(false);
+          useEffect(() => {
+            applySeed(nativeStorage, SEED).then(() => setSeeded(true));
+          }, []);
+          return seeded ? <TasksScreen /> : <ActivityIndicator style={styles.screen} />;
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, paddingTop: 64, paddingHorizontal: 16, gap: 8 },
+          notice: { padding: 8, backgroundColor: '#fef3c7', color: '#713f12', borderRadius: 6 },
+          row: { minHeight: 48, justifyContent: 'center', borderBottomWidth: 1, borderColor: '#d4d4d4' },
+        });
+        ```
+
+        **Step 10 — the repaired `useTasks.ts`** (replace the file with it completely):
+
+        ```ts
+        // RN-05 repaired load path: restore with validation and migration, set damaged text aside, save only after a load.
+        import { useEffect, useState } from 'react';
+        import type { StorageAdapter } from './storage';
+        import { restoreSnapshot, type Task } from './restore';
+
+        export const KEY = 'jsll.planner.v1';
+        export const BACKUP_KEY = 'jsll.planner.v1.backup';
+
+        type State = { status: 'loading' | 'ready' | 'failed'; tasks: Task[]; notice: 'recovered' | null };
+
+        export function useTasks(storage: StorageAdapter) {
+          const [state, setState] = useState<State>({ status: 'loading', tasks: [], notice: null });
+
+          useEffect(() => {
+            let active = true;
+            storage.getItem(KEY).then(
+              async (text) => {
+                const result = restoreSnapshot(text);
+                if (result.ok) {
+                  if (active) setState({ status: 'ready', tasks: result.records, notice: null });
+                  return;
+                }
+                if (text !== null) await storage.setItem(BACKUP_KEY, text);
+                if (active) setState({ status: 'ready', tasks: [], notice: 'recovered' });
+              },
+              () => {
+                if (active) setState({ status: 'failed', tasks: [], notice: null });
+              },
+            );
+            return () => {
+              active = false;
+            };
+          }, [storage]);
+
+          const ready = state.status === 'ready';
+          useEffect(() => {
+            if (!ready) return;
+            storage.setItem(KEY, JSON.stringify({ schemaVersion: 1, records: state.tasks }));
+          }, [storage, ready, state.tasks]);
+
+          const toggle = (id: string) =>
+            setState({ ...state, tasks: state.tasks.map((task) => (task.id === id ? { ...task, done: !task.done } : task)) });
+
+          return { ...state, toggle };
+        }
+        ```
+    tools:
+      - { name: "Node.js", version: "22.13 or newer", note: { uk: "мінімум для Expo SDK 57 за таблицею версій Expo", en: "the minimum for Expo SDK 57 per Expo's version table" } }
+      - { name: "Expo SDK", version: "57 (React Native 0.86.3)", note: { uk: "шаблон `blank-typescript@sdk-57`", en: "the `blank-typescript@sdk-57` template" } }
+      - { name: "@react-native-async-storage/async-storage", version: "2.2.0", note: { uk: "версію підбирає `npx expo install`", en: "`npx expo install` picks the version" } }
+      - { name: "Declared target", version: "from RN-01", note: { uk: "емулятор Android, симулятор iOS або телефон з Expo Go для SDK 57", en: "an Android emulator, an iOS simulator or a phone with Expo Go for SDK 57" } }
+    steps:
+      - text:
+          uk: "Перейди в теку курсу й створи навчальний проєкт із шаблону TypeScript для Expo SDK 57."
+          en: "Go to the course folder and create the lab project from the TypeScript template for Expo SDK 57."
+        command: "cd ~/js-course\nnpx create-expo-app@latest rn05-lab --template blank-typescript@sdk-57 --no-agents-md"
+        expect:
+          uk: "`Creating rn05-lab using the blank-typescript@sdk-57 template.`, вивід `npm install` і наприкінці `✅ Your project is ready!`. Рядок про вразливості теж може бути — `npm audit fix --force` не запускай."
+          en: "`Creating rn05-lab using the blank-typescript@sdk-57 template.`, the `npm install` output and at the end `✅ Your project is ready!`. A line about vulnerabilities may appear too — do not run `npm audit fix --force`."
+      - text:
+          uk: "Перейди в проєкт і додай нативне сховище у версії, сумісній з SDK."
+          en: "Go into the project and add the native store in the version that matches the SDK."
+        command: "cd rn05-lab\nnpx expo install @react-native-async-storage/async-storage"
+        expect:
+          uk: "`› Installing 1 SDK 57.0.0 compatible native module using npm`, далі вивід `npm install`. У `package.json` з’явився рядок `\"@react-native-async-storage/async-storage\": \"2.2.0\"`."
+          en: "`› Installing 1 SDK 57.0.0 compatible native module using npm`, then the `npm install` output. `package.json` now has the line `\"@react-native-async-storage/async-storage\": \"2.2.0\"`."
+      - text:
+          uk: "У VS Code створи в корені проєкту файли `storage.ts`, `restore.ts`, `useTasks.ts` і `seed.ts` з кодом «Крок 3» зі вступу й заміни весь `App.tsx`. Збережи всі файли."
+          en: "In VS Code create the files `storage.ts`, `restore.ts`, `useTasks.ts` and `seed.ts` in the project root with the “Step 3” code from the introduction, and replace the whole `App.tsx`. Save all files."
+      - text:
+          uk: "Перевір типи й закоміть навмисно зламаний стан. Зверни увагу: `tsc` мовчить, хоча вади є, — `JSON.parse` повертає `any`, і перевірка типів тут нічого не бачить."
+          en: "Check the types and commit the deliberately broken state. Notice: `tsc` stays silent although the defects are there — `JSON.parse` returns `any`, and type checking sees nothing here."
+        command: "npx tsc --noEmit\ngit add -A\ngit commit -m \"Add the seeded RN-05 lab\""
+        expect:
+          uk: "`npx tsc --noEmit` нічого не друкує; `git commit` — рядок з назвою гілки й кількістю змінених файлів."
+          en: "`npx tsc --noEmit` prints nothing; `git commit` prints a line with the branch name and the number of files changed."
+      - text:
+          uk: "Запусти dev-сервер і відкрий застосунок на заявленій цілі (`a`, `i` або QR-код у Expo Go). Із `SEED = 'valid'` має бути дві справи, одна з «✓». Не перевірено під час підготовки уроку."
+          en: "Start the dev server and open the app on your declared target (`a`, `i` or the QR code in Expo Go). With `SEED = 'valid'` there should be two tasks, one with “✓”. Not checked while preparing this lesson."
+        command: "npx expo start"
+      - text:
+          uk: "У `App.tsx` зміни `SEED` на `'outdated'`, збережи й натисни в терміналі `r` (повне перезавантаження: Fast Refresh зберіг би стан і не запустив би `applySeed` знову). Запиши, які позначки бачиш: обидві справи без «✓» — це хибні дані."
+          en: "In `App.tsx` change `SEED` to `'outdated'`, save and press `r` in the terminal (a full reload: Fast Refresh would keep the state and not run `applySeed` again). Write down which marks you see: both tasks without “✓” are wrong data."
+      - text:
+          uk: "Зміни `SEED` на `'truncated'` і натисни `r`. Запиши дослівно, що показують ціль і термінал dev-сервера: застосунок має залишитися на індикаторі завантаження."
+          en: "Change `SEED` to `'truncated'` and press `r`. Write down word for word what the target and the dev server terminal show: the app should stay on the loading indicator."
+      - text:
+          uk: "Зміни `SEED` на `'wrongShape'` і натисни `r`. У debug-режимі помилка під час render дає екран помилки — запиши її назву й повідомлення."
+          en: "Change `SEED` to `'wrongShape'` and press `r`. In debug mode an error during render gives an error screen — write down its name and message."
+      - text:
+          uk: "Зміни `SEED` на `null` (нічого не засівати) і натисни `r`. Список порожній: ранній запис уже затер пошкоджений знімок, і відновлювати нема з чого. Запиши це."
+          en: "Change `SEED` to `null` (seed nothing) and press `r`. The list is empty: the early write has already overwritten the damaged snapshot, and there is nothing to recover from. Write this down."
+      - text:
+          uk: "Заміни `useTasks.ts` полагодженою версією з кроку 10 у вступі й перевір типи."
+          en: "Replace `useTasks.ts` with the repaired version from step 10 of the introduction and check the types."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Команда нічого не друкує."
+          en: "The command prints nothing."
+      - text:
+          uk: "Повтори кроки 6–8 (`'outdated'`, `'truncated'`, `'wrongShape'`, щоразу `r`): справа про інтернет має «✓», а обидва пошкоджені знімки дають жовте повідомлення про відновлення без падіння."
+          en: "Repeat steps 6–8 (`'outdated'`, `'truncated'`, `'wrongShape'`, pressing `r` each time): the internet bill task has “✓”, and both damaged snapshots give the yellow recovery notice without a crash."
+      - text:
+          uk: "Перевір перезапуск: постав `SEED = 'valid'`, натисни `r`, тоді `SEED = null` і збережи. Познач першу справу виконаною, повністю закрий застосунок (Android: прибери його зі списку недавніх; iOS: змахни вгору в перемикачі застосунків) і відкрий знову з Expo Go."
+          en: "Check a restart: set `SEED = 'valid'`, press `r`, then `SEED = null` and save. Mark the first task done, close the app completely (Android: remove it from the recent apps; iOS: swipe it up in the app switcher) and open it again from Expo Go."
+        expect:
+          uk: "Після холодного запуску перша справа досі з «✓» — стан прийшов зі сховища, а не з пам’яті. Не перевірено під час підготовки уроку."
+          en: "After the cold start the first task still has “✓” — the state came from the store, not from memory. Not checked while preparing this lesson."
+      - text:
+          uk: "Закоміть ремонт разом зі своїми нотатками."
+          en: "Commit the repair together with your notes."
+        command: "git add -A\ngit commit -m \"Repair the RN-05 load path\""
+    verify:
+      - id: reproduced
+        text:
+          uk: "Я відтворив на заявленій цілі всі чотири випадки й записав, що побачив: хибні позначки, зависання, екран помилки й порожній список після раннього запису."
+          en: "I reproduced all four cases on my declared target and wrote down what I saw: wrong marks, the hang, the error screen and the empty list after the early write."
+      - id: repaired
+        text:
+          uk: "Після ремонту застарілий знімок показує правильні позначки, а обидва пошкоджені — повідомлення про відновлення без падіння."
+          en: "After the repair the outdated snapshot shows the correct marks, and both damaged ones show the recovery notice without a crash."
+      - id: restart
+        text:
+          uk: "Позначка, змінена перед повним закриттям застосунку, лишилася після нового запуску."
+          en: "A mark changed before closing the app completely was still there after the new launch."
+    troubleshooting:
+      - problem: { uk: "Unable to resolve module @react-native-async-storage/async-storage", en: "Unable to resolve module @react-native-async-storage/async-storage" }
+        fix: { uk: "Імовірно, крок 2 виконано не в теці проєкту. Перейди в `rn05-lab`, повтори `npx expo install @react-native-async-storage/async-storage` і перезапусти dev-сервер командою `npx expo start --clear`. Не перевірено під час підготовки уроку.", en: "Step 2 was probably run outside the project folder. Go into `rn05-lab`, repeat `npx expo install @react-native-async-storage/async-storage` and restart the dev server with `npx expo start --clear`. Not checked while preparing this lesson." }
+      - problem: { uk: "Після зміни `SEED` на цілі нічого не змінилося", en: "Nothing changed on the target after changing `SEED`" }
+        fix: { uk: "Fast Refresh оновлює код, але зберігає стан компонентів, тож `applySeed` не запускається знову. Натисни `r` у терміналі dev-сервера — це повне перезавантаження JavaScript.", en: "Fast Refresh updates the code but keeps component state, so `applySeed` does not run again. Press `r` in the dev server terminal — that is a full JavaScript reload." }
+      - problem: { uk: "Expo Go пише, що проєкт несумісний з цією версією Expo Go", en: "Expo Go says the project is incompatible with this version of Expo Go" }
+        fix: { uk: "Онови Expo Go: проєкт створено для SDK 57. Якщо оновлення немає, працюй з емулятором чи симулятором. Не перевірено під час підготовки уроку.", en: "Update Expo Go: the project was created for SDK 57. If there is no update, work with an emulator or a simulator. Not checked while preparing this lesson." }
+    recovery:
+      uk: "Навчальний проєкт `rn05-lab` окремий від твого проєкту, тож у `native/` нічого не змінюється. Зламаний стан закомічено в кроці 4: `git restore useTasks.ts` повертає файл до нього. Якщо залежності зламалися, перейменуй теку (`mv rn05-lab rn05-lab-old`) і почни з кроку 1."
+      en: "The lab project `rn05-lab` is separate from your project, so nothing in `native/` changes. The broken state was committed in step 4: `git restore useTasks.ts` returns the file to it. If the dependencies break, rename the folder (`mv rn05-lab rn05-lab-old`) and start again from step 1."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-05
+    body:
+      uk: "У проєктному кроці той самий ремонт стане частиною `native/`: пошкоджений знімок твого проєкту йде під резервний ключ з повідомленням замість падіння, застарілий знімок v0 мігрує, а збереження чекає вдалого завантаження. Перевіряєш це на заявленій цілі так само — засіяними знімками й повним перезапуском."
+      en: "In the project step the same repair becomes part of `native/`: your project's corrupt snapshot goes under a backup key with a notice instead of a crash, the outdated v0 snapshot migrates, and saving waits for a successful load. You check it on your declared target the same way — with seeded snapshots and a full restart."
