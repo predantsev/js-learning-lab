@@ -1,0 +1,643 @@
+id: re-09-01-typed-ui-review
+unit: RE-09
+title:
+  uk: "Типізовані props, state, події та hooks — глибше"
+  en: "Typed props, state, events and hooks, in depth"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Типізувати props, state, обробники змін і надсилання та результат власного хука компонента форми в режимі `strict`, без `any`."
+    en: "Type a form component's props, state, change and submit events and a custom hook's return value under strict mode without `any`."
+  - uk: "Виправити компонент із неправильним необов’язковим prop і типом події, рухаючись за помилками `tsc`."
+    en: "Repair a component whose optional prop and event type are wrong, using the compiler errors as the guide."
+prerequisites: [re-02-06-controlled-inputs-typed-events, re-04-06-custom-hooks]
+subskills:
+  - { family: P-05, skill: "typed props/state/events/hooks", depth: practice }
+glossary: [generic-component]
+selfCheck: [which-lines-fail, status-select]
+
+blocks:
+  - id: four-edges
+    kind: explanation
+    title:
+      uk: "Чотири місця, де дані входять у компонент"
+      en: "Four places where data enters a component"
+    body:
+      uk: |
+        Компонент отримує дані з чотирьох місць, і кожне має свій тип:
+
+        ```tsx
+        type WishRowProps = { wish: Wish; currency?: string };    // props
+        const [query, setQuery] = useState("");                   // state: string
+        function handleQueryChange(event: ChangeEvent<HTMLInputElement>) { … }  // event
+        function useToggle(initial: boolean): [boolean, () => void] { … }       // hook result
+        ```
+
+        - **Props** — тип описує, що компонент вимагає. Необов’язкове поле (`currency?`) має тип `string | undefined`, тож до використання його звужують: `currency ?? "грн"`.
+        - **State** — тип виводиться з початкового значення. Явний `useState<Wish | null>(null)` потрібен, коли початкове значення вужче за всі можливі.
+        - **Події** — тип каже, з якого елемента і яка подія прийде. `any` тут вимикає перевірку повністю: помилка з’явиться лише під час виконання.
+        - **Результат хука** — це контракт для кожного, хто його викликає. Без анотації `[on, toggle]` стає масивом `(boolean | (() => void))[]`, і навіть правильний виклик не пройде перевірку.
+
+        Пісочниця типи лише прибирає. Перевіряє їх `tsc` — у локальному завданні цього уроку.
+      en: |
+        A component gets data from four places, and each one has its own type:
+
+        ```tsx
+        type WishRowProps = { wish: Wish; currency?: string };    // props
+        const [query, setQuery] = useState("");                   // state: string
+        function handleQueryChange(event: ChangeEvent<HTMLInputElement>) { … }  // event
+        function useToggle(initial: boolean): [boolean, () => void] { … }       // hook result
+        ```
+
+        - **Props** — the type says what the component requires. An optional field (`currency?`) has the type `string | undefined`, so it is narrowed before use: `currency ?? "UAH"`.
+        - **State** — the type is inferred from the initial value. An explicit `useState<Wish | null>(null)` is needed when the initial value is narrower than every possible one.
+        - **Events** — the type says which element sends which event. `any` here turns the check off completely: the mistake shows up only at runtime.
+        - **The hook's result** — it is a contract for everyone who calls the hook. Without an annotation `[on, toggle]` becomes the array `(boolean | (() => void))[]`, and even a correct call fails the check.
+
+        The sandbox only removes the types. `tsc` checks them — in this lesson's local task.
+
+  - id: which-lines-fail
+    kind: prediction
+    lang: tsx
+    runnable: false
+    prompt:
+      uk: "Файл перевіряють командою `tsc` із `\"strict\": true`. На яких позначених рядках (A–E) `tsc` повідомить про помилку? Обери всі."
+      en: "The file is checked with `tsc` and `\"strict\": true`. On which marked lines (A–E) does `tsc` report an error? Choose all."
+    code: |
+      type WishCardProps = { name: string; price: number | null; category?: string };
+
+      function WishCard({ name, price, category }: WishCardProps) {
+        return <li>{name} — {price} — {category.toUpperCase()}</li>; // A
+      }
+
+      function useToggle(initial: boolean): [boolean, () => void] {
+        const [on, setOn] = useState(initial);
+        return [on, () => setOn((value) => !value)];
+      }
+
+      export function Wishes() {
+        const [query, setQuery] = useState("");
+        const [toggleAcquired, acquiredOnly] = useToggle(false); // B
+        function handleSearch(event: MouseEvent<HTMLInputElement>) { // C
+          setQuery(event.currentTarget.value);
+        }
+        function handleSort(event: any) { // D
+          console.log(event.target.checked);
+        }
+        return (
+          <>
+            <input value={query} onChange={handleSearch} />
+            <select onChange={handleSort}><option>price</option></select>
+            <button onClick={toggleAcquired}>{acquiredOnly ? "all" : "acquired"}</button>
+            <WishCard price={45} /> {/* E */}
+          </>
+        );
+      }
+    answer:
+      type: multi
+      options:
+        - id: a
+          text:
+            uk: "A — `category.toUpperCase()` у `WishCard`"
+            en: "A — `category.toUpperCase()` in `WishCard`"
+        - id: b
+          text:
+            uk: "B — елементи кортежу з `useToggle` прочитано в іншому порядку"
+            en: "B — the tuple from `useToggle` is read in the other order"
+        - id: c
+          text:
+            uk: "C — `handleSearch` з типом `MouseEvent`, переданий в `onChange`"
+            en: "C — `handleSearch` typed with `MouseEvent`, passed to `onChange`"
+        - id: d
+          text:
+            uk: "D — `handleSort` з параметром `event: any`"
+            en: "D — `handleSort` with the parameter `event: any`"
+          why:
+            uk: "`any` вимикає перевірку: `tsc` дозволяє з таким значенням усе, навіть `event.target.checked` у `<select>`, де такого поля немає. Код запуститься й виведе `undefined`."
+            en: "`any` turns the check off: `tsc` allows anything with such a value, even `event.target.checked` on a `<select>`, which has no such field. The code runs and prints `undefined`."
+        - id: e
+          text:
+            uk: "E — `<WishCard price={45} />`"
+            en: "E — `<WishCard price={45} />`"
+      correct: [a, b, c, e]
+    explanation:
+      uk: |
+        Перевірено `tsc` 7.0.2 з `@types/react` 19.3.0:
+
+        - **A** — `TS18048: 'category' is possibly 'undefined'`: необов’язковий prop треба звузити.
+        - **B** — помилку видно там, де значення використовують: `onClick={toggleAcquired}` дає `TS2322: Type 'boolean' is not assignable to type 'MouseEventHandler<HTMLButtonElement>'`, а `acquiredOnly ? …` — `TS2774`, бо функція в умові завжди правдива. Так типізований результат хука ловить переплутаний порядок.
+        - **C** — `TS2322`: `onChange` поля дає `ChangeEvent`, а обробник чекає подію миші з полями `clientX`, `button` та іншими.
+        - **E** — `TS2741: Property 'name' is missing`.
+        - **D** проходить перевірку — і саме тому `any` небезпечний для подій.
+      en: |
+        Checked with `tsc` 7.0.2 and `@types/react` 19.3.0:
+
+        - **A** — `TS18048: 'category' is possibly 'undefined'`: an optional prop must be narrowed.
+        - **B** — the error shows where the values are used: `onClick={toggleAcquired}` gives `TS2322: Type 'boolean' is not assignable to type 'MouseEventHandler<HTMLButtonElement>'`, and `acquiredOnly ? …` gives `TS2774`, because a function in a condition is always truthy. That is how a typed hook result catches a swapped order.
+        - **C** — `TS2322`: a field's `onChange` gives a `ChangeEvent`, while the handler expects a mouse event with `clientX`, `button` and other fields.
+        - **E** — `TS2741: Property 'name' is missing`.
+        - **D** passes the check — and that is exactly why `any` is dangerous for events.
+
+  - id: wish-filters
+    kind: example
+    runtime: browser-react
+    dir: wish-filters
+    entry: main.tsx
+    strings:
+      heading: { uk: "Мої бажання", en: "My wishes" }
+      search: { uk: "Пошук", en: "Search" }
+      acquiredOnly: { uk: "Лише отримані", en: "Acquired only" }
+      noPrice: { uk: "без ціни", en: "no price" }
+      uah: { uk: "грн", en: "UAH" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      tech: { uk: "Техніка", en: "Tech" }
+      home: { uk: "Дім", en: "Home" }
+      books: { uk: "Книжки", en: "Books" }
+    title:
+      uk: "Фільтри бажань з усіма чотирма типами"
+      en: "Wish filters with all four kinds of types"
+    body:
+      uk: |
+        У `WishFilters.tsx` типізовано все з пояснення: props рядка (`currency?` звужено через `??`), стан пошуку, подію поля й результат хука `useToggle`. Компонент виводить у консоль, що бачить кожен рендер. Натисни **Запустити**, надрукуй у полі частину назви й натисни «Лише отримані» на вкладці **Сторінка**.
+      en: |
+        `WishFilters.tsx` types everything from the explanation: the row's props (`currency?` narrowed with `??`), the search state, the field's event and the result of the `useToggle` hook. The component prints what every render sees to the console. Press **Run**, type part of a name into the field and press “Acquired only” on the **Page** tab.
+    tryIt:
+      uk: |
+        1. Заміни в `handleQueryChange` тип `ChangeEvent<HTMLInputElement>` на `any` і запусти: усе працює як раніше. Пісочниця типів не перевіряє, тож різниці не видно — її покаже лише `tsc`. Поверни тип.
+        2. Зміни хук так, щоб він повертав об’єкт: рядок коду `return [on, toggle];` заміни на `return { on, toggle };` і запусти. Сторінка зникає, а картка помилки каже `TypeError: useToggle is not a function or its return value is not iterable`: компонент і далі розбирає результат як масив. `tsc` знайшов би це місце ще до запуску — ти перевіриш це в локальному завданні. Поверни `return [on, toggle];`.
+      en: |
+        1. In `handleQueryChange` replace the type `ChangeEvent<HTMLInputElement>` with `any` and run: everything works as before. The sandbox does not check types, so you see no difference — only `tsc` shows it. Put the type back.
+        2. Change the hook so that it returns an object: replace the line of code `return [on, toggle];` with `return { on, toggle };` and run. The page disappears, and the error card says `TypeError: useToggle is not a function or its return value is not iterable`: the component still unpacks the result as an array. `tsc` would find this place before running — you check that in the local task. Put `return [on, toggle];` back.
+
+  - id: strict-check
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Хай tsc веде виправлення"
+      en: "Let tsc guide the repair"
+    intro:
+      uk: |
+        Ти працюєш у лабораторії `~/js-course/ts-lab` з розділу про TypeScript. Команди перевірено в macOS із Node.js v25.2.1, npm 11.6.2, TypeScript 7.0.2, React 19.3.0 і `@types/react` 19.3.0; у Linux і Windows їх не запускали.
+
+        **Якщо теки `ts-lab` немає** або в ній ще немає React (ти не проходив розділ про TypeScript чи урок RE-01 про типізовані props на цьому комп’ютері), створи її так. Перший рядок потрібен, лише якщо немає й самої теки `~/js-course`; якщо вона є, `mkdir` скаже, що тека існує, — це не завадить. Якщо `ts-lab` уже є, виконай у ній лише дві останні команди.
+
+        ```sh
+        mkdir ~/js-course
+        mkdir ~/js-course/ts-lab
+        cd ~/js-course/ts-lab
+        npm init -y
+        npm pkg set type=module
+        npm install --save-dev typescript @types/react @types/react-dom
+        npm install react react-dom
+        ```
+
+        **`tsconfig.json`** — такий вміст має бути в лабораторії; якщо файлу немає або в ньому бракує рядка `"jsx": "react-jsx",`, створи чи доповни його:
+
+        ```json
+        {
+          "compilerOptions": {
+            "strict": true,
+            "jsx": "react-jsx",
+            "target": "es2023",
+            "lib": ["es2023", "dom"],
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "moduleDetection": "force",
+            "verbatimModuleSyntax": true,
+            "rewriteRelativeImportExtensions": true,
+            "rootDir": "src",
+            "outDir": "out",
+            "types": []
+          },
+          "include": ["src"]
+        }
+        ```
+
+        **Файл `src/re09/WishFilters.tsx` для кроку 2** — у ньому навмисно неправильний тип події:
+
+        ```tsx
+        import { useState } from "react";
+        import type { ChangeEvent, MouseEvent } from "react";
+
+        type Wish = { id: string; name: string; acquired: boolean };
+
+        const WISHES: Wish[] = [
+          { id: "w-01", name: "Навушники", acquired: false },
+          { id: "w-04", name: "Книжка про JavaScript", acquired: true },
+        ];
+
+        function useToggle(initial: boolean): [boolean, () => void] {
+          const [on, setOn] = useState(initial);
+          const toggle = () => setOn((value) => !value);
+          return [on, toggle];
+        }
+
+        export function WishFilters() {
+          const [query, setQuery] = useState("");
+          const [acquiredOnly, toggleAcquiredOnly] = useToggle(false);
+          const [compact, toggleCompact] = useToggle(true);
+
+          function handleQueryChange(event: MouseEvent<HTMLInputElement>) {
+            setQuery(event.currentTarget.value);
+          }
+
+          const visible = WISHES.filter((wish) => (!acquiredOnly || wish.acquired) && wish.name.includes(query));
+          return (
+            <section>
+              <input value={query} onChange={handleQueryChange} />
+              <button aria-pressed={acquiredOnly} onClick={toggleAcquiredOnly}>Лише отримані</button>
+              <button aria-pressed={compact} onClick={toggleCompact}>Компактно</button>
+              <ul>
+                {visible.map((wish) => (
+                  <li key={wish.id}>{compact ? wish.name : `${wish.name} (${wish.id})`}</li>
+                ))}
+              </ul>
+            </section>
+          );
+        }
+        ```
+
+        **Що показує `tsc` на кроці 2:**
+
+        ```text
+        src/re09/WishFilters.tsx(29,28): error TS2322: Type '(event: MouseEvent<HTMLInputElement, MouseEvent>) => void' is not assignable to type 'ChangeEventHandler<HTMLInputElement, HTMLInputElement>'.
+          Types of parameters 'event' and 'event' are incompatible.
+            Type 'ChangeEvent<HTMLInputElement, HTMLInputElement>' is missing the following properties from type 'MouseEvent<HTMLInputElement, MouseEvent>': altKey, button, buttons, clientX, and 14 more.
+        ```
+
+        **Що показує `tsc` на кроці 5:**
+
+        ```text
+        src/re09/WishFilters.tsx(19,9): error TS2488: Type '{ on: boolean; toggle: () => void; }' must have a '[Symbol.iterator]()' method that returns an iterator.
+        src/re09/WishFilters.tsx(20,9): error TS2488: Type '{ on: boolean; toggle: () => void; }' must have a '[Symbol.iterator]()' method that returns an iterator.
+        ```
+
+        **Два рядки коду для кроку 6** — новий розбір результату хука:
+
+        ```tsx
+        const { on: acquiredOnly, toggle: toggleAcquiredOnly } = useToggle(false);
+        const { on: compact, toggle: toggleCompact } = useToggle(true);
+        ```
+      en: |
+        You work in the lab `~/js-course/ts-lab` from the TypeScript unit. The commands were checked on macOS with Node.js v25.2.1, npm 11.6.2, TypeScript 7.0.2, React 19.3.0 and `@types/react` 19.3.0; they were not run on Linux or Windows.
+
+        **If there is no `ts-lab` folder**, or it has no React yet (you did not do the TypeScript unit or the RE-01 lesson on typed props on this computer), create it like this. The first line is needed only when there is no `~/js-course` folder either; if it exists, `mkdir` says the folder exists — that does no harm. If `ts-lab` already exists, run only the last two commands in it.
+
+        ```sh
+        mkdir ~/js-course
+        mkdir ~/js-course/ts-lab
+        cd ~/js-course/ts-lab
+        npm init -y
+        npm pkg set type=module
+        npm install --save-dev typescript @types/react @types/react-dom
+        npm install react react-dom
+        ```
+
+        **`tsconfig.json`** — the lab should have these contents; if the file is missing or lacks the line `"jsx": "react-jsx",`, create or complete it:
+
+        ```json
+        {
+          "compilerOptions": {
+            "strict": true,
+            "jsx": "react-jsx",
+            "target": "es2023",
+            "lib": ["es2023", "dom"],
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "moduleDetection": "force",
+            "verbatimModuleSyntax": true,
+            "rewriteRelativeImportExtensions": true,
+            "rootDir": "src",
+            "outDir": "out",
+            "types": []
+          },
+          "include": ["src"]
+        }
+        ```
+
+        **The file `src/re09/WishFilters.tsx` for step 2** — its event type is wrong on purpose:
+
+        ```tsx
+        import { useState } from "react";
+        import type { ChangeEvent, MouseEvent } from "react";
+
+        type Wish = { id: string; name: string; acquired: boolean };
+
+        const WISHES: Wish[] = [
+          { id: "w-01", name: "Headphones", acquired: false },
+          { id: "w-04", name: "A book about JavaScript", acquired: true },
+        ];
+
+        function useToggle(initial: boolean): [boolean, () => void] {
+          const [on, setOn] = useState(initial);
+          const toggle = () => setOn((value) => !value);
+          return [on, toggle];
+        }
+
+        export function WishFilters() {
+          const [query, setQuery] = useState("");
+          const [acquiredOnly, toggleAcquiredOnly] = useToggle(false);
+          const [compact, toggleCompact] = useToggle(true);
+
+          function handleQueryChange(event: MouseEvent<HTMLInputElement>) {
+            setQuery(event.currentTarget.value);
+          }
+
+          const visible = WISHES.filter((wish) => (!acquiredOnly || wish.acquired) && wish.name.includes(query));
+          return (
+            <section>
+              <input value={query} onChange={handleQueryChange} />
+              <button aria-pressed={acquiredOnly} onClick={toggleAcquiredOnly}>Acquired only</button>
+              <button aria-pressed={compact} onClick={toggleCompact}>Compact</button>
+              <ul>
+                {visible.map((wish) => (
+                  <li key={wish.id}>{compact ? wish.name : `${wish.name} (${wish.id})`}</li>
+                ))}
+              </ul>
+            </section>
+          );
+        }
+        ```
+
+        **What `tsc` shows in step 2:**
+
+        ```text
+        src/re09/WishFilters.tsx(29,28): error TS2322: Type '(event: MouseEvent<HTMLInputElement, MouseEvent>) => void' is not assignable to type 'ChangeEventHandler<HTMLInputElement, HTMLInputElement>'.
+          Types of parameters 'event' and 'event' are incompatible.
+            Type 'ChangeEvent<HTMLInputElement, HTMLInputElement>' is missing the following properties from type 'MouseEvent<HTMLInputElement, MouseEvent>': altKey, button, buttons, clientX, and 14 more.
+        ```
+
+        **What `tsc` shows in step 5:**
+
+        ```text
+        src/re09/WishFilters.tsx(19,9): error TS2488: Type '{ on: boolean; toggle: () => void; }' must have a '[Symbol.iterator]()' method that returns an iterator.
+        src/re09/WishFilters.tsx(20,9): error TS2488: Type '{ on: boolean; toggle: () => void; }' must have a '[Symbol.iterator]()' method that returns an iterator.
+        ```
+
+        **Two lines of code for step 6** — the new way to unpack the hook's result:
+
+        ```tsx
+        const { on: acquiredOnly, toggle: toggleAcquiredOnly } = useToggle(false);
+        const { on: compact, toggle: toggleCompact } = useToggle(true);
+        ```
+    tools:
+      - { name: "Node.js", version: "22 or newer", note: { uk: "перевірено з v25.2.1", en: "checked with v25.2.1" } }
+      - { name: "TypeScript", version: "7.x", note: { uk: "у теці `ts-lab`; дає команду `tsc`", en: "in the `ts-lab` folder; provides the `tsc` command" } }
+      - { name: "@types/react", version: "19.3+", note: { uk: "типи React для `tsc`", en: "React's types for `tsc`" } }
+    steps:
+      - text:
+          uk: "Перейди в лабораторію. Якщо термінал каже, що такої теки немає, спершу створи її командами з початку завдання."
+          en: "Go to the lab. If the terminal says there is no such folder, create it first with the commands at the start of the task."
+        command: "cd ~/js-course/ts-lab"
+      - text:
+          uk: "Створи теку `src/re09`, а в ній файл `WishFilters.tsx` із вмістом для кроку 2. Запусти перевірку."
+          en: "Create the folder `src/re09` and in it the file `WishFilters.tsx` with the contents for step 2. Run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Одна помилка `TS2322` на рядку 29 — там, де обробник передають в `onChange`, а не там, де його оголошено. Якщо в лабораторії є файли з інших уроків з помилками, вони теж будуть у списку."
+          en: "One error, `TS2322`, on line 29 — where the handler is passed to `onChange`, not where it is declared. If the lab has files from other lessons with errors, they appear in the list too."
+      - text:
+          uk: "Виправ тип параметра: у рядку коду з `function handleQueryChange` заміни `MouseEvent<HTMLInputElement>` на `ChangeEvent<HTMLInputElement>`. Збережи й запусти перевірку."
+          en: "Fix the parameter's type: in the line of code with `function handleQueryChange` replace `MouseEvent<HTMLInputElement>` with `ChangeEvent<HTMLInputElement>`. Save and run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Нічого: помилок немає. Невикористаний тепер імпорт `MouseEvent` не є помилкою — його можна прибрати."
+          en: "Nothing: there are no errors. The now unused import `MouseEvent` is not an error — you can remove it."
+      - text:
+          uk: "Перероби результат хука на об’єкт з назвами: у рядку коду `function useToggle(...)` заміни тип результату `[boolean, () => void]` на `{ on: boolean; toggle: () => void }`, а `return [on, toggle];` — на `return { on, toggle };`. Виклики поки не чіпай."
+          en: "Turn the hook's result into an object with names: in the line of code `function useToggle(...)` replace the result type `[boolean, () => void]` with `{ on: boolean; toggle: () => void }`, and `return [on, toggle];` with `return { on, toggle };`. Leave the calls alone for now."
+      - text:
+          uk: "Запусти перевірку."
+          en: "Run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Дві помилки `TS2488` на рядках 19 і 20 — це обидва місця, що розбирають результат як масив. `tsc` сам знайшов кожен виклик, який треба змінити."
+          en: "Two `TS2488` errors on lines 19 and 20 — the two places that unpack the result as an array. `tsc` found every call that has to change by itself."
+      - text:
+          uk: "Заміни рядки 19 і 20 двома рядками коду для кроку 6 і запусти перевірку."
+          en: "Replace lines 19 and 20 with the two lines of code for step 6 and run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Нічого: помилок немає. Тепер переплутати порядок неможливо: значення беруть за назвою. Одруківка в назві теж не пройде — `toggel` замість `toggle` дає `TS2339: Property 'toggel' does not exist`."
+          en: "Nothing: there are no errors. Now the order cannot be swapped: values are taken by name. A typo in a name does not pass either — `toggel` instead of `toggle` gives `TS2339: Property 'toggel' does not exist`."
+    verify:
+      - id: saw-event-error
+        text:
+          uk: "Я побачив `TS2322` про `MouseEvent` і виправив тип події, після чого перевірка стала чистою."
+          en: "I saw `TS2322` about `MouseEvent` and fixed the event type, after which the check was clean."
+      - id: followed-call-sites
+        text:
+          uk: "Після зміни результату хука `tsc` показав `TS2488` на обох викликах, і я виправив їх до чистої перевірки."
+          en: "After changing the hook's result `tsc` showed `TS2488` on both calls, and I fixed them until the check was clean."
+    troubleshooting:
+      - problem:
+          uk: "`npx tsc` пропонує встановити пакет `tsc` (`Need to install the following packages`)."
+          en: "`npx tsc` offers to install a package `tsc` (`Need to install the following packages`)."
+        fix:
+          uk: "Ти не в теці `ts-lab` або в ній ще немає TypeScript. Відмов (`n`), перейди в `~/js-course/ts-lab` і, якщо треба, виконай `npm install --save-dev typescript`."
+          en: "You are not in the `ts-lab` folder, or it has no TypeScript yet. Decline (`n`), go to `~/js-course/ts-lab` and, if needed, run `npm install --save-dev typescript`."
+      - problem:
+          uk: "Кожен тег дає `error TS17004: Cannot use JSX unless the '--jsx' flag is provided.`"
+          en: "Every tag gives `error TS17004: Cannot use JSX unless the '--jsx' flag is provided.`"
+        fix:
+          uk: "У `tsconfig.json` бракує рядка `\"jsx\": \"react-jsx\",`. Додай його після `\"strict\": true,`, збережи файл і запусти перевірку знову."
+          en: "`tsconfig.json` lacks the line `\"jsx\": \"react-jsx\",`. Add it after `\"strict\": true,`, save the file and run the check again."
+      - problem:
+          uk: "`error TS2307: Cannot find module 'react' or its corresponding type declarations.`"
+          en: "`error TS2307: Cannot find module 'react' or its corresponding type declarations.`"
+        fix:
+          uk: "У лабораторії ще немає React або його типів. Виконай у ній дві останні команди з початку завдання."
+          en: "The lab has no React or no React types yet. Run the last two commands from the start of the task in it."
+      - problem:
+          uk: "Номери рядків у помилках інші, ніж у завданні."
+          en: "The line numbers in the errors differ from the task."
+        fix:
+          uk: "У файлі більше чи менше рядків, ніж у вмісті для кроку 2 (наприклад, зайвий порожній рядок). Важливі коди помилок і їхній текст."
+          en: "The file has more or fewer lines than the contents for step 2 (for example, an extra empty line). What matters is the error codes and their text."
+    recovery:
+      uk: "Усе це живе лише в `~/js-course/ts-lab/src/re09`. Якщо файл заплутався, видали його й створи знову з вмісту для кроку 2."
+      en: "All of this lives only in `~/js-course/ts-lab/src/re09`. If the file gets tangled, delete it and create it again from the contents for step 2."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: типізовані події форми"
+      en: "Recall: typed form events"
+    items:
+      - id: submit-handler
+        from: re-02-06-controlled-inputs-typed-events
+        prompt:
+          uk: "Форма витрати надсилається через `<form onSubmit={handleSubmit}>`. Який заголовок обробника правильний для `tsc` і що має статися в його першому рядку коду, щоб сторінка не перезавантажилась?"
+          en: "An expense form is submitted through `<form onSubmit={handleSubmit}>`. Which handler signature is correct for `tsc`, and what must happen in its first line of code so that the page does not reload?"
+        answer:
+          type: choice
+          options:
+            - id: submit-prevent
+              code: "function handleSubmit(event: SubmitEvent<HTMLFormElement>) { event.preventDefault(); … }"
+            - id: change-prevent
+              code: "function handleSubmit(event: ChangeEvent<HTMLFormElement>) { event.preventDefault(); … }"
+              why:
+                uk: "`ChangeEvent` — подія зміни поля, а `onSubmit` дає подію надсилання. `tsc` відхилить такий обробник з `TS2322`."
+                en: "`ChangeEvent` is a field change event, while `onSubmit` gives a submit event. `tsc` rejects such a handler with `TS2322`."
+            - id: submit-no-prevent
+              code: "function handleSubmit(event: SubmitEvent<HTMLFormElement>) { … }"
+              why:
+                uk: "Тип правильний, але React сам типового надсилання не скасовує: без `event.preventDefault()` браузер надішле форму й перезавантажить сторінку."
+                en: "The type is right, but React does not cancel the default submission by itself: without `event.preventDefault()` the browser submits the form and reloads the page."
+          correct: [submit-prevent]
+        explanation:
+          uk: "`SubmitEvent<HTMLFormElement>` — подія надсилання форми (старіший код пише `FormEvent`, у `@types/react` 19.3 його позначено застарілим). `event.preventDefault()` скасовує типову дію браузера, як і зі слухачем `submit` у звичайному JavaScript."
+          en: "`SubmitEvent<HTMLFormElement>` is a form submit event (older code writes `FormEvent`, which `@types/react` 19.3 marks deprecated). `event.preventDefault()` cancels the browser's default action, just as with a `submit` listener in plain JavaScript."
+
+  - id: generic-components
+    kind: explanation
+    title:
+      uk: "Один компонент для будь-яких елементів"
+      en: "One component for any kind of item"
+    body:
+      uk: |
+        Перемикач статусу, список категорій, вибір частоти звички — та сама розмітка для різних даних. [[generic-component|Узагальнений компонент]] отримує тип елементів як параметр, як узагальнені функції з розділу про TypeScript:
+
+        ```tsx
+        type CountBadgeProps<T> = {
+          items: readonly T[];
+          isMatch: (item: T) => boolean;
+          label: string;
+        };
+
+        function CountBadge<T>({ items, isMatch, label }: CountBadgeProps<T>) {
+          return <span>{label}: {items.filter(isMatch).length}</span>;
+        }
+
+        <CountBadge items={habits} isMatch={(habit) => habit.active} label="Активні" />
+        ```
+
+        `T` виводиться з `items`: тут це `Habit`, тож `habit` у `isMatch` має тип `Habit` без жодної анотації. Компонент не знає, що таке звичка, — він лише передає елементи функціям, які дав виклик. Так одна реалізація служить і звичкам, і рядкам, а `tsc` перевіряє кожен виклик окремо.
+      en: |
+        A status switch, a category list, a habit frequency picker — the same markup for different data. A [[generic-component]] gets the item type as a parameter, like the generic functions from the TypeScript unit:
+
+        ```tsx
+        type CountBadgeProps<T> = {
+          items: readonly T[];
+          isMatch: (item: T) => boolean;
+          label: string;
+        };
+
+        function CountBadge<T>({ items, isMatch, label }: CountBadgeProps<T>) {
+          return <span>{label}: {items.filter(isMatch).length}</span>;
+        }
+
+        <CountBadge items={habits} isMatch={(habit) => habit.active} label="Active" />
+        ```
+
+        `T` is inferred from `items`: here it is `Habit`, so `habit` in `isMatch` has the type `Habit` without any annotation. The component does not know what a habit is — it only hands the items to the functions the call gave it. That way one implementation serves habits and strings alike, and `tsc` checks every call separately.
+
+  - id: status-select
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: status-select
+    entry: main.tsx
+    editable: [SelectList.tsx, App.tsx]
+    strings:
+      heading: { uk: "Справи", en: "Tasks" }
+      statusLabel: { uk: "Статус", en: "Status" }
+      all: { uk: "Усі", en: "All" }
+      pending: { uk: "Не виконані", en: "Pending" }
+      done: { uk: "Виконані", en: "Done" }
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+      fruitLabel: { uk: "Фрукт", en: "Fruit" }
+      sizeLabel: { uk: "Розмір", en: "Size" }
+      apple: { uk: "Яблуко", en: "Apple" }
+      pear: { uk: "Груша", en: "Pear" }
+      plum: { uk: "Слива", en: "Plum" }
+    title:
+      uk: "Узагальнений SelectList<T>"
+      en: "A generic SelectList<T>"
+    instructions:
+      uk: |
+        1. У `SelectList.tsx` опиши узагальнений тип props і напиши компонент `SelectList<T>`. Props:
+           - `label` — текст, назва групи;
+           - `items` — елементи типу `T`;
+           - `selected` — вибраний елемент типу `T`;
+           - `getKey(item)` — повертає незмінний ключ елемента (текст);
+           - `getLabel(item)` — повертає текст кнопки;
+           - `onSelect(item)` — його викликають із **самим елементом**, на який натиснули.
+        2. Компонент малює групу з назвою `label` (`<div role="group" aria-label={…}>` або `<fieldset>` з `<legend>`) і в ній по кнопці на кожен елемент. Вибрана кнопка має `aria-pressed="true"`, решта — `"false"`. Вибраний елемент шукай **за ключем**: `selected` може бути іншим об’єктом з тим самим ключем.
+        3. В `App.tsx` постав `SelectList` зі `STATUS_OPTIONS` і назвою «Статус» замість коментаря `TODO`, щоб вибір змінював `status`.
+
+        Перевірки малюють `SelectList` з фруктами й з простими рядками, клацають кнопки й дивляться на сторінку. Типи вони не бачать — їх перевіряє `tsc` у лабораторії `~/js-course/ts-lab`.
+      en: |
+        1. In `SelectList.tsx` describe a generic props type and write the component `SelectList<T>`. Props:
+           - `label` — text, the group's name;
+           - `items` — items of type `T`;
+           - `selected` — the selected item of type `T`;
+           - `getKey(item)` — returns the item's stable key (text);
+           - `getLabel(item)` — returns the button's text;
+           - `onSelect(item)` — is called with **the item itself** that was pressed.
+        2. The component draws a group named `label` (`<div role="group" aria-label={…}>` or a `<fieldset>` with a `<legend>`) with one button per item. The selected button has `aria-pressed="true"`, the rest `"false"`. Find the selected item **by key**: `selected` may be a different object with the same key.
+        3. In `App.tsx` put a `SelectList` of `STATUS_OPTIONS` named “Status” in place of the `TODO` comment, so that choosing changes `status`.
+
+        The checks draw `SelectList` with fruits and with plain strings, click buttons and look at the page. They cannot see the types — `tsc` checks those in the `~/js-course/ts-lab` lab.
+    testTitles:
+      "shows a group named by label with one button per item":
+        uk: "Група з назвою з `label` і по кнопці з `getLabel(item)` на кожен елемент"
+        en: "A group named by `label` with one button per item, showing `getLabel(item)`"
+      "marks the selected item with aria-pressed, matched by its key":
+        uk: "`aria-pressed=\"true\"` має лише кнопка, чий ключ збігається з ключем `selected`"
+        en: "Only the button whose key equals the key of `selected` has `aria-pressed=\"true\"`"
+      "a click calls onSelect with the item itself":
+        uk: "Клік викликає `onSelect` один раз із самим елементом"
+        en: "A click calls `onSelect` once with the item itself"
+      "works with plain strings as items":
+        uk: "Працює й з простими рядками як елементами"
+        en: "Works with plain strings as items"
+      "the page filters the tasks with the status SelectList":
+        uk: "Сторінка має групу «Статус», і кнопка «Виконані» показує лише виконані справи"
+        en: "The page has a “Status” group, and the “Done” button shows only done tasks"
+    hints:
+      nudge:
+        uk: "Почни з типу props: кожне поле, що стосується елемента, використовує той самий параметр `T`. Потім подумай, з чим порівнювати кожну кнопку, щоб знайти вибрану."
+        en: "Start with the props type: every field that concerns an item uses the same parameter `T`. Then think about what to compare each button with to find the selected one."
+      explanation:
+        uk: "`CountBadge<T>` з пояснення — той самий прийом: `T` у назві функції й у типі props. Ключ вибраного обчислюють один раз через `getKey(selected)` і порівнюють із ключем кожного елемента; два різні об’єкти з однаковими полями через `===` не рівні. В обробнику кліку стрілкова функція замикає свій `item` і передає його далі без змін."
+        en: "`CountBadge<T>` from the explanation is the same technique: `T` in the function's name and in the props type. The selected key is computed once with `getKey(selected)` and compared with the key of each item; two different objects with equal fields are not equal under `===`. In the click handler an arrow function closes over its `item` and passes it on unchanged."
+    solutionNote:
+      uk: "`SelectList` не знає, що таке статус: усе про елемент він дізнається через `getKey` і `getLabel`, а назад віддає сам елемент. Тому `onSelect={setStatus}` в `App.tsx` типізовано: `tsc` виводить `T = StatusOption` з `items`. Порівняння за ключем робить вибір незалежним від того, чи той самий це об’єкт."
+      en: "`SelectList` does not know what a status is: it learns everything about an item through `getKey` and `getLabel`, and hands back the item itself. That is why `onSelect={setStatus}` in `App.tsx` is typed: `tsc` infers `T = StatusOption` from `items`. Comparing by key makes the choice independent of whether it is the same object."
+    feedback:
+      - when: { test: "shows a group named by label with one button per item" }
+        message:
+          uk: "Ця перевірка чекає елемент з `role=\"group\"` і `aria-label`, рівним `label` (або `<fieldset>` з `<legend>`), а в ньому — кнопки з текстами `getLabel(item)` у порядку `items`. Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі."
+          en: "This check expects an element with `role=\"group\"` and an `aria-label` equal to `label` (or a `<fieldset>` with a `<legend>`), holding buttons with the texts `getLabel(item)` in the order of `items`. If every check fails at once, fix the first console error first."
+      - when: { test: "marks the selected item with aria-pressed, matched by its key" }
+        message:
+          uk: "Перевірка передає в `selected` копію елемента — інший об’єкт із тим самим ключем — і чекає `aria-pressed` `false`, `true`, `false`. Порівнюй `getKey(item)` з `getKey(selected)`, а не самі об’єкти."
+          en: "The check passes a copy of the item as `selected` — a different object with the same key — and expects `aria-pressed` to be `false`, `true`, `false`. Compare `getKey(item)` with `getKey(selected)`, not the objects themselves."
+      - when: { test: "a click calls onSelect with the item itself" }
+        message:
+          uk: "Після кліку на третю кнопку `onSelect` має отримати сам третій елемент — не його ключ і не текст."
+          en: "After a click on the third button `onSelect` must receive the third item itself — not its key and not its text."
+      - when: { test: "the page filters the tasks with the status SelectList" }
+        message:
+          uk: "Ця перевірка шукає на сторінці групу з назвою «Статус», натискає в ній «Виконані» й чекає лише виконані справи. Перевір, що `App.tsx` імпортує `SelectList`, передає `items={STATUS_OPTIONS}`, `selected={status}` і що `onSelect` змінює `status`."
+          en: "This check looks for a group named “Status” on the page, presses “Done” in it and expects only done tasks. Check that `App.tsx` imports `SelectList`, passes `items={STATUS_OPTIONS}` and `selected={status}`, and that `onSelect` changes `status`."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` часто означає виклик того, чого немає: наприклад, `getKey` чи `onSelect` не дійшли до компонента через одруківку в назві prop. Звір назви props у типі, у деструктуруванні й у виклику."
+          en: "A `TypeError` often means calling something that is not there: for example, `getKey` or `onSelect` did not reach the component because of a typo in a prop name. Compare the prop names in the type, in the destructuring and in the call."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-09
+    body:
+      uk: "У кроці проєкту цього розділу ти пройдеш тим самим шляхом по своєму застосунку: типи props, стану, подій і результатів хуків у строгому режимі, а `tsc` покаже кожне місце, яке треба виправити."
+      en: "In this unit's project step you go the same way through your own app: types for props, state, events and hook results in strict mode, with `tsc` showing every place that needs a fix."

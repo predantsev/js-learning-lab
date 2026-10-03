@@ -1,0 +1,336 @@
+id: re-09-05-accessible-error-models
+unit: RE-09
+title:
+  uk: "Доступні моделі помилок"
+  en: "Accessible error models"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Спроєктувати одну типізовану модель помилок (помилки полів, помилка всієї форми, невдалий запит, збій рендеру) і для кожного виду визначити, де її показати й як оголосити."
+    en: "Design one typed error model (field errors, form-level error, request failure, render crash) and map each kind to where it is shown and how it is announced."
+  - uk: "Вибрати між error boundary і обробленим станом помилки для конкретного збою й пояснити, чому boundary не бачить помилок обробників подій і асинхронного коду."
+    en: "Choose between an error boundary and handled error state for a given failure, and explain why boundaries miss event-handler and async errors."
+prerequisites: [re-09-04-reuse-boundaries, re-05-04-validation-accessible-errors, re-05-07-error-boundaries-limits]
+subskills:
+  - { family: P-05, skill: "accessible error models", depth: intro }
+  - { family: R-05, skill: "validation/errors", depth: practice }
+  - { family: R-05, skill: "error boundaries and their limits", depth: practice }
+glossary: [error-model]
+selfCheck: [predict-what-the-boundary-catches, wish-errors]
+
+blocks:
+  - id: four-kinds
+    kind: explanation
+    title:
+      uk: "Чотири види збоїв — чотири місця"
+      en: "Four kinds of failure — four places"
+    body:
+      uk: |
+        На одному екрані трапляються різні збої, і кожен потребує свого місця. Якщо всі вони — червоний текст під кнопкою, людина з програмою читання з екрана не почує жодного, а зряча не зрозуміє, що до чого. [[error-model|Модель помилок]] — один типізований union, де вид помилки визначає її місце:
+
+        ```ts
+        type AppError =
+          | { kind: "field"; field: "name" | "price"; message: string }
+          | { kind: "form"; message: string }
+          | { kind: "request"; message: string }
+          | { kind: "render"; message: string };
+        ```
+
+        | Вид | Де показати | Як людина дізнається |
+        |---|---|---|
+        | `field` | біля поля | `aria-invalid` і `aria-describedby` на полі; фокус — на зведення |
+        | `form` | у [[error-summary\|зведенні]] над формою | фокус переходить на зведення |
+        | `request` | біля кнопки, чернетка лишається | `role="alert"` оголошує одразу, фокус не рухається |
+        | `render` | запасний інтерфейс [[error-boundary\|boundary]] | `role="alert"` у запасному інтерфейсі |
+
+        Колір лишається підказкою для очей. Зв’язок між помилкою й полем дають атрибути, а не те, що текст червоний і стоїть поруч.
+      en: |
+        One screen meets different failures, and each needs its own place. If they are all red text under the button, a person with a screen reader hears none of them, and a sighted one cannot tell what belongs where. An [[error-model]] is one typed union in which the kind of an error decides its place:
+
+        ```ts
+        type AppError =
+          | { kind: "field"; field: "name" | "price"; message: string }
+          | { kind: "form"; message: string }
+          | { kind: "request"; message: string }
+          | { kind: "render"; message: string };
+        ```
+
+        | Kind | Where it is shown | How the person learns of it |
+        |---|---|---|
+        | `field` | next to the field | `aria-invalid` and `aria-describedby` on the field; focus goes to the summary |
+        | `form` | in the [[error-summary\|summary]] above the form | focus moves to the summary |
+        | `request` | next to the button, the draft stays | `role="alert"` announces it at once, focus does not move |
+        | `render` | the [[error-boundary\|boundary]]'s fallback | `role="alert"` in the fallback |
+
+        Color stays a hint for the eyes. The link between an error and a field comes from attributes, not from the text being red and close by.
+
+  - id: predict-what-the-boundary-catches
+    kind: prediction
+    lang: tsx
+    runnable: false
+    prompt:
+      uk: "Форма звички стоїть у error boundary маршруту. У неї можна підкинути чотири збої A–D. Після яких boundary покаже свій запасний інтерфейс? Обери всі."
+      en: "The habit form sits inside the route's error boundary. Four failures A–D can be injected into it. After which of them does the boundary show its fallback? Choose all."
+    code: |
+      <HabitBoundary>   {/* the route's boundary */}
+        <HabitForm />
+      </HabitBoundary>
+
+      async function handleSubmit(event: SubmitEvent<HTMLFormElement>) {
+        event.preventDefault();
+        if (name.trim() === "") {                                   // A: an empty name
+          setErrors([{ kind: "field", field: "name", message: "…" }]);
+          return;
+        }
+        const answer = await saveHabit(name);                        // B: the server rejects
+        const parsed = parseHabit(answer);                           // C: the answer is damaged
+        if (!parsed.ok) setErrors([{ kind: "request", message: "…" }]);
+      }
+
+      function HabitPreview({ broken }: { broken: boolean }) {
+        if (broken) throw new Error("damaged record");               // D: a throw during render
+        return <p>…</p>;
+      }
+    answer:
+      type: multi
+      options:
+        - id: a
+          text:
+            uk: "A — порожня назва"
+            en: "A — an empty name"
+          why:
+            uk: "Тут нічого не кидають: код сам кладе помилку поля в стан, і форма показує її біля поля."
+            en: "Nothing is thrown here: the code itself puts a field error into state, and the form shows it next to the field."
+        - id: b
+          text:
+            uk: "B — сервер відхилив збереження"
+            en: "B — the server rejected the save"
+          why:
+            uk: "`await` у обробнику надсилання виконується поза рендером. Відхилений проміс без `try`/`catch` стає необробленим відхиленням: пісочниця покаже картку помилки, а boundary нічого не побачить, і форма лишиться як була."
+            en: "The `await` in a submit handler runs outside render. A rejected promise without `try`/`catch` becomes an unhandled rejection: the sandbox shows an error card, the boundary sees nothing, and the form stays as it was."
+        - id: c
+          text:
+            uk: "C — зіпсована відповідь"
+            en: "C — a damaged answer"
+          why:
+            uk: "Схема повернула `ok: false`, і код поклав помилку в стан. Нічого не кинуто — boundary немає що ловити."
+            en: "The schema returned `ok: false`, and the code put an error into state. Nothing was thrown — there is nothing for the boundary to catch."
+        - id: d
+          text:
+            uk: "D — помилка під час рендеру"
+            en: "D — a throw during render"
+      correct: [d]
+    explanation:
+      uk: "Перевірено в пісочниці на прикладі цього уроку. Boundary ловить лише те, що кинуто, поки React рендерить його дітей (і в їхніх ефектах). A і C — оброблені стани: їх показує сама форма. B — асинхронна помилка в обробнику: її треба зловити `try`/`catch` і перетворити на `request` в моделі, інакше її не побачить ніхто, крім консолі."
+      en: "Checked in the sandbox with this lesson's example. A boundary catches only what is thrown while React renders its children (and in their effects). A and C are handled states: the form itself shows them. B is an async error in a handler: it must be caught with `try`/`catch` and turned into a `request` in the model, otherwise nobody but the console sees it."
+
+  - id: habit-failures
+    kind: example
+    runtime: browser-react
+    dir: habit-failures
+    entry: main.tsx
+    strings:
+      heading: { uk: "Нова звичка", en: "A new habit" }
+      nameLabel: { uk: "Назва", en: "Name" }
+      save: { uk: "Зберегти", en: "Save" }
+      preview: { uk: "Попередній перегляд:", en: "Preview:" }
+      saved: { uk: "Збережено:", en: "Saved:" }
+      nameRequired: { uk: "Введи назву звички.", en: "Enter the habit's name." }
+      saveFailed: { uk: "Не вдалося зберегти. Спробуй ще раз.", en: "Could not save. Try again." }
+      badAnswer: { uk: "Сервер надіслав зіпсовану відповідь. Звичку не збережено.", en: "The server sent a damaged answer. The habit was not saved." }
+      damaged: { uk: "пошкоджений запис", en: "damaged record" }
+      crashed: { uk: "Цей екран не вдалося показати.", en: "This screen could not be shown." }
+      injectReject: { uk: "Сервер відхилить", en: "Server will reject" }
+      injectMalformed: { uk: "Сервер зіпсує відповідь", en: "Server will damage the answer" }
+      injectRender: { uk: "Зламати рендер", en: "Break the render" }
+      report: { uk: "Що почує програма читання з екрана", en: "What a screen reader hears" }
+      field: { uk: "Поле", en: "Field" }
+      invalidState: { uk: "недійсне значення", en: "invalid entry" }
+      announced: { uk: "Оголошено", en: "Announced" }
+    title:
+      uk: "Чотири збої на одній формі"
+      en: "Four failures on one form"
+    body:
+      uk: |
+        Форма звички має модель `AppError` з чотирма видами, але показує помилки лише червоним текстом. Три кнопки підкидають збої: сервер відхилить наступне збереження, сервер зіпсує відповідь, рендер `HabitPreview` кине помилку. Кнопка «Що почує програма читання з екрана» виводить у консоль, що дають атрибути: назву кожного поля, його стан і опис, а також текст кожної живої області. Це спрощена модель дерева доступності, а не воно саме.
+
+        Натисни **Запустити**, на вкладці **Сторінка** натисни «Зберегти» з порожньою назвою, а тоді кнопку звіту.
+      en: |
+        The habit form has an `AppError` model with four kinds, but shows the errors only as red text. Three buttons inject failures: the server rejects the next save, the server damages the answer, the render of `HabitPreview` throws. The “What a screen reader hears” button prints to the console what the attributes give: each field's name, state and description, and the text of every live region. It is a simplified model of the accessibility tree, not the tree itself.
+
+        Press **Run**, on the **Page** tab press “Save” with an empty name, then the report button.
+    tryIt:
+      uk: |
+        1. Звіт каже лише `Поле «Назва»`: червоний текст під полем програма читання з екрана не прочитає. Надрукуй назву, натисни «Сервер відхилить», потім «Зберегти» й знову звіт — повідомлення про збій теж не оголошено. Те саме з «Сервер зіпсує відповідь».
+        2. Натисни «Зламати рендер»: замість форми — запасний інтерфейс boundary. З трьох збоїв boundary зловив лише цей.
+        3. Під’єднай помилки до місць. В `<input id="habit-name" …>` додай `aria-invalid={fieldError ? "true" : undefined}` і `aria-describedby={fieldError ? "habit-name-error" : undefined}`; абзацу з `fieldError.message` дай `id="habit-name-error"`; абзацу з `problem.message` — `role="alert"`. Запусти й повтори кроки 1: тепер звіт показує `недійсне значення` з текстом помилки й рядок `Оголошено: …` для збою збереження.
+      en: |
+        1. The report says only `Field «Name»`: a screen reader does not read the red text under the field. Type a name, press “Server will reject”, then “Save” and the report again — the failure message is not announced either. The same with “Server will damage the answer”.
+        2. Press “Break the render”: the boundary's fallback replaces the form. Of the three failures the boundary caught only this one.
+        3. Connect the errors to their places. In `<input id="habit-name" …>` add `aria-invalid={fieldError ? "true" : undefined}` and `aria-describedby={fieldError ? "habit-name-error" : undefined}`; give the paragraph with `fieldError.message` the `id="habit-name-error"`; give the paragraph with `problem.message` `role="alert"`. Run and repeat step 1: now the report shows `invalid entry` with the error text and the line `Announced: …` for the failed save.
+
+  - id: boundary-or-state
+    kind: explanation
+    title:
+      uk: "Boundary чи оброблений стан"
+      en: "A boundary or a handled state"
+    body:
+      uk: |
+        Питання для кожного збою одне: **чи можна після нього працювати далі на цьому екрані?**
+
+        - **Так** — помилка поля, дубль, відхилене збереження, зіпсована відповідь. Їх ловлять там, де вони виникають (`if`, схема, `try`/`catch`), кладуть у стан як `AppError` і показують у моделі. Чернетка лишається, людина виправляє чи пробує ще раз.
+        - **Ні** — компонент не може себе намалювати: пошкоджений запис, помилка в коді рендеру. Це робота boundary: він замінює частину дерева запасним інтерфейсом, а решта сторінки живе.
+
+        Boundary не замінює обробки помилок у обробниках і промісах — він їх просто не бачить. А `try`/`catch` навколо `await` не замінює boundary: помилку рендеру дочірнього компонента зловити з обробника неможливо.
+
+        Ще одне правило моделі: збій запиту **не переводить фокус**. Людина щойно натиснула «Зберегти», `role="alert"` оголосить повідомлення, а фокус лишиться на кнопці — можна одразу натиснути ще раз. Фокус переходить на зведення лише після невдалої перевірки, коли треба йти до полів.
+      en: |
+        There is one question for every failure: **can the person keep working on this screen after it?**
+
+        - **Yes** — a field error, a duplicate, a rejected save, a damaged answer. They are caught where they arise (`if`, the schema, `try`/`catch`), put into state as an `AppError` and shown by the model. The draft stays; the person fixes it or tries again.
+        - **No** — the component cannot draw itself: a damaged record, a mistake in render code. That is the boundary's job: it replaces part of the tree with a fallback, and the rest of the page lives on.
+
+        A boundary does not replace error handling in handlers and promises — it simply does not see them. And a `try`/`catch` around `await` does not replace a boundary: a child's render error cannot be caught from a handler.
+
+        One more rule of the model: a request failure **does not move focus**. The person has just pressed “Save”; `role="alert"` announces the message, and focus stays on the button — they can press it again at once. Focus moves to the summary only after a failed check, when the person needs to go to the fields.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: чого не бачить boundary"
+      en: "Recall: what a boundary does not see"
+    items:
+      - id: then-callback
+        from: re-05-07-error-boundaries-limits
+        prompt:
+          uk: "`WishDetail` обгорнуто в boundary. Ефект завантажує бажання: `fetchWish(id).then((wish) => setTitle(wish.name.trim()))`. Сервер надіслав запис без `name`. Що станеться?"
+          en: "`WishDetail` is wrapped in a boundary. An effect loads a wish: `fetchWish(id).then((wish) => setTitle(wish.name.trim()))`. The server sent a record without `name`. What happens?"
+        answer:
+          type: choice
+          options:
+            - id: unhandled
+              text:
+                uk: "`TypeError` у колбеці `.then` стає необробленим відхиленням: boundary його не бачить, екран лишається без назви"
+                en: "The `TypeError` in the `.then` callback becomes an unhandled rejection: the boundary does not see it, and the screen stays without a title"
+            - id: fallback
+              text:
+                uk: "Boundary покаже запасний інтерфейс, бо помилка сталася в ефекті"
+                en: "The boundary shows its fallback, because the error happened in an effect"
+              why:
+                uk: "Ефект лише запустив запит і завершився без помилки. Колбек `.then` виконується пізніше, як мікрозадача, — уже не «в ефекті» для React."
+                en: "The effect only started the request and finished without an error. The `.then` callback runs later, as a microtask — no longer “in the effect” as far as React is concerned."
+            - id: empty-title
+              text:
+                uk: "Назва просто стане порожньою, без жодної помилки"
+                en: "The title just becomes empty, without any error"
+              why:
+                uk: "`wish.name` — `undefined`, і виклик `.trim()` на ньому кидає `TypeError`. Тихо порожньою назва не стане."
+                en: "`wish.name` is `undefined`, and calling `.trim()` on it throws a `TypeError`. The title does not quietly become empty."
+          correct: [unhandled]
+        explanation:
+          uk: "Boundary бачить помилки рендеру й самих ефектів, але не колбеків промісів, таймерів і обробників. Тут допомагає модель помилок: відповідь проходить схему, і `ok: false` стає станом помилки, який екран показує сам."
+          en: "A boundary sees errors of render and of the effects themselves, but not of promise callbacks, timers and handlers. The error model helps here: the answer goes through a schema, and `ok: false` becomes an error state that the screen shows itself."
+
+  - id: wish-errors
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: wish-errors
+    entry: main.tsx
+    editable: [App.tsx, appError.ts]
+    strings:
+      nameLabel: { uk: "Назва", en: "Name" }
+      priceLabel: { uk: "Ціна, грн (необов’язково)", en: "Price, UAH (optional)" }
+      save: { uk: "Зберегти", en: "Save" }
+      failNext: { uk: "Сервер відхилить наступне збереження", en: "The server will reject the next save" }
+      summaryTitle: { uk: "Форму не збережено", en: "The form was not saved" }
+      nameRequired: { uk: "Введи назву бажання.", en: "Enter the wish's name." }
+      nameTooLong: { uk: "Назва — не довше за 80 символів.", en: "The name must be at most 80 characters." }
+      priceNotWhole: { uk: "Ціна — ціле невід’ємне число гривень.", en: "The price must be a whole non-negative number." }
+      duplicate: { uk: "Таке бажання вже є у списку.", en: "This wish is already on the list." }
+      saveFailed: { uk: "Не вдалося зберегти бажання. Спробуй ще раз.", en: "Could not save the wish. Try again." }
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bike: { uk: "Велосипед", en: "Bicycle" }
+    title:
+      uk: "Кожен вид помилки — на своє місце"
+      en: "Every kind of error in its place"
+    instructions:
+      uk: |
+        `handleSubmit` в `App.tsx` уже збирає помилки в `errors: AppError[]` (модель — в `appError.ts`), але показує їх усі червоним списком під кнопкою. Перепиши розмітку форми так, щоб кожен вид мав своє доступне місце:
+
+        - **`field`** — абзац із текстом під своїм полем; поле має `aria-invalid="true"` і `aria-describedby` з `id` цього абзацу.
+        - **`field` і `form`** — ще й у зведенні над формою: елемент із `tabIndex={-1}` і `ref={summaryRef}`, заголовком і списком. Ефект, що переводить на нього фокус після невдалої перевірки, уже є.
+        - **`request`** — повідомлення з `role="alert"` біля кнопки. Фокус не рухається, назва й ціна лишаються в полях.
+
+        Після вдалого збереження помилок немає ніде. `handleSubmit` змінювати не треба, крім випадку, коли ти вирішиш інакше записати модель. Перевірки монтують окремі копії форми, заповнюють поля й натискають «Зберегти»; відмову сервера вони вмикають через `server.failNext`.
+      en: |
+        `handleSubmit` in `App.tsx` already collects the errors in `errors: AppError[]` (the model is in `appError.ts`), but shows them all as a red list under the button. Rewrite the form's markup so that each kind has its own accessible place:
+
+        - **`field`** — a paragraph with the text under its field; the field has `aria-invalid="true"` and an `aria-describedby` with that paragraph's `id`.
+        - **`field` and `form`** — also in a summary above the form: an element with `tabIndex={-1}` and `ref={summaryRef}`, a heading and a list. The effect that moves focus to it after a failed check is already there.
+        - **`request`** — a message with `role="alert"` next to the button. Focus does not move; the name and the price stay in the fields.
+
+        After a successful save there are no errors anywhere. `handleSubmit` needs no changes, unless you decide to write the model differently. The checks mount separate copies of the form, fill the fields and press “Save”; they turn the server's refusal on through `server.failNext`.
+    testTitles:
+      "a field error is next to its field: aria-invalid and aria-describedby":
+        uk: "Помилка поля біля поля: `aria-invalid=\"true\"` і `aria-describedby` з її текстом; правильне поле не позначене"
+        en: "A field error next to its field: `aria-invalid=\"true\"` and `aria-describedby` with its text; a valid field is not marked"
+      "a failed check moves focus to a summary of field and form errors":
+        uk: "Невдала перевірка переводить фокус на зведення з усіма помилками полів"
+        en: "A failed check moves focus to a summary with every field error"
+      "a duplicate name is a form error: in the summary, no field marked invalid":
+        uk: "Дубль назви — помилка форми: вона у зведенні, а поле назви не позначене й не описане"
+        en: "A duplicate name is a form error: it is in the summary, and the name field is neither marked nor described"
+      "a rejected save is announced in role=alert and focus is not moved":
+        uk: "Відхилене збереження — у `role=\"alert\"`, а фокус лишається на «Зберегти»"
+        en: "A rejected save is in `role=\"alert\"`, and focus stays on “Save”"
+      "a rejected save keeps the draft in the fields":
+        uk: "Після відхиленого збереження назва й ціна лишаються в полях"
+        en: "After a rejected save the name and the price stay in the fields"
+      "a successful save clears every error and adds the wish":
+        uk: "Вдале збереження прибирає всі помилки й додає бажання в список"
+        en: "A successful save clears every error and adds the wish to the list"
+    hints:
+      nudge:
+        uk: "Розбий `errors` на три групи за `kind` ще до `return`: помилка для кожного поля, усе для зведення і помилка запиту. Тоді кожна частина розмітки бере свою групу."
+        en: "Split `errors` into three groups by `kind` before the `return`: the error for each field, everything for the summary, and the request error. Then each part of the markup takes its own group."
+      explanation:
+        uk: "Пошук у `errors` елемента виду `field` для конкретного поля дає його помилку або `undefined` — від цього залежать `aria-invalid`, `aria-describedby` і сам абзац, як у прикладі з полем звички. Для зведення відфільтруй види `field` і `form`, а зведення малюй лише тоді, коли там щось є: `ref={summaryRef}` на ньому — те, що ефект сфокусує. Помилку запиту в зведення не клади: вона живе в окремому елементі з `role=\"alert\"`."
+        en: "Searching `errors` for an item of kind `field` for a particular field gives its error or `undefined` — `aria-invalid`, `aria-describedby` and the paragraph itself depend on it, as in the habit field example. For the summary, filter the kinds `field` and `form`, and draw the summary only when there is something in it: `ref={summaryRef}` on it is what the effect focuses. Do not put the request error into the summary: it lives in a separate element with `role=\"alert\"`."
+    solutionNote:
+      uk: "Модель вирішує, де помилка: `field` — біля поля й у зведенні, `form` — лише в зведенні, `request` — у живій області біля кнопки. Тому розмітка не гадає за текстом, а розгалужується за `kind`. Невдала перевірка веде фокус до зведення, а невдалий запит — ні: його оголошує `role=\"alert\"`, і людина може одразу натиснути «Зберегти» ще раз із тією самою чернеткою."
+      en: "The model decides where an error goes: `field` next to the field and in the summary, `form` only in the summary, `request` in a live region next to the button. So the markup does not guess from the text but branches on `kind`. A failed check takes focus to the summary, a failed request does not: `role=\"alert\"` announces it, and the person can press “Save” again at once with the same draft."
+    feedback:
+      - when: { test: "a field error is next to its field: aria-invalid and aria-describedby" }
+        message:
+          uk: "Ця перевірка зберігає форму з порожньою назвою й чекає на полі назви `aria-invalid=\"true\"` і `aria-describedby` з `id` абзацу, текст якого — повідомлення про назву. Поле ціни при цьому не позначене. Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі."
+          en: "This check saves the form with an empty name and expects `aria-invalid=\"true\"` on the name field and an `aria-describedby` with the `id` of a paragraph whose text is the name message. The price field stays unmarked. If every check fails at once, fix the first console error first."
+      - when: { test: "a failed check moves focus to a summary of field and form errors" }
+        message:
+          uk: "Після «Зберегти» з порожньою назвою й ціною `2.5` фокус має бути на зведенні (не на кнопці чи полі), а в ньому — обидва повідомлення. Зведенню потрібні `tabIndex={-1}` і `ref={summaryRef}`."
+          en: "After “Save” with an empty name and the price `2.5`, focus must be on the summary (not a button or a field), with both messages in it. The summary needs `tabIndex={-1}` and `ref={summaryRef}`."
+      - when: { test: "a duplicate name is a form error: in the summary, no field marked invalid" }
+        message:
+          uk: "Назва, що вже є у списку, — помилка виду `form`: перевірка чекає її текст у сфокусованому зведенні, а на полі назви — ні `aria-invalid`, ні опису."
+          en: "A name already on the list is a `form` kind error: the check expects its text in the focused summary, and neither `aria-invalid` nor a description on the name field."
+      - when: { test: "a rejected save is announced in role=alert and focus is not moved" }
+        message:
+          uk: "Коли сервер відхиляє збереження, перевірка чекає рівно один непорожній елемент з `role=\"alert\"` з повідомленням про збій, а фокус — досі на кнопці «Зберегти». Не клади помилку запиту в зведення: воно забирає фокус."
+          en: "When the server rejects the save, the check expects exactly one non-empty element with `role=\"alert\"` holding the failure message, and focus still on the “Save” button. Do not put the request error into the summary: it takes focus."
+      - when: { test: "a rejected save keeps the draft in the fields" }
+        message:
+          uk: "Після відхиленого збереження в полях мають лишитися введені назва й ціна: очищай поля лише після вдалого збереження."
+          en: "After a rejected save the typed name and price must stay in the fields: clear them only after a successful save."
+      - when: { test: "a successful save clears every error and adds the wish" }
+        message:
+          uk: "Перевірка робить невдалу перевірку, відхилене збереження й вдале збереження поспіль. Після вдалого не має лишитися ні `role=\"alert\"` з текстом, ні позначки `aria-invalid`, ні повідомлення про назву, а в списку — нове бажання."
+          en: "The check makes a failed check, a rejected save and a successful save in a row. After the successful one there must be no `role=\"alert\"` with text, no `aria-invalid` mark and no name message left, and the new wish must be on the list."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-09
+    body:
+      uk: "У кроці проєкту помилки твого застосунку стануть однією моделлю: недійсна ціна бажання чи дубль дати виконання звички — біля поля й у зведенні, невдале збереження — у живій області, а пошкоджений запис — у запасному інтерфейсі boundary."
+      en: "In the project step your app's errors become one model: an invalid wish price or a duplicate habit completion date next to the field and in the summary, a failed save in a live region, and a damaged record in the boundary's fallback."

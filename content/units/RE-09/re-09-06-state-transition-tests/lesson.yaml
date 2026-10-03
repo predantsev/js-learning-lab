@@ -1,0 +1,380 @@
+id: re-09-06-state-transition-tests
+unit: RE-09
+title:
+  uk: "Тести переходів станів"
+  en: "State-transition tests"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Писати табличні тести, що перевіряють наступний стан reducer для кожної важливої пари «стан + action», включно з відхиленими переходами."
+    en: "Write table-driven tests that assert the reducer's next state for every (state, action) pair that matters, including rejected transitions."
+  - uk: "Тестувати сценарій, що отримує дані через context, крізь інтерфейс із тестовим provider, перевіряючи лише те, що видно."
+    en: "Test a context-provided flow through the UI with a test provider, asserting only visible output."
+prerequisites: [re-09-05-accessible-error-models, re-06-08-testing-user-actions]
+subskills:
+  - { family: R-03, skill: "reducer state transitions", depth: practice }
+  - { family: R-03, skill: "context boundaries", depth: practice }
+glossary: [state-transition-test, transition-table]
+selfCheck: [predict-saved-column, flow-test]
+
+blocks:
+  - id: every-cell
+    kind: explanation
+    title:
+      uk: "Таблиця замість щасливого шляху"
+      en: "A table instead of the happy path"
+    body:
+      uk: |
+        Тест «надіслали → зберегли» перевіряє дві стрілки автомата. Але reducer відповідає за **кожну** пару «стан + action»: чотири стани на чотири actions — шістнадцять клітинок. Більшість із них — відхилені переходи, і саме там ховаються помилки: відповідь сервера, що прийшла, коли нічого не зберігається; друге натискання під час збереження.
+
+        [[transition-table|Таблиця переходів]] записує очікування для кожної клітинки, а [[state-transition-test|тест переходів]] проходить нею:
+
+        ```ts
+        type Row = [from: SaveState["status"], action: SaveAction["type"], to: SaveState["status"] | "same"];
+
+        const TABLE: Row[] = [
+          ["idle", "submitted", "saving"],
+          ["idle", "saved", "same"],          // no save is running: reject
+          ["saving", "saved", "saved"],
+          // …one row per cell
+        ];
+
+        for (const [from, action, to] of TABLE) {
+          test(`${from} + ${action} → ${to}`, () => { … });
+        }
+        ```
+
+        `"same"` означає, що reducer повертає **той самий** об’єкт стану, — так у попередніх уроках позначали відхилений action. Нова стрілка автомата — новий рядок таблиці, а не новий тест, написаний з нуля.
+      en: |
+        A “submitted → saved” test checks two arrows of the machine. But the reducer is responsible for **every** “state + action” pair: four states by four actions is sixteen cells. Most of them are rejected transitions, and that is exactly where mistakes hide: a server answer that arrives when nothing is being saved; a second press during a save.
+
+        A [[transition-table]] writes down the expectation for every cell, and a [[state-transition-test]] walks through it:
+
+        ```ts
+        type Row = [from: SaveState["status"], action: SaveAction["type"], to: SaveState["status"] | "same"];
+
+        const TABLE: Row[] = [
+          ["idle", "submitted", "saving"],
+          ["idle", "saved", "same"],          // no save is running: reject
+          ["saving", "saved", "saved"],
+          // …one row per cell
+        ];
+
+        for (const [from, action, to] of TABLE) {
+          test(`${from} + ${action} → ${to}`, () => { … });
+        }
+        ```
+
+        `"same"` means the reducer returns **the same** state object — that is how earlier lessons marked a rejected action. A new arrow of the machine is a new row of the table, not a new test written from scratch.
+
+  - id: predict-saved-column
+    kind: prediction
+    prompt:
+      uk: "У reducer збереження гілка `saved` забула перевірити поточний стан. Таблиця чекає `same` — той самий об’єкт стану — для кожної пари без стрілки. Які клітинки стовпця `saved` не пройдуть? Обери всі."
+      en: "In a save reducer the `saved` branch forgot to check the current state. The table expects `same` — the same state object — for every pair without an arrow. Which cells of the `saved` column fail? Choose all."
+    code: |
+      function saveReducer(state, action) {
+        switch (action.type) {
+          case "submitted":
+            return state.status === "idle" || state.status === "saved" ? { status: "saving" } : state;
+          case "saved":
+            return { status: "saved" }; // no check of the current state
+          case "failed":
+            return state.status === "saving" ? { status: "failed", message: action.message } : state;
+          case "retried":
+            return state.status === "failed" ? { status: "saving" } : state;
+        }
+      }
+
+      const rows = [ ["idle", "same"], ["saving", "saved"], ["saved", "same"], ["failed", "same"] ];
+      for (const [from, to] of rows) {
+        const state = from === "failed" ? { status: "failed", message: "503" } : { status: from };
+        const next = saveReducer(state, { type: "saved" });
+        const ok = to === "same" ? next === state : next.status === to;
+        console.log(`${from} + saved: ${ok ? "✓" : "✗"}`);
+      }
+    verify:
+      logs: ["idle + saved: ✗", "saving + saved: ✓", "saved + saved: ✗", "failed + saved: ✗"]
+    answer:
+      type: multi
+      options:
+        - id: idle
+          text: { uk: "`idle + saved`", en: "`idle + saved`" }
+        - id: saving
+          text: { uk: "`saving + saved`", en: "`saving + saved`" }
+          why:
+            uk: "Це єдина стрілка стовпця: зі `saving` відповідь `saved` справді веде в `saved`, і зламаний reducer тут поводиться правильно."
+            en: "This is the column's only arrow: from `saving` the answer `saved` really leads to `saved`, and the broken reducer behaves correctly here."
+        - id: saved
+          text: { uk: "`saved + saved`", en: "`saved + saved`" }
+        - id: failed
+          text: { uk: "`failed + saved`", en: "`failed + saved`" }
+      correct: [idle, saved, failed]
+    explanation:
+      uk: "Зламана гілка відповідає `{ status: \"saved\" }` будь-якому стану. Для `idle` і `failed` це неможливий перехід: збереження «завершилось», хоча його не було. Підступна клітинка — `saved + saved`: статус той самий, але об’єкт **новий**, тож React перемалює екран, а тест із `same` це помітить. Тест лише щасливого шляху перевірив би тільки `saving + saved` — єдину клітинку, де все гаразд."
+      en: "The broken branch answers `{ status: \"saved\" }` to any state. For `idle` and `failed` this is an impossible transition: the save “finished” although there was none. The tricky cell is `saved + saved`: the status is the same, but the object is **new**, so React redraws the screen, and a test with `same` notices. A happy-path test would check only `saving + saved` — the one cell where all is well."
+
+  - id: table-steps
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Таблиця переходів збереження"
+      en: "The transition table of a save"
+    textEquivalent:
+      uk: "Таблиця має рядок для кожного стану: idle, saving, saved, failed. У рядку idle submitted веде в saving, а всі інші actions — у той самий стан. У рядку saving saved веде в saved, failed — у failed, решта — той самий стан. У рядку saved submitted знову веде в saving. У рядку failed retried веде в saving. Тест щасливого шляху перевіряє лише кілька клітинок. У прикладі нижче таблиця спершу не має клітинки failed + retried, і всі тести зелені, хоча reducer у цій гілці помиляється. Коли клітинку додають, її тест падає: reducer перевіряє saving замість failed. Після виправлення умови проходять усі шістнадцять клітинок."
+      en: "The table has a row for each state: idle, saving, saved, failed. In the idle row submitted leads to saving, and every other action to the same state. In the saving row saved leads to saved, failed to failed, the rest to the same state. In the saved row submitted leads to saving again. In the failed row retried leads to saving. A happy-path test checks only a few cells. In the example below the table at first has no failed + retried cell, and every test is green, although the reducer is wrong in that branch. When the cell is added, its test fails: the reducer checks saving instead of failed. After the condition is fixed, all sixteen cells pass."
+    spec:
+      layout: grid
+      nodes:
+        - { id: idle, col: 0, row: 0, label: { uk: "idle: submitted → saving · решта → same", en: "idle: submitted → saving · rest → same" }, w: 330 }
+        - { id: saving, col: 0, row: 1, label: { uk: "saving: saved → saved · failed → failed", en: "saving: saved → saved · failed → failed" }, w: 330 }
+        - { id: saved, col: 0, row: 2, label: { uk: "saved: submitted → saving · решта → same", en: "saved: submitted → saving · rest → same" }, w: 330 }
+        - { id: failed, col: 0, row: 3, label: { uk: "failed: retried → saving · решта → same", en: "failed: retried → saving · rest → same" }, w: 330 }
+      steps:
+        - caption:
+            uk: "Рядок — стан, клітинка — action і очікуваний наступний стан. `same` — reducer повертає той самий об’єкт. Чотири на чотири — шістнадцять клітинок."
+            en: "A row is a state, a cell is an action and the expected next state. `same` means the reducer returns the same object. Four by four is sixteen cells."
+        - caption:
+            uk: "Тест щасливого шляху «надіслали → зберегли» проходить лише двома клітинками: `idle + submitted` і `saving + saved`."
+            en: "A happy-path test “submitted → saved” goes through only two cells: `idle + submitted` and `saving + saved`."
+          highlight: [idle, saving]
+          dim: [saved, failed]
+        - caption:
+            uk: "У прикладі таблиці бракує клітинки `failed + retried`. Решта п’ятнадцять — зелені, хоча саме ця гілка reducer помиляється."
+            en: "In the example the table lacks the cell `failed + retried`. The other fifteen are green, although exactly this branch of the reducer is wrong."
+          highlight: [failed]
+          annotate:
+            - { id: failed, text: { uk: "немає клітинки retried", en: "no retried cell" } }
+        - caption:
+            uk: "Додаєш рядок `[\"failed\", \"retried\", \"saving\"]` — і його тест падає: reducer перевіряє `saving` замість `failed`. Після виправлення умови зелені всі шістнадцять."
+            en: "You add the row `[\"failed\", \"retried\", \"saving\"]` — and its test fails: the reducer checks `saving` instead of `failed`. After the condition is fixed, all sixteen are green."
+          highlight: [failed]
+          annotate:
+            - { id: failed, text: { uk: "✗, а після виправлення ✓", en: "✗, then ✓ after the fix" } }
+
+  - id: save-table
+    kind: example
+    runtime: browser-react
+    dir: save-table
+    entry: main.tsx
+    preview: false
+    strings:
+      sameObject: { uk: "той самий об’єкт стану", en: "the same state object" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rSameFields: { uk: "(вміст однаковий, але це два різні об’єкти)", en: "(same content, but two different objects)" }
+      rNeedsFunction: { uk: "toThrow чекає функцію: напиши expect(() => …)", en: "toThrow needs a function: write expect(() => …)" }
+      rDidNotThrow: { uk: "функція не кинула помилку", en: "the function did not throw" }
+      rOtherError: { uk: "очікувалася помилка", en: "expected an error of type" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Таблиця переходів у дії"
+      en: "A transition table at work"
+    body:
+      uk: |
+        `transitions.test.ts` проходить таблицею з п’ятнадцяти рядків і на кожен створює тест. `testing.js` — той самий маленький запускач тестів, що й у розділі про тести: `test` реєструє тест, `expect` порівнює, а `run()` у `main.tsx` виводить рядок на кожен. Натисни **Запустити**: усі п’ятнадцять — `✓`.
+      en: |
+        `transitions.test.ts` walks a table of fifteen rows and creates a test for each. `testing.js` is the same small test runner as in the testing unit: `test` registers a test, `expect` compares, and `run()` in `main.tsx` prints a line for each. Press **Run**: all fifteen are `✓`.
+    tryIt:
+      uk: |
+        1. Таблиці бракує клітинки «нова спроба після збою». Додай після рядка коду `["failed", "failed", "same"],` рядок `["failed", "retried", "saving"],` і запусти. Новий тест — `✗ failed + retried → saving — очікувалося "saving", отримано "failed"`.
+        2. Знайди причину в `saveReducer.ts`: у гілці `case "retried":` умова перевіряє `"saving"`, хоча нова спроба можлива лише після збою. Заміни там `"saving"` на `"failed"` і запусти: шістнадцять `✓`.
+        3. Зламай reducer інакше: у гілці `case "saved":` видали рядок коду `if (state.status !== "saving") return state;`. Запусти — впадуть три клітинки стовпця `saved`. Поверни рядок.
+      en: |
+        1. The table lacks the cell “a new attempt after a failure”. After the line of code `["failed", "failed", "same"],` add the row `["failed", "retried", "saving"],` and run. The new test is `✗ failed + retried → saving — expected "saving", got "failed"`.
+        2. Find the cause in `saveReducer.ts`: in the branch `case "retried":` the condition checks `"saving"`, although a new attempt is possible only after a failure. Replace `"saving"` there with `"failed"` and run: sixteen `✓`.
+        3. Break the reducer another way: in the branch `case "saved":` delete the line of code `if (state.status !== "saving") return state;`. Run — three cells of the `saved` column fail. Put the line back.
+
+  - id: through-the-ui
+    kind: explanation
+    title:
+      uk: "Сценарій крізь інтерфейс — з тестовим provider"
+      en: "A flow through the UI — with a test provider"
+    body:
+      uk: |
+        Таблиця перевіряє reducer окремо. Але людина бачить екран: чи з’явилось повідомлення про збій, чи працює «Спробувати ще раз», чи зник alert після успіху. Це перевіряє тест сценарію крізь інтерфейс.
+
+        Екран отримує API через context, а не імпортом модуля. Тому тест не підміняє модулі — він дає свій **тестовий provider** зі своїм API:
+
+        ```tsx
+        function slowApi(): TasksApi {
+          return { createTask: (title) => new Promise((resolve) => setTimeout(() => resolve({ id: "t-1", title }), 500)) };
+        }
+
+        const view = renderWithApi(slowApi());   // <TasksApiContext value={api}><TaskScreen /></TasksApiContext>
+        await view.type("Нова справа", "Полити квіти");
+        await view.press("Додати");
+        await view.waitFor(() => view.items().length === 1);
+        ```
+
+        Тестовий API створюють **усередині** тесту: тоді кожен запуск починає з чистого лічильника викликів. І перевіряють лише видиме — текст, alert, пункти списку, — а не стан reducer: тест не має знати, як екран влаштовано всередині.
+      en: |
+        The table tests the reducer on its own. But a person sees the screen: did the failure message appear, does “Try again” work, did the alert disappear after success. A flow test through the UI checks that.
+
+        The screen gets the API through context, not by importing a module. So the test does not replace modules — it gives its own **test provider** with its own API:
+
+        ```tsx
+        function slowApi(): TasksApi {
+          return { createTask: (title) => new Promise((resolve) => setTimeout(() => resolve({ id: "t-1", title }), 500)) };
+        }
+
+        const view = renderWithApi(slowApi());   // <TasksApiContext value={api}><TaskScreen /></TasksApiContext>
+        await view.type("New task", "Water the plants");
+        await view.press("Add");
+        await view.waitFor(() => view.items().length === 1);
+        ```
+
+        The test API is created **inside** the test: then every run starts with a clean call counter. And only what is visible is checked — text, the alert, list items — not the reducer's state: the test should not need to know how the screen works inside.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: граничні випадки"
+      en: "Recall: boundary cases"
+    items:
+      - id: which-inputs
+        from: js-09-03-boundary-cases
+        prompt:
+          uk: "Треба протестувати `summarizeExpenses(expenses)`, яка рахує загальну суму. Який набір входів найкраще покриває граничні випадки?"
+          en: "You need to test `summarizeExpenses(expenses)`, which computes the total. Which set of inputs covers the boundary cases best?"
+        answer:
+          type: choice
+          options:
+            - id: empty-one-many
+              text:
+                uk: "Порожній список, список з однієї витрати й список з кількох"
+                en: "An empty list, a list with one expense and a list with several"
+            - id: three-typical
+              text:
+                uk: "Три різні списки по п’ять звичайних витрат"
+                en: "Three different lists of five ordinary expenses"
+              why:
+                uk: "Усі три — випадок «багато». Помилка на порожньому списку (наприклад, `reduce` без початкового значення) так і лишиться непоміченою."
+                en: "All three are the “many” case. A mistake on an empty list (for example `reduce` without an initial value) stays unnoticed."
+            - id: one-huge
+              text:
+                uk: "Один дуже великий список, щоб точно щось знайти"
+                en: "One very big list, to be sure to find something"
+              why:
+                uk: "Розмір не замінює меж: помилки живуть на краях — нуль і одиниця, — а великий список їх не містить."
+                en: "Size does not replace boundaries: mistakes live at the edges — zero and one — and a big list contains neither."
+          correct: [empty-one-many]
+        explanation:
+          uk: "Граничні випадки — краї області: порожньо, один, багато (і `null`, коли він можливий). Для reducer краї — це відхилені переходи: клітинки таблиці, куди щасливий шлях ніколи не заходить."
+          en: "Boundary cases are the edges of the domain: empty, one, many (and `null` when it is possible). For a reducer the edges are the rejected transitions: the table's cells that the happy path never enters."
+
+  - id: flow-test
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: flow-test
+    entry: main.tsx
+    editable: [flow.test.tsx]
+    preview: false
+    strings:
+      newTask: { uk: "Нова справа", en: "New task" }
+      add: { uk: "Додати", en: "Add" }
+      retry: { uk: "Спробувати ще раз", en: "Try again" }
+      taskList: { uk: "Справи", en: "Tasks" }
+      createFailed: { uk: "Не вдалося додати справу.", en: "Could not add the task." }
+      bread: { uk: "Купити хліб", en: "Buy bread" }
+      tCreate: { uk: "нова справа з’являється у списку", en: "a new task appears in the list" }
+      tFlow: { uk: "додати → збій → спробувати ще раз → успіх", en: "create → fail → retry → succeed" }
+      noField: { uk: "немає поля з підписом", en: "no field labelled" }
+      noButton: { uk: "немає кнопки", en: "no button" }
+      waitTimeout: { uk: "waitFor: умова не справдилася за 1 с", en: "waitFor: the condition did not become true within 1 s" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rSameFields: { uk: "(вміст однаковий, але це два різні об’єкти)", en: "(same content, but two different objects)" }
+      rNeedsFunction: { uk: "toThrow чекає функцію: напиши expect(() => …)", en: "toThrow needs a function: write expect(() => …)" }
+      rDidNotThrow: { uk: "функція не кинула помилку", en: "the function did not throw" }
+      rOtherError: { uk: "очікувалася помилка", en: "expected an error of type" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Тест сценарію: збій і нова спроба"
+      en: "A flow test: failure and a new attempt"
+    instructions:
+      uk: |
+        `TaskScreen` (лише для перегляду) додає справу через API з context. Коли `createTask` відхиляє проміс, екран показує `role="alert"` з повідомленням «Не вдалося додати справу.» і кнопкою «Спробувати ще раз».
+
+        У `flow.test.tsx` уже є тест успішного додавання. Допиши поруч тест «додати → збій → спробувати ще раз → успіх»:
+
+        1. Напиши тестовий API, перший виклик `createTask` якого відхиляється, а наступні — вдаються. Створюй його **всередині** тесту.
+        2. Через `renderWithApi(…)` додай справу «Купити хліб» і перевір, що alert показує повідомлення про збій, а список порожній.
+        3. Натисни «Спробувати ще раз» і перевір, що справа в списку, а alert зник.
+
+        `renderWithApi` повертає `type(підпис, текст)`, `press(текст кнопки)`, `alert()`, `items()`, `waitFor(умова)` і `unmount()`. Натисни **Запустити**, щоб побачити свої тести. Перевірки запускають твої тести двічі з правильним екраном, а потім із чотирма зламаними копіями екрана — і чекають, що з кожною копією хоч один твій тест впаде.
+      en: |
+        `TaskScreen` (read-only) adds a task through the API from context. When `createTask` rejects, the screen shows a `role="alert"` with the message “Could not add the task.” and a “Try again” button.
+
+        `flow.test.tsx` already has a test of a successful add. Next to it, write the test “create → fail → retry → succeed”:
+
+        1. Write a test API whose first `createTask` call rejects and whose later calls succeed. Create it **inside** the test.
+        2. Through `renderWithApi(…)` add the task “Buy bread” and check that the alert shows the failure message and the list is empty.
+        3. Press “Try again” and check that the task is in the list and the alert is gone.
+
+        `renderWithApi` returns `type(label, text)`, `press(button text)`, `alert()`, `items()`, `waitFor(condition)` and `unmount()`. Press **Run** to see your tests. The checks run your tests twice with the real screen, then with four broken copies of the screen — and expect at least one of your tests to fail with each copy.
+    testTitles:
+      "your tests pass with the real screen":
+        uk: "Твої тести (щонайменше два) проходять із правильним екраном"
+        en: "Your tests (at least two) pass with the real screen"
+      "your tests pass again when the whole suite runs a second time":
+        uk: "Твої тести проходять і під час повторного запуску всього набору"
+        en: "Your tests pass again when the whole suite runs a second time"
+      "a test fails when a failed create shows no alert":
+        uk: "Якийсь тест падає, коли невдале додавання не показує alert"
+        en: "A test fails when a failed create shows no alert"
+      "a test fails when Try again does nothing":
+        uk: "Якийсь тест падає, коли «Спробувати ще раз» нічого не робить"
+        en: "A test fails when “Try again” does nothing"
+      "a test fails when the alert stays after a successful retry":
+        uk: "Якийсь тест падає, коли alert лишається після вдалої нової спроби"
+        en: "A test fails when the alert stays after a successful retry"
+      "a test fails when the retried task is not added to the list":
+        uk: "Якийсь тест падає, коли справа після нової спроби не з’являється у списку"
+        en: "A test fails when the retried task is not added to the list"
+    hints:
+      nudge:
+        uk: "Подивись на `okApi` у файлі: це функція, що повертає об’єкт із `createTask`. Твоєму API потрібна пам’ять про те, котрий це виклик."
+        en: "Look at `okApi` in the file: a function that returns an object with `createTask`. Your API needs a memory of which call this is."
+      explanation:
+        uk: "Лічильник викликів живе в замиканні фабрики, як у `makeCounter` з розділу про функції: перший виклик повертає проміс, що відхиляється через `setTimeout`, решта — що вирішується. Після `press` відповідь ще не прийшла, тож чекай видимого результату через `waitFor` — появи alert чи пункту списку — і лише потім перевіряй `expect`. Наприкінці перевір обидва наслідки нової спроби: список і відсутність alert."
+        en: "The call counter lives in the factory's closure, like `makeCounter` from the functions unit: the first call returns a promise that rejects through `setTimeout`, the rest one that resolves. After `press` the answer has not arrived yet, so wait for a visible result with `waitFor` — the alert appearing or a list item — and only then check with `expect`. At the end, check both consequences of the new attempt: the list and the missing alert."
+    solutionNote:
+      uk: "Тест не знає ні про reducer, ні про стан: він дає екрану свій API через той самий context, діє як людина й перевіряє видиме. Тому зламана копія екрана, яка ховає alert, ігнорує «Спробувати ще раз», не прибирає повідомлення чи губить справу, валить тест — а внутрішні зміни, що не змінюють видимого, ні. API створюється в тесті, тож повторний запуск починає з першого, невдалого виклику."
+      en: "The test knows neither the reducer nor the state: it gives the screen its own API through the same context, acts like a person and checks what is visible. So a broken copy of the screen that hides the alert, ignores “Try again”, does not clear the message or loses the task makes the test fail — while inner changes that change nothing visible do not. The API is created in the test, so a repeated run starts with the first, failing call."
+    feedback:
+      - when: { test: "your tests pass with the real screen" }
+        message:
+          uk: "Ця перевірка чекає щонайменше два тести у `flow.test.tsx`, і всі вони мають пройти з правильним екраном; тест, що впав, і причина — у тексті помилки. Якщо твій тест проходить на **Запустити**, а тут ні, тестовий API, імовірно, створено один раз для всього файлу: його лічильник уже не на першому виклику. І ще пастка: alert зникає, щойно починається нова спроба, — ще до відповіді, тож після «Спробувати ще раз» чекай на справу у списку, а не на зникнення alert."
+          en: "This check expects at least two tests in `flow.test.tsx`, all passing with the real screen; the failing test and the reason are in the error text. If your test passes on **Run** but not here, the test API was probably created once for the whole file: its counter is no longer at the first call. One more trap: the alert disappears as soon as the new attempt starts — before the answer, so after “Try again” wait for the task in the list, not for the alert to vanish."
+      - when: { test: "your tests pass again when the whole suite runs a second time" }
+        message:
+          uk: "Повторний запуск має дати той самий результат. Створюй тестовий API всередині тесту, а не на рівні файлу."
+          en: "A repeated run must give the same result. Create the test API inside the test, not at the level of the file."
+      - when: { test: "a test fails when a failed create shows no alert" }
+        message:
+          uk: "Зламана копія ковтає збій і нічого не показує. Твій тест має дочекатися alert із текстом «Не вдалося додати справу.» після першої, невдалої спроби."
+          en: "The broken copy swallows the failure and shows nothing. Your test must wait for the alert with the text “Could not add the task.” after the first, failing attempt."
+      - when: { test: "a test fails when Try again does nothing" }
+        message:
+          uk: "Зламана копія має кнопку «Спробувати ще раз», але вона нічого не робить. Після натискання тест має дочекатися справи у списку."
+          en: "The broken copy has a “Try again” button, but it does nothing. After pressing it the test must wait for the task in the list."
+      - when: { test: "a test fails when the alert stays after a successful retry" }
+        message:
+          uk: "Зламана копія додає справу, але лишає повідомлення про збій. Після нової спроби перевір, що `alert()` — `null`."
+          en: "The broken copy adds the task but leaves the failure message. After the new attempt check that `alert()` is `null`."
+      - when: { test: "a test fails when the retried task is not added to the list" }
+        message:
+          uk: "Зламана копія прибирає alert, але справа після нової спроби не з’являється. Перевір `items()` після «Спробувати ще раз»."
+          en: "The broken copy clears the alert, but the task does not appear after the new attempt. Check `items()` after “Try again”."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-09
+    body:
+      uk: "У кроці проєкту ти напишеш таблицю переходів для reducer свого застосунку й тест сценарію з тестовим API — наприклад, для трекера звичок: невдале виконання відкочується, а інші дати лишаються."
+      en: "In the project step you write a transition table for your app's reducer and a flow test with a test API — for example, for the habit tracker: a failed completion rolls back while the other dates stay."
