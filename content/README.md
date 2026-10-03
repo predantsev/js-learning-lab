@@ -117,6 +117,8 @@ id: js-05-02-filter-find          # = directory name
 unit: JS-05
 title: { uk: …, en: … }
 kind: instructional               # instructional | review | assessment | local-task | capstone-step
+                                  #   (an assessment lesson has no "I know this" and is not skipped with its
+                                  #   unit: it is completed only through its exercises)
 minutes: 10                       # 5–15 for instructional lessons
 contentVersion: 1
 objectives: [ { uk: …, en: … } ]  # observable abilities
@@ -187,7 +189,8 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are
 - id: keep-affordable
   kind: exercise
   mode: guided                    # guided | debug | independent
-  assessment: true                # optional: gate/assessment tasks
+  assessment: true                # optional: gate/assessment tasks — "Show the solution" is offered only
+                                  #   after every check passed (the solution cannot be used to pass it)
   runtime: browser-js
   dir: keep-affordable
   entry: index.js

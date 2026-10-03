@@ -110,8 +110,14 @@ export function skipLocalTask(doc: ProgressDoc, lesson: Lesson, blockId: string,
   });
 }
 
+/** Assessment lessons are never skipped: they are completed only through their exercises. */
+export function canSkipLesson(lesson: { kind?: string }): boolean {
+  return lesson.kind !== 'assessment';
+}
+
 /** "I know this": the lesson becomes skipped (visibly, revisitable); nothing is marked passed. */
-export function skipLesson(doc: ProgressDoc, lesson: { id: string; contentVersion?: number }): ProgressDoc {
+export function skipLesson(doc: ProgressDoc, lesson: { id: string; contentVersion?: number; kind?: string }): ProgressDoc {
+  if (!canSkipLesson(lesson)) return doc;
   return withLesson(doc, lesson, (p) => (p.state === 'completed' ? p : { ...p, state: 'skipped', skippedAt: now() }));
 }
 

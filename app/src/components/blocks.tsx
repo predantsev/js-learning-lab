@@ -307,7 +307,10 @@ function Hints({ lesson, block, lang }: { lesson: Lesson; block: ExerciseBlock; 
           ))}
         </>
       ) : <p className="hint-none">{t('hint.none')}</p>}
-      {!p?.solutionViewedAt ? (
+      {/* A skills check (assessment: true) offers its solution only after it passed, so it cannot be passed with it. */}
+      {block.assessment && !p?.passedAt && !p?.solutionViewedAt ? (
+        <p className="hint-none solution-after-pass">{t('hint.solutionAfterPass')}</p>
+      ) : !p?.solutionViewedAt ? (
         <button type="button" className="btn btn-quiet hint-toggle solution-toggle" onClick={() => setConfirming(true)}>{t('hint.solution')}</button>
       ) : (
         <div className="solution">
