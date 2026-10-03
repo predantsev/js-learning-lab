@@ -2,9 +2,24 @@ import { createElement, StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 
-// Every check mounts its own copy under StrictMode, as main.jsx does, and counts the keydown
-// listeners that copy adds to and removes from window.
+// Every check mounts its own copy under StrictMode, as main.jsx does, counts the keydown
+// listeners that copy adds to and removes from window, and counts the requests (and the reading
+// of their answers) that are still in flight, so a check can wait until every answer has arrived
+// instead of guessing how long the lab takes.
 async function mount() {
+  const nativeFetch = window.fetch;
+  let inflight = 0;
+  const track = (promise) => {
+    inflight += 1;
+    const done = () => { inflight -= 1; };
+    promise.then(done, done);
+    return promise;
+  };
+  window.fetch = (...args) => track(nativeFetch(...args).then((response) => {
+    const readJson = response.json.bind(response);
+    response.json = () => track(readJson());
+    return response;
+  }));
   const nativeAdd = window.addEventListener;
   const nativeRemove = window.removeEventListener;
   const live = new Set();
@@ -33,8 +48,13 @@ async function mount() {
     host.remove();
     window.addEventListener = nativeAdd;
     window.removeEventListener = nativeRemove;
+    window.fetch = nativeFetch;
   };
-  return { host, live, unmount, finish };
+  const idle = async () => {
+    await waitFor(() => inflight === 0, { timeout: 3000 });
+    await settle();
+  };
+  return { host, live, unmount, finish, idle, nativeAdd, nativeRemove };
 }
 const button = (host, id) => [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === id);
 const detail = (host) => host.querySelector('p').textContent;
@@ -57,10 +77,27 @@ test('a slow answer for an earlier selection does not replace the current one', 
   try {
     await user.click(button(copy.host, 'w-01'));
     await user.click(button(copy.host, 'w-02'));
-    await sleep(1300);
+    await copy.idle();
     expect(selected(copy.host), 'selected wish').toEqual(['w-02']);
-    expect(detail(copy.host), 'details 1.3 s after switching from w-01 to w-02').toBe(`${L.lamp} — 45`);
+    expect(detail(copy.host), 'details after both answers arrived').toBe(`${L.lamp} — 45`);
   } finally { copy.finish(); }
+});
+
+test('a cancelled request leaves no unhandled error', async () => {
+  const copy = await mount();
+  const rejections = [];
+  const onRejection = (event) => rejections.push(event.reason?.name ?? String(event.reason));
+  copy.nativeAdd.call(window, 'unhandledrejection', onRejection);
+  try {
+    await user.click(button(copy.host, 'w-01'));
+    await user.click(button(copy.host, 'w-02'));
+    await copy.idle();
+    await settle();
+    expect(rejections, 'unhandled promise rejections after switching from w-01 to w-02').toEqual([]);
+  } finally {
+    copy.nativeRemove.call(window, 'unhandledrejection', onRejection);
+    copy.finish();
+  }
 });
 
 test('the j key moves the selection by exactly one wish', async () => {
