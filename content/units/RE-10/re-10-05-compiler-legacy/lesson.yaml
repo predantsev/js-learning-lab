@@ -1,0 +1,315 @@
+id: re-10-05-compiler-legacy
+unit: RE-10
+title:
+  uk: "Компілятор і застарілі API: як їх розрізняти"
+  en: "Compiler and legacy API distinctions"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Пояснити, що React Compiler уміє мемоізувати сам і чому він не виправдовує нечистий рендер чи порушення правил хуків."
+    en: "Explain what the React Compiler can memoize automatically and why it does not excuse impure render or rules-of-hooks violations."
+  - uk: "Упізнавати застарілі API в наявному коді (класові компоненти з методами життєвого циклу, `ReactDOM.render`, `forwardRef`, `defaultProps` у функціональних компонентах) і називати сучасну заміну та версію, у якій кожен змінився."
+    en: "Recognize legacy APIs in existing code (class components with lifecycle methods, `ReactDOM.render`, `forwardRef`, `defaultProps` on function components) and name the current replacement and the version where each changed."
+prerequisites: [re-10-04-modern-form-actions-awareness, re-07-04-memoization-when-measured, js-11-05-classes-private-static]
+subskills:
+  - { family: R-08, skill: "compiler and legacy API distinctions", depth: intro }
+glossary: [react-compiler, legacy-api, class-component]
+selfCheck: [predict-compiler-skips, sync-status]
+
+blocks:
+  - id: what-the-compiler-does
+    kind: explanation
+    title:
+      uk: "Компілятор мемоізує за тебе — якщо код за правилами"
+      en: "The compiler memoizes for you — if the code follows the rules"
+    body:
+      uk: |
+        У RE-07 ти ставив `memo`, `useMemo` і `useCallback` вручну, і лише там, де вимірювання показало користь. [[react-compiler|React Compiler]] робить це автоматично: це плагін для збирання (`babel-plugin-react-compiler`, стабільна версія 1.0.0 вийшла в жовтні 2025), який переписує компоненти, додаючи кеш. Значення й JSX обчислюються знову лише тоді, коли змінилося те, від чого вони залежать.
+
+        Але компілятор **припускає**, що код дотримується правил React: рендер чистий, хуки викликаються завжди в тому самому порядку. Що він робить, коли правило порушено, ми перевірили, запустивши компілятор 1.0.0 на цьому комп’ютері:
+
+        - компонент, що **перепризначає** змінну модуля чи **змінює** prop, або викликає хук в `if`, компілятор не оптимізує: повідомляє помилку й лишає компонент як є;
+        - а `seen.push(...)` у масив модуля він **не помітив**: компонент скомпільовано, і `push` так само виконується в кожному рендері.
+
+        Отже, компілятор не робить нечистий рендер чистим. Правила лишаються твоїми — компілятор лише винагороджує їх швидкістю. На платформі компілятора немає: пісочниця запускає твій код таким, як ти його написав.
+      en: |
+        In RE-07 you added `memo`, `useMemo` and `useCallback` by hand, and only where a measurement showed a gain. The [[react-compiler]] does this automatically: it is a build plugin (`babel-plugin-react-compiler`, stable version 1.0.0 came out in October 2025) that rewrites components and adds a cache. Values and JSX are computed again only when what they depend on has changed.
+
+        But the compiler **assumes** the code follows the rules of React: render is pure, hooks are always called in the same order. What it does when a rule is broken we checked by running compiler 1.0.0 on this computer:
+
+        - a component that **reassigns** a module variable or **changes** a prop, or calls a hook inside an `if`, is not optimized: the compiler reports an error and leaves the component as it is;
+        - but `seen.push(...)` into a module array it **did not notice**: the component was compiled, and the `push` still runs in every render.
+
+        So the compiler does not make an impure render pure. The rules stay yours — the compiler merely rewards them with speed. The platform has no compiler: the sandbox runs your code exactly as you wrote it.
+
+  - id: predict-compiler-skips
+    kind: prediction
+    lang: jsx
+    runnable: false
+    prompt:
+      uk: "Які з цих чотирьох компонентів React Compiler 1.0.0 **не оптимізує**, а повідомить помилку й лишить як є? Обери всі."
+      en: "Which of these four components does React Compiler 1.0.0 **not optimize**, reporting an error and leaving it as it is? Choose all that apply."
+    code: |
+      // A
+      let renderCount = 0;
+      function TaskTitle({ title }) {
+        renderCount += 1;
+        return <h2>{title}</h2>;
+      }
+
+      // B
+      function HabitRow({ habit }) {
+        if (habit.active) {
+          const [open, setOpen] = useState(false);
+          return <button onClick={() => setOpen(!open)}>{habit.name}</button>;
+        }
+        return <p>{habit.name}</p>;
+      }
+
+      // C
+      function ActiveHabits({ habits }) {
+        const active = habits.filter((habit) => habit.active);
+        return <ul>{active.map((habit) => <li key={habit.id}>{habit.name}</li>)}</ul>;
+      }
+
+      // D
+      function ExpenseTotal({ expenses }) {
+        const total = useMemo(() => expenses.reduce((sum, e) => sum + e.amountMinor, 0), [expenses]);
+        return <p>{total}</p>;
+      }
+    answer:
+      type: multi
+      options:
+        - id: a
+          text: { uk: "A — змінює змінну модуля під час рендеру", en: "A — changes a module variable during render" }
+        - id: b
+          text: { uk: "B — викликає `useState` всередині `if`", en: "B — calls `useState` inside an `if`" }
+        - id: c
+          text: { uk: "C — чистий список", en: "C — a pure list" }
+          why:
+            uk: "C дотримується правил: з тих самих `habits` — той самий JSX. Саме такий код компілятор і кешує: фільтр і список обчислюються знову, лише коли змінився `habits`."
+            en: "C follows the rules: the same `habits` give the same JSX. That is exactly the code the compiler caches: the filter and the list are computed again only when `habits` has changed."
+        - id: d
+          text: { uk: "D — уже має `useMemo`, написаний вручну", en: "D — already has a hand-written `useMemo`" }
+          why:
+            uk: "Ручний `useMemo` не заважає компілятору: D скомпільовано успішно. Мемоізація вручну просто стає зайвою, але не помилкою."
+            en: "A hand-written `useMemo` does not get in the compiler's way: D compiled successfully. The manual memoization merely becomes unnecessary, not an error."
+      correct: [a, b]
+    explanation:
+      uk: "Ми прогнали ці компоненти через `babel-plugin-react-compiler` 1.0.0: для A — помилка «Cannot reassign variables declared outside of the component/hook», для B — «Hooks must always be called in a consistent order, and may not be called conditionally», C і D скомпільовано. Важливе застереження: компонент, що робить `seen.push(…)` замість `renderCount += 1`, компілятор пропустив без помилки — тож відсутність помилки ще не доводить, що рендер чистий."
+      en: "We ran these components through `babel-plugin-react-compiler` 1.0.0: A gave the error “Cannot reassign variables declared outside of the component/hook”, B gave “Hooks must always be called in a consistent order, and may not be called conditionally”, C and D compiled. An important caveat: a component doing `seen.push(…)` instead of `renderCount += 1` passed the compiler without an error — so the absence of an error does not prove the render is pure."
+
+  - id: legacy-table
+    kind: explanation
+    title:
+      uk: "Застарілі API: упізнати й замінити"
+      en: "Legacy APIs: recognize and replace"
+    body:
+      uk: |
+        У чужому чи давньому коді трапляються [[legacy-api|застарілі API]]. Частина з них досі працює, частину вже прибрано:
+
+        | У старому коді | Сьогодні | Що змінилося |
+        |---|---|---|
+        | [[class-component|класовий компонент]] з `componentDidMount` і `componentWillUnmount` | функція + `useEffect` із прибиранням | хуки — з React 16.8 (лютий 2019); класи **досі працюють** у React 19 |
+        | `ReactDOM.render(<App />, el)` | `createRoot(el).render(<App />)` | `createRoot` — з 18.0; `render` **прибрано** в 19.0 |
+        | `forwardRef((props, ref) => …)` | `ref` як звичайний prop: `function Field({ ref })` | з 19.0; `forwardRef` поки працює |
+        | `Badge.defaultProps = { … }` у функції | значення за замовчуванням у параметрах: `function Badge({ label = "…" })` | у 19.0 для функцій **ігнорується мовчки**; класи досі підтримують |
+
+        Пару методів життєвого циклу легко перекласти: що робить `componentDidMount`, стає тілом ефекту, а що робить `componentWillUnmount` — функцією, яку ефект повертає.
+
+        Як виглядає прибраний API на платформі, ми перевірили: `import { render } from "react-dom"` зупиняє запуск карткою помилки `SyntaxError: The requested module 'react-dom' does not provide an export named 'render'`.
+      en: |
+        Other people's or older code contains [[legacy-api|legacy APIs]]. Some of them still work, some have been removed:
+
+        | In old code | Today | What changed |
+        |---|---|---|
+        | a [[class-component]] with `componentDidMount` and `componentWillUnmount` | a function + `useEffect` with cleanup | hooks since React 16.8 (February 2019); classes **still work** in React 19 |
+        | `ReactDOM.render(<App />, el)` | `createRoot(el).render(<App />)` | `createRoot` since 18.0; `render` **removed** in 19.0 |
+        | `forwardRef((props, ref) => …)` | `ref` as an ordinary prop: `function Field({ ref })` | since 19.0; `forwardRef` still works for now |
+        | `Badge.defaultProps = { … }` on a function | default values in the parameters: `function Badge({ label = "…" })` | **silently ignored** for functions in 19.0; classes still support it |
+
+        A pair of lifecycle methods translates easily: what `componentDidMount` does becomes the effect's body, and what `componentWillUnmount` does becomes the function the effect returns.
+
+        We checked how a removed API looks on the platform: `import { render } from "react-dom"` stops the run with the error card `SyntaxError: The requested module 'react-dom' does not provide an export named 'render'`.
+
+  - id: legacy-timer
+    kind: example
+    runtime: browser-react
+    dir: legacy-timer
+    entry: main.jsx
+    strings:
+      session: { uk: "Сесія", en: "Session" }
+      focus: { uk: "Фокус", en: "Focus" }
+      classLabel: { uk: "Клас", en: "Class" }
+      functionLabel: { uk: "Функція", en: "Function" }
+      sec: { uk: "с", en: "s" }
+      hide: { uk: "Сховати таймери", en: "Hide timers" }
+      show: { uk: "Показати таймери", en: "Show timers" }
+    title:
+      uk: "Клас і функція поруч"
+      en: "A class and a function side by side"
+    body:
+      uk: |
+        Два таймери рахують секунди: `ElapsedClass` — по-старому, класом із парою методів життєвого циклу, `ElapsedFunction` — функцією з ефектом. Кожен друкує в консоль свій `tick` щосекунди. `Badge` над ними має `defaultProps` — теж старий спосіб.
+
+        Натисни **Запустити**, зачекай кілька секунд, а тоді натисни «Сховати таймери» й подивись у **Консоль**.
+      en: |
+        Two timers count seconds: `ElapsedClass` the old way, as a class with a pair of lifecycle methods, and `ElapsedFunction` as a function with an effect. Each prints its own `tick` to the console every second. `Badge` above them has `defaultProps` — also an old way.
+
+        Press **Run**, wait a few seconds, then press “Hide timers” and look at the **Console**.
+    tryIt:
+      uk: |
+        1. Після «Сховати таймери» `class tick` зупинився — `componentWillUnmount` прибрав інтервал. А `function tick` друкується далі: ефект запускає інтервал, але нічого не прибирає.
+        2. Переклади пару методів на ефект. У `ElapsedFunction.jsx` заміни `setInterval(() => {` на `const id = setInterval(() => {`, а після закривальної дужки виклику `}, 1000);` допиши `return () => clearInterval(id);`. Запусти, зачекай і сховай: тепер зупиняються обидва.
+        3. `Badge` показує `Сесія: «»` — порожньо: React 19 ігнорує `defaultProps` у функціях, без попередження. Видали рядок коду з `Badge.defaultProps`, а параметр заміни на `{ label = "Фокус" }`. Запусти: тепер `Сесія: «Фокус»`.
+      en: |
+        1. After “Hide timers” `class tick` stopped — `componentWillUnmount` cleared the interval. But `function tick` keeps printing: the effect starts the interval and cleans nothing up.
+        2. Translate the pair of methods into an effect. In `ElapsedFunction.jsx` replace `setInterval(() => {` with `const id = setInterval(() => {`, and after the closing `}, 1000);` of that call add `return () => clearInterval(id);`. Run, wait and hide: now both stop.
+        3. `Badge` shows `Session: «»` — empty: React 19 ignores `defaultProps` on functions, without a warning. Delete the line of code with `Badge.defaultProps` and change the parameter to `{ label = "Focus" }`. Run: now it is `Session: «Focus»`.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: поля й методи класу"
+      en: "Recall: class fields and methods"
+    items:
+      - id: fields-per-instance
+        from: js-11-05-classes-private-static
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          class Counter {
+            count = 0;
+            increment() {
+              this.count += 1;
+            }
+          }
+          const a = new Counter();
+          const b = new Counter();
+          a.increment();
+          a.increment();
+          console.log(a.count, b.count);
+        verify:
+          logs: ["2 0"]
+        answer:
+          type: choice
+          options:
+            - id: two-zero
+              text: { uk: "`2 0`", en: "`2 0`" }
+            - id: two-two
+              text: { uk: "`2 2`", en: "`2 2`" }
+              why:
+                uk: "Поле `count = 0` створюється для кожного екземпляра окремо. Метод `increment` спільний, але через `this` змінює поле саме того об’єкта, на якому його викликали."
+                en: "The field `count = 0` is created for every instance separately. The `increment` method is shared, but through `this` it changes the field of exactly the object it was called on."
+            - id: one-one
+              text: { uk: "`1 1`", en: "`1 1`" }
+              why:
+                uk: "`a.increment()` викликано двічі, і обидва рази на `a`. `b` ніхто не змінював."
+                en: "`a.increment()` is called twice, both times on `a`. Nobody changed `b`."
+          correct: [two-zero]
+        explanation:
+          uk: "Кожен екземпляр має власні поля, а методи спільні й працюють через `this`. Класовий компонент React влаштований так само: `state = { … }` — поле кожного екземпляра, а `this.setState(…)` у методі змінює стан саме того компонента, чий метод викликано."
+          en: "Every instance has its own fields, while methods are shared and work through `this`. A React class component is built the same way: `state = { … }` is a field of every instance, and `this.setState(…)` in a method changes the state of exactly the component whose method was called."
+
+  - id: sync-status
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: sync-status
+    entry: main.jsx
+    editable: [SyncStatus.jsx]
+    strings:
+      expensesTitle: { uk: "Витрати", en: "Expenses" }
+      hideStatus: { uk: "Сховати стан", en: "Hide status" }
+      showStatus: { uk: "Показати стан", en: "Show status" }
+      synced: { uk: "Синхронізовано", en: "Synced" }
+      offline: { uk: "Немає зв’язку — зміни збережуться пізніше", en: "Offline — changes will be saved later" }
+    title:
+      uk: "Переписати класовий компонент на функцію"
+      en: "Rewrite a class component as a function"
+    instructions:
+      uk: |
+        `SyncStatus` — застарілий класовий компонент: у `componentDidMount` він підписується на зміни з’єднання (`connection.subscribe` повертає функцію відписки), а в `componentWillUnmount` — відписується. Перевірки вже написані й проходять для класу.
+
+        Перепиши `SyncStatus.jsx` на **функціональний компонент** з тією самою поведінкою:
+
+        - показує в `role="status"` поточний стан з’єднання («Синхронізовано» чи «Немає зв’язку — …»);
+        - стежить за змінами з’єднання;
+        - поки компонент на екрані, на з’єднання підписано рівно один слухач, а коли його сховали — жодного.
+
+        `main.jsx` вмикає `StrictMode`: під час розробки React монтує, розмонтовує й монтує кожен компонент ще раз (RE-03). Назва експорту лишається `SyncStatus`.
+      en: |
+        `SyncStatus` is a legacy class component: in `componentDidMount` it subscribes to connection changes (`connection.subscribe` returns an unsubscribe function), and in `componentWillUnmount` it unsubscribes. The checks are already written and pass for the class.
+
+        Rewrite `SyncStatus.jsx` as a **function component** with the same behavior:
+
+        - it shows the current connection state in `role="status"` (“Synced” or “Offline — …”);
+        - it follows connection changes;
+        - while the component is on the screen, exactly one listener is subscribed to the connection, and once it is hidden — none.
+
+        `main.jsx` turns on `StrictMode`: during development React mounts, unmounts and mounts every component once more (RE-03). The export keeps the name `SyncStatus`.
+    testTitles:
+      "shows the current connection status":
+        uk: "Показує поточний стан з’єднання"
+        en: "Shows the current connection status"
+      "follows changes of the connection":
+        uk: "Стежить за змінами з’єднання"
+        en: "Follows changes of the connection"
+      "listens exactly once while shown and stops when hidden":
+        uk: "Поки показаний, слухає рівно раз, а коли схований — не слухає"
+        en: "Listens exactly once while shown and stops when hidden"
+      "SyncStatus is a function component":
+        uk: "`SyncStatus` — функціональний компонент"
+        en: "`SyncStatus` is a function component"
+    hints:
+      nudge:
+        uk: "У класі стан живе в `this.state`, підписка — у `componentDidMount`, відписка — у `componentWillUnmount`. Яким трьом рядкам коду функції вони відповідають?"
+        en: "In the class, state lives in `this.state`, the subscription in `componentDidMount`, the unsubscription in `componentWillUnmount`. Which three lines of code in a function do they correspond to?"
+      explanation:
+        uk: |
+          `this.state` стає `useState` з тим самим початковим значенням. `componentDidMount` і `componentWillUnmount` — одна пара: тіло ефекту робить те, що робив `componentDidMount`, а функція, яку ефект повертає, — те, що робив `componentWillUnmount`. Порожній масив залежностей означає «один раз після появи на екрані». Схожий приклад з іншими назвами:
+
+          ```jsx
+          useEffect(() => {
+            const stop = clock.onTick(setNow);
+            return stop;
+          }, []);
+          ```
+        en: |
+          `this.state` becomes `useState` with the same initial value. `componentDidMount` and `componentWillUnmount` are one pair: the effect's body does what `componentDidMount` did, and the function the effect returns does what `componentWillUnmount` did. An empty dependency array means “once after appearing on the screen”. A similar example with other names:
+
+          ```jsx
+          useEffect(() => {
+            const stop = clock.onTick(setNow);
+            return stop;
+          }, []);
+          ```
+    solutionNote:
+      uk: "Підписка в ефекті, а функція відписки — те, що ефект повертає. Тому `StrictMode` (монтування → розмонтування → монтування) лишає рівно одного слухача, а схований компонент — жодного. Без прибирання `StrictMode` залишив би двох слухачів одразу після першого показу, а підписка просто в тілі компонента додавала б нового слухача на кожен рендер."
+      en: "The subscription is in an effect, and the unsubscribe function is what the effect returns. That is why `StrictMode` (mount → unmount → mount) leaves exactly one listener, and a hidden component none. Without the cleanup `StrictMode` would leave two listeners right after the first display, and a subscription right in the component body would add a new listener on every render."
+    feedback:
+      - when: { test: "shows the current connection status" }
+        message:
+          uk: "Ця перевірка шукає елемент із `role=\"status\"` і текстом «Синхронізовано». Якщо всі перевірки не пройшли разом, спершу виправ першу помилку в консолі."
+          en: "This check looks for an element with `role=\"status\"` and the text “Synced”. If every check fails at once, fix the first error in the console first."
+      - when: { test: "follows changes of the connection" }
+        message:
+          uk: "Ця перевірка викликає `connection.setOnline(false)`, а потім `connection.setOnline(true)` і щоразу чекає новий текст у `role=\"status\"`. Компонент має підписатися через `connection.subscribe` і класти отримане значення в стан."
+          en: "This check calls `connection.setOnline(false)` and then `connection.setOnline(true)` and expects the new text in `role=\"status\"` each time. The component has to subscribe through `connection.subscribe` and put the received value into state."
+      - when: { test: "listens exactly once while shown and stops when hidden" }
+        message:
+          uk: "Ця перевірка рахує слухачів через `connection.listenerCount()`: поки стан показано — рівно 1, після «Сховати стан» — 0, після «Показати стан» — знову 1. Ефект має повертати функцію відписки: без неї `StrictMode` лишає двох слухачів. Підписка в тілі компонента додає слухача на кожен рендер."
+          en: "This check counts listeners with `connection.listenerCount()`: exactly 1 while the status is shown, 0 after “Hide status”, 1 again after “Show status”. The effect must return the unsubscribe function: without it `StrictMode` leaves two listeners. A subscription in the component body adds a listener on every render."
+      - when: { test: "SyncStatus is a function component" }
+        message:
+          uk: "Ця перевірка чекає, що `SyncStatus` — функція, а не клас, що розширює `Component`. Класи в React 19 досі працюють, але завдання — переписати компонент на хуки."
+          en: "This check expects `SyncStatus` to be a function, not a class extending `Component`. Classes still work in React 19, but the task is to rewrite the component with hooks."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-10
+    body:
+      uk: "Якщо в проєкті ти візьмеш код зі старого прикладу, перевір його за таблицею цього уроку: `ReactDOM.render`, `defaultProps` у функціях чи клас із парою методів життєвого циклу варто замінити до того, як вони зламаються мовчки. А якщо колись увімкнеш React Compiler, він лише прискорить код, що вже дотримується правил React."
+      en: "If you take code from an old example into your project, check it against this lesson's table: `ReactDOM.render`, `defaultProps` on functions or a class with a pair of lifecycle methods are worth replacing before they break silently. And if you ever turn the React Compiler on, it will only speed up code that already follows the rules of React."
