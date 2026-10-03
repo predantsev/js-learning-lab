@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Link, useLocation, useParams } from "./router";
+import { useLocation, useParams } from "./router";
 import { categories, expenses, formatMinor, type Expense } from "./expensesData";
 
 // The page of the route /categories/:id.
@@ -19,16 +19,8 @@ export default function CategoryPage() {
     if (action !== "initial") heading.current?.focus();
   }, [title, action]);
 
-  if (!category) {
-    return (
-      <section>
-        <h1 ref={heading} tabIndex={-1}>
-          %%notFound%%
-        </h1>
-        <Link to="/expenses">%%backToList%%</Link>
-      </section>
-    );
-  }
+  // An unknown category leaves an empty screen: no heading, no way back.
+  if (!category) return null;
 
   return (
     <section>

@@ -14,8 +14,8 @@ export default function CategoryPage() {
   const totalMinor = items.reduce((sum, expense) => sum + expense.amountMinor, 0);
   const title = category ? category.name : "%%notFound%%";
 
+  // Moves focus but never sets document.title: the tab keeps the list's title.
   useEffect(() => {
-    document.title = `${title} — %%appName%%`;
     if (action !== "initial") heading.current?.focus();
   }, [title, action]);
 
