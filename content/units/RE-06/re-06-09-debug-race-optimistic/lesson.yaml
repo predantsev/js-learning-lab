@@ -1,0 +1,410 @@
+id: re-06-09-debug-race-optimistic
+unit: RE-06
+title:
+  uk: "Налагодження: запізнілі відповіді й невдале оптимістичне оновлення"
+  en: "Debug: delayed responses and a failed optimistic update"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "За журналом запитів знайти, яка запізніла відповідь перекрила новіші дані і яку оптимістичну зміну так і не відкотили."
+    en: "Diagnose from a request log which late response overwrote newer data and which optimistic change was never rolled back."
+  - uk: "Виправити обидві вади й довести кожне виправлення тестом дій користувача, який падав до нього."
+    en: "Repair both defects and prove each fix with a user-action test that fails before it."
+prerequisites: [re-06-08-testing-user-actions]
+subskills:
+  - { family: R-06, skill: "fetch lifecycle/cancellation/races", depth: assess }
+  - { family: R-06, skill: "loading/retry", depth: assess }
+glossary: []
+selfCheck: [predict-seeded, repair-board]
+
+blocks:
+  - id: hiding-bugs
+    kind: explanation
+    title:
+      uk: "Вади, що ховаються від ручної перевірки"
+      en: "Bugs that hide from a manual check"
+    body:
+      uk: |
+        Скарга з вечора, коли сервер був повільним: «Набрала "на" — а список показує й те, що "на" не містить. А лампа відмічена, хоча я бачила, що сервер падав». Удень ти клікаєш те саме — і все правильно.
+
+        Гонки й збої з’являються лише за певних затримок, тож ручна перевірка, яка закінчилася на правильному екрані, нічого не доводить. Доказ дає **журнал запитів**:
+
+        - зістав `→ #N` і `← #N` за номером: якщо відповідь на **старіший** запит того самого виду приходить **після** новішої — це кандидат на [[stale-response|застарілу відповідь]];
+        - кілька `PATCH` поспіль на один клік — хтось повторює mutation мовчки, а екран тим часом показує непідтверджену зміну;
+        - `503` без повідомлення на екрані — збій, про який людина не дізналася.
+
+        Потім відтвори сценарій фікстурою з тими самими затримками — і зафіксуй його тестом.
+      en: |
+        A complaint from an evening when the server was slow: “I typed "la" — and the list also shows things without "la". And the lamp is ticked, although I saw the server failing.” In the daytime you click the same — and everything is right.
+
+        Races and failures appear only with certain delays, so a manual check that ended on the right screen proves nothing. The proof is the **request log**:
+
+        - match `→ #N` and `← #N` by number: if the answer to an **older** request of the same kind arrives **after** a newer one, it is a [[stale-response]] candidate;
+        - several `PATCH` lines in a row for one click — someone repeats a mutation silently, while the screen shows an unconfirmed change;
+        - `503` with no message on the screen — a failure the person never learned about.
+
+        Then reproduce the scenario with a fixture with the same delays — and pin it down with a test.
+
+  - id: predict-seeded
+    kind: prediction
+    strings:
+      query: { uk: "на", en: "la" }
+    prompt:
+      uk: "У `WishBoard` пошук запускає ефект без cleanup, а позначка «отримано» після `503` одразу пробує ще раз. Пошук однієї літери триває 450 мс, двох — 150 мс, збереження — 250 мс. Які ситуації закінчаться неправильним екраном або непідтвердженою зміною? Познач усі."
+      en: "In `WishBoard` the search runs an effect without a cleanup, and the “acquired” mark tries again right after a `503`. A search for one letter takes 450 ms, for two — 150 ms, a save — 250 ms. Which situations end with a wrong screen or an unconfirmed change? Mark all of them."
+    answer:
+      type: multi
+      options:
+        - id: fast-typing
+          text:
+            uk: "Людина швидко набирає «%%query%%»"
+            en: "The person quickly types “%%query%%”"
+        - id: slow-typing
+          text:
+            uk: "Людина набирає «%%query%%» з паузою в секунду між літерами"
+            en: "The person types “%%query%%” with a one-second pause between the letters"
+          why:
+            uk: "За секунду відповідь на першу літеру вже прийшла — коли піде запит на дві літери, старого в дорозі немає. Саме тому ручна перевірка проходить."
+            en: "Within a second the answer for the first letter has already arrived — when the two-letter request goes out, there is no old one on its way. That is exactly why the manual check passes."
+        - id: tick-server-down
+          text:
+            uk: "Людина ставить галочку, а сервер відповідає `503` на кожен запит"
+            en: "The person ticks a wish, and the server answers `503` to every request"
+        - id: tick-server-up
+          text:
+            uk: "Людина ставить галочку, і сервер відповідає `200` з першого разу"
+            en: "The person ticks a wish, and the server answers `200` the first time"
+          why:
+            uk: "Без збою оптимістична зміна просто підтверджується — один `PATCH`, усе правильно."
+            en: "Without a failure the optimistic change is simply confirmed — one `PATCH`, all correct."
+      correct: [fast-typing, tick-server-down]
+    explanation:
+      uk: "Швидкий набір: відповідь на одну літеру приходить на 450 мс, після відповіді на дві (150 мс), і перекриває її. Сервер, що падає: цикл повторює `PATCH` без кінця, а галочка весь цей час на екрані, хоча жодна зміна не збереглася, — і повідомлення немає. Перевірено в пісочниці на прикладі нижче."
+      en: "Fast typing: the answer for one letter arrives at 450 ms, after the two-letter answer (150 ms), and overwrites it. A failing server: the loop repeats the `PATCH` endlessly, and the tick stays on the screen all that time although no change was saved — and there is no message. Checked in the sandbox with the example below."
+
+  - id: seeded-sequence
+    kind: visual
+    visual: sequence
+    strings:
+      query: { uk: "на", en: "la" }
+      first: { uk: "н", en: "l" }
+    title:
+      uk: "Записаний сеанс на одній шкалі часу"
+      en: "The recorded session on one timeline"
+    textEquivalent:
+      uk: >-
+        Учасники: людина, компонент WishBoard і фікстура API. Людина швидко набирає дві літери.
+        Ефект надсилає пошук «%%first%%» (#2, 450 мс), а одразу за ним — «%%query%%» (#3, 150 мс).
+        Відповідь #3 приходить першою й показує правильний список. Відповідь #2 приходить пізніше,
+        і ефект без cleanup кладе її в стан — на екрані список для однієї літери під полем, де вже
+        дві. Потім людина ставить галочку на лампі: компонент одразу показує галочку й надсилає
+        PATCH #4. Сервер відповідає 503, цикл одразу надсилає PATCH #5 — знову
+        503 — і PATCH #6. Весь цей час галочка на екрані, хоча жодна зміна не збереглася, а
+        повідомлення про збій немає. Якби сервер не відповідав 200 ніколи, цикл не закінчився б.
+      en: >-
+        Participants: the person, the WishBoard component and the fixture API. The person types two
+        letters quickly. The effect sends the search for "%%first%%" (#2, 450 ms) and right after it
+        for "%%query%%" (#3, 150 ms). Answer #3 arrives first and shows the right list. Answer #2
+        arrives later, and the effect without a cleanup puts it into state — the screen shows the
+        one-letter list under a field that already holds two letters. Then the person ticks the
+        lamp: the component shows the tick at once and sends PATCH #4. The server answers 503, the
+        loop immediately sends PATCH #5 — 503 again — and PATCH #6. All this time the tick is on the
+        screen although no change was saved, and there is no failure message. If the server never
+        answered 200, the loop would never end.
+    spec:
+      actors:
+        - { id: user, label: { uk: "Людина", en: "Person" } }
+        - { id: board, label: "WishBoard" }
+        - { id: api, label: "fixtureApi" }
+      messages:
+        - from: board
+          to: api
+          label: "#2 GET ?q=%%first%%"
+          kind: async
+          note: { uk: "450 мс", en: "450 ms" }
+          caption:
+            uk: "Людина набрала першу літеру — ефект надсилає пошук **#2**. Одна літера — багато збігів, відповідь повільна."
+            en: "The person typed the first letter — the effect sends search **#2**. One letter — many matches, a slow answer."
+        - from: board
+          to: api
+          label: "#3 GET ?q=%%query%%"
+          kind: async
+          note: { uk: "150 мс", en: "150 ms" }
+          caption:
+            uk: "Одразу друга літера — пошук **#3**. Cleanup немає: **#2** ніхто не скасовує."
+            en: "Right away the second letter — search **#3**. There is no cleanup: nobody aborts **#2**."
+        - from: api
+          to: board
+          label: "← #3 200"
+          kind: return
+          caption:
+            uk: "**#3** приходить першою: на екрані правильний список."
+            en: "**#3** arrives first: the right list is on the screen."
+        - from: api
+          to: board
+          label: "← #2 200"
+          kind: return
+          caption:
+            uk: "**#2** приходить пізніше й перекриває список. У журналі: `← #3` раніше за `← #2` — ознака застарілої відповіді."
+            en: "**#2** arrives later and overwrites the list. In the log: `← #3` before `← #2` — the sign of a stale answer."
+        - from: user
+          to: board
+          label: { uk: "галочка «лампа»", en: "tick “lamp”" }
+          caption:
+            uk: "Людина ставить галочку — компонент показує її одразу (оптимістично)."
+            en: "The person ticks the lamp — the component shows the tick at once (optimistically)."
+        - from: board
+          to: api
+          label: "#4 PATCH w-02"
+          caption:
+            uk: "Перший `PATCH`."
+            en: "The first `PATCH`."
+        - from: api
+          to: board
+          label: "← #4 503"
+          kind: return
+          caption:
+            uk: "`503`. Відкоту немає: цикл вирішує «спробувати ще раз»."
+            en: "`503`. No rollback: the loop decides to “try again”."
+        - from: board
+          to: api
+          label: "#5 PATCH · #6 PATCH…"
+          note: { uk: "без кліків людини", en: "without the person clicking" }
+          caption:
+            uk: "Нові `PATCH` без жодного кліку. Галочка весь час на екрані, хоча нічого не збережено, і повідомлення немає. Якщо сервер не оживе, цикл не скінчиться."
+            en: "New `PATCH` requests without a single click. The tick stays on the screen all the time although nothing is saved, and there is no message. If the server does not recover, the loop never ends."
+
+  - id: replay-session
+    kind: example
+    runtime: browser-react
+    dir: replay-session
+    entry: main.jsx
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      searchLabel: { uk: "Пошук бажань", en: "Search wishes" }
+      query: { uk: "на", en: "la" }
+      saveFailed: { uk: "Не вдалося зберегти «{name}». Зміну скасовано.", en: "Could not save “{name}”. The change was undone." }
+      stepType: { uk: "людина швидко набирає «на»", en: "the person quickly types “la”" }
+      stepTick: { uk: "людина ставить галочку на лампі; сервер двічі відповідає 503", en: "the person ticks the lamp; the server answers 503 twice" }
+      screenWord: { uk: "на екрані:", en: "on screen:" }
+      noMessage: { uk: "(повідомлення немає)", en: "(no message)" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rNotFound: { uk: "на екрані немає", en: "not on the screen:" }
+      rStillMissing: { uk: "так і не з’явилося", en: "never appeared" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Повтор записаного сеансу"
+      en: "Replaying the recorded session"
+    body:
+      uk: |
+        `replay.jsx` відтворює вечірній сеанс курсовими інструментами тестів: швидкий набір, потім галочка, поки сервер двічі падає. Між кроками він чекає `whenIdle()` — фікстура сама каже, коли в дорозі не лишилося жодного запиту. Затримки — в `settings` у `fakeServer.js`.
+
+        Натисни **Запустити** й читай **Консоль** згори донизу, зіставляючи кожен рядок `←` зі своїм `→`.
+      en: |
+        `replay.jsx` replays the evening session with the course test tools: fast typing, then a tick while the server fails twice. Between the steps it waits for `whenIdle()` — the fixture itself says when no request is left on its way. The delays are in `settings` in `fakeServer.js`.
+
+        Press **Run** and read the **Console** top to bottom, matching every `←` line with its `→`.
+    tryIt:
+      uk: |
+        1. Знайди в журналі `← #3` перед `← #2` і рядок `на екрані:` з чотирма бажаннями — серед них є й без «на». Потім три `PATCH` на одну галочку, а наприкінці — галочка й «(повідомлення немає)».
+        2. У `fakeServer.js` зміни `shortQueryMs: 450` на `100` і запусти знову: тепер одна літера відповідає швидше, і список правильний. Вада нікуди не ділася — вона просто не проявилася. Поверни `450`.
+        3. У `replay.jsx` зміни `settings.failNext = 2` на `5`: шість `PATCH` поспіль, і весь цей час на екрані галочка, якої сервер не прийняв.
+      en: |
+        1. Find `← #3` before `← #2` in the log, and the `on screen:` line with three wishes — two of them without “la”. Then three `PATCH` lines for one tick, and at the end a tick and “(no message)”.
+        2. In `fakeServer.js` change `shortQueryMs: 450` to `100` and run again: now one letter answers faster, and the list is right. The bug did not go away — it just did not show up. Set it back to `450`.
+        3. In `replay.jsx` change `settings.failNext = 2` to `5`: six `PATCH` lines in a row, and all that time the screen shows a tick the server did not accept.
+
+  - id: fix-and-prove
+    kind: explanation
+    title:
+      uk: "Виправити й довести тестом"
+      en: "Fix and prove with a test"
+    body:
+      uk: |
+        | Що в журналі | Причина | Виправлення |
+        |---|---|---|
+        | `← #N` старішого пошуку після новішого | ефект пошуку без cleanup | `AbortController` або прапорець ігнорування в cleanup |
+        | кілька `PATCH` на одну дію | автоматичний повтор mutation | один запит; повтор — лише за рішенням людини, з межею |
+        | після `503` зникла чужа зміна | відкат знімком усього списку | відкат одного запису оновлювачем |
+
+        Виправлення без тесту — обіцянка. [[regression-test|Регресійний тест]] спершу **падає** на старому коді (так ти знаєш, що він ловить саме цю ваду), а після виправлення проходить і далі стереже, щоб вада не повернулася. Для гонки тест має дочекатися **всіх** відповідей, зокрема запізнілої, — `whenIdle()` у фікстурі робить це без вгадування пауз.
+      en: |
+        | What the log shows | Cause | Fix |
+        |---|---|---|
+        | `← #N` of an older search after a newer one | a search effect without a cleanup | an `AbortController` or an ignore flag in the cleanup |
+        | several `PATCH` lines for one action | an automatic mutation retry | one request; a retry only when the person decides, with a limit |
+        | after a `503` someone else's change vanished | a rollback with a snapshot of the whole list | a rollback of one record with an updater |
+
+        A fix without a test is a promise. A [[regression-test]] first **fails** on the old code (so you know it catches exactly this bug), then passes after the fix and keeps guarding that the bug does not come back. For a race the test must wait for **all** answers, including the late one — the fixture's `whenIdle()` does that without guessing pauses.
+
+  - id: repair-board
+    kind: exercise
+    mode: debug
+    runtime: browser-react
+    dir: repair-board
+    entry: main.jsx
+    editable: [WishBoard.jsx, WishBoard.test.jsx]
+    capabilities: { testTimeoutMs: 12000 }
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      searchLabel: { uk: "Пошук бажань", en: "Search wishes" }
+      query: { uk: "на", en: "la" }
+      firstLetter: { uk: "н", en: "l" }
+      secondLetter: { uk: "а", en: "a" }
+      hits: { uk: "Навушники|Настільна лампа|Квитки на концерт", en: "Desk lamp" }
+      saveFailed: { uk: "Не вдалося зберегти «{name}». Зміну скасовано.", en: "Could not save “{name}”. The change was undone." }
+      testSearch: { uk: "повільно набраний пошук показує відповідні бажання", en: "a search typed slowly lists the matching wishes" }
+      testToggle: { uk: "галочка позначає бажання отриманим", en: "a tick marks the wish as acquired" }
+      testRace: { uk: "після швидкого набору лишаються бажання лише для останнього тексту", en: "after fast typing only the latest query's wishes stay" }
+      mRows: { uk: "рядки списку", en: "the list rows" }
+      mChecked: { uk: "галочка лампи", en: "the lamp's tick" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rNotFound: { uk: "на екрані немає", en: "not on the screen:" }
+      rStillMissing: { uk: "так і не з’явилося", en: "never appeared" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Полагодь пошук і галочку — і доведи тестом"
+      en: "Repair the search and the tick — and prove it with a test"
+    instructions:
+      uk: |
+        Це той самий `WishBoard`, що в записаному сеансі. Два наявні тести в `WishBoard.test.jsx` проходять — вони перевіряють лише повільний набір і вдалу галочку.
+
+        1. **Тест.** Додай у `WishBoard.test.jsx` третій тест, що відтворює гонку: швидко набери «на» одним `user.type`, дочекайся `whenIdle()` і перевір, що в списку лише бажання з «на» (у тестах уже є `rows()` і рядок `"…".split("|")` з очікуваними назвами). На поточному коді він має **впасти**. Два наявні тести не видаляй.
+        2. **Пошук.** Виправ ефект пошуку в `WishBoard.jsx`, щоб запізніла відповідь не потрапляла на екран.
+        3. **Галочка.** Перепиши `toggleAcquired`: один `PATCH` на клік, без автоматичних повторів; якщо `ok` — `false`, поверни **лише це бажання** до попереднього значення й покажи в `role="status"` «Не вдалося зберегти «Назва». Зміну скасовано.».
+
+        Перевірки запускають твої тести з твоїм кодом і з початковим пошуком без cleanup (там твій новий тест має впасти), а також перевіряють пошук і галочку напряму й **рахують запити** `PATCH`.
+      en: |
+        This is the same `WishBoard` as in the recorded session. The two existing tests in `WishBoard.test.jsx` pass — they only check slow typing and a successful tick.
+
+        1. **The test.** Add a third test to `WishBoard.test.jsx` that reproduces the race: type “la” quickly with one `user.type`, wait for `whenIdle()` and check that the list holds only the wishes with “la” (the tests already have `rows()` and the line `"…".split("|")` with the expected names). On the current code it must **fail**. Do not delete the two existing tests.
+        2. **The search.** Fix the search effect in `WishBoard.jsx` so that a late answer never reaches the screen.
+        3. **The tick.** Rewrite `toggleAcquired`: one `PATCH` per click, no automatic retries; if `ok` is `false`, put **only this wish** back to its previous value and show “Could not save “Name”. The change was undone.” in `role="status"`.
+
+        The checks run your tests with your code and with the original search without a cleanup (there your new test must fail), check the search and the tick directly and **count** `PATCH` **requests**.
+    testTitles:
+      "your tests pass with your WishBoard, the two given tests included":
+        uk: "Твої тести проходять із твоїм `WishBoard`, обидва дані тести на місці"
+        en: "Your tests pass with your `WishBoard`, the two given tests included"
+      "one of your tests fails with the original search that has no cleanup":
+        uk: "Один із твоїх тестів падає з початковим пошуком без cleanup"
+        en: "One of your tests fails with the original search that has no cleanup"
+      "after fast typing only the latest query's wishes stay":
+        uk: "Після швидкого набору лишаються бажання лише для останнього тексту"
+        en: "After fast typing only the latest query's wishes stay"
+      "a failed toggle puts back only that wish":
+        uk: "Невдала галочка повертає назад лише своє бажання"
+        en: "A failed tick puts back only that wish"
+      "a failed toggle sends one request and announces the failure":
+        uk: "Невдала галочка надсилає один запит і повідомляє про збій"
+        en: "A failed tick sends one request and announces the failure"
+    hints:
+      nudge:
+        uk: "Почни з тесту: скопіюй перший тест і прибери з нього паузу між літерами. Він має стати червоним — тоді в тебе є доказ. Далі по черзі: що в ефекті пошуку бракує для старого запиту, і що в циклі `for (;;)` робить замість відкату?"
+        en: "Start with the test: copy the first test and remove the pause between the letters. It must turn red — then you have proof. Then one at a time: what does the search effect lack for the old request, and what does the `for (;;)` loop do instead of a rollback?"
+      explanation:
+        uk: |
+          Тест: `render`, один `user.type` з обома літерами, `await whenIdle()`, порівняння `rows()` з очікуваними назвами. Пошук: cleanup ефекту має скасувати запит (`AbortController` і `signal`) або позначити його відповідь як непотрібну. Галочка: збережи попереднє значення поля, застосуй нове оновлювачем, надішли **один** запит; при `ok: false` поверни попереднє значення оновлювачем, що чіпає лише це бажання, і постав повідомлення. Цикл і `snapshot` прибери зовсім.
+
+          Схоже, з іншою задачею: «зірочка» на нотатці — `const before = note.starred; setNotes((all) => all.map((n) => (n.id === id ? { ...n, starred: !before } : n))); const r = await saveStar(id, !before); if (!r.ok) setNotes((all) => all.map((n) => (n.id === id ? { ...n, starred: before } : n)));`.
+        en: |
+          The test: `render`, one `user.type` with both letters, `await whenIdle()`, compare `rows()` with the expected names. The search: the effect's cleanup must abort the request (`AbortController` and `signal`) or mark its answer as unwanted. The tick: keep the field's previous value, apply the new one with an updater, send **one** request; on `ok: false` restore the previous value with an updater that touches only this wish, and set the message. Remove the loop and `snapshot` altogether.
+
+          Similar, with a different task: a “star” on a note — `const before = note.starred; setNotes((all) => all.map((n) => (n.id === id ? { ...n, starred: !before } : n))); const r = await saveStar(id, !before); if (!r.ok) setNotes((all) => all.map((n) => (n.id === id ? { ...n, starred: before } : n)));`.
+    solutionNote:
+      uk: "Новий тест чекає на `whenIdle()` — тобто й на запізнілу відповідь, — тому падає на старому пошуку й проходить на виправленому: це регресійний тест на саме цю гонку. Cleanup скасовує попередній пошук, і на екран потрапляє лише відповідь для останнього тексту. Галочка робить один `PATCH`; збій відкочує лише своє бажання оновлювачем і каже про це в `role=\"status\"`. Повторювати mutation має людина — автоматичний цикл тримав на екрані зміну, якої сервер не прийняв."
+      en: "The new test waits for `whenIdle()` — that is, for the late answer too — so it fails on the old search and passes on the fixed one: a regression test for exactly this race. The cleanup aborts the previous search, and only the answer for the latest text reaches the screen. The tick sends one `PATCH`; a failure rolls back only its wish with an updater and says so in `role=\"status\"`. Repeating a mutation is the person's call — the automatic loop kept a change on the screen that the server never accepted."
+    feedback:
+      - when: { test: "your tests pass with your WishBoard, the two given tests included" }
+        message:
+          uk: "Ця перевірка запускає твої тести з твоїм `WishBoard` і очікує обидва дані тести на місці, щонайменше три тести разом і жодного червоного. Рядки `✗` у **Консолі** кажуть, який тест упав. Якщо падає твій новий тест — вада гонки ще в пошуку."
+          en: "This check runs your tests with your `WishBoard` and expects both given tests in place, at least three tests in total and none red. The `✗` lines in the **Console** say which test failed. If your new test fails, the race is still in the search."
+      - when: { test: "one of your tests fails with the original search that has no cleanup" }
+        message:
+          uk: "Ця перевірка підставляє `WishBoard` з початковим пошуком без cleanup і очікує, що хоча б один твій тест упаде. Тест гонки має набрати обидві літери одним `user.type` і дочекатися `whenIdle()` — тоді запізніла відповідь устигне перекрити список."
+          en: "This check puts in a `WishBoard` with the original search without a cleanup and expects at least one of your tests to fail. The race test must type both letters with one `user.type` and wait for `whenIdle()` — then the late answer has time to overwrite the list."
+      - when: { test: "after fast typing only the latest query's wishes stay" }
+        message:
+          uk: "Ця перевірка швидко набирає «на» у твоєму `WishBoard`, чекає всіх відповідей і очікує лише «Навушники», «Настільна лампа», «Квитки на концерт». Більше бажань — пізня відповідь на одну літеру досі потрапляє на екран."
+          en: "This check quickly types “la” into your `WishBoard`, waits for every answer and expects only “Desk lamp”. More wishes — the late one-letter answer still reaches the screen."
+      - when: { test: "a failed toggle puts back only that wish" }
+        message:
+          uk: "Ця перевірка провалює галочку лампи, за 40 мс ставить галочку велосипеда (вона вдається) і очікує лампу без галочки, а велосипед — з галочкою. Автоматичний повтор залишає лампу відміченою, а відкат знімком стирає велосипед."
+          en: "This check makes the lamp's tick fail, 40 ms later ticks the bicycle (that succeeds) and expects the lamp unticked and the bicycle ticked. An automatic retry leaves the lamp ticked, and a snapshot rollback erases the bicycle."
+      - when: { test: "a failed toggle sends one request and announces the failure" }
+        message:
+          uk: "Ця перевірка провалює галочку й очікує рівно один `PATCH` та текст «Не вдалося зберегти «Настільна лампа». Зміну скасовано.» у `role=\"status\"`."
+          en: "This check makes the tick fail and expects exactly one `PATCH` and the text “Could not save “Desk lamp”. The change was undone.” in `role=\"status\"`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: missing-await
+        from: js-08-11-debug-async
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          async function save() {
+            throw new Error("503");
+          }
+
+          function onClick() {
+            try {
+              save();
+              console.log("saved");
+            } catch {
+              console.log("failed");
+            }
+          }
+
+          onClick();
+        verify:
+          logs: ["saved"]
+          error: Error
+        answer:
+          type: choice
+          options:
+            - id: saved-then-unhandled
+              text:
+                uk: "`saved`, а потім помилка про необроблене відхилення проміса"
+                en: "`saved`, then an error about an unhandled promise rejection"
+            - id: failed
+              text: { uk: "`failed`", en: "`failed`" }
+              why:
+                uk: "`save()` не кидає синхронно — вона повертає відхилений проміс. Без `await` `try` уже закінчився, коли відхилення стає відомим."
+                en: "`save()` does not throw synchronously — it returns a rejected promise. Without `await` the `try` has already finished when the rejection becomes known."
+            - id: nothing
+              text: { uk: "Нічого: помилка в асинхронній функції зникає", en: "Nothing: an error in an async function disappears" }
+              why:
+                uk: "Відхилення не зникає: середовище повідомляє про нього як про необроблене."
+                en: "The rejection does not disappear: the environment reports it as unhandled."
+          correct: [saved-then-unhandled]
+        explanation:
+          uk: "Без `await` код біжить далі й друкує `saved`, а відхилення лишається без обробника. Так само `searchWishes(query).then(setWishes)` у цьому уроці: ніхто не чекає й не скасовує старий запит, тож його відповідь приходить, коли її вже не просили."
+          en: "Without `await` the code runs on and prints `saved`, while the rejection is left without a handler. The same goes for `searchWishes(query).then(setWishes)` in this lesson: nobody waits for or aborts the old request, so its answer arrives when nobody wants it any more."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-06
+    body:
+      uk: "Перш ніж здати крок проєкту цього розділу, відтвори обидва вечірні сценарії на своєму проєкті: швидке перемикання фільтра з повільною першою відповіддю і збій оптимістичної зміни. Для кожного — тест дій користувача, що падав би без виправлення, і очікування всіх відповідей фікстури замість пауз."
+      en: "Before you hand in this unit's project step, reproduce both evening scenarios in your project: quick filter switching with a slow first answer and a failing optimistic change. For each — a user-action test that would fail without the fix, and waiting for all fixture answers instead of pauses."
