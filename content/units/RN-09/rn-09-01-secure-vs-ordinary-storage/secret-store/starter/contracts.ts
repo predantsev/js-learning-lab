@@ -14,7 +14,8 @@ export interface SecretStore {
 
 // Rules of the contract (the same for the native implementation and every test double):
 // - a key is 1 or more of: letters A–Z a–z, digits, ".", "-", "_"; any other key gives "invalid-key";
-// - a value longer than 2048 characters gives "too-large" and the old value stays;
+// - a value longer than 2048 characters gives "too-large" and the old value stays (the lab's cautious limit:
+//   Expo warns that large values may be rejected; some iOS versions refused more than about 2048 bytes);
 // - a store that is not available gives "unavailable" for every call;
 // - a key that was never set gives { ok: true, value: null }.
 export const MAX_SECRET_LENGTH = 2048;
