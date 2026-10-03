@@ -1,0 +1,179 @@
+# Capstone step of unit RE-04 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson re-04-09-capstone-data-hook from this file.
+# A local step: done in the learner's editor, terminal and browser; no platform checks. The project page
+# shows only the intro of a local step, so the intro carries the whole procedure.
+# Every command was run on macOS (Node.js 25.2.1, npm 11.6.2, Git 2.51.0, Chrome) in a scratch home on
+# all four projects, continuing the RE-03 scratch projects. The focus checks pressed Enter on the
+# buttons in Chrome and read document.activeElement; the troubleshooting rows were reproduced on a copy
+# of the wishlist project. Quoted output is from the wishlist run (uk output in the uk text, en in en).
+# reference/ holds the same file set as RE-01 (export- and npm-generated files excluded).
+unit: RE-04
+mode: local
+entry: index.html
+title:
+  uk: "Типізований reducer і хук даних"
+  en: "A typed reducer and a data hook"
+intro:
+  uk: |
+    Зараз усі зміни списку розкидано по обробниках `App`, а читання й запис сховища стоять поруч зі станом. На цьому кроці список отримує одного власника: **typed reducer** — чисту функцію `(список, action) => новий список` з [[reducer-action|actions]], типізованими як [[discriminated-union|розмічене об’єднання]]. Його разом із читанням і ефектом запису ховає [[custom-hook|власний хук]] даних. Стан, потрібний і формі, і списку, живе в їхньому найближчому спільному батьківському компоненті — `App`; те, що потрібне одній картці (підтвердження видалення), лишається в картці. Після видалення фокус клавіатури переходить на наступну картку або на заголовок списку — через [[use-ref|ref]]. `domain/` і `storage/` не змінюються.
+
+    | Проєкт | Reducer і actions (`ui/…Reducer.ts`) | Хук (`ui/use….ts`) і ключ |
+    |---|---|---|
+    | Список бажань | `itemsReducer`: `added`, `updated`, `removed`, `acquiredToggled` | `useItems`, `jsll.wishlist.v1` |
+    | Планувальник | `tasksReducer`: `added`, `updated`, `removed`, `doneToggled` | `useTasks`, `jsll.planner.v1` |
+    | Трекер звичок | `habitsReducer`: `added`, `updated`, `removed`, `activeToggled`, `completionAdded` з днем у action (той самий день не повторюється; картка отримує кнопки «Поставити на паузу» / «Відновити») | `useHabits`, `jsll.habits.v1` |
+    | Трекер витрат | `expensesReducer`: `added`, `updated`, `removed`; лише ціле `amountMinor` більше за нуль | `useExpenses`, `jsll.expenses.v1` |
+
+    Нижче — «Список бажань»; для свого проєкту підстав назви з таблиці. Перевірено на macOS (Node.js 25.2.1, React 19.3.0, TypeScript 7.0.2, esbuild 0.28.2, Chrome) на всіх чотирьох проєктах.
+
+    **1. Стан на початку.** `cd ~/js-course/wishlist`, `git status` — чисто, `git log --oneline -1` — commit кроку про ефект збереження.
+
+    **2. Reducer — `ui/itemsReducer.ts`.** Сюди переїжджають `WishFields` (з `ItemForm.tsx`) і `newId` (з `App.tsx`), а actions — це тип:
+
+    ```ts
+    export type ItemsAction =
+      | { type: "added"; fields: WishFields }
+      | { type: "updated"; id: string; fields: WishFields }
+      | { type: "removed"; id: string }
+      | { type: "acquiredToggled"; id: string };
+    ```
+
+    `itemsReducer(items: Wish[], action: ItemsAction): Wish[]` — це `switch (action.type)`, де кожна гілка повертає результат доменної функції: `added` — `addItem(items, newId(items), action.fields)`, `removed` — `removeItem`, `acquiredToggled` — `updateItem` з `acquired: !item.acquired` (невідомий `id` — той самий список). `updated` спершу перевіряє чернетку `validateItem`, бо `updateItem` копіює будь-які зміни. Гілка `default` з `const unhandled: never = action;` — [[exhaustiveness-check|перевірка вичерпності]]: якщо додати новий тип action і не обробити його, `tsc` покаже цей рядок коду. Reducer ніколи не змінює список, який отримав.
+
+    **3. Тести reducer.** Reducer — чиста функція без React, тож його перевіряє той самий `npm test`. Створи `tests/reducer.test.js` з тестами на свої actions (ми написали три: додавання з вільним `id` і відмова для порожньої назви; перемикання в копії, де інші бажання — ті самі об’єкти, а отриманий список не змінився; відмова для некоректного оновлення й видалення одного бажання) і додай `import "./tests/reducer.test.js";` у `run-tests.js`. У `tsconfig.json` у `include` додай `"ui/**/*.ts"`.
+
+    **4. Хук — `ui/useItems.ts`.** Він бере на себе читання й запис, які на попередньому кроці стояли в `App`:
+
+    ```ts
+    export function useItems(startingItems: Wish[]): [Wish[], Dispatch<ItemsAction>] {
+      const [items, dispatch] = useReducer(itemsReducer, startingItems, readSaved);
+      useEffect(() => {
+        saveItems(localStorage, items);
+      }, [items]);
+      return [items, dispatch];
+    }
+    ```
+
+    `readSaved(startingItems)` — функція з тілом лінивого ініціалізатора попереднього кроку: третій аргумент `useReducer` React викликає з другим аргументом лише під час першого рендеру, як функцію в `useState(() => …)`. Над хуком напиши коментарем його [[hook-contract|контракт]]: що повертає, звідки бере початок, що записує, чому без cleanup.
+
+    **5. `App`.** `const [items, dispatch] = useItems(startingItems);` замість `useState` і ефекту. Обробники лише відправляють actions: `dispatch({ type: "added", fields })` або `dispatch({ type: "updated", id: editingId, fields })`, `dispatch({ type: "acquiredToggled", id })`, `dispatch({ type: "removed", id })`. `editingId` і `filter` лишаються станом `App`, бо їх читають і форма, і список; `confirming` лишається в картці.
+
+    **6. Фокус після видалення.** Картка з фокусом зникає, і без допомоги фокус падає на `body`, тобто нікуди. Тож:
+
+    - `Section` отримує необов’язковий prop `headingRef?: Ref<HTMLHeadingElement>` і ставить його заголовку разом із `tabIndex={-1}` (фокус із коду можна, у порядку Tab — ні);
+    - в `App` — `listHeadingRef`, `listRef` на `<div>` навколо списку й `focusAfterRemove = useRef<string | null>(null)`; у картки є `data-id`, а в кнопки «Видалити» — `data-action="delete"`;
+    - `handleRemove` до `dispatch` записує в `focusAfterRemove.current` `id` наступної видимої картки (або попередньої, або `"heading"`, коли карток не лишиться);
+    - ефект **без масиву залежностей** запускається після кожного commit, і якщо в ref є ціль — фокусує кнопку «Видалити» цієї картки або заголовок списку й очищає ref.
+
+    У картці так само: після «Видалити» фокус переходить на «Скасувати», а після «Скасувати» — назад на «Видалити» (ефект із залежністю `[confirming]`, який нічого не робить під час першого commit).
+
+    **7. Перевірка інструментами.** `npm run typecheck` і `npm run lint` — лише рядки заголовка; `npm run build` — `⚡ Done in 40ms`; `npm test` — три нові рядки `✓ itemsReducer …` і `Пройшли: 33 · не пройшли: 0` (планувальник — 34, звички й витрати — 32).
+
+    **8. Перевірка в браузері з клавіатури** (`npm start`; Tab до кнопки й Enter). Ми перевіряли з шістьма початковими бажаннями:
+
+    - Enter на «Видалити» в «Настільній лампі» — фокус на «Скасувати»; Enter на «Скасувати» — фокус знову на «Видалити»;
+    - видалення «Настільної лампи» (посередині) — фокус на кнопці «Видалити» наступної картки, «Велосипеда»;
+    - видалення «Термочашки» (остання) — фокус на «Видалити» попередньої картки, «Квитків на концерт»;
+    - фільтр «отримані» й видалення всіх його карток — після останньої фокус на заголовку «Усі бажання»;
+    - перезавантаження — ті самі три бажання, що лишилися, без дублікатів; у Console немає червоних повідомлень, крім `404` для `favicon.ico`.
+
+    **9. Commit.** `git status --short` — ` M` для `run-tests.js`, `tsconfig.json`, `ui/App.tsx`, `ui/ItemCard.tsx`, `ui/ItemForm.tsx`, `ui/Section.tsx` і `??` для `tests/reducer.test.js`, `ui/itemsReducer.ts`, `ui/useItems.ts`. `git add -A`, `git commit -m "Move the list into a typed reducer and a data hook"` — `[main 11e2bc7] Move the list into a typed reducer and a data hook` і `9 files changed, 193 insertions(+), 56 deletions(-)`; `git diff HEAD~1 --stat -- domain storage` нічого не друкує.
+
+    **Самоперевірка:** кожен пункт кроку 8 справджується; список змінюється лише через `dispatch`; `useState` зі списком і ефекту запису в `App` більше немає — вони в хуку; `npm run typecheck`, `npm run lint` — без зауважень, `npm test` — `не пройшли: 0` разом із тестами reducer.
+
+    **Якщо щось пішло не так** (усе відтворено на «Списку бажань»):
+
+    - `✗ itemsReducer toggles acquired in a copy and keeps the other wishes as they were — the wish in the received list: очікувалося false, отримано true` — reducer змінив отримане бажання на місці (`item.acquired = !item.acquired`) і повернув той самий список; на сторінці перемикання тоді не перемальовується. Поверни новий список від `updateItem`.
+    - `error TS2820: Type '"acquiredToggle"' is not assignable to type '"acquiredToggled" | "added" | "removed" | "updated"'. Did you mean '"acquiredToggled"'?` — помилка в назві action; esbuild зібрав би такий код, і клік просто нічого б не робив, тому запускай `npm run typecheck`.
+    - `error TS2322: Type '{ type: "cleared"; }' is not assignable to type 'never'.` у гілці `default` — у `ItemsAction` додано тип, який `switch` не обробляє.
+    - Після видалення фокус на `body` — ефекту фокусу дали масив `[]`: він спрацював лише після першого commit. Йому потрібен запуск після кожного commit — без масиву.
+
+    Еталон кроку — `Завантажити: RE-04 — Типізований reducer і хук даних` у розділі «Еталони для завантаження» після експорту. Команди виконано лише на macOS; у Linux і Windows (Git Bash) їх не запускали.
+  en: |
+    Right now the list's changes are spread over the handlers of `App`, and reading and writing the storage sit next to the state. In this step the list gets one owner: a **typed reducer** — a pure function `(list, action) => new list` with [[reducer-action|actions]] typed as a [[discriminated-union]]. A [[custom-hook|custom data hook]] hides it together with the reading and the write effect. State that both the form and the list need lives in their lowest common parent — `App`; what one card needs (the delete confirmation) stays in the card. After a delete, keyboard focus moves to the next card or to the list heading — through a [[use-ref|ref]]. `domain/` and `storage/` do not change.
+
+    | Project | Reducer and actions (`ui/…Reducer.ts`) | Hook (`ui/use….ts`) and key |
+    |---|---|---|
+    | Wishlist | `itemsReducer`: `added`, `updated`, `removed`, `acquiredToggled` | `useItems`, `jsll.wishlist.v1` |
+    | Planner | `tasksReducer`: `added`, `updated`, `removed`, `doneToggled` | `useTasks`, `jsll.planner.v1` |
+    | Habit tracker | `habitsReducer`: `added`, `updated`, `removed`, `activeToggled`, `completionAdded` with the day in the action (the same day never repeats; the card gets “Pause” / “Resume” buttons) | `useHabits`, `jsll.habits.v1` |
+    | Expense tracker | `expensesReducer`: `added`, `updated`, `removed`; only a whole `amountMinor` above zero | `useExpenses`, `jsll.expenses.v1` |
+
+    Below is the wishlist; for your project use the names from the table. Checked on macOS (Node.js 25.2.1, React 19.3.0, TypeScript 7.0.2, esbuild 0.28.2, Chrome) on all four projects.
+
+    **1. The starting state.** `cd ~/js-course/wishlist`, `git status` — clean, `git log --oneline -1` — the commit of the persistence effect step.
+
+    **2. The reducer — `ui/itemsReducer.ts`.** `WishFields` (from `ItemForm.tsx`) and `newId` (from `App.tsx`) move here, and the actions are a type:
+
+    ```ts
+    export type ItemsAction =
+      | { type: "added"; fields: WishFields }
+      | { type: "updated"; id: string; fields: WishFields }
+      | { type: "removed"; id: string }
+      | { type: "acquiredToggled"; id: string };
+    ```
+
+    `itemsReducer(items: Wish[], action: ItemsAction): Wish[]` is a `switch (action.type)` in which every branch returns the result of a domain function: `added` — `addItem(items, newId(items), action.fields)`, `removed` — `removeItem`, `acquiredToggled` — `updateItem` with `acquired: !item.acquired` (an unknown `id` gives the same list). `updated` first checks the draft with `validateItem`, because `updateItem` copies any changes. The `default` branch with `const unhandled: never = action;` is an [[exhaustiveness-check]]: if you add a new action type and do not handle it, `tsc` points at this line of code. The reducer never changes the list it received.
+
+    **3. Reducer tests.** The reducer is a pure function without React, so the same `npm test` checks it. Create `tests/reducer.test.js` with tests of your actions (we wrote three: adding with a free `id` and refusing an empty name; toggling in a copy, where the other wishes are the same objects and the received list did not change; refusing an invalid update and removing one wish) and add `import "./tests/reducer.test.js";` to `run-tests.js`. In `tsconfig.json` add `"ui/**/*.ts"` to `include`.
+
+    **4. The hook — `ui/useItems.ts`.** It takes over the reading and the writing that stood in `App` in the previous step:
+
+    ```ts
+    export function useItems(startingItems: Wish[]): [Wish[], Dispatch<ItemsAction>] {
+      const [items, dispatch] = useReducer(itemsReducer, startingItems, readSaved);
+      useEffect(() => {
+        saveItems(localStorage, items);
+      }, [items]);
+      return [items, dispatch];
+    }
+    ```
+
+    `readSaved(startingItems)` is a function with the body of the previous step's lazy initializer: React calls the third argument of `useReducer` with the second argument on the first render only, like the function in `useState(() => …)`. Above the hook write its [[hook-contract|contract]] as a comment: what it returns, where it starts from, what it writes, why it has no cleanup.
+
+    **5. `App`.** `const [items, dispatch] = useItems(startingItems);` instead of `useState` and the effect. The handlers only send actions: `dispatch({ type: "added", fields })` or `dispatch({ type: "updated", id: editingId, fields })`, `dispatch({ type: "acquiredToggled", id })`, `dispatch({ type: "removed", id })`. `editingId` and `filter` stay state of `App`, because both the form and the list read them; `confirming` stays in the card.
+
+    **6. Focus after a delete.** The card with focus disappears, and without help focus falls to `body`, that is nowhere. So:
+
+    - `Section` gets an optional prop `headingRef?: Ref<HTMLHeadingElement>` and gives it to its heading together with `tabIndex={-1}` (focus from code is possible, a Tab stop it is not);
+    - `App` has `listHeadingRef`, `listRef` on a `<div>` around the list and `focusAfterRemove = useRef<string | null>(null)`; the cards have `data-id`, and the “Delete” button has `data-action="delete"`;
+    - before `dispatch`, `handleRemove` puts into `focusAfterRemove.current` the `id` of the next visible card (or of the previous one, or `"heading"` when no card will be left);
+    - an effect **without a dependency array** runs after every commit, and when the ref holds a target it focuses that card's “Delete” button or the list heading and clears the ref.
+
+    The card does the same: after “Delete” focus moves to “Cancel”, and after “Cancel” back to “Delete” (an effect with the dependency `[confirming]` that does nothing on the first commit).
+
+    **7. Check with the tools.** `npm run typecheck` and `npm run lint` — only the header lines; `npm run build` — `⚡ Done in 41ms`; `npm test` — three new `✓ itemsReducer …` lines and `Passed: 33 · failed: 0` (planner 34, habits and expenses 32).
+
+    **8. Check in the browser from the keyboard** (`npm start`; Tab to the button and Enter). We checked with the six starting wishes (the names below are those of an English project):
+
+    - Enter on “Delete” of “Desk lamp” — focus on “Cancel”; Enter on “Cancel” — focus back on “Delete”;
+    - deleting “Desk lamp” (in the middle) — focus on the “Delete” button of the next card, “Bicycle”;
+    - deleting “Travel mug” (the last one) — focus on “Delete” of the previous card, “Concert tickets”;
+    - the filter “acquired” and deleting all its cards — after the last one, focus on the heading “All wishes”;
+    - a reload — the same three remaining wishes, no duplicates; the Console has no red messages except a `404` for `favicon.ico`.
+
+    **9. Commit.** `git status --short` — ` M` for `run-tests.js`, `tsconfig.json`, `ui/App.tsx`, `ui/ItemCard.tsx`, `ui/ItemForm.tsx`, `ui/Section.tsx` and `??` for `tests/reducer.test.js`, `ui/itemsReducer.ts`, `ui/useItems.ts`. `git add -A`, `git commit -m "Move the list into a typed reducer and a data hook"` — `[main 43638f6] Move the list into a typed reducer and a data hook` and `9 files changed, 193 insertions(+), 56 deletions(-)`; `git diff HEAD~1 --stat -- domain storage` prints nothing.
+
+    **Self-check:** every item of step 8 holds; the list changes only through `dispatch`; `App` no longer has the list's `useState` or the write effect — they are in the hook; `npm run typecheck`, `npm run lint` — no findings, `npm test` — `failed: 0` together with the reducer tests.
+
+    **If something goes wrong** (all reproduced on the wishlist):
+
+    - `✗ itemsReducer toggles acquired in a copy and keeps the other wishes as they were — the wish in the received list: expected false, got true` — the reducer changed the received wish in place (`item.acquired = !item.acquired`) and returned the same list; on the page the toggle then does not redraw. Return the new list of `updateItem`.
+    - `error TS2820: Type '"acquiredToggle"' is not assignable to type '"acquiredToggled" | "added" | "removed" | "updated"'. Did you mean '"acquiredToggled"'?` — a misspelled action name; esbuild would bundle such code, and the click would simply do nothing, so run `npm run typecheck`.
+    - `error TS2322: Type '{ type: "cleared"; }' is not assignable to type 'never'.` in the `default` branch — `ItemsAction` got a type that the `switch` does not handle.
+    - After a delete focus is on `body` — the focus effect got the array `[]`: it ran only after the first commit. It needs to run after every commit — without an array.
+
+    The step's reference is `Download: RE-04 — A typed reducer and a data hook` in the “References to download” section after the export. The commands were run on macOS only; they were not run on Linux or Windows (Git Bash).
+purpose:
+  uk: "Це крок твого проєкту: підняття стану, typed reducer, власний хук і ref із цього розділу ти застосовуєш, щоб список власного застосунку мав одного власника, читання й запис жили в хуку даних, а фокус після видалення не губився. Платформа цей крок не перевіряє: доказ — тести reducer, перевірка з клавіатури й commit."
+  en: "This is a step of your project: you apply this unit's lifting state, typed reducer, custom hook and refs so that your own app's list has one owner, reading and writing live in a data hook, and focus is not lost after a delete. The platform does not check this step: the evidence is the reducer tests, the keyboard check and the commit."
+objectives:
+  - uk: "Перенести зміни списку в typed reducer з actions-розміченим об’єднанням і перевіркою вичерпності, що повертає результати доменних функцій, і покрити його тестами `npm test`."
+    en: "Move the list's changes into a typed reducer with a discriminated union of actions and an exhaustiveness check that returns the results of the domain functions, and cover it with `npm test` tests."
+  - uk: "Винести читання й ефект запису в хук даних із записаним контрактом і лишити в `App` лише спільний стан форми й списку."
+    en: "Extract the reading and the write effect into a data hook with a written contract, and keep only the state the form and the list share in `App`."
+  - uk: "Після видалення переносити фокус на наступну картку або на заголовок списку через ref і перевірити це з клавіатури."
+    en: "After a delete move focus to the next card or to the list heading through a ref, and check it from the keyboard."
+transfer:
+  uk: "Цей крок виконується в редакторі, терміналі й браузері на твоєму комп’ютері: що змінити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor, a terminal and a browser on your computer: what to change, the expected output and the self-check list are above and on the step's page in your project."
