@@ -1,0 +1,313 @@
+id: re-04-07-debug-ownership-hooks
+unit: RE-04
+title:
+  uk: "Налагодження: стан надто високо, умовний хук, порушений контракт"
+  en: "Debug: state too high, conditional hook, broken contract"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Розпізнати форму, чия чернетка живе в `App` і на кожну літеру перемальовує все дерево, і замінити context, що пропускає лише два рівні, композицією через `children`."
+    en: "Diagnose a form whose draft lives in App and re-renders the whole tree on every keystroke, and replace a context that only skips two levels with children composition."
+  - uk: "Виправити власний хук, викликаний в умові, і хук, чия повернута функція порушує його записаний контракт."
+    en: "Repair a custom hook called conditionally and a hook whose returned setter breaks its written contract."
+prerequisites: [re-04-06-custom-hooks]
+subskills:
+  - { family: R-03, skill: "composition vs prop drilling", depth: assess }
+  - { family: R-04, skill: "rules of hooks", depth: assess }
+glossary: []
+selfCheck: [predict-symptoms, wish-board]
+
+blocks:
+  - id: three-symptoms
+    kind: explanation
+    title:
+      uk: "Три дефекти — три різні симптоми"
+      en: "Three defects — three different symptoms"
+    body:
+      uk: |
+        Дефекти розділу поводяться по-різному, і саме за симптомом їх найшвидше знайти:
+
+        | Дефект | Що бачиш | Де шукати |
+        |---|---|---|
+        | стан надто високо, зайвий context | нічого не ламається, але кожна дія перемальовує багато компонентів | рядки `render …` у консолі, props, які лише проходять крізь компонент |
+        | хук в умові чи циклі | помилка React, і застосунок зникає | рядок з `? useX(…) :` чи `if (…) { useX(…) }` |
+        | порушений контракт хука | застосунок працює, але дані неправильні | порівняй, що обіцяє коментар-контракт, з тим, що робить функція |
+
+        Перший дефект найпідступніший: «працює ж». Але кожна літера, що перемальовує все дерево, і кожна обгортка, що знає про чужі дані, роблять застосунок повільнішим і крихкішим — і з кожною новою частиною це гіршає.
+      en: |
+        The unit's defects behave differently, and the symptom is the fastest way to find each one:
+
+        | Defect | What you see | Where to look |
+        |---|---|---|
+        | state too high, a needless context | nothing breaks, but every action re-renders many components | `render …` lines in the console, props that only pass through a component |
+        | a hook in a condition or a loop | a React error, and the app disappears | a line with `? useX(…) :` or `if (…) { useX(…) }` |
+        | a broken hook contract | the app works, but the data is wrong | compare what the contract comment promises with what the function does |
+
+        The first defect is the sneakiest: “but it works”. Yet every letter that re-renders the whole tree and every wrapper that knows about someone else's data make the app slower and more fragile — and it gets worse with every new part.
+
+  - id: recall-hook-order
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: skipped-slot
+        from: re-03-01-rules-of-hooks
+        prompt:
+          uk: "Компонент на першому рендері викликає `useState(\"a\")`, потім `useState(\"b\")`. На другому рендері перший виклик пропущено умовою. Яку комірку отримає виклик `useState(\"b\")`?"
+          en: "On its first render a component calls `useState(\"a\")`, then `useState(\"b\")`. On the second render the first call is skipped by a condition. Which slot does the `useState(\"b\")` call get?"
+        answer:
+          type: choice
+          options:
+            - id: first
+              text: { uk: "Першу — ту, де лежить значення `\"a\"`", en: "The first one — the one that holds the value `\"a\"`" }
+            - id: own
+              text: { uk: "Свою, другу: React знає хук за його аргументом", en: "Its own, the second one: React recognises a hook by its argument" }
+              why:
+                uk: "React не бачить ні назв змінних, ні аргументів — лише порядок викликів. Перший виклик на рендері отримує першу комірку."
+                en: "React sees neither variable names nor arguments — only the order of calls. The first call of a render gets the first slot."
+            - id: new
+              text: { uk: "Нову, третю комірку", en: "A new, third slot" }
+              why:
+                uk: "Нові комірки з’являються лише на першому рендері. Далі React роздає наявні за порядком — і, якщо викликів менше, помічає це й зупиняється з помилкою."
+                en: "New slots appear only on the first render. After that React hands out the existing ones in order — and if there are fewer calls, it notices and stops with an error."
+          correct: [first]
+        explanation:
+          uk: "Хуки зіставляються за порядком викликів. Пропущений виклик зсуває всі наступні на одну комірку, тож `useState(\"b\")` бачить `\"a\"`, а наприкінці рендеру React бачить, що викликів менше, ніж комірок. Власний хук нічим не відрізняється: хуки всередині нього — це виклики компонента."
+          en: "Hooks are matched by call order. A skipped call shifts all the following ones by one slot, so `useState(\"b\")` sees `\"a\"`, and at the end of the render React sees fewer calls than slots. A custom hook is no different: the hooks inside it are calls of the component."
+
+  - id: predict-symptoms
+    kind: prediction
+    prompt:
+      uk: "У застосунку звичок три дефекти. A — чернетка нової звички живе в `App`, а `HabitsContext` створено лише щоб оминути `HabitLayout` і `HabitSection`. B — `HabitRow` викликає `useToggle` для порад лише тоді, коли не ввімкнено компактний режим. C — контракт `useHabits` каже, що `completeToday(id)` додає сьогоднішню дату один раз, а функція додає її при кожному виклику. Що побачить користувач?"
+      en: "A habit app has three defects. A — the draft of a new habit lives in `App`, and `HabitsContext` was created only to skip `HabitLayout` and `HabitSection`. B — `HabitRow` calls `useToggle` for tips only when compact mode is off. C — the `useHabits` contract says `completeToday(id)` adds today's date once, but the function adds it on every call. What does the user see?"
+    answer:
+      type: choice
+      options:
+        - id: correct
+          text: { uk: "A — лише зайві перемальовування; B — помилка React після вмикання компактного режиму; C — неправильне число виконань після другого кліку", en: "A — only extra re-renders; B — a React error after compact mode is switched on; C — a wrong count of completions after a second click" }
+        - id: a-error
+          text: { uk: "A — помилка React, бо context не можна використовувати разом із props; B і C — неправильні дані", en: "A — a React error, because a context cannot be used together with props; B and C — wrong data" }
+          why:
+            uk: "Зайвий context і високо поставлена чернетка — коректний React. Вони нічого не ламають, лише змушують рендеритися більше компонентів, ніж треба."
+            en: "A needless context and a draft placed too high are valid React. They break nothing; they only make more components render than needed."
+        - id: b-silent
+          text: { uk: "A — лише зайві перемальовування; B — поради просто зникають без помилки; C — неправильне число виконань", en: "A — only extra re-renders; B — the tips simply disappear without an error; C — a wrong count of completions" }
+          why:
+            uk: "Після вмикання режиму `HabitRow` викликає на один хук менше, ніж на попередньому рендері. React помічає, що комірок більше, ніж викликів, і зупиняється з помилкою — зникає весь застосунок, а не лише поради."
+            en: "After the mode is switched on, `HabitRow` calls one hook fewer than on the previous render. React notices that there are more slots than calls and stops with an error — the whole app disappears, not just the tips."
+        - id: c-error
+          text: { uk: "A — лише зайві перемальовування; B — помилка React; C — помилка React через дублікат дати", en: "A — only extra re-renders; B — a React error; C — a React error because of a duplicate date" }
+          why:
+            uk: "React не знає, що дата не має повторюватися: це обіцянка контракту, а не правило React. Дублікат тихо потрапляє в стан, і лічильник показує неправильне число."
+            en: "React does not know that a date must not repeat: that is the contract's promise, not a React rule. The duplicate silently lands in state, and the counter shows a wrong number."
+      correct: [correct]
+    explanation:
+      uk: "Перевірено в пісочниці з React 19.3 на прикладі цього уроку. Літера в полі друкує `render` для `App`, обох обгорток, списку й усіх рядків, але нічого не ламає. Компактний режим зупиняє застосунок з `Rendered fewer hooks than expected`. Два кліки «Сьогодні» перетворюють «виконано: 1» на «виконано: 3»."
+      en: "Checked in the sandbox with React 19.3 on this lesson's example. A letter in the field prints `render` for `App`, both wrappers, the list and every row, but breaks nothing. Compact mode stops the app with `Rendered fewer hooks than expected`. Two clicks on “Today” turn “done: 1” into “done: 3”."
+
+  - id: seeded-tree
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Три дефекти в одному дереві"
+      en: "Three defects in one tree"
+    textEquivalent:
+      uk: "Дерево застосунку звичок: App тримає список із useHabits, чернетку й прапорець компактного режиму, ставить HabitsContext і показує HabitLayout, у ньому HabitSection, у ній HabitList, у ньому рядки HabitRow, а поруч — форму. Дефект A: чернетка в App, тож кожна літера перемальовує App, обидві обгортки, список і рядки; context лише оминає дві обгортки, які можна замінити children. Дефект B: HabitRow має дві комірки — для дат і для порад, — але в компактному режимі другий виклик пропущено, і React зупиняється, бо комірок більше, ніж викликів. Дефект C: контракт useHabits обіцяє одну дату за день, а completeToday додає її щоразу, тож кількість виконань неправильна."
+      en: "The habit app's tree: App holds the list from useHabits, the draft and the compact-mode flag, sets up HabitsContext and shows HabitLayout, inside it HabitSection, inside it HabitList, inside it the HabitRow rows, and next to them the form. Defect A: the draft is in App, so every letter re-renders App, both wrappers, the list and the rows; the context only skips two wrappers that children could replace. Defect B: HabitRow has two slots — for dates and for tips — but in compact mode the second call is skipped, and React stops because there are more slots than calls. Defect C: the useHabits contract promises one date per day, but completeToday adds it every time, so the number of completions is wrong."
+    spec:
+      layout: grid
+      nodes:
+        - { id: app, label: "App", col: 0, row: 0, w: 120 }
+        - { id: draft, label: { uk: "стан: draft", en: "state: draft" }, shape: note, col: 1, row: 0, w: 150 }
+        - { id: layout, label: "HabitLayout", col: 0, row: 1, w: 120 }
+        - { id: section, label: "HabitSection", col: 0, row: 2, w: 120 }
+        - { id: list, label: "HabitList", col: 0, row: 3, w: 120 }
+        - { id: row, label: "HabitRow", col: 0, row: 4, w: 120 }
+        - { id: slots, label: { uk: "комірки: dates · tips", en: "slots: dates · tips" }, shape: note, col: 1, row: 4, w: 150 }
+        - { id: contract, label: { uk: "контракт: одна дата за день", en: "contract: one date per day" }, shape: note, col: 1, row: 2, w: 150 }
+      edges:
+        - { id: app-layout, from: app, to: layout }
+        - { id: layout-section, from: layout, to: section }
+        - { id: section-list, from: section, to: list }
+        - { id: list-row, from: list, to: row }
+        - { id: app-draft, from: app, to: draft, kind: line }
+        - { id: row-slots, from: row, to: slots, kind: line }
+        - { id: ctx, from: app, to: list, kind: dashed }
+      steps:
+        - caption:
+            uk: "Дерево з дефектами. Пунктир — `HabitsContext` від `App` до `HabitList`."
+            en: "The tree with its defects. The dashed arrow is `HabitsContext` from `App` to `HabitList`."
+        - caption:
+            uk: "A: `draft` живе в `App`. Одна літера перемальовує `App`, обидві обгортки, список і кожен рядок."
+            en: "A: `draft` lives in `App`. One letter re-renders `App`, both wrappers, the list and every row."
+          highlight: [app, draft, layout, section, list, row, app-draft]
+        - caption:
+            uk: "A: context лише оминає дві обгортки. Якщо `App` сам напише список усередині обгорток як `children`, context не потрібен."
+            en: "A: the context only skips two wrappers. If `App` writes the list inside the wrappers as `children` itself, no context is needed."
+          highlight: [ctx, layout, section]
+          annotate:
+            - { id: ctx, text: { uk: "оминає 2 рівні", en: "skips 2 levels" } }
+        - caption:
+            uk: "B: на першому рендері в `HabitRow` дві комірки. У компактному режимі другий виклик пропущено — React зупиняється: `Rendered fewer hooks than expected`."
+            en: "B: on the first render `HabitRow` has two slots. In compact mode the second call is skipped — React stops: `Rendered fewer hooks than expected`."
+          highlight: [row, slots, row-slots]
+          annotate:
+            - { id: slots, text: { uk: "tips пропущено", en: "tips skipped" } }
+        - caption:
+            uk: "C: контракт обіцяє одну дату за день, а `completeToday` додає її при кожному виклику. Помилки немає, просто дані неправильні."
+            en: "C: the contract promises one date per day, but `completeToday` adds it on every call. There is no error, the data is just wrong."
+          highlight: [contract]
+          annotate:
+            - { id: contract, text: { uk: "порушено", en: "broken" } }
+
+  - id: habit-seeded
+    kind: example
+    runtime: browser-react
+    dir: habit-seeded
+    entry: main.jsx
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      done: { uk: "виконано:", en: "done:" }
+      today: { uk: "Сьогодні", en: "Today" }
+      dates: { uk: "Дати", en: "Dates" }
+      tips: { uk: "Поради", en: "Tips" }
+      tipText: { uk: "Почни з п’яти хвилин.", en: "Start with five minutes." }
+      compact: { uk: "Компактний режим", en: "Compact mode" }
+      newHabit: { uk: "Нова звичка", en: "New habit" }
+      add: { uk: "Додати", en: "Add" }
+    title:
+      uk: "Застосунок із трьома дефектами"
+      en: "An app with three defects"
+    body:
+      uk: |
+        Кожен компонент друкує в **Консоль** рядок `render …`. Натисни **Запустити** й зістав симптоми з дефектами:
+
+        1. Введи літеру в поле «Нова звичка»: сім рядків `render` — `App`, обидві обгортки, список і три рядки (дефект A).
+        2. Натисни «Сьогодні» біля «Ранкова зарядка» двічі: «виконано: 1» стає «виконано: 3», хоча сьогодні лише один день (дефект C).
+        3. Постав прапорець «Компактний режим»: застосунок зникає, а картка помилки показує `Rendered fewer hooks than expected. This may be caused by an accidental early return statement.` (дефект B). Місце в картці — внутрішній файл React: помилку помітив React, а причина — у `HabitRow`.
+      en: |
+        Every component prints a `render …` line to the **Console**. Press **Run** and match the symptoms to the defects:
+
+        1. Type a letter into the “New habit” field: seven `render` lines — `App`, both wrappers, the list and three rows (defect A).
+        2. Press “Today” next to “Morning exercise” twice: “done: 1” becomes “done: 3”, although today is only one day (defect C).
+        3. Tick “Compact mode”: the app disappears, and the error card shows `Rendered fewer hooks than expected. This may be caused by an accidental early return statement.` (defect B). The place on the card is React's internal file: React noticed the error, but the cause is in `HabitRow`.
+    tryIt:
+      uk: |
+        Виправ дефект B: у `HabitRow` заміни рядок `const [tipsOpen, toggleTips] = compact ? [false, null] : useToggle(false);` на `const [tipsOpen, toggleTips] = useToggle(false);`. Умова й так є в JSX — `{!compact && …}` ховає кнопку. Запусти й увімкни компактний режим: помилки немає, зникли лише кнопки «Поради». Дефекти A і C лишаються — їх ти виправиш у вправі, на іншому застосунку.
+      en: |
+        Fix defect B: in `HabitRow` replace the line `const [tipsOpen, toggleTips] = compact ? [false, null] : useToggle(false);` with `const [tipsOpen, toggleTips] = useToggle(false);`. The condition is already in the JSX — `{!compact && …}` hides the button. Run and switch compact mode on: no error, only the “Tips” buttons are gone. Defects A and C remain — you will fix them in the exercise, on another app.
+
+  - id: wish-board
+    kind: exercise
+    mode: debug
+    runtime: browser-react
+    dir: wish-board
+    entry: main.jsx
+    editable: [App.jsx, useWishes.js]
+    strings:
+      heading: { uk: "Мої бажання", en: "My wishes" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      hideAcquired: { uk: "Сховати куплені", en: "Hide acquired" }
+      newestFirst: { uk: "Нові спочатку", en: "Newest first" }
+      remove: { uk: "Прибрати", en: "Remove" }
+      newWish: { uk: "Нове бажання", en: "New wish" }
+      add: { uk: "Додати", en: "Add" }
+    title:
+      uk: "Дошка бажань із трьома дефектами"
+      en: "A wish board with three defects"
+    instructions:
+      uk: |
+        Дошка бажань працює, але в ній ті самі три види дефектів. Знайди й виправ усі три:
+
+        - **Стан і межі.** Чернетка нового бажання має жити у формі: `AddWishForm` отримує лише `onAdd(name)`. `WishesContext` потрібен лише щоб оминути `WishLayout` і `WishSection` — прибери його: `WishLayout` і `WishSection` показують свої `children`, а `WishList` отримує `wishes`, `onToggle(id)` і `onRemove(id)` як props.
+        - **Правила хуків.** Після видалення бажань до одного дошка падає — знайди хук, який викликається не на кожному рендері.
+        - **Контракт.** Порівняй контракт над `useWishes` з тим, що робить `addWish`, і виправ функцію, а не контракт.
+
+        `renders.js` (лише для читання) рахує рендери. Перевірки малюють `WishList` і `WishSection` окремо, викликають `useWishes` у своєму компоненті й проходять сценарії на сторінці.
+      en: |
+        The wish board works, but it has the same three kinds of defects. Find and fix all three:
+
+        - **State and boundaries.** The draft of a new wish must live in the form: `AddWishForm` gets only `onAdd(name)`. `WishesContext` exists only to skip `WishLayout` and `WishSection` — remove it: `WishLayout` and `WishSection` show their `children`, and `WishList` gets `wishes`, `onToggle(id)` and `onRemove(id)` as props.
+        - **Rules of hooks.** After removing wishes down to one, the board crashes — find the hook that is not called on every render.
+        - **Contract.** Compare the contract above `useWishes` with what `addWish` does, and fix the function, not the contract.
+
+        `renders.js` (read-only) counts renders. The checks draw `WishList` and `WishSection` on their own, call `useWishes` in their own component and go through scenarios on the page.
+    testTitles:
+      "typing a new wish re-renders only the form":
+        uk: "Введення нового бажання перемальовує лише форму"
+        en: "Typing a new wish re-renders only the form"
+      "WishSection shows the children it receives":
+        uk: "`WishSection` показує отримані `children`"
+        en: "`WishSection` shows the children it receives"
+      "WishList works from its props alone":
+        uk: "`WishList` працює лише з props"
+        en: "`WishList` works from its props alone"
+      "removing wishes down to one keeps the page working":
+        uk: "Видалення бажань до одного не ламає сторінку"
+        en: "Removing wishes down to one keeps the page working"
+      "addWish trims the name and ignores an empty one":
+        uk: "`addWish` обрізає пробіли й ігнорує порожню назву"
+        en: "`addWish` trims the name and ignores an empty one"
+      "the form adds a wish at the end of the list":
+        uk: "Форма додає бажання в кінець списку"
+        en: "The form adds a wish at the end of the list"
+    hints:
+      nudge:
+        uk: "Іди за симптомами, як у прикладі: введи літеру й подивися, хто рендериться; прибери два бажання й прочитай картку помилки; додай бажання з самих пробілів і порівняй із контрактом."
+        en: "Follow the symptoms, as in the example: type a letter and see who renders; remove two wishes and read the error card; add a wish made only of spaces and compare with the contract."
+      explanation:
+        uk: |
+          Чернетку потрібно лише формі — її `useState` переїжджає туди, а `App` передає тільки функцію додавання. Обгортки, що не користуються даними, приймають `children`, а `App` пише список усередині них сам — тоді context зайвий. Хук, що стоїть після `? :` чи в `if`, викликають завжди, а умову переносять у JSX чи в обчислення. Контракт каже, що робити з назвою, — функція має зробити саме це до того, як додати запис.
+
+          Схожий приклад з іншою задачею: якщо `useCart().addItem(sku)` за контрактом ігнорує порожній `sku`, перша дія функції — `if (sku.trim() === "") return;`.
+        en: |
+          Only the form needs the draft — its `useState` moves there, and `App` passes just the add function. Wrappers that do not use the data accept `children`, and `App` writes the list inside them itself — then the context is unnecessary. A hook that stands after `? :` or in an `if` is always called, and the condition moves into the JSX or the computation. The contract says what to do with the name — the function must do exactly that before adding the record.
+
+          A similar example with a different task: if by its contract `useCart().addItem(sku)` ignores an empty `sku`, the function's first action is `if (sku.trim() === "") return;`.
+    solutionNote:
+      uk: "Чернетка тепер у `AddWishForm`, тож літера рендерить лише форму. `App` пише `<WishLayout><WishSection …><WishList …/></WishSection></WishLayout>`, і обгортки отримують список як `children`, а context зник. `useToggle` для сортування викликається на кожному рендері, а кнопку ховає JSX, тож кількість хуків стала постійною. `addWish` обрізає назву й виходить на порожній — так, як обіцяє контракт."
+      en: "The draft now lives in `AddWishForm`, so a letter renders only the form. `App` writes `<WishLayout><WishSection …><WishList …/></WishSection></WishLayout>`, the wrappers get the list as `children`, and the context is gone. `useToggle` for sorting is called on every render and the JSX hides the button, so the number of hooks is constant. `addWish` trims the name and returns on an empty one — just as the contract promises."
+    feedback:
+      - when: { test: "typing a new wish re-renders only the form" }
+        message:
+          uk: "Ця перевірка вводить три літери в поле «Нове бажання» й очікує, що рендерилася `AddWishForm`, а `App`, `WishLayout`, `WishSection` і `WishList` — ні. Стан, який читає лише форма, живе у формі."
+          en: "This check types three letters into the “New wish” field and expects `AddWishForm` to have rendered, but not `App`, `WishLayout`, `WishSection` or `WishList`. State that only the form reads lives in the form."
+      - when: { test: "WishSection shows the children it receives" }
+        message:
+          uk: "Ця перевірка малює `<WishSection title=…>` з абзацом усередині й очікує заголовок і цей абзац. `WishSection` має ставити `{children}`, а не створювати `WishList` сама."
+          en: "This check draws `<WishSection title=…>` with a paragraph inside and expects the heading and that paragraph. `WishSection` must render `{children}` instead of creating `WishList` itself."
+      - when: { test: "WishList works from its props alone" }
+        message:
+          uk: "Ця перевірка малює `<WishList wishes={…} onToggle={…} onRemove={…} />` без жодного provider і очікує дві назви, виклик `onToggle(\"w-03\")` після прапорця й `onRemove(\"w-05\")` після другої кнопки «Прибрати»."
+          en: "This check draws `<WishList wishes={…} onToggle={…} onRemove={…} />` without any provider and expects two names, a call `onToggle(\"w-03\")` after the checkbox and `onRemove(\"w-05\")` after the second “Remove” button."
+      - when: { test: "removing wishes down to one keeps the page working" }
+        message:
+          uk: "Ця перевірка двічі прибирає перше бажання й очікує лише «Термочашка» без помилки React. Помилка `Rendered fewer hooks than expected` означає, що якийсь хук на цьому рендері не викликано."
+          en: "This check removes the first wish twice and expects only “Travel mug” without a React error. The error `Rendered fewer hooks than expected` means some hook was not called on that render."
+      - when: { test: "addWish trims the name and ignores an empty one" }
+        message:
+          uk: "Ця перевірка викликає `addWish(\"   \")` (бажань має лишитися 3), потім `addWish` з назвою в пробілах (має з’явитися четверте, з обрізаною назвою й `acquired: false`)."
+          en: "This check calls `addWish(\"   \")` (3 wishes must remain), then `addWish` with a name padded with spaces (a fourth must appear, with the trimmed name and `acquired: false`)."
+      - when: { test: "the form adds a wish at the end of the list" }
+        message:
+          uk: "Ця перевірка вводить «Квитки на концерт», надсилає форму й очікує нове бажання в кінці списку та порожнє поле."
+          en: "This check types “Concert tickets”, submits the form and expects the new wish at the end of the list and an empty field."
+      - when: { error: TypeError }
+        message:
+          uk: "`Cannot destructure property … of … as it is null` чи схожий `TypeError` означає, що компонент досі читає context, а provider уже немає. Такий компонент має отримувати дані через props."
+          en: "`Cannot destructure property … of … as it is null` or a similar `TypeError` means a component still reads the context, while there is no provider any more. Such a component must get its data through props."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-04
+    body:
+      uk: "Перш ніж завершити крок проєкту цього розділу, пройди ті самі три перевірки: введи літеру в поле форми й подивися, хто рендериться; пошукай хуки після `?` чи в `if`; і звір кожну функцію свого хука даних з його контрактом."
+      en: "Before you finish this unit's project step, go through the same three checks: type a letter into a form field and see who renders; look for hooks after `?` or inside `if`; and compare every function of your data hook with its contract."
