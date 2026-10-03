@@ -1,4 +1,4 @@
-// Read-only: the wishlist's storage adapter (in memory here; a native one on a phone).
+// Read-only: the wishlist's record store (in memory here; on a phone it reads native storage).
 import { createMemoryStorage } from './memoryStorage.js';
 
 export const storage = createMemoryStorage([

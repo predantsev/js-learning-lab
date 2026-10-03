@@ -6,6 +6,10 @@
 // What it simulates, as React Navigation 7 does: every screen on the stack stays mounted (only the top one is
 // shown), 'focus' / 'blur' events, and 'beforeRemove' before any screen leaves the stack — from the header back
 // button, the Android back button, the iOS swipe-back gesture or code alike.
+// Where it differs: in a real native stack, calling preventDefault() inside your own 'beforeRemove' listener does
+// not work properly (React Navigation 7 documents this) — use usePreventRemove there; a screen popped off a real
+// native stack may unmount without a 'blur' event (here it never gets one either); the Android back button on the
+// first screen leaves a real app, here it does nothing.
 // What it cannot do: native screens, animations, real gestures or a real Android back button.
 import { createContext, useContext, useEffect, useRef, useSyncExternalStore } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
@@ -38,9 +42,17 @@ export function createStack(initialName, initialParams) {
       if (routes.length <= count) return; // nothing underneath to go back to
       next = routes.slice(0, routes.length - count);
     } else if (action.type === 'REPLACE') next = [...routes.slice(0, -1), makeRoute(action.payload.name, action.payload.params)];
-    else if (action.type === 'SET_PARAMS') {
+    else if (action.type === 'NAVIGATE') {
+      // React Navigation 7: navigate to the current screen's name replaces its params; any other name pushes.
+      if (top().name !== action.payload.name) next = [...routes, makeRoute(action.payload.name, action.payload.params)];
+      else {
+        commit(routes.map((route) => (route === top() ? { ...route, params: action.payload.params } : route)));
+        return;
+      }
+    } else if (action.type === 'SET_PARAMS') {
+      // setParams merges the new params into the old ones, as React's setState does with an object.
       const key = action.source ?? top().key;
-      next = routes.map((route) => (route.key === key ? { ...route, params: action.payload.params } : route));
+      next = routes.map((route) => (route.key === key ? { ...route, params: { ...route.params, ...action.payload.params } } : route));
       commit(next);
       return;
     }
@@ -74,11 +86,7 @@ export function createStack(initialName, initialParams) {
       pop: (count = 1) => dispatch({ type: 'POP', payload: { count } }),
       goBack: () => dispatch({ type: 'GO_BACK' }),
       replace: (name, params) => dispatch({ type: 'REPLACE', payload: { name, params } }),
-      // React Navigation 7: navigate to the current screen's name updates its params; any other name pushes.
-      navigate: (name, params) =>
-        top().name === name
-          ? dispatch({ type: 'SET_PARAMS', payload: { params }, source: top().key })
-          : dispatch({ type: 'PUSH', payload: { name, params } }),
+      navigate: (name, params) => dispatch({ type: 'NAVIGATE', payload: { name, params } }),
       setParams: (params) => dispatch({ type: 'SET_PARAMS', payload: { params }, source: key }),
       setOptions: (options) => {
         state = { ...state, options: { ...state.options, [key]: { ...state.options[key], ...options } } };
@@ -113,7 +121,8 @@ export function createStack(initialName, initialParams) {
     navigate: (name, params) => navigationFor(top().key).navigate(name, params),
     // Used by <SimStack>: 'focus' after a screen became the top one, 'blur' after another screen covered it.
     emitFocusChange: (key, focused) => emit(key, focused ? 'focus' : 'blur', { type: focused ? 'focus' : 'blur' }),
-    // What the simulated device controls do. All three end up as the same GO_BACK action.
+    // What the simulated device controls do. Here all three are the same GO_BACK action; in a real native stack
+    // the iOS swipe and header button arrive as a POP action — a guard treats both the same way.
     headerBack: () => dispatch({ type: 'GO_BACK' }),
     hardwareBack: () => dispatch({ type: 'GO_BACK' }),
     swipeBack: () => {

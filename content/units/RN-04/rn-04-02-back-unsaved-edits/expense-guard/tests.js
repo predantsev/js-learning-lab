@@ -46,6 +46,15 @@ test('the iOS swipe and the header back button ask too', async () => {
   expect(openAlert(), 'the dialog after the header back button').not.toBeNull();
 });
 
+test('spaces at the ends of the label alone are not a change', async () => {
+  const field = await freshEdit();
+  await user.fill(field, `${L.transit} `);
+  scope.stack.hardwareBack();
+  await settle();
+  expect(openAlert(), 'the dialog after adding only a space at the end of the label').toBeNull();
+  expect(topName(), 'the screen on top').toBe('List');
+});
+
 test('a changed category alone counts as unsaved', async () => {
   await freshEdit();
   await user.click(screen.byRole('radio', { name: L.fun }));
