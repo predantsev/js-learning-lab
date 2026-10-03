@@ -172,6 +172,7 @@ function checkBlock(issues, block, lesson, ctx) {
       if (!Array.isArray(block.items) || block.items.length === 0) issues.add(`${p}.items`, 'a review block needs at least one question');
       for (const [i, item] of (block.items ?? []).entries()) {
         checkPredictionItem(issues, item, `${p}.items[${i}]`);
+        if (item.strings !== undefined) issues.add(`${p}.items[${i}].strings`, 'put strings on the review block: its questions share one table');
         if (!nonEmpty(item.id) || !BLOCK_ID_PATTERN.test(item.id)) issues.add(`${p}.items[${i}].id`, 'missing or invalid id');
         if (!nonEmpty(item.from) || !LESSON_ID_PATTERN.test(item.from)) issues.add(`${p}.items[${i}].from`, 'must name the earlier lesson id this question retrieves');
         else if (ctx.lessonOrder && ctx.lessonOrder.has(item.from) && ctx.lessonOrder.has(lesson.id) && ctx.lessonOrder.get(item.from) >= ctx.lessonOrder.get(lesson.id)) issues.add(`${p}.items[${i}].from`, 'must be an earlier lesson');

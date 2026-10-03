@@ -104,6 +104,32 @@ export function createMarkdown(glossary) {
   };
 }
 
+// Fields of a block that are not learner-facing prose: the strings table itself, a visual's spec
+// (compiled per language by shared/visuals) and code, accepted answers and verification data, which
+// are resolved per language where they are used.
+const NON_PROSE_KEYS = new Set(['strings', 'spec', 'code', 'accept', 'verify']);
+
+/** Every bilingual { uk, en } text of a block outside NON_PROSE_KEYS, with its field path. */
+function prosePairs(value, at = '', out = []) {
+  if (isLocalized(value)) out.push([at, value]);
+  else if (Array.isArray(value)) value.forEach((v, i) => prosePairs(v, `${at}[${i}]`, out));
+  else if (value !== null && typeof value === 'object') for (const [k, v] of Object.entries(value)) if (!NON_PROSE_KEYS.has(k)) prosePairs(v, at ? `${at}.${k}` : k, out);
+  return out;
+}
+
+/**
+ * Resolve %%key%% placeholders in every prose field of a block (instructions, test titles, hints,
+ * feedback, prompts, answer options, body, tryIt, solutionNote, …) from the block's own `strings`,
+ * each language from its own table. Runs on the Markdown source, before it is rendered.
+ */
+function localizeProse(value, block) {
+  if (!block.strings) return value;
+  if (isLocalized(value)) return localizePair(value, block);
+  if (Array.isArray(value)) return value.map((v) => localizeProse(v, block));
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, NON_PROSE_KEYS.has(k) ? v : localizeProse(v, block)]));
+  return value;
+}
+
 /** Convert every bilingual markdown string inside a value to HTML ({uk, en} → {uk, en}). */
 function renderLocalized(value, md, key = '') {
   if (isLocalized(value)) {
@@ -252,10 +278,14 @@ export function staticIssuesForLesson(lesson, ctx) {
       for (const f of Object.keys(a.solution)) if (!(f in a.starter) && !(block.allowNewFiles === true)) add(`block "${block.id}"`, `solution adds "${f}" which is not in the starter (set allowNewFiles: true if the learner must create files)`);
       if (!Object.keys(a.variants).some((v) => v.startsWith('wrong'))) add(`block "${block.id}"`, `needs at least one deliberately failing fixture directory ${block.dir}/wrong/ (or wrong-<name>/)`);
     }
-    // Every %%key%% used in code must exist in the block's strings table. (A visual's spec and the
-    // files it reads are checked when it compiles: shared/visuals/index.js compileVisual.)
-    const texts = block.kind === 'example' ? Object.values(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.values(a.starter), ...Object.values(a.solution), a.tests ?? '', ...Object.values(a.variants).flatMap((v) => Object.values(v))] : block.kind === 'visual' ? [block.title, block.textEquivalent].flatMap((pair) => (pair && typeof pair === 'object' ? Object.values(pair) : [])) : [block.code ?? '', ...(block.items ?? []).map((i) => i.code ?? '')];
-    for (const text of texts) for (const m of String(text).matchAll(STRING_PLACEHOLDER)) if (!(block.strings && m[1] in block.strings)) add(`block "${block.id}"`, `placeholder %%${m[1]}%% has no entry in strings`);
+    // Every %%key%% used in code or prose must exist in the block's strings table. (A visual's spec
+    // and the files it reads are checked when it compiles: shared/visuals/index.js compileVisual.)
+    const files = block.kind === 'example' ? Object.values(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.values(a.starter), ...Object.values(a.solution), a.tests ?? '', ...Object.values(a.variants).flatMap((v) => Object.values(v))] : [];
+    const questionCode = block.kind === 'prediction' || block.kind === 'review' ? [block, ...(block.items ?? [])].flatMap((q) => [q.code, ...(q.answer?.options ?? q.answer?.items ?? []).map((o) => o.code), ...(q.answer?.accept ?? []), ...(q.verify?.logs ?? [])]) : [];
+    const texts = [...files, ...questionCode.filter((t) => t !== undefined && t !== null), ...prosePairs(block).flatMap(([, pair]) => LANGS.map((l) => pair[l]))];
+    const missing = new Set();
+    for (const text of texts) for (const m of String(text).matchAll(STRING_PLACEHOLDER)) if (!(block.strings && m[1] in block.strings)) missing.add(m[1]);
+    for (const key of missing) add(`block "${block.id}"`, `placeholder %%${key}%% has no entry in strings${block.kind === 'review' ? ' (the review block\'s strings: its questions share one table)' : ''}`);
   }
   return issues;
 }
@@ -284,7 +314,7 @@ export async function compileLesson(lesson, ctx) {
           compiled.spec = null;
         }
       } else compiled.spec = spec;
-    } else compiled = renderLocalized(rest, md);
+    } else compiled = renderLocalized(localizeProse(rest, block), md);
     if (block.kind === 'prediction' || block.kind === 'review') {
       // Code shown in questions is resolved per language (authored UI text follows the lesson language).
       const perLang = (text) => Object.fromEntries(LANGS.map((l) => [l, localizeText(String(text), block, l)]));
