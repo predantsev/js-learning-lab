@@ -1,0 +1,424 @@
+id: re-03-04-stale-closures-in-effects
+unit: RE-03
+title:
+  uk: "Застарілі замикання в ефектах"
+  en: "Stale closures in effects"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Пояснити, чому ефект з інтервалом і залежностями `[]` весь час читає `count` першого рендеру."
+    en: "Explain why an interval effect with `[]` dependencies keeps reading the first render's `count`."
+  - uk: "Виправити застарілий ефект відповідним інструментом: пропущеною залежністю, функцією-оновлювачем або Effect Event (`useEffectEvent`) для логіки, яка має читати найновіше значення, не перезапускаючи ефект."
+    en: "Repair a stale effect with the right tool: the missing dependency, an updater function, or an Effect Event (`useEffectEvent`) for logic that must read the latest value without re-running the effect."
+prerequisites: [re-03-03-dependencies-cleanup, re-02-02-state-snapshots]
+subskills:
+  - { family: R-04, skill: "stale closure", depth: intro }
+glossary: [effect-event, exhaustive-deps]
+selfCheck: [predict-four-ticks, autosave-notice]
+
+blocks:
+  - id: frozen-snapshot
+    kind: explanation
+    title:
+      uk: "Кожен рендер — свій знімок, кожен ефект — своє замикання"
+      en: "Every render has its snapshot, every effect its closure"
+    body:
+      uk: |
+        Ти вже знаєш, що стан — це знімок рендеру: обробник кліку, створений у рендері 1, бачить значення рендеру 1. З ефектами так само: функція ефекту — це замикання, створене під час свого рендеру, і бачить змінні **цього** рендеру.
+
+        Поки ефект перезапускається, коли змінюється те, що він читає, кожен новий запуск отримує свіжий знімок. Але якщо масив залежностей бреше — скажімо, `[]`, хоча ефект читає `count`, — React більше ніколи не створить нового запуску. Таймер, запущений першим ефектом, назавжди лишиться із замиканням рендеру 1. Це [[stale-closure|застаріле замикання]].
+      en: |
+        You already know that state is a render's snapshot: a click handler created in render 1 sees render 1's values. Effects are the same: an effect function is a closure created during its render and sees **that** render's variables.
+
+        As long as the effect re-runs when what it reads changes, every new run gets a fresh snapshot. But if the dependency array lies — say `[]`, although the effect reads `count` — React never creates a new run. The timer started by the first effect keeps the closure of render 1 forever. That is a [[stale-closure|stale closure]].
+
+  - id: predict-four-ticks
+    kind: prediction
+    prompt:
+      uk: "Інтервал спрацьовує кожні 300 мс. Що показує абзац після чотирьох спрацювань?"
+      en: "The interval fires every 300 ms. What does the paragraph show after four ticks?"
+    code: |
+      function TickCounter() {
+        const [count, setCount] = useState(0);
+        useEffect(() => {
+          const timer = setInterval(() => {
+            setCount(count + 1);
+          }, 300);
+          return () => clearInterval(timer);
+        }, []);
+        return <p>Ticks: {count}</p>;
+      }
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: one
+          text: { uk: "`Ticks: 1`", en: "`Ticks: 1`" }
+        - id: four
+          text: { uk: "`Ticks: 4`", en: "`Ticks: 4`" }
+          why:
+            uk: "Ефект запускається після рендеру, але це не означає, що він бачить найновіший стан. Функцію інтервалу створено в ефекті рендеру 1, де `count` дорівнює 0, і через `[]` її ніколи не замінять. Кожне спрацювання ставить у чергу `0 + 1`."
+            en: "An effect runs after render, but that does not mean it sees the latest state. The interval's function was created in render 1's effect, where `count` is 0, and because of `[]` it is never replaced. Every tick queues `0 + 1`."
+        - id: zero
+          text: { uk: "`Ticks: 0`", en: "`Ticks: 0`" }
+          why:
+            uk: "Перше спрацювання ставить у чергу `0 + 1`, і React показує `1`. Застаріле замикання не зупиняє оновлень — воно щоразу ставить ту саму одиницю."
+            en: "The first tick queues `0 + 1`, and React shows `1`. A stale closure does not stop the updates — it queues the same 1 every time."
+        - id: grows-slowly
+          text: { uk: "`Ticks: 2` — кожне друге спрацювання губиться", en: "`Ticks: 2` — every second tick is lost" }
+          why:
+            uk: "Нічого не губиться випадково: усі чотири спрацювання однакові, бо всі читають `count = 0` із рендеру 1."
+            en: "Nothing is lost at random: all four ticks are identical, because all of them read `count = 0` from render 1."
+      correct: [one]
+    explanation:
+      uk: "Ефект із `[]` запускається один раз — після рендеру 1, де `count` дорівнює 0. Функція інтервалу закриває цей знімок, тож кожне спрацювання викликає `setCount(0 + 1)`. Після першого екран показує `Ticks: 1`, а далі React отримує те саме значення й нічого не змінює. Перевірено в пісочниці з React 19.3: після чотирьох спрацювань — `1`."
+      en: "The effect with `[]` runs once — after render 1, where `count` is 0. The interval's function closes over that snapshot, so every tick calls `setCount(0 + 1)`. After the first one the screen shows `Ticks: 1`, and after that React receives the same value and changes nothing. Checked in the sandbox with React 19.3: `1` after four ticks."
+
+  - id: stale-timeline
+    kind: visual
+    visual: render-timeline
+    title:
+      uk: "Таймер із рендеру 1 не бачить нових знімків"
+      en: "The timer from render 1 does not see new snapshots"
+    textEquivalent:
+      uk: >-
+        Рендер 1 бачить count = 0. Після commit ефект запускає інтервал; функцію інтервалу створено
+        тут, і вона закриває знімок count = 0. Перше спрацювання викликає setCount(0 + 1). Рендер 2
+        бачить count = 1, екран показує 1, але ефект із залежностями [] не перезапускається, тож
+        інтервал лишається тим самим. Друге спрацювання знову бачить count = 0 і знову ставить у чергу
+        1 — значення не змінюється, і екран лишається на 1. Третє спрацювання — те саме. Виправлення:
+        функція-оновлювач setCount(c => c + 1) отримує значення з черги, тож рахує 1, 2, 3, а інтервал
+        не перезапускається; або залежність [count], з якою інтервал перезапускається після кожного
+        спрацювання.
+      en: >-
+        Render 1 sees count = 0. After the commit the effect starts an interval; the interval's function
+        is created here and closes over the snapshot count = 0. The first tick calls setCount(0 + 1).
+        Render 2 sees count = 1 and the screen shows 1, but the effect with [] dependencies does not
+        re-run, so the interval stays the same. The second tick again sees count = 0 and again queues 1
+        — the value does not change and the screen stays at 1. The third tick is the same. The fix: the
+        updater function setCount(c => c + 1) receives the value from the queue, so it counts 1, 2, 3,
+        and the interval is not restarted; or the dependency [count], with which the interval restarts
+        after every tick.
+    spec:
+      component: TickCounter
+      code: |
+        function TickCounter() {
+          const [count, setCount] = useState(0);
+          useEffect(() => {
+            const timer = setInterval(() => {
+              setCount(count + 1);
+            }, 300);
+            return () => clearInterval(timer);
+          }, []);
+          return <p>Ticks: {count}</p>;
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 2
+          reason: { uk: "перший показ", en: "first display" }
+          snapshot: { state: { count: 0 } }
+          caption:
+            uk: "Рендер 1: `count = 0`. Функція ефекту, створена тут, бачить саме цей знімок."
+            en: "Render 1: `count = 0`. The effect function created here sees exactly this snapshot."
+        - phase: commit
+          render: 1
+          line: 9
+          dom: "<p>Ticks: 0</p>"
+          caption:
+            uk: "Commit: на екрані `Ticks: 0`."
+            en: "Commit: the screen shows `Ticks: 0`."
+        - phase: effect
+          render: 1
+          line: 4
+          run: ["setInterval(tick, 300) // tick sees count = 0"]
+          caption:
+            uk: "Ефект запускає інтервал. Його функція `tick` закриває `count = 0` з рендеру 1."
+            en: "The effect starts the interval. Its function `tick` closes over `count = 0` from render 1."
+        - phase: event
+          name: tick
+          line: 5
+          sees: { count: 0 }
+          actions: ["setCount(0 + 1)"]
+          queued: { count: 1 }
+          caption:
+            uk: "Спрацювання 1: `tick` бачить `0` і ставить у чергу `1`."
+            en: "Tick 1: `tick` sees `0` and queues `1`."
+        - phase: render
+          render: 2
+          line: 2
+          reason: { uk: "у черзі count → 1", en: "count → 1 is queued" }
+          snapshot: { state: { count: 1 } }
+          caption:
+            uk: "Рендер 2 бачить `count = 1`. Залежності `[]` не змінилися (їх немає) — ефект **не** перезапускається, інтервал той самий."
+            en: "Render 2 sees `count = 1`. The dependencies `[]` did not change (there are none) — the effect does **not** re-run, the interval is the same."
+        - phase: commit
+          render: 2
+          line: 9
+          dom: "<p>Ticks: 1</p>"
+          caption:
+            uk: "Commit 2: на екрані `Ticks: 1`."
+            en: "Commit 2: the screen shows `Ticks: 1`."
+        - phase: event
+          name: tick
+          line: 5
+          sees: { count: 0 }
+          actions: ["setCount(0 + 1)"]
+          queued: { count: 1 }
+          caption:
+            uk: "Спрацювання 2: той самий `tick` з рендеру 1 — знову бачить `0` і знову ставить `1`."
+            en: "Tick 2: the same `tick` from render 1 — it sees `0` again and queues `1` again."
+        - phase: idle
+          caption:
+            uk: "Значення не змінилося, тож екран лишається `Ticks: 1` (React може ще раз викликати компонент, переконатися в цьому й зупинитися). Спрацювання 3, 4… — те саме."
+            en: "The value did not change, so the screen stays at `Ticks: 1` (React may call the component once more, confirm that and stop). Ticks 3, 4… are the same."
+        - phase: idle
+          caption:
+            uk: "Виправлення: `setCount((c) => c + 1)` бере значення з черги, а не зі знімка — 1, 2, 3, і інтервал не перезапускається. Або `[count]` у залежностях — тоді після кожного спрацювання React зупиняє старий інтервал і запускає новий зі свіжим знімком."
+            en: "The fix: `setCount((c) => c + 1)` takes the value from the queue, not from the snapshot — 1, 2, 3, and the interval is not restarted. Or `[count]` in the dependencies — then after every tick React stops the old interval and starts a new one with a fresh snapshot."
+
+  - id: reading-timer
+    kind: example
+    runtime: browser-react
+    dir: reading-timer
+    entry: main.jsx
+    strings:
+      habit: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      read: { uk: "Прочитано:", en: "Read:" }
+      min: { uk: "хв", en: "min" }
+    title:
+      uk: "Таймер читання: зламаний і два виправлення"
+      en: "A reading timer: broken and two fixes"
+    body:
+      uk: |
+        Кожні 300 мс таймер має додавати хвилину. Натисни **Запустити** й подивись на **Сторінку**: число зупиняється на `1`. У **Консолі** кожен рядок `tick sees minutes = 0` — інтервал живе з рендеру 1, а `start interval` надруковано лише раз.
+
+        У справжньому проєкті лінтер попередив би про це ще до запуску. Ось що `eslint-plugin-react-hooks` 7.1.1 надрукував для цього самого `App.jsx` (рядок 18 — масив `[]`):
+
+        ```text
+        18:6  warning  React Hook useEffect has a missing dependency: 'minutes'. Either include it or remove the dependency array. You can also do a functional update 'setMinutes(m => ...)' if you only need 'minutes' in the 'setMinutes' call  react-hooks/exhaustive-deps
+        ```
+
+        Лінтер пропонує саме ті два виправлення, які ти зараз спробуєш.
+      en: |
+        Every 300 ms the timer should add a minute. Press **Run** and look at the **Page**: the number stops at `1`. In the **Console** every line says `tick sees minutes = 0` — the interval lives from render 1, and `start interval` is printed only once.
+
+        In a real project the linter would have warned about this before running. This is what `eslint-plugin-react-hooks` 7.1.1 printed for this very `App.jsx` (line 18 is the `[]` array):
+
+        ```text
+        18:6  warning  React Hook useEffect has a missing dependency: 'minutes'. Either include it or remove the dependency array. You can also do a functional update 'setMinutes(m => ...)' if you only need 'minutes' in the 'setMinutes' call  react-hooks/exhaustive-deps
+        ```
+
+        The linter suggests exactly the two fixes you will try now.
+    tryIt:
+      uk: |
+        1. **Оновлювач.** Заміни `setMinutes(minutes + 1)` на `setMinutes((m) => m + 1)` і запусти. Число росте: 1, 2, 3… `start interval` — один раз: інтервал живе весь час, а значення бере з черги. (`tick sees minutes = 0` лишається — сам `tick` усе ще старий, просто він більше не читає знімок для обчислення.)
+        2. **Залежність.** Поверни `setMinutes(minutes + 1)`, а `[]` заміни на `[minutes]`. Число теж росте, але тепер після кожного спрацювання в консолі `stop interval` і `start interval`: React перезапускає ефект, і кожен новий `tick` бачить свіжий знімок.
+
+        Обидва способи правильні. Оновлювач дешевший, коли значення потрібне лише для обчислення наступного стану.
+      en: |
+        1. **Updater.** Replace `setMinutes(minutes + 1)` with `setMinutes((m) => m + 1)` and run. The number grows: 1, 2, 3… `start interval` appears once: the interval lives all the time and takes the value from the queue. (`tick sees minutes = 0` stays — the `tick` itself is still the old one, it just no longer reads the snapshot to compute.)
+        2. **Dependency.** Put `setMinutes(minutes + 1)` back and replace `[]` with `[minutes]`. The number grows too, but now after every tick the console shows `stop interval` and `start interval`: React re-runs the effect, and every new `tick` sees a fresh snapshot.
+
+        Both ways are correct. The updater is cheaper when the value is needed only to compute the next state.
+
+  - id: three-tools
+    kind: explanation
+    title:
+      uk: "Три інструменти й Effect Event"
+      en: "Three tools and the Effect Event"
+    body:
+      uk: |
+        Попередження [[exhaustive-deps]] не можна просто «заглушити» коментарем: якщо код зараз працює, це збіг — застаріле значення чекає свого часу. Вибери інструмент:
+
+        | Ситуація | Інструмент |
+        |---|---|
+        | Ефект має перезапускатися, коли значення змінюється (підписка на вибраний запис) | додай значення в залежності |
+        | Значення потрібне лише, щоб обчислити наступний стан | функція-оновлювач `setX((x) => …)` |
+        | Значення треба **прочитати** найновішим, але його зміна не має перезапускати ефект | [[effect-event\|Effect Event]] |
+
+        Effect Event створюють хуком `useEffectEvent`. Це функція, яка щоразу бачить **останній** рендер, але не є реактивною: її не кладуть у залежності, і її зміна ефекту не перезапускає.
+
+        ```jsx
+        const onVisit = useEffectEvent(() => {
+          logVisit(page, cartCount); // reads the latest cartCount
+        });
+        useEffect(() => {
+          onVisit();
+        }, [page]); // re-runs for a new page, not for a new cartCount
+        ```
+
+        Effect Event викликають лише з ефектів (або з іншого Effect Event): не під час рендеру й не з обробника кліку. Лінтер позначає такий виклик як помилку.
+      en: |
+        An [[exhaustive-deps]] warning cannot simply be silenced with a comment: if the code works now, that is luck — the stale value is waiting for its moment. Pick a tool:
+
+        | Situation | Tool |
+        |---|---|
+        | The effect must re-run when the value changes (a subscription to the selected record) | add the value to the dependencies |
+        | The value is needed only to compute the next state | an updater function `setX((x) => …)` |
+        | The value must be **read** at its latest, but its change must not re-run the effect | an [[effect-event\|Effect Event]] |
+
+        An Effect Event is created with the `useEffectEvent` hook. It is a function that always sees the **latest** render but is not reactive: it is not put into the dependencies, and its change does not re-run the effect.
+
+        ```jsx
+        const onVisit = useEffectEvent(() => {
+          logVisit(page, cartCount); // reads the latest cartCount
+        });
+        useEffect(() => {
+          onVisit();
+        }, [page]); // re-runs for a new page, not for a new cartCount
+        ```
+
+        An Effect Event is called only from effects (or from another Effect Event): not during render and not from a click handler. The linter reports such a call as an error.
+
+  - id: autosave-notice
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: autosave-notice
+    entry: main.jsx
+    editable: [App.jsx]
+    strings:
+      initialTitle: { uk: "Полити квіти", en: "Water the plants" }
+      extra: { uk: " на балконі", en: " on the balcony" }
+      notSavedYet: { uk: "Ще не збережено", en: "Not saved yet" }
+      savedPrefix: { uk: "Збережено:", en: "Saved:" }
+      titleLabel: { uk: "Назва справи", en: "Task title" }
+    title:
+      uk: "Автозбереження, що читає найновішу назву"
+      en: "An autosave that reads the latest title"
+    instructions:
+      uk: |
+        `TaskDraft` кожні 400 мс автоматично зберігає назву справи через `saveDraft(title)` і показує «Збережено: …». Але інтервал запущено ефектом із `[]`, тож він вічно зберігає назву першого рендеру: допиши щось у поле — і повідомлення не зміниться.
+
+        Виправ `App.jsx` так, щоб:
+
+        - кожне спрацювання таймера зберігало й показувало назву, яку поле має **зараз**;
+        - таймер запускався один раз і **не** перезапускався від кожного натискання клавіші;
+        - демонтування зупиняло таймер.
+
+        Перевірки рахують інтервали, які запускає й зупиняє твоя копія компонента: під час набору кількох символів має бути запущено рівно один.
+      en: |
+        `TaskDraft` autosaves the task title every 400 ms through `saveDraft(title)` and shows “Saved: …”. But the interval is started by an effect with `[]`, so it saves the first render's title forever: type something into the field and the notice does not change.
+
+        Fix `App.jsx` so that:
+
+        - every tick of the timer saves and shows the title the field has **now**;
+        - the timer starts once and does **not** restart on every keystroke;
+        - unmounting stops the timer.
+
+        The checks count the intervals your copy of the component starts and stops: exactly one must be started while several characters are typed.
+    testTitles:
+      "the notice shows the title that was saved":
+        uk: "Повідомлення показує збережену назву"
+        en: "The notice shows the title that was saved"
+      "the timer saves the latest typed title":
+        uk: "Таймер зберігає найновішу набрану назву"
+        en: "The timer saves the latest typed title"
+      "typing does not restart the timer":
+        uk: "Набір тексту не перезапускає таймер"
+        en: "Typing does not restart the timer"
+      "unmounting stops the timer":
+        uk: "Демонтування зупиняє таймер"
+        en: "Unmounting stops the timer"
+    hints:
+      nudge:
+        uk: "У таблиці з цього уроку є три інструменти. Значення `title` тут треба **прочитати** найновішим, але його зміна не має перезапускати таймер — який рядок таблиці про це?"
+        en: "The table in this lesson has three tools. Here `title` must be **read** at its latest, but its change must not restart the timer — which row of the table is that?"
+      explanation:
+        uk: |
+          Залежність `[title]` дала б свіжу назву, але перезапускала б інтервал від кожної літери. Оновлювач не допоможе: `saveDraft` потребує назви, а не наступного стану. Винеси те, що робить кожне спрацювання, у функцію, створену `useEffectEvent`, а в інтервалі викликай її. Ефект тоді нічого реактивного не читає, і `[]` стає чесним.
+
+          Те саме з іншою задачею: `const onPing = useEffectEvent(() => sendPing(userName));` і `useEffect(() => { const id = setInterval(() => onPing(), 5000); return () => clearInterval(id); }, []);`. Не забудь додати `useEffectEvent` в імпорт.
+        en: |
+          The dependency `[title]` would give a fresh title but restart the interval on every letter. An updater does not help: `saveDraft` needs the title, not the next state. Move what each tick does into a function created by `useEffectEvent`, and call it in the interval. Then the effect reads nothing reactive, and `[]` becomes honest.
+
+          The same with a different task: `const onPing = useEffectEvent(() => sendPing(userName));` and `useEffect(() => { const id = setInterval(() => onPing(), 5000); return () => clearInterval(id); }, []);`. Do not forget to add `useEffectEvent` to the import.
+    solutionNote:
+      uk: "Effect Event `onAutosave` щоразу бачить останній рендер, тож зберігає назву, яку поле має зараз. Ефект нічого реактивного не читає — лише викликає `onAutosave`, — тому `[]` чесний, і таймер живе від монтування до демонтування. Залежність `[title]` теж дала б свіжу назву, але перезапускала б інтервал від кожної літери."
+      en: "The Effect Event `onAutosave` always sees the latest render, so it saves the title the field has now. The effect reads nothing reactive — it only calls `onAutosave` — so `[]` is honest, and the timer lives from mount to unmount. The dependency `[title]` would also give a fresh title, but it would restart the interval on every letter."
+    feedback:
+      - when: { test: "the notice shows the title that was saved" }
+        message:
+          uk: "Ця перевірка чекає 500 мс після першого показу й очікує «Збережено: Полити квіти». Таймер має спрацювати хоча б раз за ці 500 мс."
+          en: "This check waits 500 ms after the first display and expects “Saved: Water the plants”. The timer must fire at least once within those 500 ms."
+      - when: { test: "the timer saves the latest typed title" }
+        message:
+          uk: "Ця перевірка дописує « на балконі», чекає 500 мс і очікує, що `saveDraft` отримав повну нову назву, а повідомлення її показує. Якщо зберігається стара назва, таймер досі читає знімок першого рендеру."
+          en: "This check types “ on the balcony”, waits 500 ms and expects `saveDraft` to have received the full new title and the notice to show it. If the old title is saved, the timer still reads the first render's snapshot."
+      - when: { test: "typing does not restart the timer" }
+        message:
+          uk: "Ця перевірка набирає кілька символів і очікує, що за весь час запущено рівно один інтервал. Більше означає, що ефект перезапускається від зміни `title` — найчастіше через `[title]` у залежностях."
+          en: "This check types several characters and expects exactly one interval to have been started the whole time. More means the effect re-runs when `title` changes — most often because of `[title]` in the dependencies."
+      - when: { test: "unmounting stops the timer" }
+        message:
+          uk: "Ця перевірка демонтує компонент і очікує 0 інтервалів, що працюють. Ефект має повертати cleanup із `clearInterval`."
+          en: "This check unmounts the component and expects 0 running intervals. The effect must return a cleanup with `clearInterval`."
+      - when: { error: ReferenceError }
+        message:
+          uk: "Якщо картка каже `useEffectEvent is not defined`, додай `useEffectEvent` в імпорт із `\"react\"`."
+          en: "If the card says `useEffectEvent is not defined`, add `useEffectEvent` to the import from `\"react\"`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: handler-snapshot
+        from: re-02-02-state-snapshots
+        prompt:
+          uk: "`count` дорівнює 5. Користувач натискає кнопку, і обробник виконує `setCount(count + 1); setTimeout(() => console.log(count), 1000);`. Що надрукує консоль через секунду, коли екран уже показує 6?"
+          en: "`count` is 5. The user presses a button, and the handler runs `setCount(count + 1); setTimeout(() => console.log(count), 1000);`. What does the console print a second later, when the screen already shows 6?"
+        answer:
+          type: choice
+          options:
+            - id: five
+              text: { uk: "`5`", en: "`5`" }
+            - id: six
+              text: { uk: "`6`", en: "`6`" }
+              why:
+                uk: "Функцію таймера створено в обробнику рендеру, де `count` дорівнює 5. Новий рендер створює нові змінні, а цей таймер бачить старі."
+                en: "The timer's function was created in the handler of the render where `count` is 5. A new render creates new variables, and this timer sees the old ones."
+          correct: [five]
+        explanation:
+          uk: "Обробник — частина рендеру зі знімком `count = 5`, і таймер, створений у ньому, бачить той самий знімок. Ефект із застарілими залежностями поводиться так само, лише довше: його таймер може жити, поки компонент на екрані."
+          en: "The handler belongs to the render with the snapshot `count = 5`, and the timer created in it sees the same snapshot. An effect with stale dependencies behaves the same way, only longer: its timer may live as long as the component is on screen."
+      - id: closure-binding
+        from: js-03-05-closures
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          function makeReader(value) {
+            return () => value;
+          }
+          let title = "draft";
+          const read = makeReader(title);
+          title = "final";
+          console.log(read());
+        verify:
+          logs: ["draft"]
+        answer:
+          type: choice
+          options:
+            - id: draft
+              text: { uk: "`draft`", en: "`draft`" }
+            - id: final
+              text: { uk: "`final`", en: "`final`" }
+              why:
+                uk: "Замикання тримає параметр `value` свого виклику `makeReader`, а не змінну `title`. Пізніше присвоєння `title` цей параметр не змінює."
+                en: "The closure keeps the parameter `value` of its `makeReader` call, not the variable `title`. The later assignment to `title` does not change that parameter."
+          correct: [draft]
+        explanation:
+          uk: "Під час виклику `makeReader(title)` параметр `value` отримав `\"draft\"`, і стрілкова функція закрила саме цей зв’язок. Так само функція ефекту закриває змінні свого рендеру: новий рендер — нові змінні, старе замикання їх не бачить."
+          en: "When `makeReader(title)` was called, the parameter `value` got `\"draft\"`, and the arrow function closed over exactly that binding. An effect function closes over its render's variables the same way: a new render has new variables, and an old closure does not see them."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-03
+    body:
+      uk: "Ефект збереження у твоєму проєкті читає список записів. Поклади список у залежності — тоді кожен запуск має свіжий знімок і записує актуальні дані. Якщо лінтер у проєкті попередить про `exhaustive-deps`, виправ залежність, а не глуши попередження."
+      en: "The persistence effect in your project reads the list of records. Put the list into the dependencies — then every run has a fresh snapshot and writes current data. If the project's linter warns about `exhaustive-deps`, fix the dependency instead of silencing the warning."
