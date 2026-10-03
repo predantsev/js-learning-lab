@@ -3,7 +3,6 @@
 export function HabitForm() {
   return (
     <form noValidate>
-      <h2>%%formTitle%%</h2>
       <div className="field">
         <label htmlFor="habit-name">%%nameLabel%%</label>
         <input id="habit-name" name="name" />

@@ -5,7 +5,6 @@ type ItemFormProps = { categories: string[] };
 export function ItemForm({ categories }: ItemFormProps) {
   return (
     <form noValidate>
-      <h2>%%formTitle%%</h2>
       <div className="field">
         <label htmlFor="item-name">%%nameLabel%%</label>
         <input id="item-name" name="name" />

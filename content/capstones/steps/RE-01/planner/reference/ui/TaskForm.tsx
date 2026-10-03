@@ -3,7 +3,6 @@
 export function TaskForm() {
   return (
     <form noValidate>
-      <h2>%%formTitle%%</h2>
       <div className="field">
         <label htmlFor="task-title">%%nameLabel%%</label>
         <input id="task-title" name="title" />

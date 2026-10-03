@@ -3,7 +3,6 @@
 export function ExpenseForm() {
   return (
     <form noValidate>
-      <h2>%%formTitle%%</h2>
       <div className="field">
         <label htmlFor="expense-label">%%nameLabel%%</label>
         <input id="expense-label" name="label" />
