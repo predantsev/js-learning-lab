@@ -108,6 +108,9 @@ export function createStack(initialName, initialParams) {
       return () => subscribers.delete(notify);
     },
     navigationFor,
+    // Like React Navigation's navigationRef.navigate(...): navigate from outside any screen
+    // (for example from a link handler), acting on the screen that is on top.
+    navigate: (name, params) => navigationFor(top().key).navigate(name, params),
     // Used by <SimStack>: 'focus' after a screen became the top one, 'blur' after another screen covered it.
     emitFocusChange: (key, focused) => emit(key, focused ? 'focus' : 'blur', { type: focused ? 'focus' : 'blur' }),
     // What the simulated device controls do. All three end up as the same GO_BACK action.
