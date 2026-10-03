@@ -1,0 +1,335 @@
+id: re-06-04-queries-vs-mutations
+unit: RE-06
+title:
+  uk: "Queries і mutations: читання проти змін"
+  en: "Queries vs mutations"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Віднести кожну операцію з даними проєкту до query (читання, можна повторювати й кешувати) або до mutation (запис, побічний ефект, ніколи не повторюється мовчки)."
+    en: "Classify each capstone data operation as a query (read, repeatable, cacheable) or a mutation (write, side effect, never repeated silently)."
+  - uk: "Пояснити, чому mutation запускається з обробника події, а query веде ефект або шар даних."
+    en: "Explain why a mutation starts from an event handler while a query is driven by an effect or a data layer."
+prerequisites: [re-06-03-loading-retry, re-03-06-not-an-effect]
+subskills:
+  - { family: R-06, skill: "mutations vs queries", depth: intro }
+glossary: [data-query, data-mutation]
+selfCheck: [predict-draft-saves, wish-mutations]
+
+blocks:
+  - id: read-or-change
+    kind: explanation
+    title:
+      uk: "Прочитати чи змінити"
+      en: "Read or change"
+    body:
+      uk: |
+        Усі розмови з сервером діляться на два різні види.
+
+        | | [[data-query\|Query]] | [[data-mutation\|Mutation]] |
+        |---|---|---|
+        | що робить | читає дані | змінює дані на сервері |
+        | методи HTTP | `GET` | `POST`, `PUT`, `PATCH`, `DELETE` |
+        | повторити ще раз | безпечно — відповідь та сама | небезпечно — другий `POST` створить другий запис |
+        | кешувати | так | ні — кешувати нема чого |
+        | хто запускає | екран, якому потрібні дані | дія людини: «Додати», «Зберегти» |
+
+        Це ті самі [[safe-method|безпечні методи]] й [[idempotency|ідемпотентність]] з JS-16, лише з боку інтерфейсу. Query — «покажи, що є»: її можна запускати, коли екрану треба, й повторювати після збою. Mutation — «зроби»: вона виконується **один раз на одну дію людини**, а якщо провалилася, людина бачить про це повідомлення й сама вирішує, чи повторити.
+      en: |
+        Every conversation with a server falls into one of two kinds.
+
+        | | [[data-query\|Query]] | [[data-mutation\|Mutation]] |
+        |---|---|---|
+        | what it does | reads data | changes data on the server |
+        | HTTP methods | `GET` | `POST`, `PUT`, `PATCH`, `DELETE` |
+        | repeat it | safe — the same answer | unsafe — a second `POST` creates a second record |
+        | cache it | yes | no — there is nothing to cache |
+        | who starts it | the screen that needs the data | the person's action: “Add”, “Save” |
+
+        These are the [[safe-method|safe methods]] and the [[idempotency]] of JS-16, seen from the interface. A query is “show what there is”: run it whenever the screen needs it and repeat it after a failure. A mutation is “do it”: it runs **once per action of the person**, and if it failed, the person sees a message and decides whether to repeat it.
+
+  - id: who-starts-it
+    kind: explanation
+    title:
+      uk: "Query — з ефекту, mutation — з обробника"
+      en: "A query from an effect, a mutation from a handler"
+    body:
+      uk: |
+        Query синхронізує екран із даними сервера для поточних параметрів, тому її веде ефект (або шар даних, про який далі): змінився фільтр — React перезапустить запит.
+
+        Mutation має **причину** — клік, надсилання форми. Логіка, спричинена подією, живе в обробнику цієї події. Ефект, що «стежить» за станом форми й зберігає його, запускається не тоді, коли людина вирішила зберегти, а щоразу, коли змінився стан, — і ще раз під час монтування.
+      en: |
+        A query synchronizes the screen with the server's data for the current parameters, so an effect drives it (or a data layer, coming later): the filter changed — React re-runs the request.
+
+        A mutation has a **cause** — a click, a form submit. Logic caused by an event lives in that event's handler. An effect that “watches” the form state and saves it runs not when the person decided to save, but every time the state changed — and once more on mount.
+
+  - id: predict-draft-saves
+    kind: prediction
+    strings:
+      tea: { uk: "Чай", en: "Tea" }
+    prompt:
+      uk: "Компонент змонтовано без `<StrictMode>`. Людина вводить у поле три літери «%%tea%%» і нічого не натискає. Скільки запитів `POST /api/expenses` піде на сервер?"
+      en: "The component is mounted without `<StrictMode>`. The person types the three letters “%%tea%%” into the field and presses nothing. How many `POST /api/expenses` requests reach the server?"
+    code: |
+      const [label, setLabel] = useState("");
+
+      useEffect(() => {
+        saveExpense({ label, amountMinor: 1500 }); // POST /api/expenses
+      }, [label]);
+
+      return <input value={label} onChange={(event) => setLabel(event.target.value)} />;
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: four
+          text: { uk: "4", en: "4" }
+        - id: three
+          text: { uk: "3 — по одному на літеру", en: "3 — one per letter" }
+          why:
+            uk: "Ефект запускається ще й після першого commit, коли поле порожнє, — це перший `POST` з порожньою назвою."
+            en: "The effect also runs after the first commit, when the field is empty — that is the first `POST`, with an empty label."
+        - id: zero
+          text: { uk: "0 — людина ж не натискала «Зберегти»", en: "0 — the person never pressed “Save”" }
+          why:
+            uk: "Ефект не знає про наміри людини: він реагує на зміну `label`. Кожна літера — новий `label` і новий запуск ефекту."
+            en: "The effect knows nothing of the person's intentions: it reacts to a change of `label`. Every letter is a new `label` and a new run of the effect."
+        - id: one
+          text: { uk: "1 — React об’єднає зміни в пакет", en: "1 — React batches the changes" }
+          why:
+            uk: "Пакет збирає setter-и **одного** обробника. Три літери — три окремі події `input`, три рендери й три запуски ефекту."
+            en: "Batching groups the setters of **one** handler. Three letters are three separate `input` events, three renders and three effect runs."
+      correct: [four]
+    explanation:
+      uk: "Один `POST` після монтування (`label` = порожній рядок) і по одному на кожну літеру. Кожен створює на сервері новий запис: порожній, «Ч», «Ча», «Чай». Перевірено в пісочниці на прикладі нижче: у журналі `#1`…`#4`."
+      en: "One `POST` after mounting (`label` is an empty string) and one per letter. Each creates a new record on the server: an empty one, “T”, “Te”, “Tea”. Checked in the sandbox with the example below: `#1`…`#4` in the log."
+
+  - id: two-lanes
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Дві смуги: queries і mutations"
+      en: "Two lanes: queries and mutations"
+    textEquivalent:
+      uk: >-
+        Дві смуги руху даних. Смуга queries: дані йдуть від API через кеш до компонентів, і цей
+        шлях можна проходити скільки завгодно разів — повторний GET нічого не змінює на сервері.
+        Смуга mutations: усе починається з події людини (клік, надсилання форми), обробник надсилає
+        POST, PATCH чи DELETE в API, а після успіху позначає застарілими ті queries, яких ця зміна
+        стосується, і вони запитують дані знову. Mutation ніколи не запускається сама й не
+        повторюється мовчки.
+      en: >-
+        Two lanes of data. The query lane: data flows from the API through the cache to the
+        components, and this path may be walked any number of times — a repeated GET changes nothing
+        on the server. The mutation lane: everything starts with the person's event (a click, a form
+        submit), the handler sends POST, PATCH or DELETE to the API, and after success it marks the
+        queries this change affects as stale, and they ask for the data again. A mutation never
+        starts by itself and is never repeated silently.
+    spec:
+      layout: grid
+      groups:
+        - { id: reads, label: { uk: "Queries: читання", en: "Queries: reading" } }
+        - { id: writes, label: { uk: "Mutations: зміни", en: "Mutations: changes" } }
+      nodes:
+        - { id: api-read, group: reads, label: "GET /api/wishes", shape: round, w: 140, col: 0, row: 0 }
+        - { id: cache, group: reads, label: { uk: "кеш", en: "cache" }, shape: cylinder, col: 0, row: 1 }
+        - { id: view, group: reads, label: { uk: "компоненти", en: "components" }, col: 0, row: 2 }
+        - { id: event, group: writes, label: { uk: "подія людини", en: "person's event" }, shape: pill, w: 130, col: 1, row: 0 }
+        - { id: handler, group: writes, label: { uk: "обробник", en: "handler" }, col: 1, row: 1 }
+        - { id: api-write, group: writes, label: "POST · PATCH", shape: round, w: 120, col: 1, row: 2 }
+      edges:
+        - { id: fill, from: api-read, to: cache }
+        - { id: show, from: cache, to: view }
+        - { id: start, from: event, to: handler }
+        - { id: send, from: handler, to: api-write }
+        - { id: stale, from: api-write, to: cache, label: { uk: "застаріло", en: "stale" }, kind: dashed }
+      steps:
+        - caption:
+            uk: "Дві смуги з різними правилами. Query читає, mutation змінює."
+            en: "Two lanes with different rules. A query reads, a mutation changes."
+        - highlight: [api-read, cache, view, fill, show]
+          dim: [event, handler, api-write, start, send, stale]
+          caption:
+            uk: "Query: `GET` → кеш → компоненти. Цей шлях можна проходити знову й знову — повторне читання нічого не змінює на сервері."
+            en: "A query: `GET` → cache → components. This path can be walked again and again — reading once more changes nothing on the server."
+        - highlight: [event, handler, api-write, start, send]
+          dim: [api-read, cache, view, fill, show, stale]
+          caption:
+            uk: "Mutation починається з **події людини**: обробник надсилає `POST` чи `PATCH` один раз. Ні ефект, ні таймер її не запускають."
+            en: "A mutation starts with **the person's event**: the handler sends `POST` or `PATCH` once. Neither an effect nor a timer starts it."
+        - highlight: [api-write, stale, cache]
+          annotate:
+            - { id: stale, text: { uk: "запитати знову", en: "ask again" } }
+          caption:
+            uk: "Після успіху mutation позначає застарілими queries, яких стосується зміна, — і ті читають дані знову. Як саме — у наступному уроці."
+            en: "After success the mutation marks the affected queries as stale — and they read the data again. How exactly — in the next lesson."
+
+  - id: draft-save
+    kind: example
+    runtime: browser-react
+    dir: draft-save
+    entry: main.jsx
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      labelField: { uk: "Назва витрати", en: "Expense label" }
+      save: { uk: "Зберегти", en: "Save" }
+    title:
+      uk: "Збереження в ефекті проти збереження в обробнику"
+      en: "Saving in an effect versus saving in a handler"
+    body:
+      uk: |
+        `fakeServer.js` підміняє `fetch` для адрес `/api/…`: відповідає з пам’яті через 300 мс і друкує кожен запит із тілом. Компонент зберігає чернетку в ефекті з `[label]`.
+
+        Натисни **Запустити**, на **Сторінці** введи в поле кілька літер і подивись у **Консоль**: `POST` іде на монтуванні й після кожної літери, і кожен створює новий запис.
+      en: |
+        `fakeServer.js` replaces `fetch` for `/api/…` addresses: it answers from memory after 300 ms and prints every request with its body. The component saves the draft in an effect with `[label]`.
+
+        Press **Run**, type a few letters into the field on the **Page** and look at the **Console**: a `POST` goes out on mount and after every letter, and each one creates a new record.
+    tryIt:
+      uk: |
+        Перенеси збереження в обробник: видали весь `useEffect` разом із коментарем над ним, а в `handleSubmit` після `event.preventDefault();` додай `saveExpense({ label, amountMinor: 1500 });`. Прибери `useEffect` з імпорту й запусти знову. Тепер друк літер не надсилає нічого, а **Зберегти** — рівно один `POST` із тим, що людина ввела.
+      en: |
+        Move the saving into the handler: delete the whole `useEffect` together with the comment above it, and in `handleSubmit` after `event.preventDefault();` add `saveExpense({ label, amountMinor: 1500 });`. Remove `useEffect` from the import and run again. Now typing sends nothing, and **Save** sends exactly one `POST` with what the person typed.
+
+  - id: wish-mutations
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: wish-mutations
+    entry: main.jsx
+    editable: [mutations.ts, App.jsx]
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      nameField: { uk: "Нове бажання", en: "New wish" }
+      add: { uk: "Додати", en: "Add" }
+      markAcquired: { uk: "Отримано", en: "Got it" }
+      loadFailed: { uk: "Не вдалося завантажити бажання.", en: "Could not load the wishes." }
+      saveFailed: { uk: "Не вдалося зберегти зміну. Спробуй ще раз.", en: "Could not save the change. Try again." }
+    title:
+      uk: "Дві mutations із типізованим результатом"
+      en: "Two mutations with a typed result"
+    instructions:
+      uk: |
+        `fakeServer.js` підміняє `fetch` для `/api/wishes`: `POST /api/wishes` створює бажання й відповідає `201` зі створеним записом, `PATCH /api/wishes/<id>` змінює лише передані поля й відповідає `200` з усім записом. Уміє й ламатися: `503` або обрив з’єднання.
+
+        1. У `mutations.ts` напиши `createRecord(input)` і `updateRecord(id, patch)`. Кожна надсилає **один** запит із тілом JSON і **ніколи не відхиляє проміс**: успіх — `{ ok: true, value: <запис від сервера> }`, відповідь не `ok` чи помилка мережі — `{ ok: false, error: <текст> }`. Невдалий запит не повторюй.
+        2. У `App.jsx` допиши обробник `markAcquired(id)`: виклич `updateRecord(id, { acquired: true })`; успіх — заміни це бажання у списку тим, що повернув сервер, і очисть повідомлення; збій — покажи «Не вдалося зберегти зміну. Спробуй ще раз.» в `role="alert"`.
+
+        Перевірки викликають обидві функції напряму, **читають журнал запитів** фікстури й клікають «Отримано» у власних копіях компонента.
+      en: |
+        `fakeServer.js` replaces `fetch` for `/api/wishes`: `POST /api/wishes` creates a wish and answers `201` with the created record, `PATCH /api/wishes/<id>` changes only the fields it receives and answers `200` with the whole record. It can also break: `503` or a lost connection.
+
+        1. In `mutations.ts` write `createRecord(input)` and `updateRecord(id, patch)`. Each sends **one** request with a JSON body and **never rejects its promise**: success — `{ ok: true, value: <the record from the server> }`, a response that is not `ok` or a network error — `{ ok: false, error: <a text> }`. Do not repeat a failed request.
+        2. In `App.jsx` complete the handler `markAcquired(id)`: call `updateRecord(id, { acquired: true })`; on success replace that wish in the list with what the server returned and clear the message; on failure show “Could not save the change. Try again.” in `role="alert"`.
+
+        The checks call both functions directly, **read the fixture's request log** and click “Got it” in their own copies of the component.
+    testTitles:
+      "createRecord sends one POST and resolves to the created wish":
+        uk: "`createRecord` надсилає один `POST` і повертає створене бажання"
+        en: "`createRecord` sends one `POST` and resolves to the created wish"
+      "createRecord resolves to an error result when the server answers 503":
+        uk: "`createRecord` повертає результат-помилку, коли сервер відповів `503`"
+        en: "`createRecord` resolves to an error result when the server answers `503`"
+      "createRecord resolves to an error result when the network fails":
+        uk: "`createRecord` повертає результат-помилку, коли зник зв’язок"
+        en: "`createRecord` resolves to an error result when the network fails"
+      "updateRecord sends only the patch with PATCH and resolves to the whole wish":
+        uk: "`updateRecord` надсилає лише зміну методом `PATCH` і повертає весь запис"
+        en: "`updateRecord` sends only the patch with `PATCH` and resolves to the whole wish"
+      "a failed mutation is not repeated silently":
+        uk: "Невдалу mutation мовчки не повторено"
+        en: "A failed mutation is not repeated silently"
+      "Mark acquired marks the wish on screen":
+        uk: "«Отримано» позначає бажання на екрані"
+        en: "“Got it” marks the wish on screen"
+      "a failed Mark acquired shows the error and keeps the wish wanted":
+        uk: "Невдале «Отримано» показує помилку й лишає бажання неотриманим"
+        en: "A failed “Got it” shows the error and keeps the wish wanted"
+    hints:
+      nudge:
+        uk: "Обидві функції роблять те саме, відрізняються лише метод і адреса. Що може статися з `fetch`, крім гарної відповіді? Таких випадків два, і обидва мають стати `{ ok: false, … }`."
+        en: "Both functions do the same thing; only the method and the address differ. What can happen to `fetch` besides a good answer? There are two such cases, and both must become `{ ok: false, … }`."
+      explanation:
+        uk: |
+          `fetch` відхиляє проміс лише тоді, коли відповіді немає взагалі (обрив зв’язку), — це `catch`. Відповідь `503` проміс **виконує**, тож перевір `response.ok` самостійно. Тіло запиту — `JSON.stringify(...)` з заголовком `content-type: application/json`; тіло відповіді — `await response.json()`. Спільну частину зручно винести в допоміжну функцію з параметрами «метод», «адреса», «тіло».
+
+          Схоже, з іншою задачею: `` async function deleteNote(id) { try { const r = await fetch(`/api/notes/${id}`, { method: "DELETE" }); return r.ok ? { ok: true, value: id } : { ok: false, error: `HTTP ${r.status}` }; } catch (e) { return { ok: false, error: e.message }; } } ``.
+        en: |
+          `fetch` rejects its promise only when there is no answer at all (a lost connection) — that is the `catch`. A `503` answer **fulfils** the promise, so check `response.ok` yourself. The request body is `JSON.stringify(...)` with the header `content-type: application/json`; the response body is `await response.json()`. It is handy to move the shared part into a helper with “method”, “address” and “body” parameters.
+
+          Similar, with a different task: `` async function deleteNote(id) { try { const r = await fetch(`/api/notes/${id}`, { method: "DELETE" }); return r.ok ? { ok: true, value: id } : { ok: false, error: `HTTP ${r.status}` }; } catch (e) { return { ok: false, error: e.message }; } } ``.
+    solutionNote:
+      uk: "Результат-об’єднання `Result<T>` змушує того, хто викликає, перевірити `ok`, — і жодна гілка не губиться в непійманому відхиленні. Невдала mutation повертається одразу: повторювати `POST` мовчки небезпечно, бо перший запит міг дійти до сервера. Обидві mutations стартують з обробників (`handleSubmit`, `markAcquired`) — тобто тоді, коли людина справді вирішила щось змінити."
+      en: "The `Result<T>` union makes the caller check `ok` — and no branch gets lost in an uncaught rejection. A failed mutation returns at once: repeating a `POST` silently is dangerous, because the first request may have reached the server. Both mutations start from handlers (`handleSubmit`, `markAcquired`) — that is, when the person really decided to change something."
+    feedback:
+      - when: { test: "createRecord sends one POST and resolves to the created wish" }
+        message:
+          uk: "Ця перевірка викликає `createRecord({ name, price: 18 })` і очікує в журналі рівно один `POST /api/wishes` з тим самим тілом, а в результаті — `{ ok: true, value }`, де `value` — запис від сервера з `id` `w-04`. Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі."
+          en: "This check calls `createRecord({ name, price: 18 })` and expects exactly one `POST /api/wishes` with the same body in the log, and the result `{ ok: true, value }`, where `value` is the server's record with the `id` `w-04`. If every check fails at once, fix the first error in the console first."
+      - when: { test: "createRecord resolves to an error result when the server answers 503" }
+        message:
+          uk: "Ця перевірка змушує сервер відповісти `503` і очікує, що `createRecord` **виконає** проміс із `{ ok: false, error: <текст> }`, а не відхилить його. `fetch` не відхиляє проміс через статус — перевір `response.ok`."
+          en: "This check makes the server answer `503` and expects `createRecord` to **fulfil** its promise with `{ ok: false, error: <a text> }`, not to reject it. `fetch` does not reject because of a status — check `response.ok`."
+      - when: { test: "createRecord resolves to an error result when the network fails" }
+        message:
+          uk: "Ця перевірка імітує обрив зв’язку (тоді `fetch` відхиляє проміс із `TypeError`) і очікує `{ ok: false, error: <текст> }`. Обгорни запит у `try`/`catch` (або додай `.catch`)."
+          en: "This check imitates a lost connection (then `fetch` rejects with a `TypeError`) and expects `{ ok: false, error: <a text> }`. Wrap the request in `try`/`catch` (or add a `.catch`)."
+      - when: { test: "updateRecord sends only the patch with PATCH and resolves to the whole wish" }
+        message:
+          uk: "Ця перевірка викликає `updateRecord(\"w-02\", { acquired: true })` і очікує один `PATCH /api/wishes/w-02` з тілом рівно `{ acquired: true }`, а в результаті — `{ ok: true, value }` з усім записом лампи."
+          en: "This check calls `updateRecord(\"w-02\", { acquired: true })` and expects one `PATCH /api/wishes/w-02` with the body exactly `{ acquired: true }`, and the result `{ ok: true, value }` with the lamp's whole record."
+      - when: { test: "a failed mutation is not repeated silently" }
+        message:
+          uk: "Ця перевірка провалює один запит і очікує, що `updateRecord` надішле рівно 1 запит і поверне `ok: false`. Повтор після збою вирішує людина, а не функція."
+          en: "This check makes one request fail and expects `updateRecord` to send exactly 1 request and return `ok: false`. Whether to repeat after a failure is the person's decision, not the function's."
+      - when: { test: "Mark acquired marks the wish on screen" }
+        message:
+          uk: "Ця перевірка клікає «Отримано» в рядку лампи й очікує один `PATCH /api/wishes/w-02`, а потім знак `✓` у цьому рядку. Обробник має викликати `updateRecord` і замінити бажання у списку тим, що повернув сервер."
+          en: "This check clicks “Got it” in the lamp's row and expects one `PATCH /api/wishes/w-02`, and then the `✓` mark in that row. The handler must call `updateRecord` and replace the wish in the list with what the server returned."
+      - when: { test: "a failed Mark acquired shows the error and keeps the wish wanted" }
+        message:
+          uk: "Ця перевірка провалює `PATCH` і очікує в `role=\"alert\"` текст «Не вдалося зберегти зміну. Спробуй ще раз.», а рядок лампи — без `✓`."
+          en: "This check makes the `PATCH` fail and expects the text “Could not save the change. Try again.” in `role=\"alert\"`, and the lamp's row without `✓`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: event-logic
+        from: re-03-06-not-an-effect
+        prompt:
+          uk: "Після кліку «Купити» треба надіслати замовлення й показати «Дякуємо». Де місце цього коду?"
+          en: "After a click on “Buy” an order must be sent and “Thank you” shown. Where does this code belong?"
+        answer:
+          type: choice
+          options:
+            - id: handler
+              text: { uk: "В обробнику `onClick` кнопки «Купити»", en: "In the `onClick` handler of the “Buy” button" }
+            - id: effect-on-flag
+              text: { uk: "У кліку поставити `setBought(true)`, а надіслати в ефекті з `[bought]`", en: "Set `setBought(true)` in the click and send in an effect with `[bought]`" }
+              why:
+                uk: "Причина надсилання — клік, а не зміна стану. Ефект із прапорцем — зайвий рендер і пастка: він спрацює й тоді, коли `bought` стане `true` з іншої причини (відновлення стану, повторне монтування)."
+                en: "The cause of sending is the click, not a state change. An effect on a flag is an extra render and a trap: it also fires when `bought` becomes `true` for another reason (restored state, a remount)."
+            - id: render-body
+              text: { uk: "У тілі компонента, якщо `bought` — `true`", en: "In the component body, if `bought` is `true`" }
+              why:
+                uk: "Рендер має бути чистим, і React може викликати компонент скільки завгодно разів — замовлення пішло б кілька разів."
+                en: "Rendering must be pure, and React may call a component any number of times — the order would go out several times."
+          correct: [handler]
+        explanation:
+          uk: "Ефект — для синхронізації з тим, що показано; дія у відповідь на подію живе в обробнику. Mutation — якраз така дія."
+          en: "An effect is for synchronizing with what is shown; an action in response to an event lives in the handler. A mutation is exactly such an action."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-06
+    body:
+      uk: "Розклади операції свого проєкту на дві купки: список і пошук — queries, а створення, редагування, видалення й перемикання статусу — mutations. У кроці проєкту цього розділу кожна mutation повертатиме результат з `ok` і запускатиметься лише з обробника."
+      en: "Sort your project's operations into two piles: the list and search are queries, while create, edit, remove and the status toggle are mutations. In this unit's project step each mutation will return a result with `ok` and start only from a handler."
