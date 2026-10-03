@@ -558,7 +558,8 @@ You write git operations; the simulator produces every state and refuses impossi
 ```yaml
 spec:
   steps:
-    - op: init                   # always first; { branch: main } optional
+    - op: init                   # always first; { branch: main } optional; args: "-b main" shows
+                                 #   `git init -b main` (a -b name also names the branch)
       caption: { uk: "…", en: "…" }
     - op: commit
       message: "add wishlist page"

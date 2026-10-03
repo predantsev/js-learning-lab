@@ -9,7 +9,7 @@ export const schema = {
   summary: 'Commits, branches, HEAD and the working tree / staging area step by step: commit, branch, merge (fast-forward or merge commit, with conflicts), rebase, reset, restore. States are simulated from the operations.',
   fields: {
     steps: '[{ op, caption: { uk, en }, …op fields }]',
-    'op: init': '{ branch?: "main" } — start an empty repository',
+    'op: init': '{ branch?: "main", args?: "-b main" } — start an empty repository; `args` are shown after "git init" (a -b / --initial-branch name also names the branch)',
     'op: modify': '{ files: [paths] } — edit files in the working tree',
     'op: stage': '{ files: [paths] } — git add',
     'op: commit': '{ message, id?: "c3", files?: [paths] } — commits the staged files (plus "files"); after resolving a conflict it creates the merge commit',
@@ -23,6 +23,9 @@ export const schema = {
     'op: note': '{} — no change, caption only',
   },
 };
+
+/** The branch named by `git init` arguments (-b <name>, --initial-branch <name> or =<name>), or null. */
+const initBranchArg = (args) => /(?:^|\s)(?:-b|--initial-branch)(?:\s+|=)(\S+)/.exec(args)?.[1] ?? null;
 
 const fileList = (issues, value, path) => {
   if (!Array.isArray(value) || value.length === 0 || !value.every((f) => nonEmpty(f))) { issues.add(path, 'must be a non-empty list of file paths'); return []; }
@@ -38,6 +41,10 @@ export function validate(spec, issues = new IssueList()) {
     checkText(issues, s.caption, `${p}.caption`);
     if (!checkEnum(issues, s.op, `${p}.op`, OPS)) return;
     switch (s.op) {
+      case 'init':
+        if (s.args !== undefined && !nonEmpty(s.args)) issues.add(`${p}.args`, 'must be the text after "git init", for example "-b main"');
+        else if (nonEmpty(s.args) && nonEmpty(s.branch) && initBranchArg(s.args) !== null && initBranchArg(s.args) !== s.branch) issues.add(`${p}.args`, `names the branch "${initBranchArg(s.args)}" but branch is "${s.branch}"`);
+        break;
       case 'modify': case 'stage': case 'resolve': case 'restore': fileList(issues, s.files, `${p}.files`); break;
       case 'commit': if (!nonEmpty(s.message)) issues.add(`${p}.message`, 'a commit needs a message'); break;
       case 'branch': if (!nonEmpty(s.name)) issues.add(`${p}.name`, 'needs the branch name'); break;
@@ -107,11 +114,11 @@ export function simulate(steps, issues = new IssueList()) {
     const currentBranch = () => repo.head.branch;
     switch (s.op) {
       case 'init': {
-        const name = s.branch ?? 'main';
+        const name = s.branch ?? (nonEmpty(s.args) ? initBranchArg(s.args) : null) ?? 'main';
         repo.branches.set(name, null);
         laneFor(name);
         repo.head = { branch: name };
-        command = 'git init';
+        command = nonEmpty(s.args) ? `git init ${s.args.trim()}` : 'git init';
         changed.push(name);
         break;
       }
