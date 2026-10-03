@@ -14,7 +14,8 @@ async function mount() {
   return { host, errors, finish: () => { root.unmount(); host.remove(); } };
 }
 const row = (host, index) => host.querySelectorAll('li')[index];
-const control = (scope, text) => [...scope.querySelectorAll('button, [role="button"], span, div')].find((n) => n.textContent.trim() === text);
+// The first control whose text starts with `text` ("Rename", or "Rename Morning exercise").
+const control = (scope, text) => [...scope.querySelectorAll('button, [role="button"], span, div')].find((n) => n.textContent.trim().startsWith(text));
 const active = () => document.activeElement;
 
 test('nothing is focused on first display', async () => {
@@ -56,6 +57,21 @@ test('Escape cancels without saving and returns focus to Rename', async () => {
     expect(row(copy.host, 1).querySelector('input'), 'the name field after Escape').toBeNull();
     expect(row(copy.host, 1), 'the second habit after Escape').toHaveTextContent(L.reading);
     expect(control(row(copy.host, 1), L.rename), 'Rename of the second habit').toHaveFocus();
+  } finally { copy.finish(); }
+});
+
+test('the Cancel button closes without saving and returns focus to Rename', async () => {
+  const copy = await mount();
+  try {
+    await user.click(control(row(copy.host, 0), L.rename));
+    await user.fill(row(copy.host, 0).querySelector('input'), L.typed);
+    const cancel = control(row(copy.host, 0), L.cancel);
+    cancel.focus();
+    await user.press('Enter', cancel);
+    expect(copy.errors, 'errors React reported').toEqual([]);
+    expect(row(copy.host, 0).querySelector('input'), 'the name field after Cancel').toBeNull();
+    expect(row(copy.host, 0), 'the first habit after Cancel').toHaveTextContent(L.exercise);
+    expect(control(row(copy.host, 0), L.rename), 'Rename of the first habit').toHaveFocus();
   } finally { copy.finish(); }
 });
 

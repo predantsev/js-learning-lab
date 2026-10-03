@@ -8,10 +8,11 @@ const TASKS = [
   { id: "t-05", title: "%%dentist%%", done: false },
 ];
 
-// Describes an element in a few words, for the console.
+// Describes an element in a few words, for the console: its tag and its label or text.
 function describe(element) {
   if (element === document.body) return "body";
-  return `${element.tagName.toLowerCase()} “${element.textContent || element.value}”`;
+  const text = element.labels?.[0]?.textContent ?? element.textContent;
+  return `${element.tagName.toLowerCase()} “${text.trim()}”`;
 }
 
 export default function TaskBoard() {
