@@ -53,10 +53,11 @@ export function createMarkdown(glossary) {
       return escapeHtml(code);
     }
   };
+  // The shown text of [[id|text]] is inline Markdown (a code span, bold); the default label is the term.
   const termHtml = (id, shown) => {
     const term = glossary.get(id);
-    const label = shown ?? term?.term ?? id;
-    return `<button type="button" class="term" data-term="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
+    const label = shown !== undefined ? marked.parseInline(shown).trim() : escapeHtml(term?.term ?? id);
+    return `<button type="button" class="term" data-term="${escapeHtml(id)}">${label}</button>`;
   };
   const marked = new Marked({
     gfm: true,

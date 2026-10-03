@@ -106,3 +106,9 @@ test('raw HTML in Markdown prose is shown as text, never as markup (block, inlin
   assert.match(md.inline('[ok](https://example.com) [rel](./a.html) [top](#x)'), /href="https:\/\/example.com".*href=".\/a.html".*href="#x"/);
   assert.equal(md.inline('[click](javascript:alert(1))'), 'click');
 });
+
+test('the shown text of a glossary link is inline Markdown: code spans and bold render, HTML stays text', () => {
+  assert.equal(md.inline('[[closure|`makeCounter` **closure**]]'), '<button type="button" class="term" data-term="closure"><code>makeCounter</code> <strong>closure</strong></button>');
+  assert.equal(md.inline('[[closure|a <b>tag</b>]]'), '<button type="button" class="term" data-term="closure">a &lt;b&gt;tag&lt;/b&gt;</button>');
+  assert.equal(md.inline('[[closure]]'), '<button type="button" class="term" data-term="closure">closure</button>');
+});
