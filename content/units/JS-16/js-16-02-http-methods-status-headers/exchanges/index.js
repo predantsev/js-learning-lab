@@ -1,4 +1,4 @@
-// Four exchanges with the lab fixture server and one with a page that plays a fallback page.
+// Three exchanges with the lab fixture server, one with a project page that plays a fallback page, and one echo.
 await fetch("/lab/wishlist/reset", { method: "POST" }); // start from the original fixtures
 
 async function exchange(method, url) {

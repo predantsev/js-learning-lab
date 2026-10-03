@@ -107,3 +107,16 @@ test('only the city preference is stored, and it comes back', async () => {
   scope.restoreFilter();
   expect(screen.$('#city').value, 'the city after restoreFilter').toBe('lviv');
 });
+
+test('while the search runs the status says so, and the page does not reload', async () => {
+  const server = mockFetch(() => ({ ...json(200, EVENTS), delay: 300 }));
+  try {
+    await user.fill(screen.$('#query'), L.walk);
+    const { prevented } = await user.submit(screen.$('#search-form'));
+    expect(prevented, 'the submit event was prevented, so the page does not reload').toBe(true);
+    expect(screen.$('#status').textContent, 'the status while the request runs').toBe(L.loading);
+    await waitFor(() => screen.$('#status').textContent !== L.loading);
+  } finally {
+    server.restore();
+  }
+});
