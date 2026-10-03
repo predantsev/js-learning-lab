@@ -9,8 +9,11 @@ import { publish, subscribe, subscriberCount } from './feed.js';
 // main.jsx contains. Completions get ids that the learner's own tests never use.
 let nextId = 100;
 const completion = (habit, date) => ({ id: `c-${nextId++}`, habit, date });
-// Gives React time to run the effects (and the updates) of what was just mounted or published.
-const tick = () => new Promise((resolve) => setTimeout(resolve, 50));
+// Mounting (flushSync) and root.unmount() are synchronous, so effects and cleanups have run when
+// they return; a completion is published inside flushSync too, so its rows are on the page right
+// after it. No check depends on how long a timer takes: tick() only lets queued work settle.
+const publishNow = (record) => flushSync(() => publish(record));
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 function mountFeed() {
   const host = document.createElement('div');
@@ -29,7 +32,7 @@ test('one published completion shows exactly one row under StrictMode', async ()
   const feed = mountFeed();
   try {
     await tick();
-    publish(completion(L.exercise, '2026-03-01'));
+    publishNow(completion(L.exercise, '2026-03-01'));
     await tick();
     expect(feed.rows(), 'rows after one completion').toEqual([`${L.exercise} — 2026-03-01`]);
   } finally { feed.remove(); }
@@ -51,7 +54,7 @@ test('showing the feed again still gives one row per completion', async () => {
   const again = mountFeed();
   try {
     await tick();
-    publish(completion(L.water, '2026-03-02'));
+    publishNow(completion(L.water, '2026-03-02'));
     await tick();
     expect(again.rows(), 'rows after showing the feed again and one completion').toEqual([`${L.water} — 2026-03-02`]);
   } finally { again.remove(); }
