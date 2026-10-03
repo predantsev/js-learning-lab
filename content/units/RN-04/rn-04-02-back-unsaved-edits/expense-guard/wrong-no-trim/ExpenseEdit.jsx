@@ -4,19 +4,15 @@ import { Alert } from './alertSim.jsx';
 import { categories, expenses } from './expenses.js';
 import { usePreventRemove } from './navSim.jsx';
 
-function differsFromSaved(draft, saved) {
-  return draft.label.trim() !== saved.label || draft.category !== saved.category;
-}
-
 export function EditScreen({ navigation, route }) {
   const saved = expenses.useRecords().find((expense) => expense.id === route.params.id);
-  // One draft object instead of one state per field, and a helper that says whether it differs from the saved record.
-  const [draft, setDraft] = useState({ label: saved.label, category: saved.category });
-  const { label, category } = draft;
-  const setLabel = (text) => setDraft((current) => ({ ...current, label: text }));
-  const setCategory = (id) => setDraft((current) => ({ ...current, category: id }));
+  const [label, setLabel] = useState(saved.label);
+  const [category, setCategory] = useState(saved.category);
 
-  usePreventRemove(differsFromSaved(draft, saved), ({ data }) => {
+  // Compares the raw text, so a space typed at the end counts as a change, although Save would store the same label.
+  const isDirty = label !== saved.label || category !== saved.category;
+
+  usePreventRemove(isDirty, ({ data }) => {
     Alert.alert('%%leaveTitle%%', '%%leaveMessage%%', [
       { text: '%%keepEditing%%', style: 'cancel' },
       { text: '%%discard%%', style: 'destructive', onPress: () => navigation.dispatch(data.action) },

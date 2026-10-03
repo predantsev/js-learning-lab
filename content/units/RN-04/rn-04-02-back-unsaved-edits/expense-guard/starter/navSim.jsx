@@ -121,7 +121,8 @@ export function createStack(initialName, initialParams) {
     navigate: (name, params) => navigationFor(top().key).navigate(name, params),
     // Used by <SimStack>: 'focus' after a screen became the top one, 'blur' after another screen covered it.
     emitFocusChange: (key, focused) => emit(key, focused ? 'focus' : 'blur', { type: focused ? 'focus' : 'blur' }),
-    // What the simulated device controls do. All three end up as the same GO_BACK action.
+    // What the simulated device controls do. Here all three are the same GO_BACK action; in a real native stack
+    // the iOS swipe and header button arrive as a POP action — a guard treats both the same way.
     headerBack: () => dispatch({ type: 'GO_BACK' }),
     hardwareBack: () => dispatch({ type: 'GO_BACK' }),
     swipeBack: () => {
