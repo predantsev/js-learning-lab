@@ -8,8 +8,9 @@ const ExpensesContext = createContext(null);
 
 function useGuard(isDirty) {
   useEffect(() => {
+    if (!isDirty) return undefined; // no edits: no listener at all
     function warn(event) {
-      if (isDirty) event.preventDefault();
+      event.preventDefault();
     }
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
