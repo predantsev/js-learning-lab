@@ -4,6 +4,7 @@ import { WishCard } from "./WishCard";
 import { WISHES } from "./wishes";
 
 // The draft lives next to the field: typing renders only this form, not the board.
+// The context value below is still a new object on every render of the board.
 function NewWishForm({ onAdd }) {
   const [draft, setDraft] = useState("");
 
