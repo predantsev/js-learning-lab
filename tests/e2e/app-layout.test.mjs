@@ -34,6 +34,38 @@ const measure = (page) => page.evaluate(() => {
   };
 });
 
+// content/VISUALS.md, section 6: a diagram up to 450 px wide is drawn at no less than 75 % (338 px)
+// without horizontal scrolling, from the narrowest two-column window (1100 px) up, in every style.
+test('the visual panel of the lesson column fits a 450 px picture at 75 % from 1100 px up, in every style', async () => {
+  const lab = await Lab.start({ distDir });
+  try {
+    await lab.seed('profile', { language: 'uk', styleId: 'calm-studio', appearance: 'system', textSize: 'default', activeWorkspaceId: null, lastLesson: null, onboardingDone: true, createdAt: '2026-10-01T00:00:00.000Z' });
+    const { page, problems, context } = await openApp(browser, lab, { hash: `#/lesson/${L1}/1`, viewport: { width: 1100, height: 800 } });
+    const report = [];
+    for (const style of ['calm-studio', 'editorial', 'dev-workspace']) {
+      await page.goto(lab.url('#/settings'));
+      await page.getByRole('radio', { name: t('uk', `settings.style.${style}`), exact: true }).click();
+      for (const width of [1100, 1180, 1280, 1366, 1440]) {
+        await page.setViewportSize({ width, height: 800 });
+        await page.goto(lab.url(`#/lesson/${L1}/1`));
+        await page.locator('#block-basics-visual .viz-svg-panel').waitFor();
+        const inner = await page.evaluate(() => {
+          const panel = document.querySelector('#block-basics-visual .viz-svg-panel');
+          const cs = getComputedStyle(panel);
+          return panel.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+        });
+        report.push(`${style} ${width}: ${Math.round(inner)}px`);
+        assert.ok(inner >= 450 * 0.75, `${style} at ${width} px: the visual panel has ${inner}px, a 450 px diagram needs 338 px at 75 %`);
+      }
+    }
+    console.log(report.join('\n'));
+    assert.deepEqual(problems, []);
+    await context.close();
+  } finally {
+    await lab.dispose();
+  }
+});
+
 for (const viewport of [{ width: 1280, height: 800 }, { width: 1440, height: 900 }]) {
   test(`${viewport.width}×${viewport.height}: explanation and practice side by side, usable editor and result, no horizontal scroll`, async () => {
     const lab = await Lab.start({ distDir });
