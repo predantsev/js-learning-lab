@@ -112,6 +112,24 @@ test('removing a task removes it from the list', async () => {
   } finally { copy.finish(); }
 });
 
+const filterButton = (host, label) => [...host.querySelectorAll('button[aria-pressed]')].find((button) => button.textContent.trim() === label);
+
+test('a write also refreshes a list cached for another filter', async () => {
+  const copy = await mount();
+  try {
+    await user.click(filterButton(copy.host, L.pending));
+    await wait();
+    await user.click(filterButton(copy.host, L.all));
+    await wait();
+    await user.click(buttonIn(rowOf(copy.host, L.plants), L.markDone));
+    await wait();
+    await wait();
+    await user.click(filterButton(copy.host, L.pending));
+    await wait();
+    expect(titles(copy.host), 'the "Pending" list (cached before the write) after marking a task done on "All"').toEqual([L.library, L.grandma]);
+  } finally { copy.finish(); }
+});
+
 test('a write does not fetch the settings again', async () => {
   const copy = await mount();
   try {

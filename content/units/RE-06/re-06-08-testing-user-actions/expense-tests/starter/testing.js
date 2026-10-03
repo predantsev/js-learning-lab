@@ -93,6 +93,7 @@ const area = () => mounted.at(-1)?.container ?? document.body;
 const ROLES = { BUTTON: "button", UL: "list", OL: "list", LI: "listitem", TEXTAREA: "textbox", FORM: "form" };
 function roleOf(node) {
   if (node.getAttribute("role")) return node.getAttribute("role");
+  if (node.tagName === "A" && node.hasAttribute("href")) return "link";
   if (/^H[1-6]$/.test(node.tagName)) return "heading";
   if (node.tagName === "INPUT") return node.type === "checkbox" ? "checkbox" : node.type === "submit" ? "button" : "textbox";
   return ROLES[node.tagName] ?? null;
