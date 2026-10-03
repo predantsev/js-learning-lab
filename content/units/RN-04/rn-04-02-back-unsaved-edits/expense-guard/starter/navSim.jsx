@@ -24,13 +24,7 @@ export function createStack(initialName, initialParams) {
     for (const callback of [...(listeners.get(key)?.get(type) ?? [])]) callback(event);
   }
   function commit(routes, options = state.options) {
-    const before = top();
     state = { routes, options };
-    const after = top();
-    if (before.key !== after.key) {
-      emit(before.key, 'blur', { type: 'blur' });
-      emit(after.key, 'focus', { type: 'focus' });
-    }
     subscribers.forEach((notify) => notify());
   }
 
@@ -114,6 +108,8 @@ export function createStack(initialName, initialParams) {
       return () => subscribers.delete(notify);
     },
     navigationFor,
+    // Used by <SimStack>: 'focus' after a screen became the top one, 'blur' after another screen covered it.
+    emitFocusChange: (key, focused) => emit(key, focused ? 'focus' : 'blur', { type: focused ? 'focus' : 'blur' }),
     // What the simulated device controls do. All three end up as the same GO_BACK action.
     headerBack: () => dispatch({ type: 'GO_BACK' }),
     hardwareBack: () => dispatch({ type: 'GO_BACK' }),
@@ -218,14 +214,7 @@ export function SimStack({ stack, screens, platform = 'none' }) {
       </View>
       {routes.map((route) => {
         const focused = route.key === topRoute.key;
-        const Screen = screens[route.name];
-        return (
-          <View key={route.key} style={[styles.screen, !focused && styles.hidden]} aria-hidden={!focused}>
-            <RouteContext.Provider value={{ stack, routeKey: route.key, navigation: stack.navigationFor(route.key) }}>
-              <Screen navigation={stack.navigationFor(route.key)} route={route} />
-            </RouteContext.Provider>
-          </View>
-        );
+        return <RouteHost key={route.key} stack={stack} route={route} focused={focused} Screen={screens[route.name]} />;
       })}
       <View style={styles.device}>
         <Text style={styles.deviceLabel}>
@@ -246,6 +235,24 @@ export function SimStack({ stack, screens, platform = 'none' }) {
           </View>
         )}
       </View>
+    </View>
+  );
+}
+
+// One screen of the stack. Its effect runs after the screen's own effects, so a listener the screen
+// added on mount already hears the first 'focus'.
+function RouteHost({ stack, route, focused, Screen }) {
+  const navigation = stack.navigationFor(route.key);
+  const wasFocused = useRef(false);
+  useEffect(() => {
+    if (focused !== wasFocused.current) stack.emitFocusChange(route.key, focused);
+    wasFocused.current = focused;
+  }, [focused, stack, route.key]);
+  return (
+    <View style={[styles.screen, !focused && styles.hidden]} aria-hidden={!focused}>
+      <RouteContext.Provider value={{ stack, routeKey: route.key, navigation }}>
+        <Screen navigation={navigation} route={route} />
+      </RouteContext.Provider>
     </View>
   );
 }
