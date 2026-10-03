@@ -1,7 +1,8 @@
 // labDevice.jsx: a simulated phone for this preview only — the camera permission and the camera itself. Do not edit.
 // The permission follows the documented Android rule (no dialog after a second denial).
 // CameraPreview imitates expo-camera's CameraView: onCameraReady when the camera starts,
-// onMountError when "the camera preview could not start" — for example, with no camera or no permission.
+// onMountError when "the camera preview could not start". Firing it both with no camera and with no permission is
+// this lab's model; what a real CameraView does in each case is checked on your target.
 import { useEffect } from 'react';
 import { StyleSheet, View } from 'react-native';
 
