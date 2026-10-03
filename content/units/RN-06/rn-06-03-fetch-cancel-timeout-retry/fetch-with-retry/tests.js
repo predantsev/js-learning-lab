@@ -93,6 +93,19 @@ test('an outer abort stops at once and starts no new attempt', async () => {
   expect(calls.length, 'attempts, also 400 ms after the abort').toBe(1);
 });
 
+test('an outer abort during an attempt aborts that attempt at once', async () => {
+  const { fn, calls } = fakeFetch(['silent']);
+  const controller = new AbortController();
+  const pending = outcome(fetchWithRetry(URL_, { ...fast, timeoutMs: 1000, fetchFn: fn, signal: controller.signal }));
+  await sleep(30); // the first attempt is still waiting for an answer
+  controller.abort();
+  const result = await within(pending, 200);
+  expect(result, 'result after the abort').toEqual({ error: 'AbortError' });
+  expect(calls[0]?.signal?.aborted, 'the signal passed to fetchFn is aborted').toBe(true);
+  await sleep(100);
+  expect(calls.length, 'attempts, also 100 ms after the abort').toBe(1);
+});
+
 test('the wait before each next attempt grows', async () => {
   const { fn, calls } = fakeFetch([503, 503, 200]);
   await within(fetchWithRetry(URL_, { ...fast, baseDelayMs: 60, fetchFn: fn }), 1500);
