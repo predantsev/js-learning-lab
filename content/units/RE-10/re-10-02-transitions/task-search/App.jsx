@@ -1,7 +1,8 @@
 import { Profiler, useEffect, useRef, useState } from "react";
 import { TaskList } from "./TaskList";
 
-// The Profiler calls this after every commit in which TaskList rendered.
+// The Profiler calls this after every commit that passed through it;
+// actualDuration is about 0 when memo skipped TaskList.
 function logListRender(id, phase, actualDuration) {
   console.log(`TaskList: ${Math.round(actualDuration)} ms`);
 }
