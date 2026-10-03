@@ -17,7 +17,8 @@ async function mount() {
 }
 const rows = (host) => [...host.querySelectorAll('tbody tr')];
 const labelOf = (tr) => tr.querySelector('td').textContent;
-const removeIn = (tr) => [...tr.querySelectorAll('*')].find((n) => n.children.length === 0 && n.textContent.trim() === L.remove);
+// The first control whose text starts with "Delete" ("Delete", or "Delete Weekly groceries 1").
+const removeIn = (tr) => [...tr.querySelectorAll('button, [role="button"], span, div, a')].find((n) => n.textContent.trim().startsWith(L.remove));
 const field = (host, name) => [...host.querySelectorAll('label')].find((l) => l.textContent.includes(name))?.querySelector('input, select');
 const summaryText = (host) => host.querySelector('section').textContent;
 // Puts the whole query into the field with one input event, like a paste: one render instead of
