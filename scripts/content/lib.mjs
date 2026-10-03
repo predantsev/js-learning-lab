@@ -18,7 +18,7 @@ export const CONTENT_DIR = process.env.JSLL_CONTENT_ROOT ? path.resolve(process.
 // Fields shown inside a line (no paragraph wrapper) and fields used as plain text (attributes,
 // headings). Everything else is block Markdown. `testTitles` values are compiled as inline text.
 const INLINE_KEYS = new Set(['title', 'text', 'why', 'label', 'name', 'problem', 'note', 'objectives']);
-const PLAIN_KEYS = new Set(['title', 'name', 'placeholder']);
+const PLAIN_KEYS = new Set(['title', 'name', 'placeholder', 'version']);
 const RAW_KEYS = new Set(['strings', 'spec']);
 const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.env', '.gitignore', '']);
 

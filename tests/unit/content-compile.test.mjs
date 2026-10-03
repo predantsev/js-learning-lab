@@ -155,3 +155,15 @@ test('a diagram wider than the 450 px lesson column is a warning while authoring
   assert.equal(release[0].level, undefined, 'an error for a release');
   assert.deepEqual(await compile(narrow, false), []);
 });
+
+test('a local-task tool version is a plain string or bilingual text, compiled as plain text', async () => {
+  const task = (version) => ({ id: 'local', kind: 'local-task', runtime: 'local-node', title: pair('Т', 'T'), intro: pair('і', 'i'), tools: [{ name: 'Node.js', version }], steps: [{ text: pair('к', 's') }], verify: [{ id: 'v', text: pair('в', 'v') }], troubleshooting: [{ problem: pair('п', 'p'), fix: pair('ф', 'f') }], recovery: pair('р', 'r') });
+  const localized = await compiledBlock(task({ uk: '22.13 або новіший', en: '22.13 or **newer**' }));
+  assert.deepEqual(localized.tools[0].version, { uk: '22.13 або новіший', en: '22.13 or **newer**' });
+  assert.equal((await compiledBlock(task('22.13'))).tools[0].version, '22.13');
+  const toolIssues = (version) => staticIssuesForLesson(lessonWith([task(version)]), ctx).filter((i) => /tools/.test(i.path)).map((i) => `${i.path}: ${i.message}`);
+  assert.deepEqual(toolIssues('22.13'), []);
+  assert.deepEqual(toolIssues({ uk: '22.13 або новіший', en: '22.13 or newer' }), []);
+  assert.equal(toolIssues({ en: 'only English' }).length, 1);
+  assert.match(toolIssues({ en: 'only English' })[0], /tools\[0\]\.version\.uk: missing or empty translation/);
+});

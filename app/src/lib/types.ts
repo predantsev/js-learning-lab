@@ -65,7 +65,7 @@ export interface LocalTaskBlock extends BlockBase {
   title: L10n;
   intro: L10n;
   runtime: RuntimeKind;
-  tools: { name: string; version?: string; note?: L10n }[];
+  tools: { name: string; version?: string | L10n; note?: L10n }[];
   steps: { text: L10n; command?: string; expect?: L10n }[];
   verify: { id: string; text: L10n }[];
   troubleshooting: { problem: L10n; fix: L10n }[];

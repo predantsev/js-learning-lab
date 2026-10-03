@@ -387,7 +387,7 @@ function LocalTaskView({ lesson, block }: { lesson: Lesson; block: LocalTaskBloc
       <p className="runtime-note"><Icon name="info" size={13} /> {t(`ws.runtime.${block.runtime}` as Key)}</p>
       <Html html={block.intro[lang]} lang={lang} className="prose" />
       <h4>{t('local.tools')}</h4>
-      <ul className="tool-list">{block.tools.map((tool) => <li key={tool.name}><strong>{tool.name}</strong>{tool.version && <span className="tool-version"> {tool.version}</span>}{tool.note && <> — <Html inline html={tool.note[lang]} lang={lang} /></>}</li>)}</ul>
+      <ul className="tool-list">{block.tools.map((tool) => <li key={tool.name}><strong>{tool.name}</strong>{tool.version && <span className="tool-version"> {typeof tool.version === 'string' ? tool.version : tool.version[lang]}</span>}{tool.note && <> — <Html inline html={tool.note[lang]} lang={lang} /></>}</li>)}</ul>
       <h4>{t('local.steps')}</h4>
       <ol className="local-steps">
         {block.steps.map((step, i) => (
