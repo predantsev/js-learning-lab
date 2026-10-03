@@ -11,6 +11,21 @@ export const WORKSPACE_BLOCK_KINDS = ['example', 'exercise'];
 export const EXECUTABLE_RUNTIMES = ['browser-js', 'browser-react', 'concept-preview', 'isolated-node'];
 export const LOCAL_RUNTIMES = ['local-web', 'local-native', 'local-node'];
 export const RUNTIME_KINDS = [...EXECUTABLE_RUNTIMES, ...LOCAL_RUNTIMES];
+/**
+ * Runtime honesty per stage (REQ-013/014): the runtimes a lesson block or a syllabus practice entry
+ * of each stage may declare. Shared by the content validator and scripts/content/validate-syllabus.mjs.
+ * React Native units may also run computer-side Node.js (the supplied mock service of rn-06-01:
+ * an `isolated-node` example and a `local-node` task); that is never native evidence, so every RN
+ * unit still needs a `local-native` task (STAGE_REQUIRED_RUNTIMES). content/README.md, "Runtimes".
+ */
+export const STAGE_RUNTIMES = {
+  JS: ['browser-js', 'local-web', 'concept-preview'],
+  RE: ['browser-react', 'browser-js', 'local-web', 'concept-preview'],
+  RN: ['browser-js', 'concept-preview', 'local-native', 'local-web', 'isolated-node', 'local-node'],
+  NO: ['browser-js', 'browser-react', 'concept-preview', 'isolated-node', 'local-node', 'local-web', 'local-native'],
+};
+/** At least one practice entry of each unit of these stages uses one of these runtimes (syllabus). */
+export const STAGE_REQUIRED_RUNTIMES = { RN: ['local-native'], NO: ['isolated-node', 'local-node'] };
 export const EXERCISE_MODES = ['guided', 'debug', 'independent'];
 export const PREDICTION_TYPES = ['choice', 'multi', 'text', 'order'];
 export const VISUAL_KINDS = ['code-trace', 'memory-graph', 'pipeline', 'event-loop', 'diagram', 'sequence', 'git-graph', 'render-timeline'];
@@ -166,6 +181,10 @@ function checkBlock(issues, block, lesson, ctx) {
     return;
   }
   if (block.title !== undefined) checkLocalized(issues, block.title, `${p}.title`);
+  const stage = typeof lesson.id === 'string' ? lesson.id.slice(0, 2).toUpperCase() : null;
+  if (['example', 'exercise', 'local-task'].includes(block.kind) && RUNTIME_KINDS.includes(block.runtime) && STAGE_RUNTIMES[stage] && !STAGE_RUNTIMES[stage].includes(block.runtime)) {
+    issues.add(`${p}.runtime`, `runtime ${block.runtime} is not honest for stage ${stage} (allowed: ${STAGE_RUNTIMES[stage].join(', ')}; content/README.md, "Runtimes")`);
+  }
   switch (block.kind) {
     case 'explanation':
       checkLocalized(issues, block.title, `${p}.title`);

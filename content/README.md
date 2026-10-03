@@ -261,6 +261,19 @@ Commands in `local-task` blocks must be commands you actually ran; record the to
 | `concept-preview` | React Native components through `react-native-web` | Always add `limits`: no native rendering, device APIs or performance. |
 | `isolated-node` | Real Node.js in an isolated child process on the learner's computer | For Node-stage practice: real `node:http` on loopback, `node:fs` in the exercise folder, `node:sqlite`, streams. No page, no npm packages. See [isolated-node](#isolated-node-real-nodejs). |
 
+### Runtimes per stage
+
+Both validators (`validate.mjs` for lesson blocks, `validate-syllabus.mjs` for syllabus practice entries) apply one table, `STAGE_RUNTIMES` in `shared/content-schema.js`:
+
+| Stage | Allowed runtimes |
+|---|---|
+| JS | `browser-js`, `local-web`, `concept-preview` |
+| RE | `browser-react`, `browser-js`, `local-web`, `concept-preview` |
+| RN | `browser-js`, `concept-preview`, `local-native`, `local-web`, `isolated-node`, `local-node` |
+| NO | every runtime |
+
+A React Native unit may contain computer-only Node.js work — the supplied mock service of `rn-06-01` runs as an `isolated-node` example and is started by the learner in a `local-node` task — because real server processes on the learner's machine are `local-node` in every stage. Such a task proves nothing about the app on a device: every RN unit still needs a `local-native` task, and every NO unit an `isolated-node` or `local-node` entry.
+
 ### Pages, images and links (`browser-js` with an `.html` entry)
 
 - **Images: project `.svg` files** (they are text, so they live in the block directory like any other file). They show when referenced from `<img src="img/logo.svg">`, from `url(img/dot.svg)` in a linked `.css` file or an inline `<style>` (resolved from that stylesheet's or page's folder), and from JavaScript (`img.src = 'img/logo.svg'`). Binary images (`.png`, `.jpg`) are not supported; use SVG, or a `data:` URL. A `src` that matches no project file stays exactly as written, so the browser shows the `alt` text (use this on purpose to teach `alt`); the console names the missing file. External addresses (`https://…`) are blocked — the sandbox has no network — and the console says so.

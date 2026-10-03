@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
 import * as visuals from '../../shared/visuals/index.js';
+import { STAGE_REQUIRED_RUNTIMES, STAGE_RUNTIMES } from '../../shared/content-schema.js';
 import { CONTENT_DIR, compileLesson, createMarkdown, gitIgnoredLessonFiles, glossaryLinkProblems, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
 
 const md = createMarkdown(new Map([['closure', { id: 'closure', term: 'closure' }]]));
@@ -193,6 +194,17 @@ test('verify on a review question needs that question\'s own code; code or verif
   assert.match(noCode[0], /items\[0\]\.verify: verify runs this question's own "code" field \(as in a prediction\)/);
   const nested = issuesOf({ answer: { type: 'text', accept: ['1'], code: 'console.log(1);', verify: { logs: ['1'] } } });
   assert.ok(nested.some((m) => /items\[0\]\.answer\.verify: "verify" belongs to the question, next to "prompt", not inside "answer"/.test(m)), nested.join('\n'));
+});
+
+test('block runtimes follow the per-stage table the syllabus validator uses; an RN lesson may run computer-side Node.js', () => {
+  const task = (runtime) => ({ id: 'local', kind: 'local-task', runtime, title: pair('Т', 'T'), intro: pair('і', 'i'), tools: [{ name: 'Node.js' }], steps: [{ text: pair('к', 's') }], verify: [{ id: 'v', text: pair('в', 'v') }], troubleshooting: [{ problem: pair('п', 'p'), fix: pair('ф', 'f') }], recovery: pair('р', 'r') });
+  const runtimeIssues = (id, runtime) => staticIssuesForLesson({ ...lessonWith([task(runtime)]), source: { ...lessonWith([task(runtime)]).source, id, unit: id.slice(0, 5).toUpperCase() } }, ctx).filter((i) => /runtime/.test(i.path)).map((i) => i.message);
+  for (const runtime of STAGE_RUNTIMES.RN.filter((r) => r.startsWith('local-'))) assert.deepEqual(runtimeIssues('rn-06-09-sample', runtime), [], runtime);
+  assert.ok(STAGE_RUNTIMES.RN.includes('isolated-node'));
+  assert.deepEqual(STAGE_REQUIRED_RUNTIMES.RN, ['local-native'], 'computer-side Node.js never replaces the native task of an RN unit');
+  const found = runtimeIssues('js-01-09-sample', 'local-node');
+  assert.equal(found.length, 1);
+  assert.match(found[0], /runtime local-node is not honest for stage JS \(allowed: browser-js, local-web, concept-preview/);
 });
 
 test('a local-task tool version is a plain string or bilingual text, compiled as plain text', async () => {
