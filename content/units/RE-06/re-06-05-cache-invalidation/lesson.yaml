@@ -1,0 +1,455 @@
+id: re-06-05-cache-invalidation
+unit: RE-06
+title:
+  uk: "Кеш і принципи інвалідації"
+  en: "Cache and invalidation principles"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Зберігати результати в кеші за ключем із назви query та параметрів і передбачати, коли запис віддається з кешу, запитується знову чи відкидається."
+    en: "Key cached results by query and parameters, and predict when an entry is served, refetched or discarded."
+  - uk: "Інвалідовувати рівно ті queries, яких стосується mutation, замість очищати весь кеш."
+    en: "Invalidate exactly the queries a mutation affects instead of clearing the whole cache."
+prerequisites: [re-06-04-queries-vs-mutations, js-12-11-map-set]
+subskills:
+  - { family: R-06, skill: "cache/invalidation principles", depth: intro }
+glossary: [cache-key, cache-invalidation]
+selfCheck: [predict-invalidate, query-cache]
+
+blocks:
+  - id: why-cache
+    kind: explanation
+    title:
+      uk: "Кеш: відповідь, яку вже отримали"
+      en: "A cache: an answer you already have"
+    body:
+      uk: |
+        Людина перемикає фільтр «Усі» → «Хочу» → «Усі». Без кешу третій клік знову йде на сервер і знову показує «Завантажую…», хоч цей список щойно був на екрані. Кеш запам’ятовує відповіді queries і віддає їх одразу.
+
+        Кожну відповідь кеш зберігає під [[cache-key|ключем]] — назвою query разом з її параметрами: `["wishes", "all"]`, `["wishes", "wanted"]`, `["categories"]`. Різні параметри — різні записи.
+
+        | Коли екран просить ключ | Що робить кеш |
+        |---|---|
+        | запису немає (**miss**) | надсилає запит, кладе відповідь у кеш |
+        | є свіжий запис (**hit**) | віддає його одразу, без запиту |
+
+        Кеш — це `Map`. Але масив як ключ `Map` не підходить: два однакові масиви — це два різні об’єкти. Тому ключ перетворюють на текст (`"wishes:all"` або `JSON.stringify(key)`).
+      en: |
+        Someone switches the filter “All” → “Wanted” → “All”. Without a cache the third click goes to the server again and shows “Loading…” again, although this very list was on the screen a moment ago. A cache remembers the answers of queries and hands them out at once.
+
+        The cache stores every answer under a [[cache-key]] — the query's name together with its parameters: `["wishes", "all"]`, `["wishes", "wanted"]`, `["categories"]`. Different parameters — different entries.
+
+        | When a screen asks for a key | What the cache does |
+        |---|---|
+        | no entry (**miss**) | sends a request, puts the answer into the cache |
+        | a fresh entry (**hit**) | hands it out at once, without a request |
+
+        A cache is a `Map`. But an array is no good as a `Map` key: two equal arrays are two different objects. So the key is turned into text (`"wishes:all"` or `JSON.stringify(key)`).
+
+  - id: correctness
+    kind: explanation
+    title:
+      uk: "Кеш впливає не лише на швидкість"
+      en: "A cache is not only about speed"
+    body:
+      uk: |
+        Після mutation кешовані відповіді **брешуть**: людина додала бажання, а `["wishes", "all"]` у кеші — список без нього. Якщо нічого не зробити, кеш покаже старий список як свіжий. Тому кеш — це питання правильності, а не лише швидкості.
+
+        Після успішної mutation її обробник робить [[cache-invalidation|інвалідацію]]: позначає записи, яких стосується зміна, — або забуває їх. Query, яка зараз на екрані, одразу запитує дані знову; решта — коли їх покажуть наступного разу.
+
+        Інвалідуй **точно**: нове бажання змінює списки бажань (`["wishes", …]` — усі ключі з цим початком), але не список категорій. Очистити весь кеш «про всяк випадок» — це зайві запити за даними, що не змінилися, і «Завантажую…» там, де людина нічого не чіпала.
+      en: |
+        After a mutation cached answers **lie**: the person added a wish, but `["wishes", "all"]` in the cache is the list without it. If nothing is done, the cache shows the old list as if it were fresh. That is why a cache is a matter of correctness, not only speed.
+
+        After a successful mutation its handler does a [[cache-invalidation]]: it marks the entries the change affects — or forgets them. The query that is on the screen now asks for the data again at once; the rest do when they are shown next time.
+
+        Invalidate **precisely**: a new wish changes the wish lists (`["wishes", …]` — every key with that start), but not the list of categories. Clearing the whole cache “just in case” means extra requests for data that did not change, and “Loading…” where the person touched nothing.
+
+  - id: predict-invalidate
+    kind: prediction
+    prompt:
+      uk: "У кеші три записи: `wishes:all`, `wishes:wanted` і `categories`. На екрані фільтр «Усі» і категорії. Людина додає бажання, і після відповіді `POST` обробник викликає `cache.invalidate(\"wishes:\")` — він видаляє записи, чий ключ починається з `\"wishes:\"`. Які запити підуть одразу?"
+      en: "The cache has three entries: `wishes:all`, `wishes:wanted` and `categories`. The screen shows the “All” filter and the categories. The person adds a wish, and after the `POST` answer the handler calls `cache.invalidate(\"wishes:\")` — it deletes the entries whose key starts with `\"wishes:\"`. Which requests go out at once?"
+    answer:
+      type: choice
+      options:
+        - id: only-shown
+          text:
+            uk: "Лише `GET /api/wishes?filter=all` — список, що зараз на екрані"
+            en: "Only `GET /api/wishes?filter=all` — the list that is on the screen now"
+        - id: none
+          text:
+            uk: "Жодного: у кеші ж є дані, вони просто старіші"
+            en: "None: the cache has the data, it is just older"
+          why:
+            uk: "Інвалідація видалила обидва записи `wishes:…`. Екран, що показує «Усі», знову просить свій ключ, бачить miss — і надсилає запит. Без інвалідації нове бажання не з’явилося б зовсім."
+            en: "The invalidation deleted both `wishes:…` entries. The screen showing “All” asks for its key again, sees a miss — and sends a request. Without the invalidation the new wish would not appear at all."
+        - id: everything
+          text:
+            uk: "Три: «Усі», «Хочу» і категорії — після зміни кеш перечитує все"
+            en: "Three: “All”, “Wanted” and the categories — after a change the cache rereads everything"
+          why:
+            uk: "`categories` не починається з `\"wishes:\"`, тож лишився в кеші. А `wishes:wanted` зараз ніхто не показує: його запитають, коли людина відкриє «Хочу»."
+            en: "`categories` does not start with `\"wishes:\"`, so it stayed in the cache. And nobody shows `wishes:wanted` right now: it is requested when the person opens “Wanted”."
+        - id: both-wish-lists
+          text:
+            uk: "Два: «Усі» і «Хочу» — обидва ж інвалідовано"
+            en: "Two: “All” and “Wanted” — both were invalidated"
+          why:
+            uk: "Інвалідація лише прибирає запис. Запит надсилає компонент, якому ці дані потрібні зараз, — а «Хочу» зараз не на екрані."
+            en: "An invalidation only removes the entry. The request is sent by a component that needs the data now — and “Wanted” is not on the screen."
+      correct: [only-shown]
+    explanation:
+      uk: "Видалено обидва `wishes:…`, але запит надсилає лише та query, яка зараз на екрані. «Хочу» запитають, коли людина його відкриє, а категорії лишаються в кеші. Перевірено в пісочниці на прикладі нижче: після `invalidate \"wishes:\"` іде один `GET /api/wishes?filter=all`, а `GET /api/wishes?filter=wanted` — лише після кліку «Хочу»."
+      en: "Both `wishes:…` entries are deleted, but only the query that is on the screen now sends a request. “Wanted” is requested when the person opens it, and the categories stay in the cache. Checked in the sandbox with the example below: after `invalidate \"wishes:\"` there is one `GET /api/wishes?filter=all`, and `GET /api/wishes?filter=wanted` comes only after a click on “Wanted”."
+
+  - id: cache-table
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Записи кешу до і після створення справи"
+      en: "Cache entries before and after creating a task"
+    textEquivalent:
+      uk: >-
+        У кеші планувальника чотири записи з ключами-масивами: ["tasks","all"], ["tasks","pending"],
+        ["tasks","due-count"] і ["settings"]. Спершу всі свіжі. Людина створює справу: mutation
+        POST /api/tasks проходить успішно, і обробник викликає invalidate з префіксом ["tasks"].
+        Під цей префікс потрапляють три записи справ — вони стають застарілими, але їхні дані поки
+        лишаються. ["settings"] не починається з "tasks", тож лишається свіжим і не запитується.
+        Список ["tasks","all"] і лічильник ["tasks","due-count"] зараз на екрані: вони одразу
+        запитуються знову й стають свіжими з новою справою. ["tasks","pending"] запитається, коли
+        його покажуть.
+      en: >-
+        The planner's cache holds four entries with array keys: ["tasks","all"], ["tasks","pending"],
+        ["tasks","due-count"] and ["settings"]. At first all are fresh. The person creates a task: the
+        mutation POST /api/tasks succeeds, and the handler calls invalidate with the prefix ["tasks"].
+        The prefix covers the three task entries — they become stale, but their data stays for now.
+        ["settings"] does not start with "tasks", so it stays fresh and is not requested. The list
+        ["tasks","all"] and the counter ["tasks","due-count"] are on the screen now: they are
+        requested again at once and become fresh with the new task. ["tasks","pending"] is requested
+        when it is shown.
+    spec:
+      layout: grid
+      nodes:
+        - { id: create, label: "POST", shape: round, col: 0, row: 0 }
+        - { id: invalidate, label: "invalidate", shape: pill, col: 0, row: 2 }
+        - { id: all, label: "[\"tasks\",\"all\"]", col: 1, row: 0 }
+        - { id: pending, label: "[\"tasks\",\"pending\"]", col: 1, row: 1 }
+        - { id: due, label: "[\"tasks\",\"due-count\"]", col: 1, row: 2 }
+        - { id: settings, label: "[\"settings\"]", col: 1, row: 3 }
+      edges:
+        - { id: then, from: create, to: invalidate, label: "[\"tasks\"]" }
+        - { id: hit-all, from: invalidate, to: all, kind: dashed }
+        - { id: hit-pending, from: invalidate, to: pending, kind: dashed }
+        - { id: hit-due, from: invalidate, to: due, kind: dashed }
+      hidden: [then, hit-all, hit-pending, hit-due]
+      steps:
+        - caption:
+            uk: "Чотири записи, усі свіжі: екран бере їх без запитів. Список «Усі» й лічильник зараз на екрані."
+            en: "Four entries, all fresh: the screen takes them without requests. The “All” list and the counter are on the screen now."
+          highlight: [all, pending, due, settings]
+          dim: [create, invalidate]
+          annotate:
+            - { id: all, text: { uk: "свіжий · на екрані", en: "fresh · on screen" } }
+            - { id: pending, text: { uk: "свіжий", en: "fresh" } }
+            - { id: due, text: { uk: "свіжий · на екрані", en: "fresh · on screen" } }
+            - { id: settings, text: { uk: "свіжий", en: "fresh" } }
+        - caption:
+            uk: "Людина додає справу. `POST` успішний — обробник викликає `invalidate([\"tasks\"])`."
+            en: "The person adds a task. The `POST` succeeds — the handler calls `invalidate([\"tasks\"])`."
+          show: [then]
+          highlight: [create, invalidate, then]
+          dim: [all, pending, due, settings]
+        - caption:
+            uk: "Префікс `[\"tasks\"]` збігається з трьома ключами — вони **застарілі**, хоча дані поки лишаються. `[\"settings\"]` не збігається й лишається свіжим."
+            en: "The prefix `[\"tasks\"]` matches three keys — they are **stale**, although their data stays for now. `[\"settings\"]` does not match and stays fresh."
+          show: [hit-all, hit-pending, hit-due]
+          highlight: [invalidate, all, pending, due, hit-all, hit-pending, hit-due]
+          dim: [settings, create, then]
+          annotate:
+            - { id: all, text: { uk: "застарілий", en: "stale" } }
+            - { id: pending, text: { uk: "застарілий", en: "stale" } }
+            - { id: due, text: { uk: "застарілий", en: "stale" } }
+            - { id: settings, text: { uk: "свіжий", en: "fresh" } }
+        - caption:
+            uk: "Список і лічильник на екрані — їх запитують **зараз**, і вони знову свіжі, уже з новою справою. `[\"tasks\",\"pending\"]` чекає, доки його покажуть."
+            en: "The list and the counter are on the screen — they are requested **now** and are fresh again, with the new task. `[\"tasks\",\"pending\"]` waits until it is shown."
+          highlight: [all, due]
+          dim: [create, invalidate, then, hit-all, hit-pending, hit-due, settings]
+          annotate:
+            - { id: all, text: { uk: "запит → свіжий", en: "refetch → fresh" } }
+            - { id: pending, text: { uk: "застарілий", en: "stale" } }
+            - { id: due, text: { uk: "запит → свіжий", en: "refetch → fresh" } }
+            - { id: settings, text: { uk: "свіжий", en: "fresh" } }
+
+  - id: cache-inspector
+    kind: example
+    runtime: browser-react
+    dir: cache-inspector
+    entry: main.jsx
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      tech: { uk: "Техніка", en: "Tech" }
+      home: { uk: "Дім", en: "Home" }
+      books: { uk: "Книжки", en: "Books" }
+      all: { uk: "Усі", en: "All" }
+      wanted: { uk: "Хочу", en: "Wanted" }
+      acquired: { uk: "Отримано", en: "Acquired" }
+      categories: { uk: "Категорії:", en: "Categories:" }
+      loading: { uk: "Завантажую…", en: "Loading…" }
+      nameField: { uk: "Нове бажання", en: "New wish" }
+      add: { uk: "Додати", en: "Add" }
+      inspector: { uk: "Що в кеші", en: "What is in the cache" }
+    title:
+      uk: "Кеш з інспектором"
+      en: "A cache with an inspector"
+    body:
+      uk: |
+        `queryCache.js` — найпростіший кеш: `Map` з ключа-тексту (`"wishes:all"`) у дані. Хук `useQuery(key, fetcher)` бере дані з кешу або, якщо їх немає, надсилає запит. Унизу сторінки — «інспектор»: усі ключі в кеші й кількість елементів під кожним. Консоль показує `cache hit` / `cache miss` і журнал запитів.
+
+        Натисни **Запустити**, на **Сторінці** перемкни «Хочу», а потім знову «Усі»: другий раз — `cache hit wishes:all` і жодного запиту.
+      en: |
+        `queryCache.js` is the simplest cache: a `Map` from a key text (`"wishes:all"`) to the data. The hook `useQuery(key, fetcher)` takes the data from the cache or, if it is not there, sends a request. At the bottom of the page is an “inspector”: every key in the cache and the number of items under each. The console shows `cache hit` / `cache miss` and the request log.
+
+        Press **Run**, on the **Page** switch to “Wanted” and then back to “All”: the second time it is `cache hit wishes:all` and no request.
+    tryIt:
+      uk: |
+        1. Будучи на «Усі», додай бажання. У консолі `invalidate "wishes:"` і один новий `GET …filter=all`; в інспекторі ключі `wishes:…` на мить зникли, а `categories` лишився. Відкрий «Хочу» — `cache miss` і запит: його ключ теж забуто.
+        2. У `App.jsx` заміни `cache.invalidate("wishes:")` на `cache.clear()` і запусти знову. Після додавання ще раз запитуються й категорії, хоча вони не змінювалися.
+        3. Тепер видали цей рядок зовсім. Додай бажання: `POST` проходить, а список «Усі» лишається без нього — кеш віддає стару відповідь як свіжу. Поверни `cache.invalidate("wishes:")`.
+      en: |
+        1. While on “All”, add a wish. The console shows `invalidate "wishes:"` and one new `GET …filter=all`; in the inspector the `wishes:…` keys disappear for a moment, while `categories` stays. Open “Wanted” — `cache miss` and a request: its key was forgotten too.
+        2. In `App.jsx` replace `cache.invalidate("wishes:")` with `cache.clear()` and run again. After adding, the categories are requested again too, although they did not change.
+        3. Now delete that line altogether. Add a wish: the `POST` succeeds, but the “All” list stays without it — the cache hands out the old answer as if it were fresh. Put `cache.invalidate("wishes:")` back.
+
+  - id: forget-or-stale
+    kind: explanation
+    title:
+      uk: "Забути чи позначити застарілим"
+      en: "Forget or mark as stale"
+    body:
+      uk: |
+        Кеш у прикладі інвалідацію робить грубо — **забуває** запис. Тому після додавання список на мить замінюється на «Завантажую…», хоча старий список ще цілком придатний для показу.
+
+        Кращий спосіб — **позначити** запис застарілим (`stale: true`) і лишити дані. Екран і далі показує старий список, а query запитує новий — це [[background-refresh|фонове оновлення]] з уроку про повтори. Коли прийде відповідь, `set` покладе свіжі дані й зніме позначку.
+
+        Ще одне вдосконалення — ключі-масиви з префіксом по **частинах**: `["tasks"]` збігається з `["tasks", "done"]`, але не з `["tasksArchive"]`, хоча текст `"tasksArchive"` і починається з `"tasks"`.
+      en: |
+        The cache in the example invalidates crudely — it **forgets** the entry. So after adding, the list is replaced by “Loading…” for a moment, although the old list is still perfectly fine to show.
+
+        A better way is to **mark** the entry as stale (`stale: true`) and keep the data. The screen keeps showing the old list while the query asks for the new one — the [[background-refresh]] of the retry lesson. When the answer arrives, `set` puts the fresh data in and clears the mark.
+
+        One more improvement — array keys with a prefix matched by **parts**: `["tasks"]` matches `["tasks", "done"]` but not `["tasksArchive"]`, although the text `"tasksArchive"` does start with `"tasks"`.
+
+  - id: query-cache
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: query-cache
+    entry: main.jsx
+    editable: [queryCache.js, App.jsx]
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      listName: { uk: "Мої справи", en: "My tasks" }
+      dueToday: { uk: "На сьогодні:", en: "Due today:" }
+      all: { uk: "Усі", en: "All" }
+      pending: { uk: "Невиконані", en: "Pending" }
+      done: { uk: "Виконані", en: "Done" }
+      loading: { uk: "Завантажую…", en: "Loading…" }
+      markDone: { uk: "Виконано", en: "Done" }
+      remove: { uk: "Видалити", en: "Remove" }
+      titleField: { uk: "Нова справа", en: "New task" }
+      add: { uk: "Додати", en: "Add" }
+    title:
+      uk: "Кеш на Map із точною інвалідацією"
+      en: "A Map-based cache with precise invalidation"
+    instructions:
+      uk: |
+        Планувальник показує список справ за фільтром (`["tasks", filter]`), лічильник справ на сьогодні (`["tasks", "due-count"]`) і назву списку з налаштувань (`["settings"]`). Хук `useQuery` вже готовий: він бере запис із кешу, а якщо запису немає або він застарілий — запитує дані знову.
+
+        1. У `queryCache.js` допиши три методи. Записи зберігай у `entries` (це `Map`):
+           - `set(key, data)` — кладе `{ data, stale: false }` під ключем і сповіщає підписників (`notify()`);
+           - `get(key)` — повертає запис для **рівного** ключа, навіть якщо це інший масив з тими самими частинами, або `undefined`;
+           - `invalidate(prefix)` — позначає `stale: true` кожен запис, чий ключ починається з **усіх частин** `prefix`, дані лишає, і сповіщає підписників.
+        2. У `App.jsx` після кожної успішної mutation (додати, позначити виконаною, видалити) інвалідуй рівно ті queries, яких вона стосується: списки справ і лічильник, але не налаштування.
+
+        Перевірки викликають методи кешу напряму, а в копіях планувальника додають, позначають і видаляють справи й **рахують запити**: після запису `GET /api/settings` іти не має.
+      en: |
+        The planner shows the task list for a filter (`["tasks", filter]`), the due-today counter (`["tasks", "due-count"]`) and the list name from the settings (`["settings"]`). The `useQuery` hook is ready: it takes the entry from the cache, and if there is no entry or it is stale, it asks for the data again.
+
+        1. In `queryCache.js` complete three methods. Keep the entries in `entries` (a `Map`):
+           - `set(key, data)` — stores `{ data, stale: false }` under the key and notifies the subscribers (`notify()`);
+           - `get(key)` — returns the entry for an **equal** key, even if it is a different array with the same parts, or `undefined`;
+           - `invalidate(prefix)` — marks `stale: true` every entry whose key starts with **all the parts** of `prefix`, keeps the data, and notifies the subscribers.
+        2. In `App.jsx`, after every successful mutation (add, mark done, remove), invalidate exactly the queries it affects: the task lists and the counter, but not the settings.
+
+        The checks call the cache's methods directly, and in copies of the planner they add, mark done and remove tasks and **count requests**: after a write there must be no `GET /api/settings`.
+    testTitles:
+      "get returns what set stored under an equal key":
+        uk: "`get` повертає те, що `set` поклав під рівним ключем"
+        en: "`get` returns what `set` stored under an equal key"
+      "invalidate marks every entry under the prefix as stale and keeps its data":
+        uk: "`invalidate` позначає застарілим кожен запис під префіксом і лишає його дані"
+        en: "`invalidate` marks every entry under the prefix as stale and keeps its data"
+      "invalidate leaves entries outside the prefix fresh":
+        uk: "`invalidate` лишає свіжими записи поза префіксом"
+        en: "`invalidate` leaves entries outside the prefix fresh"
+      "set after invalidate makes the entry fresh again":
+        uk: "`set` після `invalidate` знову робить запис свіжим"
+        en: "`set` after `invalidate` makes the entry fresh again"
+      "set and invalidate notify the subscribers":
+        uk: "`set` і `invalidate` сповіщають підписників"
+        en: "`set` and `invalidate` notify the subscribers"
+      "adding a task shows it in the list":
+        uk: "Додана справа з’являється в списку"
+        en: "Adding a task shows it in the list"
+      "marking a task done updates the due-today count":
+        uk: "Позначка «виконано» оновлює лічильник на сьогодні"
+        en: "Marking a task done updates the due-today count"
+      "removing a task removes it from the list":
+        uk: "Видалена справа зникає зі списку"
+        en: "Removing a task removes it from the list"
+      "a write does not fetch the settings again":
+        uk: "Запис не перечитує налаштування"
+        en: "A write does not fetch the settings again"
+    hints:
+      nudge:
+        uk: "Чому `entries.get([\"tasks\", \"all\"])` нічого не знайде, навіть якщо такий масив клали? Ключ `Map` має бути значенням, яке для рівних масивів однакове. А для префікса порівнюй частини за номерами."
+        en: "Why does `entries.get([\"tasks\", \"all\"])` find nothing even if such an array was stored? A `Map` key must be a value that is the same for equal arrays. And for the prefix, compare the parts by index."
+      explanation:
+        uk: |
+          Перетвори масив-ключ на текст (наприклад, `JSON.stringify`) і використовуй цей текст як ключ `Map`; сам масив збережи в записі, щоб потім перевіряти префікс. Префікс збігається, коли кожна його частина дорівнює частині ключа з тим самим номером — так `["tasks"]` не зачепить `["tasksArchive"]`. Позначаючи запис застарілим, клади новий об’єкт з тими самими даними, а не видаляй запис.
+
+          Схоже, з іншою задачею: чи починається шлях `["docs", "2026", "march"]` з папки `["docs", "2026"]` — `folder.every((part, i) => path[i] === part)`.
+        en: |
+          Turn the key array into text (for example with `JSON.stringify`) and use that text as the `Map` key; keep the array itself in the entry so you can check the prefix later. A prefix matches when each of its parts equals the key's part at the same index — that way `["tasks"]` does not touch `["tasksArchive"]`. When marking an entry stale, store a new object with the same data instead of deleting the entry.
+
+          Similar, with a different task: whether the path `["docs", "2026", "march"]` is inside the folder `["docs", "2026"]` — `folder.every((part, i) => path[i] === part)`.
+    solutionNote:
+      uk: "Текст `JSON.stringify(key)` однаковий для рівних масивів, тож `get` знаходить запис за новим масивом із тими самими частинами. `invalidate` порівнює частини за номерами й лише позначає записи застарілими: екран і далі показує старі дані, а `useQuery` у фоні запитує нові. Обробники інвалідують `[\"tasks\"]` — це всі списки й лічильник, — а налаштування не чіпають, тож їх ніхто не перечитує даремно."
+      en: "The text `JSON.stringify(key)` is the same for equal arrays, so `get` finds the entry with a new array of the same parts. `invalidate` compares the parts by index and only marks entries as stale: the screen keeps showing the old data while `useQuery` asks for new data in the background. The handlers invalidate `[\"tasks\"]` — every list and the counter — and leave the settings alone, so nobody rereads them for nothing."
+    feedback:
+      - when: { test: "get returns what set stored under an equal key" }
+        message:
+          uk: "Ця перевірка кладе дані під `[\"tasks\", \"pending\"]` і читає їх **новим** масивом із тими самими частинами, очікуючи `{ data, stale: false }`, а для ключа, якого не клали, — `undefined`. Два однакові масиви — різні ключі `Map`, тому ключ треба перетворити на текст."
+          en: "This check stores data under `[\"tasks\", \"pending\"]` and reads it with a **new** array of the same parts, expecting `{ data, stale: false }`, and `undefined` for a key that was never stored. Two equal arrays are different `Map` keys, so the key must be turned into text."
+      - when: { test: "invalidate marks every entry under the prefix as stale and keeps its data" }
+        message:
+          uk: "Ця перевірка кладе `[\"tasks\", \"all\"]` і `[\"tasks\", \"due-count\"]`, викликає `invalidate([\"tasks\"])` і очікує `stale: true` в обох записах та ті самі дані в першому. Запис не видаляй — лише позначай."
+          en: "This check stores `[\"tasks\", \"all\"]` and `[\"tasks\", \"due-count\"]`, calls `invalidate([\"tasks\"])` and expects `stale: true` in both entries and the same data in the first. Do not delete the entry — only mark it."
+      - when: { test: "invalidate leaves entries outside the prefix fresh" }
+        message:
+          uk: "Ця перевірка очікує, що `invalidate([\"tasks\"])` не зачепить `[\"settings\"]` і `[\"tasksArchive\"]`, а `invalidate([\"tasks\", \"pending\"])` — `[\"tasks\", \"done\"]`. Порівнювати треба частини ключа, а не початок тексту."
+          en: "This check expects `invalidate([\"tasks\"])` to leave `[\"settings\"]` and `[\"tasksArchive\"]` alone, and `invalidate([\"tasks\", \"pending\"])` to leave `[\"tasks\", \"done\"]` alone. Compare the key's parts, not the start of a text."
+      - when: { test: "set after invalidate makes the entry fresh again" }
+        message:
+          uk: "Ця перевірка робить `set` → `invalidate` → `set` і очікує нові дані зі `stale: false`."
+          en: "This check does `set` → `invalidate` → `set` and expects the new data with `stale: false`."
+      - when: { test: "set and invalidate notify the subscribers" }
+        message:
+          uk: "Ця перевірка підписується на кеш і очікує одне сповіщення після `set` і ще одне після `invalidate`. Без сповіщення `useQuery` не дізнається, що треба перемалювати екран і запитати дані знову."
+          en: "This check subscribes to the cache and expects one notification after `set` and one more after `invalidate`. Without a notification `useQuery` never learns that it must redraw the screen and ask for the data again."
+      - when: { test: "adding a task shows it in the list" }
+        message:
+          uk: "Ця перевірка додає справу «Записатися до стоматолога» й очікує її в кінці списку. Якщо список не змінився, кеш віддає стару відповідь: після успішного `POST` потрібна інвалідація списків справ. Якщо всі перевірки планувальника падають разом, спершу перевір `get` і `set`."
+          en: "This check adds the task “Book a dentist visit” and expects it at the end of the list. If the list did not change, the cache hands out the old answer: a successful `POST` must be followed by invalidating the task lists. If every planner check fails at once, check `get` and `set` first."
+      - when: { test: "marking a task done updates the due-today count" }
+        message:
+          uk: "Ця перевірка позначає виконаною справу з терміном і очікує, що лічильник «На сьогодні» зміниться з `2` на `1`. Лічильник — це query з ключем `[\"tasks\", \"due-count\"]`: інвалідація після `PATCH` має зачепити й його."
+          en: "This check marks a due task done and expects the “Due today” counter to change from `2` to `1`. The counter is a query with the key `[\"tasks\", \"due-count\"]`: the invalidation after the `PATCH` must reach it too."
+      - when: { test: "removing a task removes it from the list" }
+        message:
+          uk: "Ця перевірка видаляє «Написати бабусі» й очікує список без неї. Після успішного `DELETE` теж потрібна інвалідація."
+          en: "This check removes “Write to grandma” and expects the list without it. A successful `DELETE` needs an invalidation too."
+      - when: { test: "a write does not fetch the settings again" }
+        message:
+          uk: "Ця перевірка позначає справу виконаною й очікує новий запит списку, але жодного `GET /api/settings`. Інвалідуй префікс, що покриває лише справи, а не порожній префікс чи весь кеш."
+          en: "This check marks a task done and expects a new list request, but no `GET /api/settings`. Invalidate a prefix that covers only the tasks, not an empty prefix or the whole cache."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: map-array-keys
+        from: js-12-11-map-set
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          const byArray = new Map();
+          byArray.set(["tasks", "all"], 4);
+          const byText = new Map();
+          byText.set(JSON.stringify(["tasks", "all"]), 4);
+
+          console.log(byArray.get(["tasks", "all"]));
+          console.log(byText.get(JSON.stringify(["tasks", "all"])));
+        verify:
+          logs: ["undefined", "4"]
+        answer:
+          type: choice
+          options:
+            - id: undefined-four
+              code: "undefined\n4"
+            - id: four-four
+              code: "4\n4"
+              why:
+                uk: "`Map` порівнює ключі-об’єкти за посиланням. Масив у `get` — новий об’єкт, не той, що клали в `set`, тож його не знайдено."
+                en: "A `Map` compares object keys by reference. The array in `get` is a new object, not the one passed to `set`, so it is not found."
+            - id: undefined-undefined
+              code: "undefined\nundefined"
+              why:
+                uk: "Текст порівнюється за значенням: однакові масиви дають однаковий текст `JSON.stringify`, тож другий `get` знаходить `4`."
+                en: "Text is compared by value: equal arrays give the same `JSON.stringify` text, so the second `get` finds `4`."
+          correct: [undefined-four]
+        explanation:
+          uk: "Ключ-об’єкт у `Map` знаходиться лише тим самим об’єктом. Тому кеш з ключами-масивами зберігає записи під текстом ключа."
+          en: "An object key in a `Map` is found only by the very same object. That is why a cache with array keys stores entries under the key's text."
+      - id: two-misses
+        from: js-08-08-combinators-sequential-concurrent
+        prompt:
+          uk: "Екран має два cache miss одразу: список (300 мс) і лічильник (200 мс). Що надрукує цей код?"
+          en: "A screen has two cache misses at once: the list (300 ms) and the counter (200 ms). What does this code print?"
+        code: |
+          const wait = (ms, value) => new Promise((resolve) => setTimeout(() => resolve(value), ms));
+          const started = Date.now();
+
+          const [list, count] = await Promise.all([wait(300, "list"), wait(200, "count")]);
+          const took = Date.now() - started;
+          console.log(list, count, took < 450 ? "together" : "one after another");
+        verify:
+          logs: ["list count together"]
+        answer:
+          type: choice
+          options:
+            - id: together
+              code: "list count together"
+            - id: by-speed
+              code: "count list together"
+              why:
+                uk: "`Promise.all` повертає результати в порядку **масиву**, а не в порядку, в якому вони прийшли."
+                en: "`Promise.all` returns the results in the order of the **array**, not in the order they arrived."
+            - id: sequential
+              code: "list count one after another"
+              why:
+                uk: "Обидва таймери стартують одразу, ще до `await`, тож разом це ~300 мс, а не 500 мс."
+                en: "Both timers start at once, before the `await`, so together it takes ~300 ms, not 500 ms."
+          correct: [together]
+        explanation:
+          uk: "Незалежні queries одного екрана йдуть одночасно — як два хуки `useQuery`, кожен зі своїм ефектом. Очікування дорівнює найдовшому запиту, а не сумі."
+          en: "Independent queries of one screen go out at the same time — like two `useQuery` hooks, each with its own effect. The wait equals the longest request, not the sum."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-06
+    body:
+      uk: "У кроці проєкту цього розділу кешуй списки записів за ключем із фільтром і після кожного створення, редагування чи видалення інвалідуй лише те, що змінилося: у планувальнику — списки й лічильник на сьогодні, у трекері витрат — список і підсумки за категоріями."
+      en: "In this unit's project step, cache the record lists under a key with the filter, and after every create, edit or remove invalidate only what changed: in the planner the lists and the due-today count, in the expense tracker the list and the category totals."
