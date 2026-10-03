@@ -1,0 +1,352 @@
+id: rn-05-01-storage-adapters
+unit: RN-05
+title:
+  uk: "Нативні адаптери сховища та їхні обмеження"
+  en: "Native storage adapters and their limits"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Порівняти `localStorage` браузера з нативним асинхронним сховищем «ключ — значення»: виклики через Promise, лише текстові значення, обмеження розміру й швидкості, життя в межах одного встановлення застосунку й відсутність шифрування."
+    en: "Compare browser `localStorage` with a native async key-value store: asynchronous calls, string-only values, size and speed limits, per-install lifetime and no encryption by default."
+  - uk: "Реалізувати завантаження й збереження версіонованого знімка через контракт адаптера сховища з RN-03."
+    en: "Implement load and save of the versioned snapshot behind the storage adapter contract from RN-03."
+prerequisites: [rn-04-09-capstone-native-navigation, js-07-05-persist-reload, rn-03-02-platform-adapters]
+subskills:
+  - { family: N-05, skill: "storage adapter limits", depth: intro }
+glossary: [async-key-value-store, app-sandbox]
+selfCheck: [predict-promise-text, snapshot-io]
+
+blocks:
+  - id: two-stores
+    kind: explanation
+    title:
+      uk: "Той самий контракт, інше сховище"
+      en: "The same contract, a different store"
+    body:
+      uk: |
+        У вебі записи проєкту жили в `localStorage`: `getItem` одразу повертав текст. На телефоні браузера немає, тож і `localStorage` немає. Його місце займає нативне [[async-key-value-store|асинхронне сховище «ключ — значення»]]. Для Expo SDK 57 це пакет `@react-native-async-storage/async-storage` версії 2.2.0 — саме її ставить `npx expo install`.
+
+        | | `localStorage` (веб) | AsyncStorage (телефон) |
+        |---|---|---|
+        | відповідь | одразу, синхронно | `Promise`: відповідь приходить пізніше |
+        | значення | лише текст | лише текст: `null` як значення — помилка, число чи об’єкт — попередження |
+        | розмір | кілька мегабайтів на адресу сайту | Android: усе сховище — 6 МБ за замовчуванням |
+        | де живе | у браузері, для однієї адреси | у [[app-sandbox|пісочниці застосунку]]; видалив застосунок — дані зникли |
+        | шифрування | немає | немає: опис пакета прямо каже «unencrypted» |
+
+        Кожен виклик іде з JavaScript у нативний код і назад. Тому сховище читають один раз під час запуску, а далі працюють зі станом React. Паролі й токени сюди не кладуть: для секретів є окремі модулі, як-от `expo-secure-store`.
+
+        Контракт з RN-03 від цього не змінюється: `getItem`, `setItem` і `removeItem` повертають `Promise`. Змінюється лише те, що стоїть за ним.
+      en: |
+        On the web the project's records lived in `localStorage`: `getItem` returned the text at once. A phone has no browser, so it has no `localStorage` either. Its place is taken by a native [[async-key-value-store|async key-value store]]. For Expo SDK 57 that is the `@react-native-async-storage/async-storage` package, version 2.2.0 — the version `npx expo install` installs.
+
+        | | `localStorage` (web) | AsyncStorage (phone) |
+        |---|---|---|
+        | answer | at once, synchronously | a `Promise`: the answer comes later |
+        | values | text only | text only: `null` as a value is an error, a number or object a warning |
+        | size | a few megabytes per site address | Android: 6 MB for the whole store by default |
+        | where it lives | in the browser, for one address | in the [[app-sandbox|app sandbox]]; uninstall the app and the data is gone |
+        | encryption | none | none: the package description says “unencrypted” outright |
+
+        Every call goes from JavaScript into native code and back. So the store is read once at launch, and after that the app works with React state. Passwords and tokens do not go here: secrets have separate modules, such as `expo-secure-store`.
+
+        The contract from RN-03 does not change: `getItem`, `setItem` and `removeItem` return a `Promise`. Only what stands behind it changes.
+
+  - id: predict-promise-text
+    kind: prediction
+    prompt:
+      uk: "Ось код, який читає нативне сховище так, ніби це `localStorage`. Що він надрукує?"
+      en: "Here is code that reads a native store as if it were `localStorage`. What does it print?"
+    code: |
+      const nativeStore = {
+        async getItem(key) {
+          return '{"schemaVersion":1,"records":[]}';
+        },
+      };
+
+      const text = nativeStore.getItem("jsll.planner.v1");
+      console.log(typeof text);
+      const snapshot = JSON.parse(text);
+      console.log(snapshot.records.length);
+    verify: { logs: ["object"], error: SyntaxError }
+    answer:
+      type: choice
+      options:
+        - id: string-zero
+          text:
+            uk: "`string`, потім `0`"
+            en: "`string`, then `0`"
+          why:
+            uk: "Функція з `async` завжди повертає `Promise`, навіть коли всередині просто `return` тексту. Текст можна дістати лише через `await` чи `.then`."
+            en: "An `async` function always returns a `Promise`, even when its body just returns text. The text can only be taken out with `await` or `.then`."
+        - id: object-error
+          text:
+            uk: "`object`, потім помилка `SyntaxError`"
+            en: "`object`, then a `SyntaxError`"
+        - id: object-zero
+          text:
+            uk: "`object`, потім `0`"
+            en: "`object`, then `0`"
+          why:
+            uk: "`JSON.parse` чекає текст. `Promise` він перетворює на текст `[object Promise]`, а це не JSON — розбір падає."
+            en: "`JSON.parse` expects text. It turns the `Promise` into the text `[object Promise]`, which is not JSON — parsing fails."
+        - id: undefined-type
+          text:
+            uk: "`undefined`, потім `TypeError`"
+            en: "`undefined`, then a `TypeError`"
+          why:
+            uk: "Виклик повертає не `undefined`, а `Promise` — об’єкт, тому `typeof` дає `object`."
+            en: "The call returns not `undefined` but a `Promise` — an object, so `typeof` gives `object`."
+      correct: [object-error]
+    explanation:
+      uk: "`getItem` нативного сховища повертає `Promise`, а не текст. `JSON.parse` перетворює його на `[object Promise]` і кидає `SyntaxError`. Тому прочитати сховище «під час render» не вийде: render синхронний, а відповідь прийде пізніше."
+      en: "A native store's `getItem` returns a `Promise`, not text. `JSON.parse` turns it into `[object Promise]` and throws a `SyntaxError`. That is why the store cannot be read “during render”: render is synchronous, and the answer comes later."
+
+  - id: where-snapshot-lives
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Де живе знімок"
+      en: "Where the snapshot lives"
+    textEquivalent:
+      uk: "Хук даних useWishes передає записи адаптеру сховища. Адаптер перетворює їх на текст через JSON.stringify, бо сховища приймають лише текст. У вебі адаптер викликає localStorage: виклик синхронний, а дані належать адресі сайту в цьому браузері. На телефоні той самий адаптер викликає AsyncStorage: кожен виклик повертає Promise, а дані лежать у пісочниці застосунку й зникають разом з ним після видалення. Хук не знає, яке сховище за адаптером: він бачить лише контракт getItem, setItem, removeItem з відповідями через Promise."
+      en: "The data hook useWishes hands records to the storage adapter. The adapter turns them into text with JSON.stringify, because the stores accept only text. On the web the adapter calls localStorage: the call is synchronous, and the data belongs to the site address in this browser. On a phone the same adapter calls AsyncStorage: every call returns a Promise, and the data lies in the app sandbox and disappears with the app when it is uninstalled. The hook does not know which store is behind the adapter: it sees only the getItem, setItem, removeItem contract with answers through a Promise."
+    spec:
+      layout: grid
+      groups:
+        - { id: app, label: { uk: "Застосунок", en: "App" } }
+        - { id: web, label: { uk: "Браузер", en: "Browser" } }
+        - { id: phone, label: { uk: "Телефон", en: "Phone" } }
+      nodes:
+        - { id: hook, group: app, label: "useWishes", w: 130, col: 0, row: 0 }
+        - { id: adapter, group: app, label: "StorageAdapter", w: 140, col: 1, row: 0 }
+        - { id: local, group: web, label: "localStorage", shape: cylinder, w: 130, col: 0, row: 1 }
+        - { id: native, group: phone, label: "AsyncStorage", shape: cylinder, w: 140, col: 1, row: 1 }
+      edges:
+        - { id: hook-adapter, from: hook, to: adapter, label: { uk: "записи", en: "records" } }
+        - { id: adapter-local, from: adapter, to: local, label: { uk: "текст", en: "text" } }
+        - { id: adapter-native, from: adapter, to: native, label: { uk: "текст", en: "text" } }
+      steps:
+        - caption:
+            uk: "Хук передає записи адаптеру, а адаптер робить з них текст через `JSON.stringify`: обидва сховища приймають лише текст."
+            en: "The hook hands records to the adapter, and the adapter makes text of them with `JSON.stringify`: both stores accept only text."
+          highlight: [hook, adapter, hook-adapter]
+          dim: [local, native, adapter-local, adapter-native]
+        - caption:
+            uk: "У вебі адаптер викликає `localStorage`: відповідь приходить одразу, а дані належать адресі сайту в цьому браузері."
+            en: "On the web the adapter calls `localStorage`: the answer comes at once, and the data belongs to the site address in this browser."
+          highlight: [adapter-local, local]
+          dim: [native, adapter-native]
+          annotate:
+            - { id: local, text: { uk: "синхронно", en: "synchronous" } }
+        - caption:
+            uk: "На телефоні адаптер викликає AsyncStorage: кожна відповідь — `Promise`. Дані лежать у пісочниці застосунку й зникають після його видалення."
+            en: "On a phone the adapter calls AsyncStorage: every answer is a `Promise`. The data lies in the app sandbox and disappears when the app is uninstalled."
+          highlight: [adapter-native, native]
+          dim: [local, adapter-local]
+          annotate:
+            - { id: native, text: { uk: "Promise", en: "Promise" } }
+        - caption:
+            uk: "Хук не знає, що стоїть за адаптером: він бачить лише контракт `getItem` / `setItem` / `removeItem`. Тому його код однаковий на обох платформах."
+            en: "The hook does not know what stands behind the adapter: it sees only the `getItem` / `setItem` / `removeItem` contract. So its code is the same on both platforms."
+          highlight: [hook, adapter, hook-adapter]
+
+  - id: first-frame
+    kind: example
+    runtime: concept-preview
+    dir: first-frame
+    entry: main.jsx
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      title: { uk: "Мої бажання", en: "My wishes" }
+      loading: { uk: "Завантажую бажання…", en: "Loading wishes…" }
+      empty: { uk: "Бажань ще немає", en: "No wishes yet" }
+      frame: { uk: "кадр", en: "frame" }
+      wishes: { uk: "бажання", en: "wishes" }
+    title:
+      uk: "Перший кадр списку"
+      en: "The list's first frame"
+    body:
+      uk: |
+        `native-store.js` — імітація нативного сховища: він поводиться як AsyncStorage (відповідає через `Promise`, приймає лише текст), але живе в пам’яті перегляду. `main.jsx` кладе в нього три бажання й запускає екран. Хук `useWishes` читає сховище в effect і до відповіді показує стан `loading`.
+
+        Натисни **Запустити** й подивись у **Консоль**: після кожного commit екран друкує, що він показав, а сховище — що в нього попросили.
+      en: |
+        `native-store.js` imitates a native store: it behaves like AsyncStorage (answers through a `Promise`, accepts only text), but lives in the preview's memory. `main.jsx` puts three wishes into it and starts the screen. The `useWishes` hook reads the store in an effect and shows the `loading` state until the answer comes.
+
+        Press **Run** and look at the **Console**: after every commit the screen prints what it showed, and the store prints what it was asked for.
+    tryIt:
+      uk: |
+        1. Подивись на порядок у консолі: першим іде кадр із текстом завантаження, потім відповідь сховища, потім кадр із трьома бажаннями. Навіть коли сховище відповідає без затримки, перший кадр — це завантаження.
+        2. У `main.jsx` зміни `READ_DELAY_MS` на `1200` і запусти. Тепер на вкладці **Сторінка** приблизно секунду видно індикатор і «Завантажую бажання…», а вже потім список.
+        3. Там само заміни весь виклик `device.seed({ … })` на `device.seed({})` (сховище порожнє) і запусти: спершу знову завантаження, а напис «Бажань ще немає» з’являється лише після відповіді `null`. Поверни `READ_DELAY_MS` до `0`.
+      en: |
+        1. Look at the order in the console: first comes the frame with the loading text, then the store's answer, then the frame with three wishes. Even when the store answers without a delay, the first frame is the loading one.
+        2. In `main.jsx` change `READ_DELAY_MS` to `1200` and run. Now the **Page** tab shows the indicator and “Loading wishes…” for about a second, and only then the list.
+        3. In the same file replace the whole `device.seed({ … })` call with `device.seed({})` (an empty store) and run: loading comes first again, and “No wishes yet” appears only after the `null` answer. Set `READ_DELAY_MS` back to `0`.
+    limits:
+      uk: "Це концептуальний перегляд у браузері через react-native-web, а не native-застосунок. Сховище тут — імітація в пам’яті сторінки: вона повторює контракт AsyncStorage (Promise, лише текст, виклики по черзі), але не нативний модуль, не його ліміт розміру, не швидкість пристрою й не пісочницю застосунку. Немає native view, вигляду платформи, справжніх жестів і навігаційного стека платформи."
+      en: "This is a concept preview in the browser through react-native-web, not a native app. The store here is an imitation in the page's memory: it follows the AsyncStorage contract (Promise, text only, calls in order), but it is not the native module, its size limit, the device's speed or the app sandbox. There are no native views, platform look, real gestures or platform navigation stack."
+
+  - id: recall-storage
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: missing-key
+        from: js-07-05-persist-reload
+        prompt:
+          uk: "Застосунок уперше запускається, і під його ключем у `localStorage` ще нічого немає. Що поверне `localStorage.getItem` для цього ключа?"
+          en: "An app starts for the first time, and nothing is stored under its key in `localStorage` yet. What does `localStorage.getItem` return for that key?"
+        answer:
+          type: choice
+          options:
+            - id: null-value
+              code: "null"
+            - id: empty-string
+              code: "\"\""
+              why:
+                uk: "Порожній текст — це збережене значення. Ключ, під яким нічого немає, дає `null`."
+                en: "Empty text is a stored value. A key that holds nothing gives `null`."
+            - id: undefined
+              code: "undefined"
+              why:
+                uk: "`getItem` ніколи не повертає `undefined`: або текст, або `null`."
+                en: "`getItem` never returns `undefined`: either text or `null`."
+            - id: throws
+              text:
+                uk: "Кидає помилку"
+                en: "It throws an error"
+              why:
+                uk: "Відсутній ключ — звичайна ситуація першого запуску, не помилка."
+                en: "A missing key is the normal first-launch situation, not an error."
+          correct: [null-value]
+        explanation:
+          uk: "`null` означає «нічого не збережено» — тоді застосунок починає з порожнього списку без попередження. AsyncStorage відповідає так само, тільки через `Promise`: `await getItem(key)` дає `null`."
+          en: "`null` means “nothing saved” — the app then starts from an empty list without a warning. AsyncStorage answers the same way, only through a `Promise`: `await getItem(key)` gives `null`."
+      - id: why-pass-adapter
+        from: rn-03-02-platform-adapters
+        prompt:
+          uk: "Хук даних отримує сховище параметром замість того, щоб імпортувати AsyncStorage напряму. Що це дає?"
+          en: "The data hook receives its storage as a parameter instead of importing AsyncStorage directly. What does that give you?"
+        answer:
+          type: choice
+          options:
+            - id: swap
+              text:
+                uk: "Той самий хук працює з вебовим, нативним і тестовим сховищем без змін"
+                en: "The same hook works with the web, the native and a test store without changes"
+            - id: faster
+              text:
+                uk: "Сховище стає швидшим"
+                en: "The store becomes faster"
+              why:
+                uk: "Адаптер нічого не прискорює: за ним той самий нативний модуль. Він лише відокремлює код від конкретного сховища."
+                en: "The adapter speeds nothing up: the same native module stands behind it. It only separates the code from a concrete store."
+            - id: sync
+              text:
+                uk: "Адаптер робить нативне сховище синхронним"
+                en: "The adapter makes the native store synchronous"
+              why:
+                uk: "Нативне сховище асинхронне, і адаптер цього не змінює: контракт сам обіцяє `Promise`."
+                en: "The native store is asynchronous, and an adapter does not change that: the contract itself promises a `Promise`."
+          correct: [swap]
+        explanation:
+          uk: "Контракт — це межа: код по один бік не знає, що по інший. Тому домен і хук перевіряють у тестах зі сховищем у пам’яті, а на телефоні підставляють нативне."
+          en: "The contract is a boundary: code on one side does not know what is on the other. That is why the domain and the hook are tested with an in-memory store, and the native one is plugged in on a phone."
+
+  - id: snapshot-io
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: snapshot-io
+    entry: index.js
+    editable: [snapshot.ts]
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+    title:
+      uk: "Завантаж і збережи знімок планувальника"
+      en: "Load and save the planner snapshot"
+    instructions:
+      uk: |
+        У `snapshot.ts` допиши дві функції для планувальника. Сховище вони отримують параметром — за контрактом `StorageAdapter` з `contracts.ts`; у `device-store.js` лежить імітація, яка, як і нативне сховище, відповідає через `Promise` і приймає лише текст.
+
+        - `loadSnapshot(storage)` читає текст під ключем `KEY` і повертає розібраний знімок або `null`, якщо нічого не збережено. Пошкоджений текст розберемо в наступних уроках: тут `JSON.parse` може кинути помилку.
+        - `saveSnapshot(storage, records)` записує під `KEY` JSON-текст знімка `{ schemaVersion: 1, records }` і повертає `{ ok: true, length }`, де `length` — довжина тексту.
+        - Якщо текст довший за `MAX_SNAPSHOT_LENGTH` символів, `saveSnapshot` нічого не записує й повертає `{ ok: false, reason: 'too-large', length }`. Текст рівно такої довжини зберігається.
+
+        Перевірки рахують записи в сховище: для занадто довгого знімка їх має бути нуль.
+      en: |
+        In `snapshot.ts` finish two functions for the planner. They receive the store as a parameter — following the `StorageAdapter` contract in `contracts.ts`; `device-store.js` holds an imitation that, like a native store, answers through a `Promise` and accepts only text.
+
+        - `loadSnapshot(storage)` reads the text under the key `KEY` and returns the parsed snapshot, or `null` when nothing is saved. Damaged text is handled in the next lessons: here `JSON.parse` may throw.
+        - `saveSnapshot(storage, records)` writes the JSON text of the snapshot `{ schemaVersion: 1, records }` under `KEY` and returns `{ ok: true, length }`, where `length` is the length of the text.
+        - If the text is longer than `MAX_SNAPSHOT_LENGTH` characters, `saveSnapshot` writes nothing and returns `{ ok: false, reason: 'too-large', length }`. Text of exactly that length is saved.
+
+        The checks count the writes to the store: for a too long snapshot there must be none.
+    testTitles:
+      "both functions return promises":
+        uk: "Обидві функції повертають `Promise`"
+        en: "Both functions return a `Promise`"
+      "an empty store gives null":
+        uk: "Порожнє сховище дає `null`"
+        en: "An empty store gives `null`"
+      "saving writes the snapshot as JSON text under the planner key":
+        uk: "Збереження записує знімок JSON-текстом під ключем планувальника"
+        en: "Saving writes the snapshot as JSON text under the planner key"
+      "loading gives back what was saved":
+        uk: "Завантаження повертає те, що збережено"
+        en: "Loading gives back what was saved"
+      "a snapshot over the limit is refused and nothing is written":
+        uk: "Знімок понад ліміт відхилено, і нічого не записано"
+        en: "A snapshot over the limit is refused and nothing is written"
+      "a snapshot of exactly the limit is saved":
+        uk: "Знімок рівно на ліміті збережено"
+        en: "A snapshot of exactly the limit is saved"
+    hints:
+      nudge:
+        uk: "Що саме повертає кожен метод сховища — значення чи `Promise` значення? І в якому порядку робити «перевірити розмір» і «записати»?"
+        en: "What exactly does each store method return — a value or a `Promise` of a value? And in which order do “check the size” and “write” go?"
+      explanation:
+        uk: "Відповідь сховища дістають через `await`: наприклад, `const raw = await storage.getItem('jsll.habits.v1')`. Сховище приймає лише текст, тож об’єкт спершу перетворюють на JSON, і довжину міряють уже в тексті — саме його й буде записано. Перевірка ліміту має стояти до запису: якщо записати першим, старий знімок уже буде замінено, хоч функція й скаже «відхилено». «Довший за ліміт» означає `>`: текст рівно на ліміті проходить."
+        en: "A store's answer is taken out with `await`: for example, `const raw = await storage.getItem('jsll.habits.v1')`. The store accepts only text, so the object is turned into JSON first, and the length is measured on that text — it is exactly what gets written. The limit check must come before the write: write first, and the old snapshot is already replaced even though the function says “refused”. “Longer than the limit” means `>`: text exactly at the limit passes."
+    solutionNote:
+      uk: "`loadSnapshot` чекає відповідь через `await` і розбирає текст лише тоді, коли він є. `saveSnapshot` один раз робить JSON-текст, міряє саме його, відмовляє до будь-якого запису і лише потім викликає `setItem`. Так само працюватиме й нативний адаптер: зміниться лише сховище, яке передають параметром."
+      en: "`loadSnapshot` waits for the answer with `await` and parses the text only when there is some. `saveSnapshot` makes the JSON text once, measures exactly that text, refuses before any write, and only then calls `setItem`. A native adapter works the same way: only the store passed as the parameter changes."
+    feedback:
+      - when: { test: "both functions return promises" }
+        message:
+          uk: "Ця перевірка викликає обидві функції й чекає, що кожна поверне `Promise`. Функція з `async` повертає його сама."
+          en: "This check calls both functions and expects each to return a `Promise`. An `async` function returns one by itself."
+      - when: { test: "saving writes the snapshot as JSON text under the planner key" }
+        message:
+          uk: "Ця перевірка чекає під `KEY` текст, з якого `JSON.parse` дає `{ schemaVersion: 1, records }`, і результат `{ ok: true, length }` з довжиною цього тексту."
+          en: "This check expects text under `KEY` from which `JSON.parse` gives `{ schemaVersion: 1, records }`, and the result `{ ok: true, length }` with that text's length."
+      - when: { test: "a snapshot over the limit is refused and nothing is written" }
+        message:
+          uk: "Ця перевірка зберігає знімок на 1 символ довший за ліміт і чекає `{ ok: false, reason: 'too-large', length }`, нуль нових записів і незмінений попередній знімок. Розмір треба перевірити до `setItem`."
+          en: "This check saves a snapshot 1 character over the limit and expects `{ ok: false, reason: 'too-large', length }`, zero new writes and the earlier snapshot unchanged. The size has to be checked before `setItem`."
+      - when: { test: "a snapshot of exactly the limit is saved" }
+        message:
+          uk: "Ця перевірка зберігає знімок рівно на `MAX_SNAPSHOT_LENGTH` символів і чекає `{ ok: true, length }`. Відмовляти треба лише тексту, довшому за ліміт."
+          en: "This check saves a snapshot of exactly `MAX_SNAPSHOT_LENGTH` characters and expects `{ ok: true, length }`. Only text longer than the limit is refused."
+      - when: { error: SyntaxError }
+        message:
+          uk: "Якщо бачиш картку «Код не вдалося запустити», у `snapshot.ts` синтаксична помилка — подивись на рядок у повідомленні. Якщо ж `SyntaxError` кинув `JSON.parse` під час перевірки, розібрати намагалися не текст: відповідь `getItem` — це `Promise`, і текст із нього дістають через `await`."
+          en: "If you see the card “The code could not start”, `snapshot.ts` has a syntax error — look at the line in the message. If instead `JSON.parse` threw the `SyntaxError` during a check, what it tried to parse was not text: `getItem`'s answer is a `Promise`, and the text is taken out of it with `await`."
+      - when: { error: TypeError }
+        message:
+          uk: "Якщо в повідомленні є «the value must be text», у `setItem` передали не текст. Сховище, як і нативне, приймає лише текст: об’єкт спершу перетвори на JSON. Якщо ж усі перевірки падають разом, виправ першу помилку в консолі."
+          en: "If the message says “the value must be text”, something other than text was passed to `setItem`. The store, like a native one, accepts only text: turn the object into JSON first. If every check fails at once, fix the first error in the console."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-05
+    body:
+      uk: "У проєктному кроці цього розділу хук даних у `native/` отримає нативний адаптер поверх AsyncStorage і зберігатиме записи версіонованим знімком під тим самим ключем, що й у вебі. Функції `loadSnapshot` і `saveSnapshot` з цієї вправи — його основа."
+      en: "In this unit's project step the data hook in `native/` gets a native adapter on top of AsyncStorage and saves the records as a versioned snapshot under the same key as on the web. The `loadSnapshot` and `saveSnapshot` functions from this exercise are its base."
