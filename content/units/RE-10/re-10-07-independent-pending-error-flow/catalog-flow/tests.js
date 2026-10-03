@@ -101,11 +101,12 @@ test('versionNotes give the first React version of every API used, and the runni
   }
   const transitionApis = ['useTransition', 'startTransition', 'useDeferredValue'].filter((api) => api in versionNotes);
   expect(transitionApis.length, 'versionNotes entries for useTransition, startTransition or useDeferredValue').toBeGreaterThan(0);
-  const majorMinor = (text) => String(text).split('.').slice(0, 2).map(Number);
+  // "18", "18.0" and "18.0.0" all name the same release line.
+  const majorMinor = (text) => { const [major, minor = '0'] = String(text).split('.'); return [Number(major), Number(minor)]; };
   const [major, minor] = majorMinor(version);
   for (const [api, noted] of Object.entries(versionNotes)) {
-    if (api in firstVersion) expect(String(noted).split('.').slice(0, 2).join('.'), `versionNotes.${api}`).toBe(firstVersion[api]);
     const [needMajor, needMinor] = majorMinor(noted);
+    if (api in firstVersion) expect(`${needMajor}.${needMinor}`, `versionNotes.${api}`).toBe(firstVersion[api]);
     expect(major > needMajor || (major === needMajor && minor >= needMinor), `the running React ${version} meets versionNotes.${api} = ${noted}`).toBe(true);
   }
 });

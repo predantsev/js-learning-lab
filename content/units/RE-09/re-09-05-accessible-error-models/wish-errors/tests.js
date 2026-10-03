@@ -23,7 +23,12 @@ async function submit(copy, name, price) {
   await user.fill(copy.q('#wish-name'), name);
   await user.fill(copy.q('#wish-price'), price);
   await user.click(copy.q('button[type="submit"]'));
-  await sleep(80);
+  await answered();
+}
+// Waits until the fixture server has answered every save, then lets React finish.
+async function answered() {
+  await waitFor(() => server.pending === 0);
+  await settle();
 }
 // The element that holds focus after a failed check and lists the problems.
 const summaryOf = (host) => (document.activeElement && host.contains(document.activeElement) && document.activeElement.tagName !== 'BUTTON' && document.activeElement.tagName !== 'INPUT' ? document.activeElement : null);
@@ -68,7 +73,7 @@ test('a rejected save is announced in role=alert and focus is not moved', async 
     server.failNext = true;
     copy.q('button[type="submit"]').focus();
     await user.click(copy.q('button[type="submit"]'));
-    await sleep(80);
+    await answered();
     expect(alerts(copy.host), 'texts of role="alert" elements').toEqual([L.saveFailed]);
     expect(document.activeElement === copy.q('button[type="submit"]'), 'focus is still on the Save button').toBe(true);
   } finally { copy.finish(); }
