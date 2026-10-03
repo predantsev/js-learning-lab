@@ -1,0 +1,410 @@
+id: re-09-07-debug-race-rollback-typed
+unit: RE-09
+title:
+  uk: "Налагодження: недопустимий перехід, неперевірена відповідь, невдалий відкат"
+  en: "Debug: invalid transition, unchecked response, failed rollback"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "За журналом переходів знайти недопустимий перехід reducer, неперевірену відповідь, що валить рендер, і відкат, який повертає старі дані після новішого успіху."
+    en: "Diagnose from a supplied trace an invalid reducer transition, an unchecked response that crashes render, and a rollback that reinstates old data after a newer success."
+  - uk: "Виправити всі три — типами, розбором схемою й відкатом, що зважає на версію, — і додати по одному регресійному тесту на кожен дефект."
+    en: "Repair all three with types, a schema parse and a version-aware rollback, adding one test per defect."
+prerequisites: [re-09-06-state-transition-tests, re-06-09-debug-race-optimistic]
+subskills:
+  - { family: P-05, skill: "typed props/state/events/hooks", depth: assess }
+  - { family: P-05, skill: "typed reducers/context", depth: assess }
+  - { family: P-05, skill: "API models and runtime schemas", depth: assess }
+  - { family: R-06, skill: "optimistic update and rollback", depth: assess }
+  - { family: R-06, skill: "stale data and consistency", depth: assess }
+glossary: []
+selfCheck: [predict-three-symptoms, expense-repair]
+
+blocks:
+  - id: three-defects
+    kind: explanation
+    title:
+      uk: "Три дефекти, які пропустив tsc"
+      en: "Three defects that tsc let through"
+    body:
+      uk: |
+        Екран витрат повністю типізований, і `tsc` не має до нього жодної претензії. Проте в ньому сидять три дефекти — кожен із попередніх уроків цього розділу:
+
+        - **Перехід.** Гілка `loadFailed` збирає новий стан через `{ ...state, status: "failed", message }`. Для об’єкта з розгортанням `tsc` не перевіряє зайвих полів, тож `failed` зі старим списком усередині проходить — неможливий стан, який тип не помітив.
+        - **Відповідь.** `api.ts` приводить відповідь сервера через `as ApiExpense[]`. Схема вже написана, але на межі її не викликають.
+        - **Відкат.** Кожне редагування суми оптимістичне: нова сума одразу на екрані, а якщо сервер відмовив — reducer повертає `previousAmount`. Але він не дивиться, чи не підтверджено за цей час **новіше** редагування того самого запису.
+
+        «Типи пройшли» означає, що код узгоджений сам із собою. Про порядок подій і про дані ззовні це не каже нічого.
+      en: |
+        The expense screen is fully typed, and `tsc` has no complaint about it. Yet it holds three defects — one from each of this unit's earlier lessons:
+
+        - **Transition.** The `loadFailed` branch builds the new state with `{ ...state, status: "failed", message }`. For an object with a spread `tsc` does not check extra fields, so a `failed` with the old list inside gets through — an impossible state the type did not notice.
+        - **Response.** `api.ts` casts the server's answer with `as ApiExpense[]`. The schema is already written, but nobody calls it at the boundary.
+        - **Rollback.** Every amount edit is optimistic: the new amount is on the screen at once, and if the server refuses, the reducer brings back `previousAmount`. But it does not look at whether a **newer** edit of the same record has been confirmed in the meantime.
+
+        “The types pass” means the code agrees with itself. It says nothing about the order of events or about outside data.
+
+  - id: predict-three-symptoms
+    kind: prediction
+    lang: ts
+    runnable: false
+    prompt:
+      uk: "Ще до запуску вирішуй, як проявиться кожен дефект. Сценарій: список завантажено; сума запису змінюється двічі (перше редагування сервер відхиляє пізніше, ніж підтверджує друге); пізно приходить ще один збій завантаження; потім список перезавантажують, а сервер віддає запис із `\"spent_on\": null`, і рядок показує `expense.date.slice(5)`."
+      en: "Before running, decide how each defect shows itself. The scenario: the list is loaded; a record's amount is edited twice (the server rejects the first edit later than it confirms the second); one more load failure arrives late; then the list is reloaded and the server sends a record with `\"spent_on\": null`, and the row shows `expense.date.slice(5)`."
+    code: |
+      // 1 — expensesReducer.ts
+      case "loadFailed":
+        return { ...state, status: "failed", message: action.message };
+
+      // 2 — expensesReducer.ts
+      case "editFailed":
+        if (state.status !== "ready") return state;
+        return { ...state, expenses: setAmount(state.expenses, action.id, action.previousAmount) };
+
+      // 3 — api.ts
+      const body = await getJson();
+      return { ok: true, value: (body as ApiExpense[]).map(toExpense) };
+    answer:
+      type: choice
+      options:
+        - id: right-mapping
+          text:
+            uk: "1 — тихо приймає неможливий стан; 2 — показує неправильну суму; 3 — валить рендер"
+            en: "1 silently accepts an impossible state; 2 shows a wrong amount; 3 crashes render"
+        - id: swap-one-two
+          text:
+            uk: "1 — показує неправильну суму; 2 — тихо приймає неможливий стан; 3 — валить рендер"
+            en: "1 shows a wrong amount; 2 silently accepts an impossible state; 3 crashes render"
+          why:
+            uk: "Дефект 1 не змінює жодної суми: він ховає список за повідомленням про збій, а сам список лишається в стані — поруч із `message`. Дефект 2 повертає стару суму після підтвердженої нової — це й є неправильне значення."
+            en: "Defect 1 changes no amount: it hides the list behind a failure message, while the list itself stays in the state — next to `message`. Defect 2 brings back the old amount after a confirmed new one — that is the wrong value."
+        - id: tsc-catches
+          text:
+            uk: "1 не пропустить `tsc`; 2 — показує неправильну суму; 3 — валить рендер"
+            en: "`tsc` rejects 1; 2 shows a wrong amount; 3 crashes render"
+          why:
+            uk: "Для об’єкта з `...state` `tsc` не шукає зайвих полів: такий літерал пройде, хоча той самий об’єкт, записаний вручну з `expenses`, `tsc` відхилив би (`TS2353`)."
+            en: "For an object with `...state` `tsc` does not look for extra fields: such a literal gets through, although the same object written out by hand with `expenses` is rejected (`TS2353`)."
+        - id: schema-crash
+          text:
+            uk: "1 — тихо приймає неможливий стан; 2 — показує неправильну суму; 3 — нічого не ламає, бо типи кажуть, що `date` — текст"
+            en: "1 silently accepts an impossible state; 2 shows a wrong amount; 3 breaks nothing, because the types say `date` is text"
+          why:
+            uk: "Типи не бачать відповіді сервера. `null.slice(5)` кидає `TypeError` під час рендеру, і без boundary зникає вся сторінка."
+            en: "Types do not see the server's answer. `null.slice(5)` throws a `TypeError` during render, and without a boundary the whole page disappears."
+      correct: [right-mapping]
+    explanation:
+      uk: "Перевірено в пісочниці на прикладі нижче й командою `tsc` 7.0.2 (гілка з розгортанням проходить, літерал із зайвим `expenses` — `TS2353`). Неправильна сума — 845.50 замість 950.00 після відкату; падіння — `TypeError: Cannot read properties of null (reading 'slice')`; неможливий стан видно лише в журналі: `failed {status, expenses, confirmed, message}`."
+      en: "Checked in the sandbox with the example below and with `tsc` 7.0.2 (the branch with the spread passes, a literal with an extra `expenses` gives `TS2353`). The wrong amount is 845.50 instead of 950.00 after the rollback; the crash is `TypeError: Cannot read properties of null (reading 'slice')`; the impossible state is visible only in the log: `failed {status, expenses, confirmed, message}`."
+
+  - id: overlapping-edits
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Два редагування одного запису й зіпсована відповідь"
+      en: "Two edits of one record and a damaged answer"
+    textEquivalent:
+      uk: "Інтерфейс змінює суму запису e-01 на 900.00: reducer одразу показує нову суму, а запит A до сервера триває 300 мс. Поки він іде, людина змінює суму ще раз, на 950.00: reducer показує її, а запит B триває 100 мс. Сервер першим підтверджує B, і reducer запам’ятовує, що для e-01 підтверджено редагування 2. Потім сервер відхиляє A. Наївний відкат повертає суму з-перед редагування A, 845.50, хоча новіше редагування вже підтверджене: на екрані застарілі дані. Відкат, що зважає на версію, бачить підтверджене редагування 2, новіше за 1, і нічого не відкочує. Окремо: коли сервер надсилає запис із spent_on: null, а відповідь лише приводять через as, цей null доходить до рендеру й валить його; розбір схемою зупинив би запис на межі."
+      en: "The UI changes the amount of record e-01 to 900.00: the reducer shows the new amount at once, and request A to the server takes 300 ms. While it runs, the person changes the amount again, to 950.00: the reducer shows it, and request B takes 100 ms. The server confirms B first, and the reducer remembers that edit 2 of e-01 is confirmed. Then the server rejects A. A naive rollback brings back the amount from before edit A, 845.50, although a newer edit is already confirmed: the screen shows stale data. A version-aware rollback sees the confirmed edit 2, newer than 1, and rolls nothing back. Separately: when the server sends a record with spent_on: null and the answer is only cast with as, that null reaches render and crashes it; a schema parse would stop the record at the boundary."
+    spec:
+      actors:
+        - { id: ui, label: "UI" }
+        - { id: reducer, label: "reducer" }
+        - { id: api, label: { uk: "сервер", en: "server" } }
+      messages:
+        - from: ui
+          to: reducer
+          label: "editStarted #1 (900.00)"
+          caption:
+            uk: "Редагування A: reducer одразу показує 900.00 — оптимістично, ще до відповіді сервера."
+            en: "Edit A: the reducer shows 900.00 at once — optimistically, before the server answers."
+        - from: ui
+          to: api
+          label: "PUT e-01 #1"
+          kind: async
+          note: { uk: "300 мс, відмова", en: "300 ms, refusal" }
+          caption:
+            uk: "Запит A йде до сервера; він відповість через 300 мс."
+            en: "Request A goes to the server; it will answer in 300 ms."
+        - from: ui
+          to: reducer
+          label: "editStarted #2 (950.00)"
+          caption:
+            uk: "Поки A в дорозі, редагування B: тепер на екрані 950.00."
+            en: "While A is on its way, edit B: the screen now shows 950.00."
+        - from: ui
+          to: api
+          label: "PUT e-01 #2"
+          kind: async
+          note: { uk: "100 мс, успіх", en: "100 ms, success" }
+          caption:
+            uk: "Запит B — швидший."
+            en: "Request B is faster."
+        - from: api
+          to: ui
+          label: "#2 ok"
+          kind: return
+          caption:
+            uk: "Сервер першим підтверджує B."
+            en: "The server confirms B first."
+        - from: ui
+          to: reducer
+          label: "editConfirmed #2"
+          caption:
+            uk: "Reducer запам’ятовує: для e-01 підтверджено редагування 2."
+            en: "The reducer remembers: edit 2 of e-01 is confirmed."
+        - from: api
+          to: ui
+          label: "#1 503"
+          kind: return
+          caption:
+            uk: "Через 300 мс сервер відхиляє A."
+            en: "After 300 ms the server rejects A."
+        - from: ui
+          to: reducer
+          label: "editFailed #1 → 845.50"
+          note: { uk: "наївний відкат", en: "naive rollback" }
+          caption:
+            uk: "Наївний відкат повертає 845.50 — суму з-перед A — і затирає підтверджені 950.00. Відкат, що зважає на версію, бачить підтверджене редагування 2 > 1 і нічого не змінює."
+            en: "A naive rollback brings back 845.50 — the amount from before A — and wipes out the confirmed 950.00. A version-aware rollback sees the confirmed edit 2 > 1 and changes nothing."
+        - from: api
+          to: ui
+          label: "spent_on: null"
+          kind: return
+          note: { uk: "as: без перевірки", en: "as: unchecked" }
+          caption:
+            uk: "Інша історія: список із `spent_on: null`, приведений через `as`, доходить до рендеру, і `date.slice(5)` кидає `TypeError`. Схема на межі зупинила б цей запис."
+            en: "A different story: a list with `spent_on: null`, cast with `as`, reaches render, and `date.slice(5)` throws a `TypeError`. A schema at the boundary would stop this record."
+
+  - id: seeded-ledger
+    kind: example
+    runtime: browser-react
+    dir: seeded-ledger
+    entry: main.tsx
+    strings:
+      heading: { uk: "Витрати", en: "Expenses" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      uah: { uk: "грн", en: "UAH" }
+      loading: { uk: "Завантаження…", en: "Loading…" }
+      loadFailed: { uk: "Не вдалося завантажити:", en: "Could not load:" }
+      lateFailure: { uk: "запізніла відповідь про збій", en: "a late failure answer" }
+      editA: { uk: "A: 900.00 (повільно, відмова)", en: "A: 900.00 (slow, refused)" }
+      editB: { uk: "B: 950.00 (швидко, успіх)", en: "B: 950.00 (fast, success)" }
+      late: { uk: "Запізнілий збій завантаження", en: "Late load failure" }
+      restartDamaged: { uk: "Перезапустити: сервер зіпсує запис", en: "Restart: the server damages a record" }
+    title:
+      uk: "Сценарій із трьома дефектами"
+      en: "A scenario with three defects"
+    body:
+      uk: |
+        Тут дефекти ще на місці. `loggedReducer` в `App.tsx` виводить кожен перехід: статуси, **поля** нового стану й суми записів. Кнопки на вкладці **Сторінка** — це елементи керування сценарієм. Натисни **Запустити** й пройди сценарій по черзі, стежачи за **Консоллю**.
+      en: |
+        Here the defects are still in place. `loggedReducer` in `App.tsx` prints every transition: the statuses, the **fields** of the new state and the records' amounts. The buttons on the **Page** tab are the scenario's controls. Press **Run** and go through the scenario in order, watching the **Console**.
+    tryIt:
+      uk: |
+        1. Натисни «A», одразу «B» і зачекай пів секунди. Журнал: `editStarted … e-01=90000`, `editStarted … e-01=95000`, `editConfirmed`, а тоді `editFailed … e-01=84550` — на екрані знову 845.50, хоча 950.00 сервер підтвердив.
+        2. Натисни «Запізнілий збій завантаження». Список зник, а журнал каже `ready + loadFailed → failed {status, expenses, confirmed, message}`: стан `failed`, у якому досі лежить список.
+        3. Натисни «Перезапустити: сервер зіпсує запис». Сторінка зникає, а картка помилки каже `TypeError: Cannot read properties of null (reading 'slice')`. Рядок `loading + loaded` у журналі — двічі: після помилки під час рендеру React ще раз пробує відрендерити, перш ніж здатися.
+      en: |
+        1. Press “A”, right away “B”, and wait half a second. The log: `editStarted … e-01=90000`, `editStarted … e-01=95000`, `editConfirmed`, and then `editFailed … e-01=84550` — the screen shows 845.50 again, although the server confirmed 950.00.
+        2. Press “Late load failure”. The list is gone, and the log says `ready + loadFailed → failed {status, expenses, confirmed, message}`: a `failed` state that still holds the list.
+        3. Press “Restart: the server damages a record”. The page disappears, and the error card says `TypeError: Cannot read properties of null (reading 'slice')`. The line `loading + loaded` appears twice in the log: after an error during render React tries rendering once more before giving up.
+
+  - id: repair-plan
+    kind: explanation
+    title:
+      uk: "Виправлення — і тест, що його охороняє"
+      en: "A repair — and a test that guards it"
+    body:
+      uk: |
+        Кожне виправлення — з попередніх уроків:
+
+        - **Перехід:** `loadFailed` має стрілку лише з `loading`, а новий стан збирають без розгортання — лише з полів свого варіанта.
+        - **Відповідь:** `loadExpenses` повертає результат `parseExpenseList(...)`; екран уже вміє показати `ok: false`.
+        - **Відкат, що зважає на версію:** кожне редагування має номер `mutation`, а `confirmed[id]` — номер найновішого підтвердженого. Якщо він більший за номер редагування, що впало, відкочувати нічого: новіше значення вже правда.
+
+        **Регресійний тест** відтворює дефект: спершу він падає на зламаному коді, після виправлення — проходить і далі не дає дефекту повернутися. Пиши його так, щоб він не залежав від деталей виправлення: для відкату — послідовність actions і очікувана сума, а не перевірка, як саме reducer порівнює номери.
+      en: |
+        Each repair comes from an earlier lesson:
+
+        - **Transition:** `loadFailed` has an arrow only from `loading`, and the new state is built without a spread — from its own member's fields only.
+        - **Response:** `loadExpenses` returns the result of `parseExpenseList(...)`; the screen already knows how to show `ok: false`.
+        - **Version-aware rollback:** every edit has a number `mutation`, and `confirmed[id]` holds the number of the newest confirmed one. If it is greater than the number of the edit that failed, there is nothing to roll back: the newer value is already the truth.
+
+        A **regression test** reproduces a defect: first it fails on the broken code, after the repair it passes and from then on keeps the defect from coming back. Write it so that it does not depend on the details of the repair: for the rollback — a sequence of actions and the expected amount, not a check of how exactly the reducer compares numbers.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: що відновлює відкат"
+      en: "Recall: what a rollback restores"
+    items:
+      - id: per-record
+        from: re-06-06-optimistic-rollback
+        prompt:
+          uk: "Людина оптимістично позначає бажання «Навушники» отриманим. Поки запит іде, вона перейменовує інше бажання. Запит про «Навушники» відхилено. Що має відновити відкат?"
+          en: "A person optimistically marks the wish “Headphones” as acquired. While the request runs, they rename another wish. The request about “Headphones” is rejected. What must the rollback restore?"
+        answer:
+          type: choice
+          options:
+            - id: one-record
+              text:
+                uk: "Лише попереднє значення `acquired` у «Навушниках»; перейменування лишається"
+                en: "Only the previous `acquired` value of “Headphones”; the rename stays"
+            - id: whole-list
+              text:
+                uk: "Увесь список, збережений перед запитом"
+                en: "The whole list saved before the request"
+              why:
+                uk: "Знімок усього списку не знає про зміни, зроблені після нього: відкат зітре перейменування, якого сервер не відхиляв."
+                en: "A snapshot of the whole list knows nothing of changes made after it: the rollback would wipe out a rename the server never rejected."
+            - id: nothing
+              text:
+                uk: "Нічого: краще просто перезавантажити список"
+                en: "Nothing: it is better to just reload the list"
+              why:
+                uk: "Без відкату екран показуватиме зміну, якої немає на сервері, доки не прийде новий список. Відкат має прибрати саме невдалу зміну."
+                en: "Without a rollback the screen shows a change that is not on the server until a new list arrives. The rollback must remove exactly the failed change."
+          correct: [one-record]
+        explanation:
+          uk: "Відкат прибирає лише ту зміну, що не вдалася, — у тому записі, якого вона стосувалась. Сьогоднішній урок додає ще одну умову: якщо після неї той самий запис отримав новіше підтверджене значення, відкочувати вже нічого."
+          en: "A rollback removes only the change that failed — in the record it was about. Today's lesson adds one more condition: if that same record has since got a newer confirmed value, there is nothing left to roll back."
+
+  - id: expense-repair
+    kind: exercise
+    mode: debug
+    runtime: browser-react
+    dir: expense-repair
+    entry: main.tsx
+    editable: [expensesReducer.ts, api.ts, regressions.test.ts]
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      uah: { uk: "грн", en: "UAH" }
+      loading: { uk: "Завантаження…", en: "Loading…" }
+      loadFailed: { uk: "Не вдалося завантажити:", en: "Could not load:" }
+      lateFailure: { uk: "запізніла відповідь про збій", en: "a late failure answer" }
+      editA: { uk: "A: 900.00 (повільно, відмова)", en: "A: 900.00 (slow, refused)" }
+      editB: { uk: "B: 950.00 (швидко, успіх)", en: "B: 950.00 (fast, success)" }
+      late: { uk: "Запізнілий збій завантаження", en: "Late load failure" }
+      tLoaded: { uk: "loading + loaded → ready", en: "loading + loaded → ready" }
+      tLateFailure: { uk: "запізнілий loadFailed не ламає готовий список", en: "a late loadFailed does not break a ready list" }
+      tDamaged: { uk: "зіпсована відповідь стає ok: false", en: "a damaged answer becomes ok: false" }
+      tOlderFails: { uk: "невдале старіше редагування не скасовує підтверджене новіше", en: "a failed older edit does not undo a confirmed newer one" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rSameFields: { uk: "(вміст однаковий, але це два різні об’єкти)", en: "(same content, but two different objects)" }
+      rNeedsFunction: { uk: "toThrow чекає функцію: напиши expect(() => …)", en: "toThrow needs a function: write expect(() => …)" }
+      rDidNotThrow: { uk: "функція не кинула помилку", en: "the function did not throw" }
+      rOtherError: { uk: "очікувалася помилка", en: "expected an error of type" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Полагодь екран витрат і закріпи тестами"
+      en: "Repair the expense screen and pin it with tests"
+    instructions:
+      uk: |
+        Це той самий екран, що й у сценарії, з тими самими трьома дефектами. Для кожного:
+
+        1. **Спершу тест.** У `regressions.test.ts` допиши регресійний тест, який відтворює дефект і зараз падає. Код перевіряй лише через `subject.expensesReducer` і `subject.loadExpenses`; відповідь сервера підміняй через `setAnswer(DAMAGED)` і повертай назад через `setAnswer(GOOD)`.
+        2. **Потім виправлення** — в `expensesReducer.ts` чи `api.ts`, доки тест не пройде.
+
+        Що має вийти:
+
+        - `loadFailed` змінює лише стан `loading`, і новий стан — рівно `{ status: "failed", message }`;
+        - `loadExpenses` перевіряє відповідь схемою з `expenseModel.ts`, тож зіпсований запис дає `ok: false` і повідомлення на екрані, а не падіння;
+        - `editFailed` не відкочує, якщо для того самого запису вже підтверджено новіше редагування, але відкочує в усіх інших випадках.
+
+        **Запустити** показує твої тести, а потім екран. Перевірки пробують твоє виправлення в різних послідовностях і запускають твої тести тричі — щоразу з одним із трьох дефектів, повернутих у `subject`.
+      en: |
+        This is the same screen as in the scenario, with the same three defects. For each one:
+
+        1. **Test first.** In `regressions.test.ts` add a regression test that reproduces the defect and fails now. Reach the code only through `subject.expensesReducer` and `subject.loadExpenses`; swap the server's answer with `setAnswer(DAMAGED)` and put it back with `setAnswer(GOOD)`.
+        2. **Then the repair** — in `expensesReducer.ts` or `api.ts`, until the test passes.
+
+        What must come out:
+
+        - `loadFailed` changes only the `loading` state, and the new state is exactly `{ status: "failed", message }`;
+        - `loadExpenses` checks the answer with the schema from `expenseModel.ts`, so a damaged record gives `ok: false` and a message on the screen, not a crash;
+        - `editFailed` does not roll back when a newer edit of the same record has already been confirmed, and rolls back in every other case.
+
+        **Run** shows your tests, then the screen. The checks try your repair in different sequences and run your tests three times — each time with one of the three defects put back into `subject`.
+    testTitles:
+      "loadFailed is rejected while ready and leaves no impossible state":
+        uk: "`ready + loadFailed` повертає той самий стан, а `loading + loadFailed` — рівно `{ status: \"failed\", message }`"
+        en: "`ready + loadFailed` returns the same state, and `loading + loadFailed` exactly `{ status: \"failed\", message }`"
+      "a damaged answer becomes ok: false and the screen shows an alert":
+        uk: "Зіпсована відповідь дає `ok: false`, а екран показує `role=\"alert\"` без падіння"
+        en: "A damaged answer gives `ok: false`, and the screen shows `role=\"alert\"` without a crash"
+      "a failed older edit does not undo a newer confirmed one":
+        uk: "Невдале старіше редагування не скасовує підтверджене новіше"
+        en: "A failed older edit does not undo a newer confirmed one"
+      "a failed edit still rolls back when no newer edit is confirmed":
+        uk: "Без новішого підтвердженого редагування невдале редагування відкочується"
+        en: "Without a newer confirmed edit a failed edit is rolled back"
+      "your regression tests pass on the fixed code":
+        uk: "У `regressions.test.ts` щонайменше чотири тести, і всі проходять на твоєму виправленому коді"
+        en: "`regressions.test.ts` has at least four tests, and all pass on your repaired code"
+      "a regression test catches the late loadFailed defect":
+        uk: "Якийсь твій тест падає, коли повернуто дефект із запізнілим `loadFailed`"
+        en: "One of your tests fails when the late `loadFailed` defect is put back"
+      "a regression test catches the unchecked answer":
+        uk: "Якийсь твій тест падає, коли повернуто неперевірену відповідь"
+        en: "One of your tests fails when the unchecked answer is put back"
+      "a regression test catches the blind rollback":
+        uk: "Якийсь твій тест падає, коли повернуто відкат, що не зважає на версію"
+        en: "One of your tests fails when the rollback that ignores versions is put back"
+    hints:
+      nudge:
+        uk: "Пройди сценарій із прикладу й зістав кожен рядок журналу з гілкою reducer чи з `api.ts`. Для кожного дефекту спершу опиши словами «стан + action → що мало бути»."
+        en: "Go through the example's scenario and match each log line with a reducer branch or with `api.ts`. For each defect, first say in words “state + action → what should have happened”."
+      explanation:
+        uk: "Стрілку автомата охороняє `return state;` на початку гілки, а неможливий стан зникає, коли об’єкт будують лише з полів свого варіанта. Схема вже є в `expenseModel.ts` — її результат і є відповіддю `loadExpenses`. Для відкату порівняй номер редагування, що впало, з `state.confirmed[action.id]`, якого може й не бути. Регресійний тест для відкату — це послідовність: два `editStarted`, `editConfirmed` новішого, `editFailed` старішого — і перевірка суми."
+        en: "A machine's arrow is guarded by `return state;` at the start of the branch, and the impossible state disappears when the object is built from its own member's fields only. The schema is already in `expenseModel.ts` — its result is the answer of `loadExpenses`. For the rollback, compare the failed edit's number with `state.confirmed[action.id]`, which may be missing. A regression test for the rollback is a sequence: two `editStarted`, `editConfirmed` of the newer one, `editFailed` of the older one — and a check of the amount."
+    solutionNote:
+      uk: "Три виправлення — три різні варти: reducer охороняє порядок подій, схема — дані ззовні, номер редагування — свіжість даних. Жодне з них `tsc` не замінить. А регресійні тести перевіряють видиму поведінку через `subject`, тож ловлять дефект, хоч би як його знову внесли."
+      en: "Three repairs are three different guards: the reducer guards the order of events, the schema guards outside data, the edit number guards freshness. `tsc` replaces none of them. And the regression tests check visible behavior through `subject`, so they catch the defect however it is brought back."
+    feedback:
+      - when: { test: "loadFailed is rejected while ready and leaves no impossible state" }
+        message:
+          uk: "Ця перевірка чекає, що `loadFailed` у стані `ready` повертає **той самий** об’єкт, а зі стану `loading` дає рівно `{ status: \"failed\", message }` — без `expenses` і `confirmed`. Розгортання `...state` переносить старі поля. Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі."
+          en: "This check expects `loadFailed` in the `ready` state to return **the same** object, and from `loading` to give exactly `{ status: \"failed\", message }` — without `expenses` and `confirmed`. A `...state` spread carries the old fields over. If every check fails at once, fix the first console error first."
+      - when: { test: "a damaged answer becomes ok: false and the screen shows an alert" }
+        message:
+          uk: "Перевірка ставить зіпсовану відповідь і чекає від `loadExpenses` `ok: false`, а від екрана — `role=\"alert\"` без помилки рендеру. Поверни з `loadExpenses` результат `parseExpenseList` замість приведення `as`."
+          en: "The check puts the damaged answer in place and expects `ok: false` from `loadExpenses` and a `role=\"alert\"` without a render error from the screen. Return the result of `parseExpenseList` from `loadExpenses` instead of the `as` cast."
+      - when: { test: "a failed older edit does not undo a newer confirmed one" }
+        message:
+          uk: "Послідовність: редагування 1 (250.00), редагування 2 (300.00), підтвердження 2, збій 1. Перевірка чекає 300.00: підтверджене новіше редагування має лишитися."
+          en: "The sequence: edit 1 (250.00), edit 2 (300.00), confirmation of 2, failure of 1. The check expects 300.00: the confirmed newer edit must stay."
+      - when: { test: "a failed edit still rolls back when no newer edit is confirmed" }
+        message:
+          uk: "Перевірка робить два сценарії: одне редагування, що впало, — чекає повернення до 210.50; старіше підтверджене й новіше, що впало, — чекає 250.00. Пропускай відкат лише тоді, коли підтверджене редагування **новіше** за те, що впало."
+          en: "The check runs two scenarios: one edit that fails — it expects a return to 210.50; an older confirmed edit and a newer one that fails — it expects 250.00. Skip the rollback only when the confirmed edit is **newer** than the one that failed."
+      - when: { test: "your regression tests pass on the fixed code" }
+        message:
+          uk: "Перевірка чекає щонайменше чотири тести в `regressions.test.ts` (готовий і по одному на дефект), і всі мають пройти на твоєму виправленому коді. Тест, що впав, і причина — у тексті помилки. Тест, який міняє відповідь сервера, має повернути `setAnswer(GOOD)`."
+          en: "The check expects at least four tests in `regressions.test.ts` (the ready one and one per defect), all passing on your repaired code. The failing test and the reason are in the error text. A test that changes the server's answer must put back `setAnswer(GOOD)`."
+      - when: { test: "a regression test catches the late loadFailed defect" }
+        message:
+          uk: "Коли в `subject.expensesReducer` повертається гілка `{ ...state, status: \"failed\", message }`, жоден твій тест не впав. Додай тест: `loadFailed` для стану `ready` має повернути той самий стан."
+          en: "When the branch `{ ...state, status: \"failed\", message }` comes back into `subject.expensesReducer`, none of your tests fails. Add a test: `loadFailed` for a `ready` state must return the same state."
+      - when: { test: "a regression test catches the unchecked answer" }
+        message:
+          uk: "Коли `subject.loadExpenses` знову приводить відповідь через `as`, жоден твій тест не впав. Додай тест із `setAnswer(DAMAGED)`, що чекає `ok: false`."
+          en: "When `subject.loadExpenses` casts the answer with `as` again, none of your tests fails. Add a test with `setAnswer(DAMAGED)` that expects `ok: false`."
+      - when: { test: "a regression test catches the blind rollback" }
+        message:
+          uk: "Коли відкат знову не зважає на підтверджені редагування, жоден твій тест не впав. Додай тест-послідовність: новіше редагування підтверджене, старіше впало — сума має лишитися новою."
+          en: "When the rollback ignores confirmed edits again, none of your tests fails. Add a sequence test: the newer edit is confirmed, the older one fails — the amount must stay the new one."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-09
+    body:
+      uk: "У кроці проєкту ти перевіриш свій застосунок на ті самі три дефекти: чи всі переходи reducer мають стрілку, чи кожна відповідь проходить схему, і чи відкат після невдалої зміни — наприклад, видалення витрати чи виконання звички — повертає саме те, що треба, разом із підсумками."
+      en: "In the project step you check your app for the same three defects: whether every reducer transition has an arrow, whether every answer goes through a schema, and whether the rollback after a failed change — for example removing an expense or completing a habit — brings back exactly what it should, totals included."
