@@ -18,16 +18,16 @@ test('every toggle is at least 48 × 48', async () => {
 test('the row shows the new state before the report is rebuilt', async () => {
   const first = await waitFor(() => toggles()[0]);
   const wasDone = first.textContent.includes('✓');
-  let shownAt = null;
+  const before = reportStarts.length;
+  let reportsWhenShown = null; // how many reports had started when the row changed
   const observer = new MutationObserver(() => {
-    if (shownAt === null && toggles()[0].textContent.includes('✓') !== wasDone) shownAt = performance.now();
+    if (reportsWhenShown === null && toggles()[0].textContent.includes('✓') !== wasDone) reportsWhenShown = reportStarts.length;
   });
   observer.observe(document.getElementById('root'), { subtree: true, childList: true, characterData: true });
-  const before = reportStarts.length;
   await user.click(first);
-  await waitFor(() => shownAt !== null && reportStarts.length > before, { timeout: 3000 });
+  await waitFor(() => reportsWhenShown !== null && reportStarts.length > before, { timeout: 3000 });
   observer.disconnect();
-  expect(shownAt < reportStarts[before], 'the row changed before the report started').toBe(true);
+  expect(reportsWhenShown, 'reports started for this press when the row changed').toBe(before);
 });
 
 test('the report catches up with every toggle', async () => {
