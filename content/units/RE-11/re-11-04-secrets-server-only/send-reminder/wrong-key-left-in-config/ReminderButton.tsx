@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { APP_NAME, MAX_REMINDERS } from "./config";
-// import { sendReminder } from "./config"; — the old call; the browser now asks our server instead.
+import { APP_NAME, MAX_REMINDERS } from "./public-config";
 import { requestReminder } from "./reminder-client";
 
 export default function ReminderButton({ taskId, title }: { taskId: string; title: string }) {

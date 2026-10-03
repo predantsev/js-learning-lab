@@ -25,6 +25,23 @@ test('the client bundle does not contain the reminder key', async () => {
   expect(leaked, 'the client bundle files that contain the key').toEqual([]);
 });
 
+test('every module that holds the key is server-only: a client import of it stops the build', async () => {
+  // Any of the learner's modules whose text holds the key must be refused as client code, so that a
+  // future client import of it fails loudly instead of leaking the key.
+  const editable = ['ReminderButton.tsx', 'public-config.ts', 'reminders.server.ts', 'config.ts'];
+  const holders = editable.filter((path) => typeof files[path] === 'string' && files[path].includes(KEY));
+  const shippable = [];
+  for (const path of holders) {
+    try {
+      await bundle(`./${path}`);
+      shippable.push(path);
+    } catch (error) {
+      if (error?.name !== 'BuildError') throw error;
+    }
+  }
+  expect(shippable, 'modules with the key that a client could still import without a build error').toEqual([]);
+});
+
 test('public-config.ts exports APP_NAME and MAX_REMINDERS, and no value equal to the key', () => {
   expect(publicConfig.APP_NAME, 'APP_NAME from public-config.ts').toBe(L.appName);
   expect(publicConfig.MAX_REMINDERS, 'MAX_REMINDERS from public-config.ts').toBe(3);
