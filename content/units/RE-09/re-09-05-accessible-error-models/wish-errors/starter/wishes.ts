@@ -23,12 +23,15 @@ export const START_WISHES: Wish[] = [
 ];
 
 // The server rejects the next save when `server.failNext` is true.
-export const server = { failNext: false };
+// `pending` counts the saves that have not answered yet (the checks wait for it to reach 0).
+export const server = { failNext: false, pending: 0 };
 let nextNumber = 7;
 
 export function saveWish(value: { name: string; price: number | null }): Promise<Wish> {
+  server.pending += 1;
   return new Promise((resolve, reject) =>
     setTimeout(() => {
+      server.pending -= 1;
       if (server.failNext) {
         server.failNext = false;
         reject(new Error("503 Service Unavailable"));

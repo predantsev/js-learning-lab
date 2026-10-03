@@ -23,8 +23,7 @@ export function saveReducer(state: SaveState, action: SaveAction): SaveState {
       if (state.status !== "saving") return state;
       return { status: "failed", message: action.message };
     case "retried":
-      if (state.status !== "saving") return state;
-      return { status: "saving" };
+      return state;
     default: {
       const unhandled: never = action;
       throw new Error(`Unknown action: ${JSON.stringify(unhandled)}`);
