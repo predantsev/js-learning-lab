@@ -161,6 +161,10 @@ test('submitting an empty name by keyboard shows an accessible error and focuses
     expect(described, 'text the name field is described by').toBe(L.nameRequired);
     expect(document.activeElement === field, 'focus on the name field after the failed submit').toBe(true);
     expect(copy.headingText(), 'still on the edit screen').toBe(L.editing);
+    // a second failed submit from the Save button: focus leaves the button for the field
+    await copy.click('form button', L.save);
+    await waitFor(() => document.activeElement === copy.field('habit-name')).catch(() => {});
+    expect(document.activeElement === copy.field('habit-name'), 'focus on the name field after a failed submit from the Save button').toBe(true);
   } finally { copy.finish(); }
 });
 
