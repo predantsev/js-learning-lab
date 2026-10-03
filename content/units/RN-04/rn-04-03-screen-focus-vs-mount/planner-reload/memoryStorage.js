@@ -1,5 +1,6 @@
-// Read-only helper: an in-memory storage adapter. Screens read and write records only through it,
-// so a native adapter could take its place without changing them. Like storage on a device, a read
+// Read-only helper: an in-memory record store. Screens read and write records only through it
+// (readAll / writeAll), so in a real app a repository on top of the RN-03 storage adapter
+// (getItem / setItem) can take its place without changing them. Like storage on a device, a read
 // takes time: it answers with the records as they were when the read began.
 export function createMemoryStorage(initialRecords, { delayMs = 80 } = {}) {
   let records = initialRecords;
