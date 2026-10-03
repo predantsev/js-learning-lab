@@ -1,0 +1,361 @@
+id: rn-05-02-async-loading-failure
+unit: RN-05
+title:
+  uk: "Асинхронне завантаження і збої"
+  en: "Async loading and failure"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Змоделювати запуск як `loading` → `ready` | `empty` | `failed` і показати кожен стан, ніколи не плутаючи «ще не завантажено» з «записів немає»."
+    en: "Model the startup load as `loading` → `ready` | `empty` | `failed` and render each state, never treating “not loaded yet” as “no records”."
+  - uk: "Не дати збереженню перезаписати дані в сховищі, поки початкове завантаження не завершилося."
+    en: "Prevent a save from overwriting stored data before the initial load has settled."
+prerequisites: [rn-05-01-storage-adapters, re-03-08-independent-persistence-sync]
+subskills:
+  - { family: N-05, skill: "async loading/failure", depth: intro }
+glossary: []
+selfCheck: [predict-early-save, expense-startup]
+
+blocks:
+  - id: four-states
+    kind: explanation
+    title:
+      uk: "Порожній список — ще не відповідь"
+      en: "An empty list is not an answer yet"
+    body:
+      uk: |
+        У вебі початковий стан можна було прочитати з `localStorage` одразу, ще до першого кадру. На телефоні відповідь сховища приходить пізніше, тож у застосунку з’являється проміжок, якого у вебі не було. Порожній масив у стані на цей час нічого не означає: записи можуть бути, просто їх ще не прочитано.
+
+        Тому запуск — це маленька машина станів:
+
+        | Стан | Що показати |
+        |---|---|
+        | `loading` | індикатор: читання ще триває |
+        | `ready` | записи |
+        | `empty` | «Записів ще немає» — сховище відповіло `null` або порожнім списком |
+        | `failed` | повідомлення й кнопка «Спробувати ще» |
+
+        Друга пастка — збереження. Effect, що зберігає список після кожної зміни, спрацьовує вже після першого кадру, коли в стані ще порожній масив. Без запобіжника він запише в сховище порожній список раніше, ніж прочитає справжній.
+      en: |
+        On the web the starting state could be read from `localStorage` at once, before the first frame. On a phone the store's answer comes later, so the app gets a gap the web did not have. An empty array in state during that time means nothing: there may well be records, they just have not been read yet.
+
+        So startup is a small state machine:
+
+        | State | What to show |
+        |---|---|
+        | `loading` | an indicator: the read is still running |
+        | `ready` | the records |
+        | `empty` | “No records yet” — the store answered `null` or an empty list |
+        | `failed` | a message and a “Try again” button |
+
+        The second trap is saving. An effect that saves the list after every change runs right after the first frame, while state still holds an empty array. Without a guard it writes an empty list into the store before it has read the real one.
+
+  - id: recall-sync
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: web-initial-read
+        from: re-03-08-independent-persistence-sync
+        prompt:
+          uk: "У вебі список витрат зберігали одним effect після кожної зміни, і порожній список ніколи не затирав збережені дані. Чому там це було безпечно?"
+          en: "On the web the expense list was saved by one effect after every change, and an empty list never overwrote the saved data. Why was that safe there?"
+        answer:
+          type: choice
+          options:
+            - id: lazy-initial
+              text:
+                uk: "Початковий стан читали синхронно ще до першого render, тож effect одразу бачив справжні записи"
+                en: "The initial state was read synchronously before the first render, so the effect saw the real records at once"
+            - id: effects-wait
+              text:
+                uk: "Effects завжди чекають, поки дані завантажаться"
+                en: "Effects always wait until the data has loaded"
+              why:
+                uk: "Effect нічого не чекає: він виконується після кожного commit, у якому змінилися його залежності, зокрема після першого."
+                en: "An effect waits for nothing: it runs after every commit in which its dependencies changed, including the first one."
+            - id: strict-mode
+              text:
+                uk: "StrictMode відміняв перший запис"
+                en: "StrictMode cancelled the first write"
+              why:
+                uk: "StrictMode, навпаки, запускає effect ще раз, щоб показати зайві записи; він нічого не відміняє."
+                en: "StrictMode does the opposite: it runs the effect once more to expose extra writes; it cancels nothing."
+          correct: [lazy-initial]
+        explanation:
+          uk: "`localStorage` відповідав одразу, тож початковий стан уже містив збережені записи, і перший запис effect повторював їх. Нативне сховище так не вміє: читання асинхронне, тому про «чи вже можна зберігати» треба подбати окремо."
+          en: "`localStorage` answered at once, so the initial state already held the saved records, and the effect's first write repeated them. A native store cannot do that: the read is asynchronous, so “may I save yet?” needs its own guard."
+
+  - id: predict-early-save
+    kind: prediction
+    prompt:
+      uk: "У сховищі на пристрої — 3 звички. Застосунок запускається з цим хуком, а читання триває 300 мс. Що лежить у сховищі через 100 мс після запуску?"
+      en: "The device store holds 3 habits. The app launches with this hook, and the read takes 300 ms. What does the store hold 100 ms after launch?"
+    code: |
+      export function useHabits(storage) {
+        const [habits, setHabits] = useState([]);
+
+        useEffect(() => {
+          storage.getItem(KEY).then((text) => {
+            setHabits(text === null ? [] : JSON.parse(text).records);
+          });
+        }, [storage]);
+
+        useEffect(() => {
+          storage.setItem(KEY, JSON.stringify({ schemaVersion: 1, records: habits }));
+        }, [storage, habits]);
+
+        return habits;
+      }
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: three
+          text:
+            uk: "Ті самі 3 звички: за 100 мс нічого не змінилося"
+            en: "The same 3 habits: nothing changed in 100 ms"
+          why:
+            uk: "Другий effect виконався одразу після першого кадру, коли `habits` ще порожній масив. Він не чекає читання — і вже записав порожній список."
+            en: "The second effect ran right after the first frame, while `habits` was still an empty array. It does not wait for the read — and it has already written an empty list."
+        - id: zero
+          text:
+            uk: "Знімок з 0 звичок"
+            en: "A snapshot with 0 habits"
+        - id: nothing
+          text:
+            uk: "Нічого: ключ видалено"
+            en: "Nothing: the key was removed"
+          why:
+            uk: "`removeItem` ніхто не викликає. `setItem` записує текст — у цьому випадку знімок з порожнім списком."
+            en: "Nobody calls `removeItem`. `setItem` writes text — here a snapshot with an empty list."
+        - id: crash
+          text:
+            uk: "Застосунок падає, бо `habits` ще не завантажено"
+            en: "The app crashes, because `habits` is not loaded yet"
+          why:
+            uk: "Порожній масив — цілком правильне значення: `JSON.stringify` охоче його запише. Саме тому вада тиха."
+            en: "An empty array is a perfectly valid value: `JSON.stringify` happily writes it. That is exactly why the defect is silent."
+      correct: [zero]
+    explanation:
+      uk: "Обидва effects виконуються після першого кадру. Читання ще в дорозі, а запис порожнього списку вже в сховищі. Коли читання повернеться, екран покаже 3 звички й запише їх назад — але якщо читання впаде чи застосунок закриють у ці 300 мс, звички зникнуть назавжди."
+      en: "Both effects run after the first frame. The read is still on its way, while the write of an empty list is already in the store. When the read returns, the screen shows 3 habits and writes them back — but if the read fails or the app is closed during those 300 ms, the habits are gone for good."
+
+  - id: launch-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Запуск: читання, очікування, збій"
+      en: "Launch: read, wait, failure"
+    textEquivalent:
+      uk: "Учасники — екран, хук даних і сховище на пристрої за адаптером. Перший кадр показує стан loading. Хук просить у сховища getItem, і поки відповідь у дорозі, effect збереження нічого не пише: статус ще loading. Сховище повертає текст, хук розбирає його, статус стає ready, і екран показує записи. Лише тепер зміна користувача, наприклад додавання, викликає setItem. Якщо ж читання відхилено, статус стає failed: екран показує повідомлення й кнопку повторити, а збереження й далі заблоковане — у сховищі лежать невідомі, але цілі дані. Кнопка повторити знову запускає getItem."
+      en: "The participants are the screen, the data hook and the device store behind the adapter. The first frame shows the loading state. The hook asks the store for getItem, and while the answer is on its way the save effect writes nothing: the status is still loading. The store returns text, the hook parses it, the status becomes ready and the screen shows the records. Only now does a user change, such as adding, call setItem. If instead the read is rejected, the status becomes failed: the screen shows a message and a retry button, and saving stays blocked — the store holds unknown but intact data. The retry button starts getItem again."
+    spec:
+      actors:
+        - { id: screen, label: { uk: "Екран", en: "Screen" } }
+        - { id: hook, label: { uk: "Хук даних", en: "Data hook" } }
+        - { id: store, label: { uk: "Сховище", en: "Store" } }
+      intro:
+        uk: "Три учасники: екран, хук даних і сховище на пристрої за адаптером з RN-03."
+        en: "Three participants: the screen, the data hook and the device store behind the adapter from RN-03."
+      messages:
+        - from: hook
+          to: screen
+          label: "status: loading"
+          kind: return
+          caption:
+            uk: "Перший кадр: хук ще нічого не прочитав, тож повідомляє `loading`, а не порожній список."
+            en: "The first frame: the hook has read nothing yet, so it reports `loading`, not an empty list."
+        - from: hook
+          to: store
+          label: "getItem(KEY)"
+          kind: async
+          caption:
+            uk: "Effect читання просить текст. Відповідь прийде пізніше — через `Promise`."
+            en: "The read effect asks for the text. The answer comes later — through a `Promise`."
+        - from: hook
+          to: hook
+          label: { uk: "збереження чекає", en: "saving waits" }
+          kind: note
+          caption:
+            uk: "Effect збереження теж виконався після першого кадру, але статус `loading`, тож він нічого не пише."
+            en: "The save effect also ran after the first frame, but the status is `loading`, so it writes nothing."
+        - from: store
+          to: hook
+          label: { uk: "текст знімка", en: "snapshot text" }
+          kind: return
+          caption:
+            uk: "Сховище відповіло. Хук розбирає текст, і статус стає `ready` (або `empty`, якщо записів немає)."
+            en: "The store answered. The hook parses the text, and the status becomes `ready` (or `empty` if there are no records)."
+        - from: screen
+          to: hook
+          label: "add(expense)"
+          caption:
+            uk: "Лише після вдалого завантаження зміна користувача може зберегтися: тепер у стані справжні записи."
+            en: "Only after a successful load may a user change be saved: state now holds the real records."
+        - from: hook
+          to: store
+          label: "setItem(KEY, text)"
+          kind: async
+          caption:
+            uk: "Запис іде в сховище з повним списком — старими записами й новим."
+            en: "The write goes to the store with the full list — the old records and the new one."
+        - from: store
+          to: hook
+          label: { uk: "відмова читання", en: "read rejected" }
+          kind: return
+          caption:
+            uk: "Інший запуск: читання відхилено. Статус стає `failed`, а збереження лишається заблокованим — дані в сховищі невідомі, але цілі."
+            en: "Another launch: the read is rejected. The status becomes `failed`, and saving stays blocked — the data in the store is unknown but intact."
+          note:
+            uk: "екран: повідомлення + «Спробувати ще»"
+            en: "screen: message + “Try again”"
+
+  - id: premature-save
+    kind: example
+    runtime: concept-preview
+    dir: premature-save
+    entry: main.jsx
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      title: { uk: "Мої звички", en: "My habits" }
+      empty: { uk: "Звичок ще немає", en: "No habits yet" }
+      relaunch: { uk: "Перезапустити застосунок", en: "Relaunch the app" }
+      relaunchFailing: { uk: "Перезапустити, читання впаде", en: "Relaunch with a failing read" }
+    title:
+      uk: "Ранній запис порожнього списку"
+      en: "An early write of an empty list"
+    body:
+      uk: |
+        Це хук з передбачення, у рамці «телефона». Під рамкою — службові кнопки перегляду: **Перезапустити застосунок** знімає весь застосунок і монтує його знову (стан React зникає, сховище лишається), а друга кнопка робить так, що наступне читання сховища впаде.
+
+        Натисни **Запустити** й читай **Консоль**: сховище друкує кожне читання й кожен запис і скільки записів у знімку.
+      en: |
+        This is the hook from the prediction, inside a “phone” frame. Below the frame are the preview's helper buttons: **Relaunch the app** unmounts the whole app and mounts it again (React state is gone, the store stays), and the second button makes the next store read fail.
+
+        Press **Run** and read the **Console**: the store prints every read and every write and how many records the snapshot holds.
+    tryIt:
+      uk: |
+        1. Подивись на порядок у консолі: `setItem(…, 0 records)` стоїть **перед** відповіддю `getItem(…) → 3 records`. На 300 мс сховище тримало порожній список. А на сторінці ці 300 мс видно «Звичок ще немає», хоча звички є.
+        2. Натисни **Перезапустити, читання впаде**: читання падає, а порожній список уже записано. Тепер натисни **Перезапустити застосунок**: звичок немає й у сховищі — їх втрачено. Щоб повернути їх, знову натисни **Запустити**.
+        3. Додай у `useHabits.js` прапорець: `const [loaded, setLoaded] = useState(false);`, у `.then` після `setHabits(…)` виклич `setLoaded(true)`, а в effect збереження першим рядком напиши `if (!loaded) return;` і додай `loaded` у його залежності. Запусти й повтори крок 2: перед відповіддю читання записів немає, а після збою й перезапуску всі 3 звички на місці.
+      en: |
+        1. Look at the order in the console: `setItem(…, 0 records)` comes **before** the answer `getItem(…) → 3 records`. For 300 ms the store held an empty list. And for those 300 ms the page shows “No habits yet”, although the habits exist.
+        2. Press **Relaunch with a failing read**: the read fails, while the empty list is already written. Now press **Relaunch the app**: the store has no habits either — they are lost. To bring them back, press **Run** again.
+        3. Add a flag to `useHabits.js`: `const [loaded, setLoaded] = useState(false);`, call `setLoaded(true)` in `.then` after `setHabits(…)`, and in the save effect write `if (!loaded) return;` as the first line and add `loaded` to its dependencies. Run and repeat step 2: there are no writes before the read's answer, and after the failure and a relaunch all 3 habits are in place.
+    limits:
+      uk: "Це концептуальний перегляд у браузері через react-native-web, а не native-застосунок. «Перезапуск» тут лише знімає й знову монтує дерево React; сховище — імітація в пам’яті сторінки з навмисною затримкою, яка повторює контракт AsyncStorage (Promise, лише текст, виклики по черзі). Справжнього завершення процесу, нативного модуля, швидкості пристрою, native view і жестів тут немає."
+      en: "This is a concept preview in the browser through react-native-web, not a native app. “Relaunch” here only unmounts and remounts the React tree; the store is an imitation in the page's memory with a deliberate delay that follows the AsyncStorage contract (Promise, text only, calls in order). There is no real process termination, native module, device speed, native views or gestures here."
+
+  - id: expense-startup
+    kind: exercise
+    mode: guided
+    runtime: concept-preview
+    dir: expense-startup
+    entry: main.jsx
+    editable: [useExpenses.js]
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      loading: { uk: "Завантажую витрати…", en: "Loading expenses…" }
+      empty: { uk: "Витрат ще немає", en: "No expenses yet" }
+      failed: { uk: "Не вдалося прочитати витрати.", en: "Could not read the expenses." }
+      retry: { uk: "Спробувати ще", en: "Try again" }
+      add: { uk: "Додати обід", en: "Add lunch" }
+      relaunch: { uk: "Перезапустити застосунок", en: "Relaunch the app" }
+      relaunchFailing: { uk: "Перезапустити, читання впаде", en: "Relaunch with a failing read" }
+    title:
+      uk: "Машина станів запуску для витрат"
+      en: "A startup state machine for expenses"
+    instructions:
+      uk: |
+        `ExpensesScreen.jsx` уже вміє показувати чотири стани: `loading`, `ready`, `empty` і `failed`. Він бере їх із хука `useExpenses`, а хук у `useExpenses.js` поки що не знає про завантаження. Перепиши хук так, щоб:
+
+        - до відповіді сховища статус був `loading`;
+        - після відповіді — `ready` з записами або `empty`, якщо сховище повернуло `null` чи порожній список;
+        - відхилене читання давало `failed`, а `retry()` читав сховище ще раз;
+        - нічого не записувалося, доки читання не завершилося **вдало**: ні до відповіді, ні після збою;
+        - `add(expense)` після завантаження додавав витрату й зберігав увесь список.
+
+        Перевірки запускають екран на власному імітованому сховищі й рахують записи в нього. Кнопки під рамкою допоможуть перевірити все самому.
+      en: |
+        `ExpensesScreen.jsx` can already show four states: `loading`, `ready`, `empty` and `failed`. It takes them from the `useExpenses` hook, and the hook in `useExpenses.js` does not know about loading yet. Rewrite the hook so that:
+
+        - until the store answers, the status is `loading`;
+        - after the answer it is `ready` with the records, or `empty` if the store returned `null` or an empty list;
+        - a rejected read gives `failed`, and `retry()` reads the store again;
+        - nothing is written until the read has finished **successfully**: neither before the answer nor after a failure;
+        - after loading, `add(expense)` adds the expense and saves the whole list.
+
+        The checks start the screen on their own imitation store and count the writes to it. The buttons below the frame help you check everything yourself.
+    testTitles:
+      "the first frame shows loading, not the empty message":
+        uk: "Перший кадр показує завантаження, а не «витрат немає»"
+        en: "The first frame shows loading, not the empty message"
+      "stored expenses appear once the read finishes":
+        uk: "Збережені витрати з’являються після читання"
+        en: "Stored expenses appear once the read finishes"
+      "an empty store shows the empty message after loading":
+        uk: "Порожнє сховище після завантаження показує «витрат немає»"
+        en: "An empty store shows the empty message after loading"
+      "nothing is written before the read settles":
+        uk: "До завершення читання нічого не записано"
+        en: "Nothing is written before the read settles"
+      "a failed read shows the error with a retry and writes nothing":
+        uk: "Невдале читання показує помилку з повтором і нічого не записує"
+        en: "A failed read shows the error with a retry and writes nothing"
+      "retry reads again and shows the expenses":
+        uk: "Повтор читає знову й показує витрати"
+        en: "Retry reads again and shows the expenses"
+      "adding after the load saves the new list":
+        uk: "Додавання після завантаження зберігає новий список"
+        en: "Adding after the load saves the new list"
+    hints:
+      nudge:
+        uk: "Яке значення стану відповідає на питання «чи ми вже знаємо, що лежить у сховищі?» І яким воно має бути, коли читання впало?"
+        en: "Which piece of state answers “do we know yet what is in the store?” And what should it be when the read failed?"
+      explanation:
+        uk: "Тримай статус окремо від записів і почни з `loading`. `.then` приймає другий аргумент — функцію для відхиленого `Promise`, наприклад `load().then(show, () => setStatus('failed'))`; у `try`/`catch` з `await` так само. Зберігати можна лише тоді, коли статус каже «ми прочитали сховище»: це `ready` чи `empty`, але не `loading` і не `failed`, бо після збою ти не знаєш, що там лежить. Щоб `retry` прочитав ще раз, effect читання має залежати від чогось, що `retry` змінює, — наприклад від лічильника спроб."
+        en: "Keep the status separate from the records and start with `loading`. `.then` takes a second argument — a function for a rejected `Promise`, for example `load().then(show, () => setStatus('failed'))`; with `await` a `try`/`catch` does the same. Saving is allowed only when the status says “we have read the store”: that is `ready` or `empty`, but not `loading` and not `failed`, because after a failure you do not know what is there. For `retry` to read again, the read effect must depend on something `retry` changes — for example an attempt counter."
+    solutionNote:
+      uk: "Статус — окрема частина стану, і порожній масив більше нічого не означає сам по собі. Збереження відкрите лише для `ready` і `empty`: так і рання відповідь, і збій лишають сховище недоторканим. `retry` скидає статус у `loading` і збільшує лічильник спроб, від якого залежить effect читання. Інший правильний шлях — зберігати не в effect, а в обробнику `add`: тоді записати раніше за читання просто нічого."
+      en: "The status is its own piece of state, and an empty array no longer means anything by itself. Saving is open only for `ready` and `empty`: that way both an early moment and a failure leave the store untouched. `retry` puts the status back to `loading` and increments the attempt counter the read effect depends on. Another correct route is to save not in an effect but in the `add` handler: then nothing can be written before the read."
+    feedback:
+      - when: { test: "the first frame shows loading, not the empty message" }
+        message:
+          uk: "Ця перевірка дивиться на екран через 30 мс після запуску, поки читання ще триває, і чекає текст завантаження без «витрат немає». Початковий статус має бути `loading`."
+          en: "This check looks at the screen 30 ms after launch, while the read is still running, and expects the loading text without “no expenses”. The initial status must be `loading`."
+      - when: { test: "nothing is written before the read settles" }
+        message:
+          uk: "Ця перевірка рахує записи, поки читання ще в дорозі, і чекає нуль, а потім — ті самі дві витрати в сховищі. Effect збереження не має нічого писати, доки статус не `ready` чи `empty`."
+          en: "This check counts the writes while the read is still on its way and expects zero, and then the same two expenses in the store. The save effect must write nothing until the status is `ready` or `empty`."
+      - when: { test: "a failed read shows the error with a retry and writes nothing" }
+        message:
+          uk: "Ця перевірка змушує читання впасти й чекає текст помилки, кнопку повтору, нуль записів і незмінені дані в сховищі. Після збою зберігати не можна: ти не знаєш, що там лежить."
+          en: "This check makes the read fail and expects the error text, a retry button, zero writes and the store's data unchanged. After a failure you must not save: you do not know what is there."
+      - when: { test: "retry reads again and shows the expenses" }
+        message:
+          uk: "Ця перевірка натискає «Спробувати ще» після збою й чекає витрати на екрані. `retry` має знову запустити читання, а не лише змінити статус."
+          en: "This check presses “Try again” after a failure and expects the expenses on screen. `retry` has to start the read again, not just change the status."
+      - when: { test: "adding after the load saves the new list" }
+        message:
+          uk: "Ця перевірка після завантаження натискає «Додати обід» і чекає в сховищі три витрати: дві старі й нову."
+          en: "This check presses “Add lunch” after loading and expects three expenses in the store: the two old ones and the new one."
+    limits:
+      uk: "Перевірки запускають екран у перегляді react-native-web з імітованим сховищем у пам’яті, яке відповідає із затримкою й уміє навмисно впасти. Справжній AsyncStorage, його помилки на пристрої й перезапуск процесу тут не перевіряються — це робиш у локальному завданні уроку про налагодження."
+      en: "The checks start the screen in the react-native-web preview with an imitation store in memory that answers with a delay and can fail on purpose. The real AsyncStorage, its errors on a device and a process restart are not checked here — you do that in the local task of the debugging lesson."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-05
+    body:
+      uk: "У проєктному кроці хук даних у `native/` отримає ті самі чотири стани запуску, а збереження через нативний адаптер відкриється лише після вдалого читання: так проєкт переживе перезапуск, не затерши записи порожнім списком."
+      en: "In the project step the data hook in `native/` gets the same four startup states, and saving through the native adapter opens only after a successful read: that way the project survives a restart without wiping its records with an empty list."
