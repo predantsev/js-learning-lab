@@ -556,7 +556,7 @@
       toHaveBeenCalledTimes: (n) => check(actual && actual.calls && actual.calls.length === n, `to have been called ${n} time(s)${actual && actual.calls ? ` (was called ${actual.calls.length})` : ''}`),
       toHaveBeenCalledWith: (...args) => check(actual && actual.calls && actual.calls.some((c) => deepEqual(c, args)), `to have been called with ${show(args)}`),
       toHaveTextContent: (text) => { const t = actual ? actual.textContent.replace(/\s+/g, ' ').trim() : ''; check(text instanceof RegExp ? text.test(t) : t.includes(text), `to have text ${show(String(text))} (text is ${show(t)})`); },
-      toBeVisible: () => check(Boolean(actual) && actual.isConnected && getComputedStyle(actual).display !== 'none' && getComputedStyle(actual).visibility !== 'hidden' && !actual.closest('[hidden]'), 'to be visible'),
+      toBeVisible: () => check(Boolean(actual) && actual.nodeType === 1 && !isHidden(actual), 'to be visible'),
       toBeInTheDocument: () => check(Boolean(actual) && actual.isConnected, 'to be in the document'),
       toHaveFocus: () => check(document.activeElement === actual, `to have focus (focus is on ${show(document.activeElement)})`),
       toHaveValue: (v) => check(actual && actual.value === v, `to have value ${show(v)}${actual ? ` (value is ${show(actual.value)})` : ''}`),
@@ -659,6 +659,25 @@
     async submit(target) { lastSubmitPrevented = null; el(target).requestSubmit(); await settle(); return { prevented: lastSubmitPrevented === true }; },
   };
   const textOf = (n) => n.textContent.replace(/\s+/g, ' ').trim();
+  /**
+   * Hidden from the user: not in the document, or hidden by the element itself or by any ancestor
+   * (display: none, the hidden attribute); visibility: hidden counts as the element computes it
+   * (it is inherited, and a child may set visibility: visible again).
+   */
+  function isHidden(node) {
+    if (!node.isConnected) return true;
+    if (getComputedStyle(node).visibility === 'hidden' || getComputedStyle(node).visibility === 'collapse') return true;
+    for (let n = node; n && n.nodeType === 1; n = n.parentElement) {
+      if (n.hasAttribute('hidden') || getComputedStyle(n).display === 'none') return true;
+    }
+    return false;
+  }
+  /** Text the page shows: the body's text without the content of script and style elements. */
+  function pageText() {
+    const copy = document.body.cloneNode(true);
+    for (const n of copy.querySelectorAll('script, style, template')) n.remove();
+    return textOf(copy);
+  }
   function accessibleName(node) {
     const labelledby = node.getAttribute('aria-labelledby');
     if (labelledby) return labelledby.split(/\s+/).map((id) => { const n = document.getElementById(id); return n ? textOf(n) : ''; }).join(' ').trim();
@@ -683,14 +702,15 @@
   const screen = {
     $: (sel) => document.querySelector(sel),
     $$: (sel) => [...document.querySelectorAll(sel)],
-    allByRole: (role, opts = {}) => [...document.querySelectorAll('*')].filter((n) => implicitRole(n) === role && (opts.name === undefined || matchText(accessibleName(n), opts.name))),
+    // Like Testing Library: hidden elements are skipped unless { hidden: true }.
+    allByRole: (role, opts = {}) => [...document.querySelectorAll('*')].filter((n) => implicitRole(n) === role && (opts.name === undefined || matchText(accessibleName(n), opts.name)) && (opts.hidden === true || !isHidden(n))),
     byRole: (role, opts) => screen.allByRole(role, opts)[0] || null,
     allByText: (text) => [...document.querySelectorAll('body *')].filter((n) => ![...n.children].some((c) => matchText(textOf(c), text)) && matchText(textOf(n), text) && !['SCRIPT', 'STYLE'].includes(n.tagName)),
     byText: (text) => screen.allByText(text)[0] || null,
     byLabel: (text) => [...document.querySelectorAll('input,select,textarea,button,[role]')].find((n) => matchText(accessibleName(n), text)) || null,
     nameOf: accessibleName,
     roleOf: implicitRole,
-    text: () => textOf(document.body),
+    text: pageText,
   };
   function mockFetch(routes) {
     const calls = [];

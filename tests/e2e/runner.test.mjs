@@ -243,6 +243,22 @@ test('behavior tests see top-level bindings, console output, DOM events and asyn
   assert.match(r.tests[5].message, /timed out/);
 });
 
+test('test helpers tell the truth about hidden elements and page text', async () => {
+  const files = {
+    'index.html': '<!doctype html><html><body><h1>Shop</h1><div id="panel" style="display:none"><p id="inner">Secret</p><button>Hidden save</button></div><section hidden><button>Attr hidden</button></section><div style="visibility:hidden"><button id="vis">Invisible</button><button style="visibility:visible" id="back">Shown again</button></div><button>Save</button><style>.x { color: red }</style><script type="module" src="index.js"></script></body></html>',
+    'index.js': 'document.querySelector("h1").dataset.ready = "yes";',
+  };
+  const tests = [
+    'test("inner of display none is not visible", () => { expect(screen.$("#inner")).not.toBeVisible(); });',
+    'test("visibility hidden and visible again", () => { expect(screen.$("#vis")).not.toBeVisible(); expect(screen.$("#back")).toBeVisible(); expect(screen.$("h1")).toBeVisible(); });',
+    'test("role queries skip hidden", () => { expect(screen.allByRole("button").map((b) => b.textContent)).toEqual(["Shown again", "Save"]); expect(screen.byRole("button", { name: "Hidden save" })).toBeNull(); expect(screen.byRole("button", { name: "Hidden save", hidden: true })).not.toBeNull(); expect(screen.allByRole("button", { hidden: true })).toHaveLength(5); });',
+    'test("page text has no script or style", () => { expect(screen.text()).not.toMatch(/color: red|querySelector/); expect(screen.text()).toMatch(/^Shop/); });',
+  ].join("\n");
+  const r = await run({ entry: 'index.html', files, tests: { path: '__tests__.js', source: tests } });
+  assert.deepEqual(r.tests.map((t) => [t.name, t.status, t.message ?? '']), r.tests.map((t) => [t.name, 'pass', '']));
+  assert.equal(r.tests.length, 4);
+});
+
 test('a form submitted without preventDefault is explained instead of reloading the sandbox', async () => {
   const r = await run({
     entry: 'index.html',
