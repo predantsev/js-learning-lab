@@ -5,7 +5,7 @@ import { HabitRow } from './HabitRow.jsx';
 
 const habits = [
   { id: 'h-05', name: '%%words%%', completions: ['2026-02-20'], details: '%%wordsDetails%%' },
-  { id: 'h-01', name: '%%exercise%%', completions: ['2026-02-27', '2026-02-28', '2026-03-01'], details: '%%exerciseDetails%%' },
+  { id: 'h-03', name: '%%water%%', completions: ['2026-03-01'], details: '%%waterDetails%%' },
 ];
 
 createRoot(document.getElementById('root')).render(
