@@ -30,10 +30,13 @@ Names that the repository's `.gitignore` drops (`dist/`, `build/`, `coverage/`, 
 npm run build                                        # once, and after platform changes
 node scripts/content/validate.mjs --unit JS-03       # static checks + real execution of every fixture
 node scripts/content/validate.mjs --lesson <id>
+node scripts/content/validate.mjs --lesson <id> --verbose      # also every run and every check: ✔/✖ per check of each fixture
 node scripts/content/validate.mjs --unit JS-12 --locale uk-UA   # browser under another locale (default: en-US)
 node scripts/content/smoke.mjs --unit JS-12 --locale uk-UA      # every lesson page in the real app
 npm start                                            # read your lesson as a learner (http://localhost:7300)
 ```
+
+`--verbose` prints, under a `▸ <lesson> › <block>` header, one line per run (example, prediction, fixture, capstone state, per language) and, for a fixture, one `✔`/`✖` line per check with the failure message: you see which checks each `wrong*` fixture fails (rule 54: a wrong fixture should break only the rule it models) and that `solution` and every `alt*` pass all of them. A line starts with `✖` when that run breaks the validator's rule; the errors are still listed at the end. Without `--verbose` the output is unchanged.
 
 The validator runs every example, every exercise fixture and every verifiable prediction in headless Chrome through the same sandbox the learner uses, in both languages. A lesson is not done until it passes. Headless Chrome reports the locale `en-US` unless `--locale` names another one (Chrome `--lang` plus the page locale: `Intl`, `navigator.language`, `localeCompare` and `toLocaleString` follow it); validate Intl-dependent lessons under `--locale uk-UA` and `--locale en-US`.
 
