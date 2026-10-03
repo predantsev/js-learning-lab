@@ -1,0 +1,397 @@
+id: re-02-08-debug-stale-setter-derived
+unit: RE-02
+title:
+  uk: "Налагодження: застарілий сетер і продубльований похідний стан"
+  en: "Debug: stale setter and duplicated derived state"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знайти оновлення, загублені через `setX(x + 1)` у швидких або відкладених оновленнях, і виправити їх функціями-оновлювачами."
+    en: "Diagnose increments lost by `setX(x + 1)` in rapid or delayed updates and repair them with updater functions."
+  - uk: "Прибрати продубльований похідний стан, що розходиться з даними, і обчислювати його під час рендеру."
+    en: "Remove duplicated derived state that drifts out of sync and compute it during render instead."
+prerequisites: [re-02-07-reset-preserve-identity]
+subskills:
+  - { family: R-02, skill: "state snapshots", depth: assess }
+  - { family: R-02, skill: "updater queues/batching", depth: assess }
+  - { family: R-02, skill: "derived state", depth: assess }
+glossary: []
+selfCheck: [timer-clicks, coffee-board]
+
+blocks:
+  - id: two-suspects
+    kind: explanation
+    title:
+      uk: "Два підозрювані"
+      en: "Two suspects"
+    body:
+      uk: |
+        Коли число на екрані неправильне, у React найчастіше винен один із двох:
+
+        - **Застарілий сетер.** `setX(x + …)` чи `setList([...list, item])` рахує зі **знімка** рендеру. Якщо такий виклик спрацьовує пізніше — у таймері, після очікування — або кілька разів до наступного рендеру, усі вони бачать той самий старий знімок, і кожен наступний затирає попередній.
+        - **Продубльований похідний стан.** Підсумок, лічильник чи відфільтрований список лежить в окремому `useState`. Обробник, який забув його оновити, — і копія розходиться з даними.
+
+        Перевірка «я клацнув один раз, повільно, і все правильно» нічого не доводить: обидві вади мовчать у повільному сценарії. Відтвори той, що їх будить:
+
+        1. Швидкі кліки й дії, що завершуються пізніше.
+        2. Дія, після якої дані змінюються іншим шляхом (вилучення, фільтр, повернення назад).
+        3. Для кожного хибного числа спитай: який рендер — який знімок — його порахував?
+      en: |
+        When a number on the screen is wrong, in React one of two suspects is usually to blame:
+
+        - **A stale setter.** `setX(x + …)` or `setList([...list, item])` computes from the render's **snapshot**. If such a call runs later — in a timer, after waiting — or several times before the next render, all of them see the same old snapshot, and each next one overwrites the previous.
+        - **Duplicated derived state.** A total, a counter or a filtered list lives in its own `useState`. One handler forgets to update it — and the copy drifts away from the data.
+
+        The check “I clicked once, slowly, and everything is right” proves nothing: both defects stay silent in the slow scenario. Reproduce the one that wakes them up:
+
+        1. Quick clicks and actions that finish later.
+        2. An action after which the data changes another way (a removal, a filter, going back).
+        3. For every wrong number ask: which render — which snapshot — computed it?
+
+  - id: timer-clicks
+    kind: prediction
+    lang: jsx
+    runnable: false
+    prompt:
+      uk: "Людина швидко тричі клацає «+1» — за менш ніж пів секунди. Що покаже лічильник через секунду?"
+      en: "A person quickly clicks “+1” three times — within less than half a second. What does the counter show a second later?"
+    code: |
+      const [streak, setStreak] = useState(0);
+
+      function handlePlusOne() {
+        setTimeout(() => {
+          setStreak(streak + 1);
+        }, 500);
+      }
+
+      return <button onClick={handlePlusOne}>+1 ({streak})</button>;
+    answer:
+      type: choice
+      options:
+        - id: one
+          text: { uk: "`1`", en: "`1`" }
+        - id: three
+          text: { uk: "`3`", en: "`3`" }
+          why:
+            uk: "Сам клік нічого не змінює в стані, тож рендеру між кліками немає: усі три таймери створено в рендері з `streak = 0`, і кожен ставить `0 + 1`."
+            en: "The click itself changes nothing in state, so there is no render between the clicks: all three timers were created in the render with `streak = 0`, and each sets `0 + 1`."
+        - id: two
+          text: { uk: "`2`", en: "`2`" }
+          why:
+            uk: "Немає рендеру, після якого другий чи третій таймер побачив би `1`: їхній знімок — той, що був під час кліку."
+            en: "There is no render after which the second or third timer would see `1`: their snapshot is the one from the click."
+      correct: [one]
+    explanation:
+      uk: "Клік лише запускає таймер — стан не змінюється, і React не рендерить. Тож усі три обробники з одного рендеру, а таймери закрилися над `streak = 0`. Через пів секунди кожен ставить `0 + 1`: лічильник `1`. Повільні кліки — з паузою більше ніж пів секунди — дали б `3`, і вада сховалася б. `setStreak((s) => s + 1)` дає `3` за будь-якого темпу."
+      en: "A click only starts a timer — state does not change, and React does not render. So all three handlers come from one render, and the timers closed over `streak = 0`. Half a second later each sets `0 + 1`: the counter shows `1`. Slow clicks — more than half a second apart — would give `3`, and the defect would hide. `setStreak((s) => s + 1)` gives `3` at any pace."
+
+  - id: total-after-remove
+    kind: prediction
+    lang: jsx
+    runnable: false
+    strings:
+      lunch: { uk: "Обід", en: "Lunch" }
+    prompt:
+      uk: "Витрат дві: 845.50 і 210.50, тож `total` — 105600 копійок. Людина вилучає «Обід» (210.50). Що покаже сума?"
+      en: "There are two expenses: 845.50 and 210.50, so `total` is 105600 kopiykas. A person removes “Lunch” (210.50). What does the total show?"
+    code: |
+      const [expenses, setExpenses] = useState(start);
+      const [total, setTotal] = useState(105600);
+
+      function handleRemove(id) {
+        setExpenses(expenses.filter((e) => e.id !== id));
+      }
+    answer:
+      type: choice
+      options:
+        - id: stale
+          text: { uk: "Досі 1056.00", en: "Still 1056.00" }
+        - id: fresh
+          text: { uk: "845.50", en: "845.50" }
+          why:
+            uk: "`total` — окремий стан, і `handleRemove` його не чіпає. React не знає, що одне випливає з іншого."
+            en: "`total` is separate state, and `handleRemove` does not touch it. React does not know one follows from the other."
+        - id: zero
+          text: { uk: "0.00", en: "0.00" }
+          why:
+            uk: "Ніхто не скидав `total` — він просто лишився таким, яким був."
+            en: "Nobody reset `total` — it simply stayed as it was."
+      correct: [stale]
+    explanation:
+      uk: "Список став коротшим, але `total` живе окремо, і вилучення його не оновило: на екрані досі 1056.00. Така сума правильна до першої дії, яку автор забув урахувати. Сума, обчислена з `expenses` під час рендеру, була б 845.50."
+      en: "The list got shorter, but `total` lives separately, and the removal did not update it: the screen still shows 1056.00. Such a total is right until the first action its author forgot. A total computed from `expenses` during render would show 845.50."
+
+  - id: habit-board
+    kind: example
+    runtime: browser-react
+    dir: habit-board
+    entry: main.jsx
+    strings:
+      title: { uk: "Звички на сьогодні", en: "Habits for today" }
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      doneToday: { uk: "Виконано сьогодні", en: "Done today" }
+      done: { uk: "виконано", en: "done" }
+      notYet: { uk: "ще ні", en: "not yet" }
+      markDone: { uk: "Виконано", en: "Done" }
+      undo: { uk: "Скасувати", en: "Undo" }
+    title:
+      uk: "Звички, що «губляться»"
+      en: "Habits that “get lost”"
+    body:
+      uk: |
+        Тут обидві вади разом. «Виконано» позначає звичку через пів секунди, ніби спершу зберігає її, а лічильник «Виконано сьогодні» — окремий стан. Консоль показує кожен рендер і кожен таймер зі знімком, який він бачить. Запусти й спробуй на вкладці **Сторінка**.
+      en: |
+        Both defects are here together. “Done” marks a habit half a second later, as if saving it first, and the “Done today” counter is separate state. The console shows every render and every timer with the snapshot it sees. Run it and try it on the **Page** tab.
+    tryIt:
+      uk: |
+        1. Повільно: клацни «Виконано» в одній звичці й зачекай. Усе правильно — так вада й ховається.
+        2. Швидко: перезапусти й клацни «Виконано» у двох звичках менш ніж за пів секунди. Перша звичка позначається, а за мить знову стає «ще ні»; лічильник — `1`. Консоль: обидва таймери бачать `doneCount = 0` — знімок рендеру, у якому сталися обидва кліки.
+        3. Клацни «Скасувати»: позначка зникає, а лічильник лишається — копію не оновили.
+        4. Виправ: у таймері `setHabits((previous) => previous.map(…))` замість `habits.map(…)`; прибери `doneCount` зі стану й обчислюй `habits.filter((h) => h.done).length`. Повтори кроки 2 і 3.
+      en: |
+        1. Slowly: click “Done” on one habit and wait. Everything is right — that is how the defect hides.
+        2. Quickly: rerun and click “Done” on two habits within half a second. The first habit gets marked and a moment later turns “not yet” again; the counter shows `1`. Console: both timers see `doneCount = 0` — the snapshot of the render in which both clicks happened.
+        3. Click “Undo”: the mark disappears, but the counter stays — the copy was not updated.
+        4. Fix it: in the timer use `setHabits((previous) => previous.map(…))` instead of `habits.map(…)`; remove `doneCount` from state and compute `habits.filter((h) => h.done).length`. Repeat steps 2 and 3.
+
+  - id: replay
+    kind: visual
+    visual: render-timeline
+    strings:
+      exercise: { uk: "Зарядка", en: "Exercise" }
+      reading: { uk: "Читання", en: "Reading" }
+    title:
+      uk: "Повтор швидкого сценарію"
+      en: "A replay of the quick scenario"
+    textEquivalent:
+      uk: >-
+        Рендер 1: жодну звичку не виконано, doneCount = 0. Людина клацає «Виконано» у звичці h-01, а одразу потім у h-02. Клік
+        лише запускає таймер, тож рендеру між кліками немає, і обидва таймери тримають знімок рендеру 1. Перший таймер ставить
+        список із виконаною h-01 і doneCount = 0 + 1: рендер 2 показує h-01 виконаною й лічильник 1. Другий таймер досі тримає
+        знімок рендеру 1, тож ставить список, де виконана лише h-02, — позначку h-01 затерто, — і знову doneCount = 0 + 1. Рендер 3:
+        виконана тільки h-02, лічильник 1, хоча клацнули двічі.
+      en: >-
+        Render 1: no habit is done, doneCount = 0. The person clicks “Done” on habit h-01 and right after that on h-02. A click
+        only starts a timer, so there is no render between the clicks, and both timers hold the snapshot of render 1. The first
+        timer sets a list with h-01 done and doneCount = 0 + 1: render 2 shows h-01 as done and the counter 1. The second timer
+        still holds the snapshot of render 1, so it sets a list where only h-02 is done — the h-01 mark is overwritten — and
+        again doneCount = 0 + 1. Render 3: only h-02 is done, the counter shows 1, although there were two clicks.
+    spec:
+      component: HabitBoard
+      code: |
+        function HabitBoard() {
+          const [habits, setHabits] = useState(startHabits);
+          const [doneCount, setDoneCount] = useState(0);
+          function handleDone(id) {
+            setTimeout(() => {
+              setHabits(habits.map((h) => (h.id === id ? { ...h, done: true } : h)));
+              setDoneCount(doneCount + 1);
+            }, 500);
+          }
+          // …
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 2
+          reason: { uk: "перший показ", en: "the first display" }
+          snapshot: { state: { done: [], doneCount: 0 } }
+          caption:
+            uk: "Рендер 1: нічого не виконано, `doneCount = 0`. Обидва майбутні обробники кліку народжуються тут."
+            en: "Render 1: nothing is done, `doneCount = 0`. Both future click handlers are born here."
+        - phase: commit
+          render: 1
+          line: 2
+          dom: "%%exercise%%: —, %%reading%%: —, 0"
+          caption:
+            uk: "Commit 1: дві звички «ще ні», лічильник 0."
+            en: "Commit 1: two habits “not yet”, the counter 0."
+        - phase: event
+          name: click h-01, click h-02
+          line: 5
+          sees: { done: [], doneCount: 0 }
+          actions: ["setTimeout(…h-01…, 500)", "setTimeout(…h-02…, 500)"]
+          caption:
+            uk: "Два швидкі кліки. Кожен лише запускає таймер — стан не змінюється, рендеру між ними немає. Обидва таймери тримають знімок рендеру 1."
+            en: "Two quick clicks. Each one only starts a timer — state does not change, there is no render between them. Both timers hold the snapshot of render 1."
+        - phase: event
+          name: timer h-01
+          line: 6
+          sees: { done: [], doneCount: 0 }
+          actions: ["setHabits(h-01 done)", "setDoneCount(0 + 1)"]
+          queued: { done: ["h-01"], doneCount: 1 }
+          caption:
+            uk: "Перший таймер: список зі знімка, у ньому h-01 виконана; лічильник `0 + 1`."
+            en: "The first timer: a list from the snapshot with h-01 done; the counter `0 + 1`."
+        - phase: render
+          render: 2
+          line: 2
+          reason: { uk: "таймер h-01", en: "the h-01 timer" }
+          snapshot: { state: { done: ["h-01"], doneCount: 1 } }
+          caption:
+            uk: "Рендер 2: h-01 виконана, лічильник 1. Поки що все правильно."
+            en: "Render 2: h-01 is done, the counter shows 1. So far everything is right."
+        - phase: commit
+          render: 2
+          line: 2
+          dom: "%%exercise%%: ✓, %%reading%%: —, 1"
+          caption:
+            uk: "Commit 2: на екрані h-01 виконана, лічильник 1."
+            en: "Commit 2: the screen shows h-01 as done, the counter 1."
+        - phase: event
+          name: timer h-02
+          line: 6
+          sees: { done: [], doneCount: 0 }
+          actions: ["setHabits(h-02 done)", "setDoneCount(0 + 1)"]
+          queued: { done: ["h-02"], doneCount: 1 }
+          caption:
+            uk: "Другий таймер досі тримає **знімок рендеру 1**: у його `habits` h-01 не виконана. Він ставить список лише з h-02 і знову `0 + 1`."
+            en: "The second timer still holds **the snapshot of render 1**: in its `habits` h-01 is not done. It sets a list with only h-02 done and again `0 + 1`."
+        - phase: render
+          render: 3
+          line: 2
+          reason: { uk: "таймер h-02", en: "the h-02 timer" }
+          snapshot: { state: { done: ["h-02"], doneCount: 1 } }
+          caption:
+            uk: "Рендер 3: позначку h-01 затерто, лічильник 1 після двох кліків. Обидва хибні числа — зі знімка рендеру 1."
+            en: "Render 3: the h-01 mark is overwritten, the counter shows 1 after two clicks. Both wrong numbers come from the snapshot of render 1."
+        - phase: commit
+          render: 3
+          line: 2
+          dom: "%%exercise%%: —, %%reading%%: ✓, 1"
+          caption:
+            uk: "Commit 3: на екрані одна виконана звичка з двох. Функція-оновлювач отримала б результат першого таймера, а лічильник, обчислений зі списку, не міг би розійтися з ним."
+            en: "Commit 3: the screen shows one done habit out of two. An updater function would receive the first timer's result, and a counter computed from the list could not drift from it."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: захоплене значення"
+      en: "Recall: a captured value"
+    items:
+      - id: captured-in-loop
+        from: js-03-09-debug-captured-bindings
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          let total = 100;
+          const report = () => console.log(total);
+          const saved = total;
+          const reportSaved = () => console.log(saved);
+          total = 250;
+          report();
+          reportSaved();
+        verify:
+          logs: ["250", "100"]
+        answer:
+          type: order
+          items:
+            - { id: live, code: "250" }
+            - { id: copy, code: "100" }
+        explanation:
+          uk: "`report` читає змінну `total` у момент виклику — там уже `250`. `reportSaved` читає `saved` — константу, яка отримала `100` і більше не змінюється. Знімок стану в React — саме такий `const`: обробник читає значення свого рендеру, хоч би що сталося потім."
+          en: "`report` reads the variable `total` at the time of the call — it already holds `250`. `reportSaved` reads `saved` — a constant that got `100` and never changes. A React state snapshot is exactly such a `const`: the handler reads the value of its render, whatever happens later."
+
+  - id: coffee-board
+    kind: exercise
+    mode: debug
+    runtime: browser-react
+    dir: coffee-board
+    entry: main.jsx
+    editable: [App.jsx]
+    strings:
+      title: { uk: "Витрати тижня", en: "This week's expenses" }
+      all: { uk: "Усі", en: "All" }
+      food: { uk: "Їжа", en: "Food" }
+      fun: { uk: "Розваги", en: "Fun" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      coffeeFriends: { uk: "Кава з друзями", en: "Coffee with friends" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      coffee: { uk: "Кава", en: "Coffee" }
+      addCoffee: { uk: "+ кава", en: "+ coffee" }
+      total: { uk: "Разом", en: "Total" }
+      currency: { uk: "грн", en: "UAH" }
+      remove: { uk: "Вилучити", en: "Remove" }
+    title:
+      uk: "Кава, що не додається"
+      en: "Coffee that does not add up"
+    instructions:
+      uk: |
+        Дошка витрат тижня має фільтр, кнопку «+ кава», яка додає каву за 45.00 грн через 300 мс (ніби спершу зберігає), і суму всіх витрат. Код виглядає охайно, але люди скаржаться:
+
+        - швидко клацнули «+ кава» тричі — кава з’явилася раз або й жодного;
+        - після вилучення витрати сума не змінюється;
+        - з увімкненим фільтром «Розваги» нова кава не з’являється в списку.
+
+        Знайди причини й виправ `App.jsx`, щоб:
+
+        1. Три швидкі кліки «+ кава» додавали три кави, а сума враховувала всі три.
+        2. Сума завжди дорівнювала сумі **всіх** витрат, і після вилучення теж.
+        3. Список завжди показував витрати вибраної категорії — і щойно додані теж.
+
+        Перевірки клацають швидко й чекають, поки спрацюють таймери. Кожна показує власну, щойно створену копію дошки.
+      en: |
+        The weekly expense board has a filter, a “+ coffee” button that adds a 45.00 UAH coffee after 300 ms (as if saving it first), and the sum of all expenses. The code looks tidy, but people complain:
+
+        - they quickly clicked “+ coffee” three times — the coffee appeared once, or not at all;
+        - after an expense is removed, the total does not change;
+        - with the “Fun” filter on, a new coffee does not appear in the list.
+
+        Find the causes and fix `App.jsx` so that:
+
+        1. Three quick clicks on “+ coffee” add three coffees, and the total counts all three.
+        2. The total always equals the sum of **all** expenses, after a removal too.
+        3. The list always shows the expenses of the selected category — including the ones just added.
+
+        The checks click quickly and wait for the timers to fire. Each one shows its own freshly created copy of the board.
+    testTitles:
+      "three quick clicks add three coffees":
+        uk: "Три швидкі кліки додають три кави"
+        en: "Three quick clicks add three coffees"
+      "the total counts all three quick coffees":
+        uk: "Сума враховує всі три швидкі кави"
+        en: "The total counts all three quick coffees"
+      "removing an expense updates the total":
+        uk: "Вилучення витрати оновлює суму"
+        en: "Removing an expense updates the total"
+      "a new coffee shows up while the Fun filter is on":
+        uk: "Нова кава з’являється, коли ввімкнено фільтр «Розваги»"
+        en: "A new coffee shows up while the Fun filter is on"
+    hints:
+      nudge:
+        uk: "Для кожного хибного числа спитай: з якого знімка його пораховано? І чи має кожна змінна стану право бути станом — чи її можна обчислити?"
+        en: "For every wrong number ask: from which snapshot was it computed? And does every state variable deserve to be state — or can it be computed?"
+      explanation:
+        uk: "Таймер у `handleAddCoffee` бачить `expenses` рендеру, у якому стався клік, тож три таймери з одного рендеру затирають один одного — сетер має отримувати функцію від попереднього списку, як `setStreak((s) => s + 1)` у передбаченні. `visible` і `total` — копії того, що випливає з `expenses` і `category`: прибери їх зі стану разом з усіма їхніми сетерами й обчислюй під час рендеру."
+        en: "The timer in `handleAddCoffee` sees the `expenses` of the render in which the click happened, so three timers from one render overwrite each other — the setter has to get a function of the previous list, like `setStreak((s) => s + 1)` in the prediction. `visible` and `total` are copies of what follows from `expenses` and `category`: remove them from state together with all their setters and compute them during render."
+    solutionNote:
+      uk: "Функція-оновлювач у таймері бере список, який лишив попередній таймер, тож жодна кава не губиться за будь-якого темпу кліків. `visible` і `total` тепер обчислюються з `expenses` і `category` на кожен рендер — їх більше нема кому забути оновити, і зайві сетери зникли разом із ними."
+      en: "The updater function in the timer takes the list the previous timer left, so no coffee is lost at any clicking pace. `visible` and `total` are now computed from `expenses` and `category` on every render — nobody can forget to update them any more, and the extra setters are gone with them."
+    feedback:
+      - when: { test: "three quick clicks add three coffees" }
+        message:
+          uk: "Ця перевірка тричі швидко клацає «+ кава», чекає 600 мс і рахує рядки «Кава» у списку — їх має бути три. Якщо їх менше, таймери рахують зі старого знімка `expenses`, або список показує окрему копію, яку додавання не оновлює. Якщо всі перевірки не пройшли разом, спершу виправ першу помилку в консолі."
+          en: "This check quickly clicks “+ coffee” three times, waits 600 ms and counts the “Coffee” rows in the list — there must be three. If there are fewer, the timers compute from an old snapshot of `expenses`, or the list shows a separate copy that adding does not update. If every check fails at once, fix the first error in the console first."
+      - when: { test: "the total counts all three quick coffees" }
+        message:
+          uk: "Ця перевірка тричі швидко клацає «+ кава» і за 600 мс чекає суму `Разом: 1371.00 грн` (1236.00 + 3 × 45.00)."
+          en: "This check quickly clicks “+ coffee” three times and 600 ms later expects the total `Total: 1371.00 UAH` (1236.00 + 3 × 45.00)."
+      - when: { test: "removing an expense updates the total" }
+        message:
+          uk: "Ця перевірка вилучає «Обід» (210.50) і чекає `Разом: 1025.50 грн`. Сума, обчислена з `expenses` під час рендеру, оновлюється сама."
+          en: "This check removes “Lunch” (210.50) and expects `Total: 1025.50 UAH`. A total computed from `expenses` during render updates by itself."
+      - when: { test: "a new coffee shows up while the Fun filter is on" }
+        message:
+          uk: "Ця перевірка вмикає «Розваги», додає каву й чекає в списку два рядки: «Кава з друзями» і нову «Кава». Список має обчислюватися з `expenses` і `category`, а не лежати окремою копією, яку оновлює лише клік фільтра."
+          en: "This check turns on “Fun”, adds a coffee and expects two rows in the list: “Coffee with friends” and the new “Coffee”. The list has to be computed from `expenses` and `category`, not kept as a separate copy that only a filter click updates."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-02
+    body:
+      uk: "Коли наприкінці розділу перевірятимеш проєкт, не обмежуйся повільним кліком: перемикай статус кілька разів поспіль, вилучай записи з увімкненим фільтром і стеж, чи підсумок не відстає від списку."
+      en: "When you check your project at the end of the unit, do not stop at one slow click: toggle a status several times in a row, remove records with a filter on and watch whether the summary keeps up with the list."
