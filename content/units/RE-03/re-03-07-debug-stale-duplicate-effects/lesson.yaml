@@ -1,0 +1,511 @@
+id: re-03-07-debug-stale-duplicate-effects
+unit: RE-03
+title:
+  uk: "Налагодження: застарілі дані й продубльовані ефекти"
+  en: "Debug: stale data and duplicated effects"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Розпізнати в панелі подробиць, що показує дані попереднього запису, пропущену залежність або нескасований запит — і виправити їх."
+    en: "Diagnose a detail view that shows the previous record's data as a missing dependency or an uncancelled request, and repair it."
+  - uk: "Виправити ефекти, що «течуть» чи дублюють роботу в Strict Mode, — так, щоб кожен cleanup скасовував рівно те, що зробив його setup."
+    en: "Repair effects that leak or duplicate work under Strict Mode by making each cleanup undo exactly what its setup did."
+prerequisites: [re-03-06-not-an-effect]
+subskills:
+  - { family: R-04, skill: "dependencies/cleanup", depth: assess }
+  - { family: R-04, skill: "stale closure", depth: assess }
+  - { family: R-04, skill: "development rechecks", depth: assess }
+glossary: []
+selfCheck: [predict-race-and-listeners, wish-detail]
+
+blocks:
+  - id: two-symptoms
+    kind: explanation
+    title:
+      uk: "Два симптоми — дві родини причин"
+      en: "Two symptoms — two families of causes"
+    body:
+      uk: |
+        Більшість помилок в ефектах видно з одного з двох симптомів.
+
+        **Екран показує дані попереднього запису.** Причин дві:
+
+        - **пропущена залежність** — ефект не перезапускається для нового запису й лишається з першим;
+        - **нескасований запит** — ефект перезапустився, але відповідь для старого запису прийшла **пізніше** за нову й записала себе поверх неї. Це [[stale-response|застаріла відповідь]] з JS-08, тепер у React.
+
+        **Щось трапляється двічі або не зникає.** Клавіша спрацьовує двічі, listeners накопичуються, з’єднання лишаються відкритими. Причина — cleanup, який скасовує **не те** або не все, що зробив setup. StrictMode показує таку помилку вже на першому монтуванні — і це не «помилка лише розробки»: те саме станеться, коли компонент змонтують удруге.
+      en: |
+        Most bugs in effects show up as one of two symptoms.
+
+        **The screen shows the previous record's data.** There are two causes:
+
+        - **a missing dependency** — the effect does not re-run for the new record and stays with the first one;
+        - **an uncancelled request** — the effect did re-run, but the answer for the old record arrived **later** than the new one and wrote itself over it. That is the [[stale-response]] of JS-08, now in React.
+
+        **Something happens twice or never goes away.** A key fires twice, listeners pile up, connections stay open. The cause is a cleanup that undoes **the wrong thing** or not everything its setup did. StrictMode shows such a bug on the very first mount — and it is not a “development-only bug”: the same happens when the component is mounted a second time.
+
+  - id: predict-race-and-listeners
+    kind: prediction
+    prompt:
+      uk: "Компонент змонтовано в `<StrictMode>`. Користувач клікає `w-01`, а одразу за ним `w-02`. Лабораторія відповідає для `w-01` за 900 мс, для `w-02` — за 100 мс. Що покаже панель через секунду і скільки listeners `keydown` висить на `window`?"
+      en: "The component is mounted inside `<StrictMode>`. The user clicks `w-01` and right after it `w-02`. The lab answers for `w-01` in 900 ms and for `w-02` in 100 ms. What does the panel show after a second, and how many `keydown` listeners are attached to `window`?"
+    code: |
+      useEffect(() => {
+        if (selectedId === null) return;
+        fetch(`/lab/wishlist/items/${selectedId}?delay=${delayFor(selectedId)}`)
+          .then((response) => response.json())
+          .then((data) => setWish(data));
+      }, [selectedId]);
+
+      useEffect(() => {
+        function onKey(event) { /* j selects the next wish */ }
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", (event) => onKey(event));
+      }, []);
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: old-two
+          text:
+            uk: "Дані `w-01`; два listeners"
+            en: "The data of `w-01`; two listeners"
+        - id: new-one
+          text:
+            uk: "Дані `w-02`; один listener"
+            en: "The data of `w-02`; one listener"
+          why:
+            uk: "Залежність `[selectedId]` правильна, але запит для `w-01` ніхто не скасував: його відповідь приходить останньою й перезаписує `w-02`. А cleanup знімає **нову** стрілкову функцію, яку ніколи не додавали, — тож listener першого setup лишається."
+            en: "The dependency `[selectedId]` is right, but nobody cancelled the request for `w-01`: its answer arrives last and overwrites `w-02`. And the cleanup removes a **new** arrow function that was never added — so the first setup's listener stays."
+        - id: new-two
+          text:
+            uk: "Дані `w-02`; два listeners"
+            en: "The data of `w-02`; two listeners"
+          why:
+            uk: "Запит для `w-01` триває 900 мс і завершується **після** запиту для `w-02`. Без скасування його `setWish` спрацьовує останнім."
+            en: "The request for `w-01` takes 900 ms and finishes **after** the one for `w-02`. Without cancelling, its `setWish` runs last."
+        - id: old-one
+          text:
+            uk: "Дані `w-01`; один listener"
+            en: "The data of `w-01`; one listener"
+          why:
+            uk: "`removeEventListener` знімає лише ту саму функцію, яку передали в `addEventListener`. Нова стрілкова функція — інша, тож StrictMode (setup → cleanup → setup) лишає два."
+            en: "`removeEventListener` removes only the same function that was passed to `addEventListener`. A new arrow function is a different one, so StrictMode (setup → cleanup → setup) leaves two."
+      correct: [old-two]
+    explanation:
+      uk: "Обидва ефекти виглядають робочими, але cleanup у них або відсутній, або скасовує не те. Запит `w-01` не скасовано — його пізня відповідь перезаписує `w-02`. Cleanup listener’а передає в `removeEventListener` нову функцію, тож після setup → cleanup → setup на `window` два listeners, і клавіша `j` перескакує через запис. Перевірено в пісочниці з React 19.3 і лабораторними відповідями з такими затримками."
+      en: "Both effects look like they work, but their cleanup is either missing or undoes the wrong thing. The `w-01` request is not cancelled — its late answer overwrites `w-02`. The listener's cleanup passes a new function to `removeEventListener`, so after setup → cleanup → setup there are two listeners on `window`, and the `j` key skips a record. Checked in the sandbox with React 19.3 and lab answers with these delays."
+
+  - id: session-timeline
+    kind: visual
+    visual: render-timeline
+    title:
+      uk: "Сеанс із двома дефектами, крок за кроком"
+      en: "A session with two defects, step by step"
+    textEquivalent:
+      uk: >-
+        Компонент WishDetail монтується в StrictMode. Ефект клавіші запускається, його cleanup знімає
+        нову стрілкову функцію, яку ніколи не додавали, і ефект запускається вдруге — на window тепер два
+        listeners. Клік на w-01: рендер бачить selectedId = w-01, ефект запиту просить w-01 у лабораторії
+        (900 мс). Клік на w-02: рендер бачить w-02, ефект просить w-02 (100 мс); попередній запит ніхто не
+        скасовує. Через 100 мс приходить w-02, і екран показує «Настільна лампа». Через 900 мс приходить
+        w-01: його колбек створено ще в рендері з w-01, і він викликає setWish з даними w-01 — екран
+        показує «Навушники», хоча вибрано w-02. Виправлення: cleanup запиту викликає controller.abort(), а
+        cleanup listener’а передає ту саму функцію onKey.
+      en: >-
+        The WishDetail component mounts under StrictMode. The key effect runs, its cleanup removes a new
+        arrow function that was never added, and the effect runs a second time — window now has two
+        listeners. A click on w-01: the render sees selectedId = w-01, the request effect asks the lab for
+        w-01 (900 ms). A click on w-02: the render sees w-02, the effect asks for w-02 (100 ms); nobody
+        cancels the previous request. After 100 ms w-02 arrives and the screen shows “Desk lamp”. After
+        900 ms w-01 arrives: its callback was created in the render with w-01, and it calls setWish with
+        w-01's data — the screen shows “Headphones” although w-02 is selected. The fix: the request's
+        cleanup calls controller.abort(), and the listener's cleanup passes the same onKey function.
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+    spec:
+      component: WishDetail
+      code: |
+        function WishDetail() {
+          const [selectedId, setSelectedId] = useState(null);
+          const [wish, setWish] = useState(null);
+          useEffect(() => {
+            if (selectedId === null) return;
+            fetch(`/lab/wishlist/items/${selectedId}`)
+              .then((response) => response.json())
+              .then((data) => setWish(data));
+          }, [selectedId]);
+          useEffect(() => {
+            window.addEventListener("keydown", onKey);
+            return () => window.removeEventListener("keydown", (e) => onKey(e));
+          }, []);
+          return <p>{wish ? wish.name : "…"}</p>;
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 2
+          reason: { uk: "перший показ (StrictMode)", en: "first display (StrictMode)" }
+          snapshot: { state: { selectedId: null, wish: null } }
+          caption:
+            uk: "Монтування: нічого не вибрано."
+            en: "Mount: nothing is selected."
+        - phase: commit
+          render: 1
+          line: 14
+          dom: "<p>…</p>"
+          caption:
+            uk: "Commit: панель порожня."
+            en: "Commit: the panel is empty."
+        - phase: effect
+          render: 1
+          line: 11
+          run: ["addEventListener(onKey)"]
+          cleanup: []
+          caption:
+            uk: "Setup ефекту клавіші: listener **1**."
+            en: "The key effect's setup: listener **1**."
+        - phase: effect
+          render: 1
+          line: 12
+          cleanup: ["removeEventListener((e) => onKey(e)) // a different function"]
+          run: ["addEventListener(onKey)"]
+          caption:
+            uk: "StrictMode: cleanup знімає **іншу** функцію — нічого не знято; setup удруге. Listeners: **2** — `j` спрацює двічі."
+            en: "StrictMode: the cleanup removes a **different** function — nothing is removed; setup again. Listeners: **2** — `j` will fire twice."
+        - phase: event
+          name: click
+          sees: { selectedId: null }
+          actions: ["setSelectedId(\"w-01\")"]
+          caption:
+            uk: "Клік на `w-01`."
+            en: "A click on `w-01`."
+        - phase: render
+          render: 2
+          line: 2
+          reason: { uk: "змінився selectedId", en: "selectedId changed" }
+          snapshot: { state: { selectedId: "w-01", wish: null } }
+          caption:
+            uk: "Рендер 2 бачить `w-01`."
+            en: "Render 2 sees `w-01`."
+        - phase: commit
+          render: 2
+          line: 14
+          dom: "<p>…</p>"
+          caption:
+            uk: "Commit 2: дані ще не прийшли."
+            en: "Commit 2: no data yet."
+        - phase: effect
+          render: 2
+          line: 6
+          run: ["fetch(\"/lab/wishlist/items/w-01\") // 900 ms"]
+          caption:
+            uk: "Запит для `w-01` — повільний, 900 мс. Його колбек закриває знімок рендеру 2."
+            en: "The request for `w-01` — a slow one, 900 ms. Its callback closes over render 2's snapshot."
+        - phase: event
+          name: click
+          sees: { selectedId: "w-01" }
+          actions: ["setSelectedId(\"w-02\")"]
+          caption:
+            uk: "Одразу клік на `w-02`."
+            en: "Right away, a click on `w-02`."
+        - phase: render
+          render: 3
+          line: 2
+          reason: { uk: "змінився selectedId", en: "selectedId changed" }
+          snapshot: { state: { selectedId: "w-02", wish: null } }
+          caption:
+            uk: "Рендер 3 бачить `w-02`."
+            en: "Render 3 sees `w-02`."
+        - phase: commit
+          render: 3
+          line: 14
+          dom: "<p>…</p>"
+          caption:
+            uk: "Commit 3."
+            en: "Commit 3."
+        - phase: effect
+          render: 3
+          line: 6
+          cleanup: []
+          run: ["fetch(\"/lab/wishlist/items/w-02\") // 100 ms"]
+          caption:
+            uk: "Запит для `w-02` — швидкий. Cleanup попереднього запуску **немає**, тож запит `w-01` далі летить."
+            en: "The request for `w-02` — a fast one. The previous run has **no** cleanup, so the `w-01` request keeps going."
+        - phase: event
+          name: response w-02
+          sees: { selectedId: "w-02" }
+          actions: ["setWish(w-02)"]
+          caption:
+            uk: "Через 100 мс приходить `w-02`."
+            en: "After 100 ms `w-02` arrives."
+        - phase: render
+          render: 4
+          line: 3
+          reason: { uk: "прийшли дані w-02", en: "the w-02 data arrived" }
+          snapshot: { state: { selectedId: "w-02", wish: "w-02" } }
+          caption:
+            uk: "Рендер 4: дані відповідають вибору."
+            en: "Render 4: the data matches the selection."
+        - phase: commit
+          render: 4
+          line: 14
+          dom: "<p>%%lamp%%</p>"
+          caption:
+            uk: "Екран показує `%%lamp%%` — поки що правильно."
+            en: "The screen shows `%%lamp%%` — right, for now."
+        - phase: event
+          name: response w-01
+          sees: { selectedId: "w-01" }
+          actions: ["setWish(w-01)"]
+          caption:
+            uk: "Через 900 мс приходить застаріла відповідь. Її колбек — із рендеру 2, він не знає про `w-02`."
+            en: "After 900 ms the stale answer arrives. Its callback is from render 2, it knows nothing about `w-02`."
+        - phase: render
+          render: 5
+          line: 3
+          reason: { uk: "прийшли дані w-01", en: "the w-01 data arrived" }
+          snapshot: { state: { selectedId: "w-02", wish: "w-01" } }
+          caption:
+            uk: "Рендер 5: вибрано `w-02`, а дані — від `w-01`."
+            en: "Render 5: `w-02` is selected, but the data is from `w-01`."
+        - phase: commit
+          render: 5
+          line: 14
+          dom: "<p>%%headphones%%</p>"
+          caption:
+            uk: "Екран показує `%%headphones%%` — дані попереднього запису. Виправлення: `return () => controller.abort()` у запиті й та сама `onKey` у `removeEventListener`."
+            en: "The screen shows `%%headphones%%` — the previous record's data. The fix: `return () => controller.abort()` in the request and the same `onKey` in `removeEventListener`."
+
+  - id: task-detail
+    kind: example
+    runtime: browser-react
+    dir: task-detail
+    entry: main.jsx
+    capabilities: { network: lab }
+    strings:
+      lang: { uk: "uk", en: "en" }
+      selected: { uk: "Вибрано:", en: "Selected:" }
+      pick: { uk: "Вибери справу.", en: "Pick a task." }
+    title:
+      uk: "Відтвори сеанс і зістав кожен хибний екран з ефектом"
+      en: "Replay the session and match each wrong screen to an effect"
+    body:
+      uk: |
+        Тут ті самі два дефекти, але на справах із планувальника: лабораторія відповідає для `t-01` за 1,2 с, для інших — за 0,15 с. Ефекти друкують у консоль, що вони роблять, — це твоя часова шкала. `main.jsx` обгортає застосунок у `<StrictMode>`.
+
+        Модуль `keyboard.js` додає й знімає listeners і друкує, скільки їх висить зараз. Натисни **Запустити** й подивись у **Консоль** ще до будь-якого кліку: `listen: live listeners: 1`, `unlisten: live listeners: 1`, `listen: live listeners: 2` — cleanup нічого не зняв.
+      en: |
+        Here are the same two defects, but on planner tasks: the lab answers for `t-01` in 1.2 s and for the others in 0.15 s. The effects print what they do to the console — that is your timeline. `main.jsx` wraps the app in `<StrictMode>`.
+
+        The `keyboard.js` module adds and removes listeners and prints how many are attached now. Press **Run** and look at the **Console** before any click: `listen: live listeners: 1`, `unlisten: live listeners: 1`, `listen: live listeners: 2` — the cleanup removed nothing.
+    tryIt:
+      uk: |
+        1. На **Сторінці** клікни `t-01`, а одразу — `t-02`. Зачекай секунду-дві. Панель спершу покаже `t-02`, а потім — назву `t-01`, хоча вибрано `t-02`. У консолі останній рядок — `response: t-01 → setTask`: це відповідь ефекту, запущеного для `t-01`.
+        2. Клацни на сторінці (щоб клавіатура працювала в ній) і натисни `j` один раз: «Вибрано» перескочить на два кроки. Це два listeners — по одному від кожного setup у StrictMode.
+        3. Тепер виправ: у першому ефекті створи `AbortController`, передай `{ signal: controller.signal }` у `fetch`, додай `.catch` для `AbortError` і поверни `() => controller.abort()`; у другому передай в `unlisten` саме `onKey`. Запусти знову: у консолі `live listeners` повертається до 1. Повтори кроки 1–2: панель лишається на `t-02`, а `j` робить один крок.
+      en: |
+        1. On the **Page** click `t-01` and right after it `t-02`. Wait a second or two. The panel first shows `t-02` and then the title of `t-01`, although `t-02` is selected. The last console line is `response: t-01 → setTask`: that is the answer of the effect run for `t-01`.
+        2. Click the page (so the keyboard goes to it) and press `j` once: “Selected” jumps two steps. These are two listeners — one from each setup under StrictMode.
+        3. Now fix it: in the first effect create an `AbortController`, pass `{ signal: controller.signal }` to `fetch`, add a `.catch` for `AbortError` and return `() => controller.abort()`; in the second, pass exactly `onKey` to `unlisten`. Run again: the console shows `live listeners` going back to 1. Repeat steps 1–2: the panel stays on `t-02`, and `j` makes one step.
+
+  - id: repair-kit
+    kind: explanation
+    title:
+      uk: "Набір для ремонту"
+      en: "The repair kit"
+    body:
+      uk: |
+        | Симптом | Перевір | Виправлення |
+        |---|---|---|
+        | Дані не оновлюються для нового запису | масив залежностей | додай усе, що ефект читає |
+        | Дані старого запису з’являються пізніше за новий | чи скасовує cleanup запит | `AbortController` у cleanup або прапорець `ignore` |
+        | Щось спрацьовує двічі, listeners накопичуються | чи знімає cleanup **ту саму** функцію | збережи функцію в змінній і передай її обом викликам |
+
+        Скасований `fetch` відхиляє проміс із помилкою `AbortError`. Це очікувана подія, а не збій: оброби її в `.catch`, щоб вона не стала необробленою помилкою, а інші помилки пропускай далі.
+
+        Після кожного виправлення перевір у StrictMode: setup → cleanup → setup має давати рівно стільки підписок, listeners і запитів, скільки один setup.
+      en: |
+        | Symptom | Check | Fix |
+        |---|---|---|
+        | The data does not update for a new record | the dependency array | add everything the effect reads |
+        | The old record's data appears after the new one | whether the cleanup cancels the request | an `AbortController` in the cleanup, or an `ignore` flag |
+        | Something fires twice, listeners pile up | whether the cleanup removes **the same** function | keep the function in a variable and pass it to both calls |
+
+        A cancelled `fetch` rejects its promise with an `AbortError`. That is an expected event, not a failure: handle it in `.catch` so it does not become an unhandled error, and let other errors through.
+
+        After every fix, check under StrictMode: setup → cleanup → setup must leave exactly as many subscriptions, listeners and requests as a single setup.
+
+  - id: wish-detail
+    kind: exercise
+    mode: debug
+    runtime: browser-react
+    dir: wish-detail
+    entry: main.jsx
+    editable: [App.jsx]
+    capabilities: { network: lab }
+    strings:
+      lang: { uk: "uk", en: "en" }
+      pick: { uk: "Вибери бажання.", en: "Pick a wish." }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bike: { uk: "Велосипед", en: "Bicycle" }
+    title:
+      uk: "Полагодь панель бажання"
+      en: "Repair the wish panel"
+    instructions:
+      uk: |
+        `WishDetail` показує вибране бажання (назва — ціна) з лабораторії; клавіша `j` вибирає наступне. Застосунок змонтовано в `<StrictMode>`. Скарги користувачів:
+
+        - «Обираю інше бажання — панель не змінюється»;
+        - «Швидко перемкнув з `w-01` на `w-02` — а показало `w-01`»;
+        - «Натискаю `j` — перескакує через одне».
+
+        Знайди причини й виправ `App.jsx`. Лабораторія відповідає для `w-01` за 900 мс, для інших — за 100 мс. Перевірки монтують окрему копію в `<StrictMode>`, рахують listeners `keydown`, які вона додає на `window`, і очікують рівно один після монтування й жодного після демонтування.
+      en: |
+        `WishDetail` shows the selected wish (name — price) from the lab; the `j` key selects the next one. The app is mounted inside `<StrictMode>`. User complaints:
+
+        - “I pick another wish — the panel does not change”;
+        - “I switched quickly from `w-01` to `w-02` — and it showed `w-01`”;
+        - “I press `j` — it skips one”.
+
+        Find the causes and repair `App.jsx`. The lab answers for `w-01` in 900 ms and for the others in 100 ms. The checks mount a separate copy inside `<StrictMode>`, count the `keydown` listeners it adds to `window`, and expect exactly one after mounting and none after unmounting.
+    testTitles:
+      "selecting a wish shows its details":
+        uk: "Вибране бажання показує свої подробиці"
+        en: "Selecting a wish shows its details"
+      "a slow answer for an earlier selection does not replace the current one":
+        uk: "Повільна відповідь для попереднього вибору не замінює поточного"
+        en: "A slow answer for an earlier selection does not replace the current one"
+      "the j key moves the selection by exactly one wish":
+        uk: "Клавіша j переміщує вибір рівно на одне бажання"
+        en: "The j key moves the selection by exactly one wish"
+      "after mounting exactly one key listener is attached":
+        uk: "Після монтування висить рівно один listener клавіш"
+        en: "After mounting exactly one key listener is attached"
+      "unmounting removes the key listener":
+        uk: "Демонтування знімає listener клавіш"
+        en: "Unmounting removes the key listener"
+    hints:
+      nudge:
+        uk: "Три скарги — три місця. Для кожного ефекту запитай: що він читає, що він налаштовує і що саме скасовує його cleanup?"
+        en: "Three complaints — three places. For each effect ask: what does it read, what does it set up, and what exactly does its cleanup undo?"
+      explanation:
+        uk: |
+          Перша скарга — ефект запиту не перезапускається: подивись на його масив залежностей. Друга з’явиться, щойно виправиш першу: старий запит ніхто не скасовує, і його пізня відповідь перезаписує нову. Потрібен cleanup, який скасовує запит, і `.catch`, що спокійно приймає `AbortError`. Третя — cleanup listener’а передає в `removeEventListener` функцію, якої ніколи не додавали.
+
+          Схоже, з іншою задачею: `useEffect(() => { const controller = new AbortController(); load(city, controller.signal).catch(skipAbort); return () => controller.abort(); }, [city]);`.
+        en: |
+          The first complaint — the request effect does not re-run: look at its dependency array. The second shows up as soon as you fix the first: nobody cancels the old request, and its late answer overwrites the new one. You need a cleanup that cancels the request and a `.catch` that calmly accepts an `AbortError`. The third — the listener's cleanup passes a function to `removeEventListener` that was never added.
+
+          Similar, with a different task: `useEffect(() => { const controller = new AbortController(); load(city, controller.signal).catch(skipAbort); return () => controller.abort(); }, [city]);`.
+    solutionNote:
+      uk: "Ефект запиту читає `selectedId`, тож `[selectedId]` — його залежності; cleanup викликає `controller.abort()`, і відповідь для попереднього вибору вже не доходить до `setWish`, а `AbortError` тихо обробляє `.catch`. Ефект клавіші знімає ту саму `onKey`, тож setup → cleanup → setup лишає один listener. Прапорець `ignore` замість `AbortController` теж працює: запит долітає, але результат відкидається."
+      en: "The request effect reads `selectedId`, so `[selectedId]` is its dependency list; the cleanup calls `controller.abort()`, and the answer for the previous selection no longer reaches `setWish`, while `.catch` quietly handles the `AbortError`. The key effect removes the same `onKey`, so setup → cleanup → setup leaves one listener. An `ignore` flag instead of an `AbortController` works too: the request completes, but its result is thrown away."
+    feedback:
+      - when: { test: "selecting a wish shows its details" }
+        message:
+          uk: "Ця перевірка вибирає `w-02`, потім `w-03` і щоразу очікує їхні назву й ціну («Настільна лампа — 45», «Велосипед — 240»). Якщо панель не змінюється, ефект запиту не перезапускається для нового `selectedId`."
+          en: "This check selects `w-02`, then `w-03`, and each time expects their name and price (“Desk lamp — 45”, “Bicycle — 240”). If the panel does not change, the request effect does not re-run for the new `selectedId`."
+      - when: { test: "a slow answer for an earlier selection does not replace the current one" }
+        message:
+          uk: "Ця перевірка клікає `w-01`, одразу `w-02` і через 1,3 с очікує дані `w-02`. Відповідь для `w-01` приходить пізніше — її має скасувати (або відкинути) cleanup ефекту запиту."
+          en: "This check clicks `w-01`, right away `w-02`, and 1.3 s later expects the data of `w-02`. The answer for `w-01` arrives later — the request effect's cleanup must cancel (or discard) it."
+      - when: { test: "the j key moves the selection by exactly one wish" }
+        message:
+          uk: "Ця перевірка вибирає `w-01`, натискає `j` один раз і очікує `w-02`. Перескок на `w-03` означає два listeners: cleanup має знімати ту саму функцію, яку додав setup."
+          en: "This check selects `w-01`, presses `j` once and expects `w-02`. A jump to `w-03` means two listeners: the cleanup must remove the same function the setup added."
+      - when: { test: "after mounting exactly one key listener is attached" }
+        message:
+          uk: "Ця перевірка монтує копію в `<StrictMode>` і очікує рівно один listener `keydown` на `window`. Два означають, що cleanup першого setup нічого не зняв."
+          en: "This check mounts a copy inside `<StrictMode>` and expects exactly one `keydown` listener on `window`. Two mean the first setup's cleanup removed nothing."
+      - when: { test: "unmounting removes the key listener" }
+        message:
+          uk: "Ця перевірка демонтує копію й очікує 0 listeners `keydown` від неї. Cleanup має передати в `removeEventListener` ту саму функцію, що й `addEventListener` (або скасувати її сигнал)."
+          en: "This check unmounts the copy and expects 0 `keydown` listeners from it. The cleanup must pass the same function to `removeEventListener` as to `addEventListener` (or abort its signal)."
+      - when: { error: AbortError }
+        message:
+          uk: "Скасований запит відхиляє проміс з `AbortError`. Додай у ланцюжок `fetch` `.catch`, який ігнорує саме `AbortError` (`error.name === \"AbortError\"`), а інші помилки кидає далі."
+          en: "A cancelled request rejects its promise with an `AbortError`. Add a `.catch` to the `fetch` chain that ignores exactly an `AbortError` (`error.name === \"AbortError\"`) and rethrows other errors."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: abort-signal
+        from: js-08-09-cancellation-abort
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          const controller = new AbortController();
+          controller.abort();
+          console.log(controller.signal.aborted, controller.signal.reason.name);
+        verify:
+          logs: ["true AbortError"]
+        answer:
+          type: choice
+          options:
+            - id: true-abort
+              text: { uk: "`true AbortError`", en: "`true AbortError`" }
+            - id: false-undefined
+              text: { uk: "`false undefined`", en: "`false undefined`" }
+              why:
+                uk: "`abort()` одразу позначає сигнал як скасований і записує причину — без жодного очікування."
+                en: "`abort()` marks the signal as aborted at once and records the reason — with no waiting."
+            - id: true-error
+              text: { uk: "`true Error`", en: "`true Error`" }
+              why:
+                uk: "Без аргументу `abort()` бере причину за замовчуванням — `DOMException` з назвою `AbortError`."
+                en: "Without an argument `abort()` uses the default reason — a `DOMException` named `AbortError`."
+          correct: [true-abort]
+        explanation:
+          uk: "Після `abort()` сигнал має `aborted: true`, а причина — `DOMException` з назвою `AbortError`. Саме з такою помилкою відхиляється `fetch`, якому передали цей сигнал, — тому в ефекті її відрізняють від справжніх збоїв."
+          en: "After `abort()` the signal has `aborted: true`, and the reason is a `DOMException` named `AbortError`. A `fetch` given this signal rejects with exactly this error — which is why an effect tells it apart from real failures."
+      - id: latest-wins
+        from: js-08-10-stale-responses-retry
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          let latest = 0;
+          function search(query, ms) {
+            const requestId = ++latest;
+            return new Promise((resolve) => setTimeout(() => resolve(query), ms)).then((result) => {
+              if (requestId === latest) console.log("show", result);
+            });
+          }
+          search("lamp", 300);
+          search("mug", 100);
+        verify:
+          logs: ["show mug"]
+        answer:
+          type: choice
+          options:
+            - id: mug-only
+              text: { uk: "`show mug`", en: "`show mug`" }
+            - id: both
+              text: { uk: "`show mug`, потім `show lamp`", en: "`show mug`, then `show lamp`" }
+              why:
+                uk: "Відповідь `lamp` приходить пізніше, але її `requestId` — 1, а `latest` уже 2. Перевірка відкидає застарілу відповідь."
+                en: "The `lamp` answer arrives later, but its `requestId` is 1 while `latest` is already 2. The check discards the stale answer."
+            - id: lamp-only
+              text: { uk: "`show lamp`", en: "`show lamp`" }
+              why:
+                uk: "Показується не те, що прийшло останнім, а те, що запитали останнім: `mug`."
+                en: "What is shown is not what arrived last but what was requested last: `mug`."
+          correct: [mug-only]
+        explanation:
+          uk: "Перемагає останній **запит**, а не остання відповідь. У React той самий прийом — прапорець `ignore` або `abort()` у cleanup: React сам скасовує запуск ефекту для старого значення, коли з’являється нове."
+          en: "The last **request** wins, not the last answer. In React the same trick is an `ignore` flag or `abort()` in the cleanup: React itself cancels the effect run for the old value when a new one appears."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-03
+    body:
+      uk: "Перш ніж додавати ефект збереження в проєкт, пройдися набором для ремонту по ефектах, які там уже є: чи повні залежності, чи скасовує кожен cleanup саме те, що зробив setup, і чи не дублює StrictMode жодної дії."
+      en: "Before you add the persistence effect to your project, run the repair kit over the effects that are already there: are the dependencies complete, does every cleanup undo exactly what its setup did, and does StrictMode duplicate nothing."

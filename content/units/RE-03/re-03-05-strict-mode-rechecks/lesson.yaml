@@ -1,0 +1,388 @@
+id: re-03-05-strict-mode-rechecks
+unit: RE-03
+title:
+  uk: "Перевірки під час розробки (Strict Mode)"
+  en: "Development rechecks (Strict Mode)"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Передбачити додатковий рендер і додатковий цикл setup → cleanup → setup, які Strict Mode додає лише під час розробки."
+    en: "Predict the extra render and the extra setup → cleanup → setup cycle that Strict Mode adds in development only."
+  - uk: "За подвійним запуском знайти ефект, чий cleanup не скасовує setup повністю, і пояснити, чому виправляють cleanup, а не прибирають StrictMode."
+    en: "Use the double run to find an effect whose cleanup does not fully undo its setup, and explain why the fix is the cleanup, not removing StrictMode."
+prerequisites: [re-03-04-stale-closures-in-effects]
+subskills:
+  - { family: R-04, skill: "development rechecks", depth: intro }
+glossary: [react-strict-mode, development-recheck]
+selfCheck: [predict-double-mount, sync-channel]
+
+blocks:
+  - id: what-strict-does
+    kind: explanation
+    title:
+      uk: "Strict Mode перевіряє твої ефекти"
+      en: "Strict Mode checks your effects"
+    body:
+      uk: |
+        Досі приклади цього розділу показували компонент без обгортки — навмисно, щоб у консолі не було зайвих рядків. А от у справжньому проєкті шаблон `npm create vite@latest` (create-vite 9.2.1) одразу пише в `main.jsx`:
+
+        ```jsx
+        createRoot(document.getElementById('root')).render(
+          <StrictMode>
+            <App />
+          </StrictMode>,
+        )
+        ```
+
+        [[react-strict-mode|StrictMode]] нічого не малює. Під час розробки він робить [[development-recheck|перевірки]]:
+
+        - викликає кожну функцію компонента **двічі** (а також функції-оновлювачі й початкові значення `useState`) — так видно нечистий рендер;
+        - під час монтування запускає кожен ефект за схемою **setup → cleanup → setup** — ніби компонент одразу зняли зі сторінки й поставили знову.
+
+        У production-збірці цього немає: ми зібрали той самий компонент двічі, і в розробці він надрукував `render` двічі та `connect, disconnect, connect`, а в production — по одному разу.
+      en: |
+        So far the examples of this unit showed the component without a wrapper — on purpose, to keep extra lines out of the console. In a real project, though, the `npm create vite@latest` template (create-vite 9.2.1) writes this into `main.jsx` right away:
+
+        ```jsx
+        createRoot(document.getElementById('root')).render(
+          <StrictMode>
+            <App />
+          </StrictMode>,
+        )
+        ```
+
+        [[react-strict-mode|StrictMode]] draws nothing. During development it runs [[development-recheck|rechecks]]:
+
+        - it calls every component function **twice** (and updater functions and `useState` initial values too) — that exposes an impure render;
+        - on mount it runs every effect as **setup → cleanup → setup** — as if the component were taken off the page and put back at once.
+
+        The production build has none of this: we built the same component both ways, and in development it printed `render` twice and `connect, disconnect, connect`, while in production everything happened once.
+
+  - id: predict-double-mount
+    kind: prediction
+    strings:
+      recordsLabel: { uk: "Записів:", en: "Records:" }
+    prompt:
+      uk: "`WishSync` змонтовано всередині `<StrictMode>` під час розробки. Що надрукує консоль і скільки записів покаже абзац?"
+      en: "`WishSync` is mounted inside `<StrictMode>` during development. What does the console print, and how many records does the paragraph show?"
+    code: |
+      function WishSync() {
+        const [records, setRecords] = useState([]);
+        useEffect(() => {
+          console.log("connect");
+          setRecords((current) => [...current, "w-01"]);
+          return () => console.log("disconnect");
+        }, []);
+        return <p>%%recordsLabel%% {records.length}</p>;
+      }
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: twice-two
+          text:
+            uk: "`connect`, `disconnect`, `connect`; абзац — `Записів: 2`"
+            en: "`connect`, `disconnect`, `connect`; the paragraph shows `Records: 2`"
+        - id: once
+          text:
+            uk: "`connect`; абзац — `Записів: 1`"
+            en: "`connect`; the paragraph shows `Records: 1`"
+          why:
+            uk: "Так буде в production-збірці або без StrictMode. Під час розробки StrictMode навмисно запускає ефект ще раз після cleanup."
+            en: "That is what happens in a production build or without StrictMode. During development StrictMode deliberately runs the effect once more after the cleanup."
+        - id: twice-one
+          text:
+            uk: "`connect`, `disconnect`, `connect`; абзац — `Записів: 1`, бо React відкидає першу спробу"
+            en: "`connect`, `disconnect`, `connect`; the paragraph shows `Records: 1`, because React throws the first attempt away"
+          why:
+            uk: "React нічого за тебе не відкочує: перший setup уже поставив у чергу додавання, а cleanup лише друкує `disconnect` і нічого не прибирає. Другий setup додає ще раз."
+            en: "React rolls nothing back for you: the first setup has already queued an append, and the cleanup only prints `disconnect` and removes nothing. The second setup appends again."
+        - id: no-disconnect
+          text:
+            uk: "`connect`, `connect`; абзац — `Записів: 2`"
+            en: "`connect`, `connect`; the paragraph shows `Records: 2`"
+          why:
+            uk: "Між двома запусками StrictMode завжди викликає cleanup — саме так він імітує зняття й повернення компонента."
+            en: "Between the two runs StrictMode always calls the cleanup — that is exactly how it imitates removing and returning the component."
+      correct: [twice-two]
+    explanation:
+      uk: "StrictMode запускає ефект, викликає його cleanup і запускає знову. Setup додає запис, а cleanup цього не скасовує — тож записів стає два. Перевірено в пісочниці з React 19.3: `connect`, `disconnect`, `connect` і на екрані `Записів: 2`. Подвійний запуск не створив помилку, а **показав** її: те саме станеться, коли користувач сховає й знову відкриє цей компонент."
+      en: "StrictMode runs the effect, calls its cleanup and runs it again. The setup appends a record, and the cleanup does not undo that — so there are two records. Checked in the sandbox with React 19.3: `connect`, `disconnect`, `connect` and `Records: 2` on the screen. The double run did not create the bug, it **revealed** it: the same thing happens when a user hides and reopens this component."
+
+  - id: append-fixture
+    kind: example
+    runtime: browser-react
+    dir: append-fixture
+    entry: main.jsx
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      water: { uk: "Пити воду", en: "Drink water" }
+    title:
+      uk: "Ефект, що дописує, і ефект, що записує"
+      en: "An effect that appends and one that writes"
+    body:
+      uk: |
+        `HabitStore` в ефекті читає збережені звички з `localStorage` і **дописує** до них свої дві. `main.jsx` тут можна редагувати, і в ньому є `<StrictMode>`.
+
+        Натисни **Запустити** й подивись у **Консоль**. На першому запуску там `effect: setup`, `stored records: 2`, `effect: cleanup`, `effect: setup`, `stored records: 4`. Дві звички — а в сховищі чотири записи.
+      en: |
+        In an effect, `HabitStore` reads the stored habits from `localStorage` and **appends** its two habits to them. `main.jsx` is editable here, and it has `<StrictMode>`.
+
+        Press **Run** and look at the **Console**. On the first run it shows `effect: setup`, `stored records: 2`, `effect: cleanup`, `effect: setup`, `stored records: 4`. Two habits — and four records in storage.
+    tryIt:
+      uk: |
+        1. У `main.jsx` заміни обгортку на просто `<App />` і запусти кілька разів. Тепер `effect: setup` друкується один раз за запуск — але число все одно росте: 6, 8, 10… Сховище цієї вправи живе між запусками, і кожен новий показ компонента дописує знову. StrictMode лише показав це одразу, на першому ж запуску.
+        2. Поверни `<StrictMode>`. У `App.jsx` заміни два рядки, що читають і дописують, одним — записом **поточного** списку: `localStorage.setItem(KEY, JSON.stringify(habits));`. Запускай скільки завгодно: щоразу `stored records: 2`. Такий setup можна повторити без шкоди — і cleanup йому не потрібен.
+      en: |
+        1. In `main.jsx` replace the wrapper with just `<App />` and run a few times. Now `effect: setup` is printed once per run — but the number still grows: 6, 8, 10… This exercise's storage lives between runs, and every new display of the component appends again. StrictMode just showed it right away, on the very first run.
+        2. Put `<StrictMode>` back. In `App.jsx` replace the two lines that read and append with one that writes the **current** list: `localStorage.setItem(KEY, JSON.stringify(habits));`. Run as often as you like: it says `stored records: 2` every time. Such a setup can be repeated without harm — and it needs no cleanup.
+
+  - id: strict-timeline
+    kind: visual
+    visual: render-timeline
+    strings:
+      recordsLabel: { uk: "Записів:", en: "Records:" }
+    title:
+      uk: "Монтування в StrictMode під час розробки"
+      en: "A mount under StrictMode in development"
+    textEquivalent:
+      uk: >-
+        Під час розробки StrictMode викликає функцію компонента WishSync двічі з тим самим знімком —
+        records порожній. React переносить результат на екран: «%%recordsLabel%% 0». Потім ефект: setup друкує
+        connect і ставить у чергу додавання w-01; cleanup друкує disconnect, але нічого не прибирає;
+        setup запускається вдруге й ставить у чергу ще одне додавання. Наступний рендер бачить два
+        однакові записи. Якби setup записував увесь поточний список, а не дописував, повторний запуск
+        нічого б не змінив. У production-збірці подвійних викликів немає.
+      en: >-
+        During development StrictMode calls the WishSync component function twice with the same
+        snapshot — records is empty. React puts the result on the screen: “%%recordsLabel%% 0”. Then the
+        effect: the setup prints connect and queues an append of w-01; the cleanup prints disconnect but
+        removes nothing; the setup runs a second time and queues another append. The next render sees
+        two identical records. If the setup wrote the whole current list instead of appending, the
+        repeated run would change nothing. A production build has no double calls.
+    spec:
+      component: WishSync
+      code: |
+        function WishSync() {
+          const [records, setRecords] = useState([]);
+          useEffect(() => {
+            console.log("connect");
+            setRecords((current) => [...current, "w-01"]);
+            return () => console.log("disconnect");
+          }, []);
+          return <p>%%recordsLabel%% {records.length}</p>;
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 2
+          reason: { uk: "перший показ", en: "first display" }
+          snapshot: { state: { records: [] } }
+          caption:
+            uk: "StrictMode викликає `WishSync()` уперше: `records` порожній."
+            en: "StrictMode calls `WishSync()` for the first time: `records` is empty."
+        - phase: render
+          render: 2
+          line: 2
+          reason: { uk: "повторний виклик StrictMode (лише під час розробки)", en: "StrictMode's repeated call (development only)" }
+          snapshot: { state: { records: [] } }
+          caption:
+            uk: "І ще раз — з тим самим знімком. Чистий рендер дає той самий результат, тож нічого не змінюється."
+            en: "And once more — with the same snapshot. A pure render gives the same result, so nothing changes."
+        - phase: commit
+          render: 2
+          line: 8
+          dom: "<p>%%recordsLabel%% 0</p>"
+          caption:
+            uk: "Commit: на екрані `%%recordsLabel%% 0`."
+            en: "Commit: the screen shows `%%recordsLabel%% 0`."
+        - phase: effect
+          render: 2
+          line: 5
+          run: ["console.log(\"connect\")", "setRecords(append \"w-01\")"]
+          caption:
+            uk: "Setup: `connect` і додавання `w-01` у черзі."
+            en: "Setup: `connect` and an append of `w-01` in the queue."
+        - phase: effect
+          render: 2
+          line: 6
+          cleanup: ["console.log(\"disconnect\")"]
+          caption:
+            uk: "StrictMode викликає cleanup, ніби компонент зняли зі сторінки. Він лише друкує — додавання ніхто не скасовує."
+            en: "StrictMode calls the cleanup as if the component were taken off the page. It only prints — nobody undoes the append."
+        - phase: effect
+          render: 2
+          line: 5
+          run: ["console.log(\"connect\")", "setRecords(append \"w-01\")"]
+          caption:
+            uk: "Setup удруге: ще одне додавання. Ось і дубль, який з’явиться й без StrictMode, коли компонент змонтують знову."
+            en: "Setup for the second time: one more append. That is the duplicate that also appears without StrictMode when the component is mounted again."
+        - phase: render
+          render: 3
+          line: 2
+          reason: { uk: "у черзі два додавання", en: "two appends are queued" }
+          snapshot: { state: { records: ["w-01", "w-01"] } }
+          caption:
+            uk: "Наступний рендер бачить `[\"w-01\", \"w-01\"]`. Виправлення — не прибрати StrictMode, а зробити setup повторюваним: записувати повний поточний список замість дописування."
+            en: "The next render sees `[\"w-01\", \"w-01\"]`. The fix is not to remove StrictMode but to make the setup repeatable: write the whole current list instead of appending."
+
+  - id: fix-the-cleanup
+    kind: explanation
+    title:
+      uk: "Виправляють ефект, а не StrictMode"
+      en: "You fix the effect, not StrictMode"
+    body:
+      uk: |
+        Коли подвійний запуск щось ламає, хочеться «полагодити» сам подвійний запуск. Обидва очевидні способи — хибні:
+
+        - **Прибрати `<StrictMode>`.** Помилка лишається: компонент знімають і ставлять знову й у звичайному житті — перемкнули вкладку, сховали панель, змінили `key`. Ти просто перестаєш її бачити.
+        - **Прапорець «вже запускався»** (`let started = false` поза компонентом). Другий setup пропускається, але й cleanup не скасовує першого. Після справжнього зняття з’єднання лишається відкритим, а наступне монтування взагалі нічого не відкриє.
+
+        Правильно — щоб setup і cleanup були парою: cleanup **повністю** скасовує те, що зробив setup (від’єднатися, зупинити таймер, зняти listener). Тоді setup → cleanup → setup дає той самий стан, що й один setup. Або setup такий, що його можна повторити без шкоди: записати весь поточний список замість дописування.
+      en: |
+        When the double run breaks something, it is tempting to “fix” the double run itself. Both obvious ways are wrong:
+
+        - **Remove `<StrictMode>`.** The bug stays: components are taken off the page and put back in normal life too — a tab is switched, a panel is hidden, a `key` changes. You just stop seeing it.
+        - **A “has already run” flag** (`let started = false` outside the component). The second setup is skipped, but the cleanup does not undo the first one either. After a real unmount the connection stays open, and the next mount opens nothing at all.
+
+        The right way is for setup and cleanup to be a pair: the cleanup **fully** undoes what the setup did (disconnect, stop a timer, remove a listener). Then setup → cleanup → setup gives the same state as a single setup. Or the setup can be repeated without harm: write the whole current list instead of appending.
+
+  - id: sync-channel
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: sync-channel
+    entry: main.jsx
+    editable: [App.jsx]
+    strings:
+      home: { uk: "Дім", en: "Home" }
+      work: { uk: "Робота", en: "Work" }
+      syncing: { uk: "Синхронізую список:", en: "Syncing list:" }
+      turnOff: { uk: "Вимкнути синхронізацію", en: "Turn sync off" }
+      turnOn: { uk: "Увімкнути синхронізацію", en: "Turn sync on" }
+    title:
+      uk: "Рівно одне з’єднання в StrictMode"
+      en: "Exactly one connection under StrictMode"
+    instructions:
+      uk: |
+        `channel.js` — несправжній канал синхронізації: кожен виклик `connect(listId)` відкриває окреме з’єднання й повертає об’єкт із методом `disconnect()`. `main.jsx` показує застосунок у `<StrictMode>`.
+
+        Допиши в компоненті `ListSync` ефект, щоб поки компонент на екрані, до списку `listId` було відкрите **рівно одне** з’єднання:
+
+        - після монтування в StrictMode — одне з’єднання;
+        - після перемикання на інший список — одне, до нового;
+        - після «Вимкнути синхронізацію» — жодного, а після повторного увімкнення — знову одне.
+
+        Перевірки монтують окрему копію в `<StrictMode>` і читають, які з’єднання відкриті в каналі.
+      en: |
+        `channel.js` is a fake sync channel: every call to `connect(listId)` opens a separate connection and returns an object with a `disconnect()` method. `main.jsx` shows the app inside `<StrictMode>`.
+
+        Add an effect to the `ListSync` component so that while the component is on the screen there is **exactly one** open connection to the list `listId`:
+
+        - after mounting under StrictMode — one connection;
+        - after switching to another list — one, to the new list;
+        - after “Turn sync off” — none, and after turning it on again — one again.
+
+        The checks mount a separate copy inside `<StrictMode>` and read which connections are open in the channel.
+    testTitles:
+      "mounting under StrictMode leaves exactly one connection":
+        uk: "Після монтування в StrictMode відкрите рівно одне з’єднання"
+        en: "Mounting under StrictMode leaves exactly one connection"
+      "switching the list moves the connection":
+        uk: "Перемикання списку переносить з’єднання"
+        en: "Switching the list moves the connection"
+      "turning sync off closes the connection":
+        uk: "Вимкнення синхронізації закриває з’єднання"
+        en: "Turning sync off closes the connection"
+      "turning sync on again opens one connection":
+        uk: "Повторне увімкнення відкриває одне з’єднання"
+        en: "Turning sync on again opens one connection"
+    hints:
+      nudge:
+        uk: "Що має зробити cleanup, щоб setup → cleanup → setup залишив стільки ж з’єднань, скільки один setup?"
+        en: "What must the cleanup do so that setup → cleanup → setup leaves as many connections as a single setup?"
+      explanation:
+        uk: |
+          Ефект відкриває з’єднання й тримає повернений об’єкт у змінній; cleanup викликає в нього `disconnect()`. Ефект читає `listId`, тож він — залежність: при зміні списку React закриє старе з’єднання й відкриє нове. Не намагайся пропустити другий запуск прапорцем — тоді після зняття компонента з’єднання не закриється.
+
+          Схожий приклад з іншою задачею: `useEffect(() => { const player = startMusic(trackId); return () => player.stop(); }, [trackId]);`.
+        en: |
+          The effect opens a connection and keeps the returned object in a variable; the cleanup calls its `disconnect()`. The effect reads `listId`, so it is a dependency: when the list changes, React closes the old connection and opens a new one. Do not try to skip the second run with a flag — then the connection is not closed after the component is removed.
+
+          A similar example with a different task: `useEffect(() => { const player = startMusic(trackId); return () => player.stop(); }, [trackId]);`.
+    solutionNote:
+      uk: "Cleanup закриває саме те з’єднання, яке відкрив його setup, тож setup → cleanup → setup лишає одне з’єднання — і в StrictMode, і після перемикання, і після вимкнення та увімкнення. Прапорець «вже запускався» або cleanup, що закриває лише інколи, StrictMode викриває одразу."
+      en: "The cleanup closes exactly the connection its setup opened, so setup → cleanup → setup leaves one connection — under StrictMode, after switching, and after turning sync off and on. A “has already run” flag, or a cleanup that disconnects only sometimes, is exposed by StrictMode right away."
+    feedback:
+      - when: { test: "mounting under StrictMode leaves exactly one connection" }
+        message:
+          uk: "Ця перевірка монтує копію в `<StrictMode>` і очікує, що від неї відкрите рівно одне з’єднання — до `home`. Два з’єднання означають, що cleanup не закриває з’єднання першого setup; жодного — що setup цієї копії пропущено (наприклад, прапорцем поза компонентом, який уже спрацював для копії на сторінці) або з’єднання закрито зайвий раз."
+          en: "This check mounts a copy inside `<StrictMode>` and expects exactly one open connection from it — to `home`. Two connections mean the cleanup does not close the first setup's connection; none means this copy's setup was skipped (for example by a flag outside the component that already fired for the copy on the page) or the connection was closed once too often."
+      - when: { test: "switching the list moves the connection" }
+        message:
+          uk: "Ця перевірка перемикає на «Робота» й назад і щоразу очікує одне з’єднання — до вибраного списку. Ефект має залежати від `listId`, а cleanup — закривати старе з’єднання."
+          en: "This check switches to “Work” and back and each time expects one connection — to the selected list. The effect must depend on `listId`, and the cleanup must close the old connection."
+      - when: { test: "turning sync off closes the connection" }
+        message:
+          uk: "Ця перевірка натискає «Вимкнути синхронізацію» й очікує 0 відкритих з’єднань від копії. Під час демонтування React викликає cleanup — він має викликати `disconnect()`."
+          en: "This check presses “Turn sync off” and expects 0 open connections from the copy. On unmount React calls the cleanup — it must call `disconnect()`."
+      - when: { test: "turning sync on again opens one connection" }
+        message:
+          uk: "Ця перевірка вимикає й знову вмикає синхронізацію й очікує одне з’єднання до `home`. Прапорець «вже запускався» поза компонентом не дасть відкрити його вдруге."
+          en: "This check turns sync off and on again and expects one connection to `home`. A “has already run” flag outside the component prevents opening it a second time."
+      - when: { error: ReferenceError }
+        message:
+          uk: "Якщо картка каже `useEffect is not defined`, додай `useEffect` в імпорт із `\"react\"`."
+          en: "If the card says `useEffect is not defined`, add `useEffect` to the import from `\"react\"`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: whole-list-save
+        from: js-07-05-persist-reload
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          function save(records) {
+            localStorage.setItem("jsll.wishlist.v1", JSON.stringify({ schemaVersion: 1, records }));
+          }
+          save(["w-01"]);
+          save(["w-01"]);
+          save(["w-01", "w-02"]);
+          save(["w-01", "w-02"]);
+          const stored = JSON.parse(localStorage.getItem("jsll.wishlist.v1"));
+          console.log(stored.records.length);
+        verify:
+          logs: ["2"]
+        answer:
+          type: choice
+          options:
+            - id: two
+              text: { uk: "`2`", en: "`2`" }
+            - id: six
+              text: { uk: "`6`", en: "`6`" }
+              why:
+                uk: "`setItem` не дописує до збереженого, а **замінює** значення під ключем цілком. Лишається те, що записав останній виклик."
+                en: "`setItem` does not append to what is stored, it **replaces** the value under the key entirely. What remains is what the last call wrote."
+            - id: four
+              text: { uk: "`4`", en: "`4`" }
+              why:
+                uk: "Повторний запис того самого списку нічого не додає: значення під ключем просто замінюється таким самим."
+                en: "Writing the same list again adds nothing: the value under the key is simply replaced with an identical one."
+          correct: [two]
+        explanation:
+          uk: "Кожен `save` записує **увесь** поточний список, замінюючи попередній. Тому повторний виклик із тим самим списком нічого не псує — саме такий setup ефекту витримує подвійний запуск StrictMode."
+          en: "Every `save` writes the **whole** current list, replacing the previous one. So calling it again with the same list breaks nothing — that is the kind of effect setup that survives StrictMode's double run."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-03
+    body:
+      uk: "Якщо `main.jsx` твого проєкту обгортає `<App />` у `<StrictMode>` (шаблон Vite так і робить), ефект збереження записуватиме **увесь** поточний список `{ schemaVersion: 1, records }`, а не дописуватиме до збереженого, — тож подвійне монтування не дублюватиме записів. Не прибирай `<StrictMode>`, щоб «полагодити» дубль: виправляй ефект."
+      en: "If your project's `main.jsx` wraps `<App />` in `<StrictMode>` (the Vite template does), the persistence effect will write the **whole** current list `{ schemaVersion: 1, records }` instead of appending to what is stored — so the double mount will not duplicate records. Do not remove `<StrictMode>` to “fix” a duplicate: fix the effect."
