@@ -15,7 +15,10 @@ try {
   for (const path of paths) {
     const response = await fetch(base + path, { signal: AbortSignal.timeout(3000) });
     const body = await response.json();
-    const summary = Array.isArray(body) ? body.map((item) => item.name).join(', ') : JSON.stringify(body);
+    // Wishes have a name, tasks a title, expenses a label.
+    const summary = Array.isArray(body)
+      ? body.map((item) => item.name ?? item.title ?? item.label).join(', ')
+      : JSON.stringify(body);
     console.log(`→ ${response.status}: ${summary}`);
   }
 } finally {
