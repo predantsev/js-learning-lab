@@ -188,7 +188,7 @@ blocks:
       uk: |
         Кроки 1–5 — для всіх. Далі виконуй кроки своєї цілі: **A** — Android-емулятор чи Android-телефон, **I** — iOS-симулятор (лише macOS). Для справжнього iPhone потрібен обліковий запис Apple Developer — курс його не вимагає, тож таку ціль запиши як непідтриману для release.
 
-        **Що перевірено під час підготовки уроку** (macOS, Node.js v25.2.1, JDK 21, Expo SDK 57, React Native 0.86.3): кроки 1–5 і генерація keystore з кроку 6A — з дослівним виводом нижче. `npx tsc --noEmit` для файлів з кроку 3 завершився без повідомлень, а `npx expo export --platform android` зібрав bundle `.hbc` на 1,4 МБ, у якому `grep -a -F` знайшов `Build: release` і назви бажань, але не знайшов `[dev] wishes` і `Build: debug`. **Збирання native-частини, встановлення й усі команди з `adb`, `apksigner`, `xcrun` і `plutil` не перевірено** — Android SDK, емулятора й Xcode там немає. Що покажуть вони в тебе, запиши сам.
+        **Що перевірено під час підготовки уроку** (macOS, Node.js v25.2.1, JDK 21, Expo SDK 57, React Native 0.86.3): кроки 1–5, генерація keystore з кроку 6A і `prebuild` з плагіном з кроку 7A — з дослівним виводом нижче. `npx tsc --noEmit` для файлів з кроку 3 завершився без повідомлень, а `npx expo export --platform android` зібрав bundle `.hbc` на 1,4 МБ, у якому `grep -a -F` знайшов `Build: release` і назви бажань, але не знайшов `[dev] wishes` і `Build: debug`. **Збирання native-частини, встановлення й усі команди з `adb`, `apksigner`, `xcrun` і `plutil` не перевірено** — Android SDK, емулятора й Xcode там немає. Що покажуть вони в тебе, запиши сам.
 
         Якщо native-інструментів немає, натисни **«У мене немає емулятора чи пристрою»**: завдання запишеться як не виконане.
 
@@ -257,22 +257,46 @@ blocks:
 
         Обидва паролі однакові: у сховищі PKCS12 пароль ключа збігається з паролем сховища. На Windows шлях має вигляд `C:\\Users\\твоє-ім’я\\keys\\rn11-lab-upload.keystore` (подвійні зворотні скісні риски).
 
-        **Крок 7A — зміни в `android/app/build.gradle`** (блок з документації React Native 0.86 «Publishing to Google Play Store»). У `signingConfigs { … }` поруч із `debug { … }` додай:
+        **Крок 7A — release-підпис через config plugin.** Документація React Native 0.86 («Publishing to Google Play Store») каже додати блок `release` у `signingConfigs` файлу `android/app/build.gradle`. Але в проєкті Expo цей файл генерує `prebuild`: ми додали блок руками, запустили звичайний `npx expo prebuild` — і блок зник, а release знову підписувався `debug`. До того ж тека `android/` ігнорується Git (рядок `/android` у `.gitignore`). Тому той самий блок додає маленький **config plugin** — функція, яку `prebuild` викликає щоразу, коли генерує native-файли. Новий файл `plugins/with-release-signing.js`:
 
-        ```groovy
-        release {
-            if (project.hasProperty('MYAPP_UPLOAD_STORE_FILE')) {
-                storeFile file(MYAPP_UPLOAD_STORE_FILE)
-                storePassword MYAPP_UPLOAD_STORE_PASSWORD
-                keyAlias MYAPP_UPLOAD_KEY_ALIAS
-                keyPassword MYAPP_UPLOAD_KEY_PASSWORD
+        ```js
+        // Config plugin: on every `npx expo prebuild`, adds the release signing config from the
+        // React Native 0.86 guide to android/app/build.gradle. The values come from ~/.gradle/gradle.properties.
+        const { withAppBuildGradle } = require('expo/config-plugins');
+
+        const RELEASE_SIGNING = `        release {
+                    if (project.hasProperty('MYAPP_UPLOAD_STORE_FILE')) {
+                        storeFile file(MYAPP_UPLOAD_STORE_FILE)
+                        storePassword MYAPP_UPLOAD_STORE_PASSWORD
+                        keyAlias MYAPP_UPLOAD_KEY_ALIAS
+                        keyPassword MYAPP_UPLOAD_KEY_PASSWORD
+                    }
+                }
+        `;
+
+        module.exports = function withReleaseSigning(config) {
+          return withAppBuildGradle(config, (mod) => {
+            let gradle = mod.modResults.contents;
+            if (!gradle.includes('MYAPP_UPLOAD_STORE_FILE')) {
+              gradle = gradle.replace('    signingConfigs {\n', (start) => start + RELEASE_SIGNING);
             }
-        }
+            gradle = gradle.replace(
+              /(buildTypes \{[\s\S]*?\n        release \{[\s\S]*?)signingConfig signingConfigs\.debug/,
+              '$1signingConfig signingConfigs.release',
+            );
+            mod.modResults.contents = gradle;
+            return mod;
+          });
+        };
         ```
 
-        А в `buildTypes { release { … } }` заміни рядок `signingConfig signingConfigs.debug` на `signingConfig signingConfigs.release`.
+        І в `app.json` усередині `"expo"` — рядок, що його вмикає:
 
-        Тека `android/` у шаблоні Expo ігнорується Git (рядок `/android` у `.gitignore`), а `npx expo prebuild --clean` створює її наново. Тож ця зміна не потрапляє в commit і зникає після `--clean` — тоді повтори крок 7A.
+        ```json
+        "plugins": ["./plugins/with-release-signing"]
+        ```
+
+        Плагін і рядок у `app.json` лежать у репозиторії: паролів і ключа в них немає, лише назви властивостей.
 
         **Крок 10 — `release-evidence.md`** у корені проєкту (приклад; заповни своїми даними, без паролів):
 
@@ -289,7 +313,7 @@ blocks:
       en: |
         Steps 1–5 are for everyone. After that, do the steps of your target: **A** — an Android emulator or an Android phone, **I** — the iOS simulator (macOS only). A real iPhone needs an Apple Developer account — the course does not require one, so record such a target as unsupported for a release.
 
-        **What was checked while preparing this lesson** (macOS, Node.js v25.2.1, JDK 21, Expo SDK 57, React Native 0.86.3): steps 1–5 and the keystore generation of step 6A — with their verbatim output below. `npx tsc --noEmit` for the files of step 3 finished without messages, and `npx expo export --platform android` built a 1.4 MB `.hbc` bundle in which `grep -a -F` found `Build: release` and the wish names but not `[dev] wishes` or `Build: debug`. **Building the native part, installing, and every command with `adb`, `apksigner`, `xcrun` and `plutil` were not checked** — there is no Android SDK, emulator or Xcode there. Write down yourself what they show for you.
+        **What was checked while preparing this lesson** (macOS, Node.js v25.2.1, JDK 21, Expo SDK 57, React Native 0.86.3): steps 1–5, the keystore generation of step 6A and `prebuild` with the plugin of step 7A — with their verbatim output below. `npx tsc --noEmit` for the files of step 3 finished without messages, and `npx expo export --platform android` built a 1.4 MB `.hbc` bundle in which `grep -a -F` found `Build: release` and the wish names but not `[dev] wishes` or `Build: debug`. **Building the native part, installing, and every command with `adb`, `apksigner`, `xcrun` and `plutil` were not checked** — there is no Android SDK, emulator or Xcode there. Write down yourself what they show for you.
 
         If you have no native tooling, press **“I have no emulator or device”**: the task is recorded as not performed.
 
@@ -358,22 +382,46 @@ blocks:
 
         Both passwords are the same: in a PKCS12 store the key password equals the store password. On Windows the path looks like `C:\\Users\\your-name\\keys\\rn11-lab-upload.keystore` (doubled backslashes).
 
-        **Step 7A — changes in `android/app/build.gradle`** (the block from the React Native 0.86 docs, “Publishing to Google Play Store”). In `signingConfigs { … }` next to `debug { … }` add:
+        **Step 7A — release signing through a config plugin.** The React Native 0.86 docs (“Publishing to Google Play Store”) say to add a `release` block to `signingConfigs` in `android/app/build.gradle`. But in an Expo project `prebuild` generates that file: we added the block by hand, ran a plain `npx expo prebuild` — and the block was gone, with release signed by `debug` again. On top of that, Git ignores the `android/` folder (the `/android` line in `.gitignore`). So the same block is added by a small **config plugin** — a function `prebuild` calls every time it generates the native files. A new file `plugins/with-release-signing.js`:
 
-        ```groovy
-        release {
-            if (project.hasProperty('MYAPP_UPLOAD_STORE_FILE')) {
-                storeFile file(MYAPP_UPLOAD_STORE_FILE)
-                storePassword MYAPP_UPLOAD_STORE_PASSWORD
-                keyAlias MYAPP_UPLOAD_KEY_ALIAS
-                keyPassword MYAPP_UPLOAD_KEY_PASSWORD
+        ```js
+        // Config plugin: on every `npx expo prebuild`, adds the release signing config from the
+        // React Native 0.86 guide to android/app/build.gradle. The values come from ~/.gradle/gradle.properties.
+        const { withAppBuildGradle } = require('expo/config-plugins');
+
+        const RELEASE_SIGNING = `        release {
+                    if (project.hasProperty('MYAPP_UPLOAD_STORE_FILE')) {
+                        storeFile file(MYAPP_UPLOAD_STORE_FILE)
+                        storePassword MYAPP_UPLOAD_STORE_PASSWORD
+                        keyAlias MYAPP_UPLOAD_KEY_ALIAS
+                        keyPassword MYAPP_UPLOAD_KEY_PASSWORD
+                    }
+                }
+        `;
+
+        module.exports = function withReleaseSigning(config) {
+          return withAppBuildGradle(config, (mod) => {
+            let gradle = mod.modResults.contents;
+            if (!gradle.includes('MYAPP_UPLOAD_STORE_FILE')) {
+              gradle = gradle.replace('    signingConfigs {\n', (start) => start + RELEASE_SIGNING);
             }
-        }
+            gradle = gradle.replace(
+              /(buildTypes \{[\s\S]*?\n        release \{[\s\S]*?)signingConfig signingConfigs\.debug/,
+              '$1signingConfig signingConfigs.release',
+            );
+            mod.modResults.contents = gradle;
+            return mod;
+          });
+        };
         ```
 
-        And in `buildTypes { release { … } }` replace the line `signingConfig signingConfigs.debug` with `signingConfig signingConfigs.release`.
+        And in `app.json` inside `"expo"`, the line that turns it on:
 
-        The Expo template's Git ignores the `android/` folder (the `/android` line in `.gitignore`), and `npx expo prebuild --clean` creates it anew. So this change never gets into a commit and disappears after `--clean` — repeat step 7A then.
+        ```json
+        "plugins": ["./plugins/with-release-signing"]
+        ```
+
+        The plugin and the `app.json` line live in the repository: they hold no passwords and no key, only property names.
 
         **Step 10 — `release-evidence.md`** in the project root (an example; fill in your own data, no passwords):
 
@@ -430,12 +478,12 @@ blocks:
           uk: "`Generating 2,048 bit RSA key pair and self-signed certificate (SHA384withRSA) with a validity of 10,000 days` і `[Storing rn11-lab-upload.keystore]`. `keytool -list` (ще раз пароль) друкує `Certificate fingerprint (SHA-256): …` — запиши цей відбиток."
           en: "`Generating 2,048 bit RSA key pair and self-signed certificate (SHA384withRSA) with a validity of 10,000 days` and `[Storing rn11-lab-upload.keystore]`. `keytool -list` (the password once more) prints `Certificate fingerprint (SHA-256): …` — note this fingerprint."
       - text:
-          uk: "**A.** Згенеруй теку `android/` і зміни в `android/app/build.gradle` підпис release, як у кроці 7A вступу."
-          en: "**A.** Generate the `android/` folder and change the release signing in `android/app/build.gradle` as in step 7A of the intro."
-        command: "npx expo prebuild --platform android"
+          uk: "**A.** Створи `plugins/with-release-signing.js` і додай рядок `\"plugins\"` в `app.json`, як у кроці 7A вступу. Потім згенеруй теку `android/` і перевір, чим підписується кожен варіант. Закоміть плагін."
+          en: "**A.** Create `plugins/with-release-signing.js` and add the `\"plugins\"` line to `app.json` as in step 7A of the intro. Then generate the `android/` folder and check what signs each variant. Commit the plugin."
+        command: "npx expo prebuild --platform android\ngrep -n \"signingConfig signingConfigs\" android/app/build.gradle\ngit add -A\ngit commit -m \"Sign release builds with the upload key\""
         expect:
-          uk: "`✔ Created native directory`, `✔ Updated package.json` і `✔ Finished prebuild`. У `android/app/build.gradle` — `applicationId 'com.example.jsll.releaselab'`, `versionCode 1`, `versionName \"1.0.0\"` (у нас було саме так)."
-          en: "`✔ Created native directory`, `✔ Updated package.json` and `✔ Finished prebuild`. `android/app/build.gradle` has `applicationId 'com.example.jsll.releaselab'`, `versionCode 1`, `versionName \"1.0.0\"` (exactly what we got)."
+          uk: "`✔ Created native directory`, `✔ Updated package.json` і `✔ Finished prebuild`. `grep` показує два рядки: `signingConfig signingConfigs.debug` (для debug) і `signingConfig signingConfigs.release` (для release). У `android/app/build.gradle` також `applicationId 'com.example.jsll.releaselab'`, `versionCode 1`, `versionName \"1.0.0\"`. У нас було саме так — і після повторного `prebuild`, і після `prebuild --clean`."
+          en: "`✔ Created native directory`, `✔ Updated package.json` and `✔ Finished prebuild`. `grep` shows two lines: `signingConfig signingConfigs.debug` (for debug) and `signingConfig signingConfigs.release` (for release). `android/app/build.gradle` also has `applicationId 'com.example.jsll.releaselab'`, `versionCode 1`, `versionName \"1.0.0\"`. That is exactly what we got — also after a repeated `prebuild` and after `prebuild --clean`."
       - text:
           uk: "**A.** Запусти емулятор (або підключи телефон) і збери та встав release. Команда сама ставить і відкриває застосунок. Не перевірено під час підготовки уроку; перше збирання триває кілька хвилин."
           en: "**A.** Start the emulator (or connect the phone), then build and install the release. The command installs and opens the app by itself. Not checked while preparing this lesson; the first build takes several minutes."
@@ -462,8 +510,8 @@ blocks:
           en: "Create `release-evidence.md` following the step 10 sample in the intro and commit it. It holds neither the keystore nor passwords — check `git status` before committing."
         command: "git status --short\ngit add release-evidence.md\ngit commit -m \"Record release evidence for build 1\""
         expect:
-          uk: "`git status` показує лише `?? release-evidence.md` (та `M package.json`, якщо ти не закомітив зміну, яку зробив `prebuild`). Жодного `.keystore` у списку."
-          en: "`git status` shows only `?? release-evidence.md` (and `M package.json` if you did not commit the change `prebuild` made). No `.keystore` in the list."
+          uk: "`git status` показує `?? release-evidence.md` (на цілі I ще `M package.json`: `prebuild` змінив у ньому скрипти — його теж можна закомітити). Жодного `.keystore` у списку."
+          en: "`git status` shows `?? release-evidence.md` (on target I also `M package.json`: `prebuild` changed its scripts — you may commit it too). No `.keystore` in the list."
     verify:
       - id: release-installed
         text:
@@ -507,12 +555,12 @@ blocks:
           uk: "`apksigner` лежить у теці конкретної версії Build-Tools: подивись `ls $ANDROID_HOME/build-tools` і підстав назву теки замість `<версія>`. Якщо Build-Tools немає, встанови їх в Android Studio (SDK Tools)."
           en: "`apksigner` lives in the folder of a specific Build-Tools version: look at `ls $ANDROID_HOME/build-tools` and put that folder name in place of `<version>`. If there are no Build-Tools, install them in Android Studio (SDK Tools)."
     recovery:
-      uk: "Проєкт створено з Git-репозиторієм, і крок 5 закомітив робочий стан. Якщо тека `android/` заплуталася, `npx expo prebuild --platform android --clean` створює її наново з `app.json` — після цього повтори крок 7A. Keystore лежить у `~/keys` поза проєктом і від цього не страждає. Встановлений release прибирає `adb uninstall com.example.jsll.releaselab`."
-      en: "The project was created with a Git repository, and step 5 committed a working state. If the `android/` folder gets tangled, `npx expo prebuild --platform android --clean` creates it anew from `app.json` — repeat step 7A afterwards. The keystore sits in `~/keys` outside the project and is unaffected. `adb uninstall com.example.jsll.releaselab` removes the installed release."
+      uk: "Проєкт створено з Git-репозиторієм, і крок 5 закомітив робочий стан. Якщо тека `android/` заплуталася, `npx expo prebuild --platform android --clean` створює її наново з `app.json`, і плагін з кроку 7A знову додає release-підпис. Keystore лежить у `~/keys` поза проєктом і від цього не страждає. Встановлений release прибирає `adb uninstall com.example.jsll.releaselab`."
+      en: "The project was created with a Git repository, and step 5 committed a working state. If the `android/` folder gets tangled, `npx expo prebuild --platform android --clean` creates it anew from `app.json`, and the plugin from step 7A adds the release signing again. The keystore sits in `~/keys` outside the project and is unaffected. `adb uninstall com.example.jsll.releaselab` removes the installed release."
 
   - id: to-project
     kind: transfer
     capstoneStep: RN-11
     body:
-      uk: "Для release свого проєкту в тебе тепер є перевірений порядок: ідентифікатори в `app.json`, keystore поза проєктом, підпис у `build.gradle`, збирання й встановлення на заявлену ціль, а потім читання артефакту назад і запис у `release-evidence.md`."
-      en: "For your project's release you now have a checked order: ids in `app.json`, a keystore outside the project, signing in `build.gradle`, building and installing on the declared target, and then reading the artifact back and recording it in `release-evidence.md`."
+      uk: "Для release свого проєкту в тебе тепер є перевірений порядок: ідентифікатори в `app.json`, keystore поза проєктом, release-підпис через config plugin, збирання й встановлення на заявлену ціль, а потім читання артефакту назад і запис у `release-evidence.md`."
+      en: "For your project's release you now have a checked order: ids in `app.json`, a keystore outside the project, release signing through a config plugin, building and installing on the declared target, and then reading the artifact back and recording it in `release-evidence.md`."
