@@ -101,7 +101,7 @@ function LessonBody({ lesson, drafts, page, focusBlock }: { lesson: Lesson; draf
   const complete = progress ? progress.state === 'completed' || isLessonComplete(lesson, progress) : false;
 
   return (
-    <div className="lesson" ref={main} tabIndex={-1} aria-labelledby="lesson-title">
+    <div className="lesson" ref={main} tabIndex={-1} aria-labelledby="lesson-title" data-lesson={lesson.id} data-page={current + 1}>
       <header className="page-heading">
         <div>
           <span className="eyebrow">{ref ? `${pick(ref.unit.title, lang)} · ${ref.unit.id}` : lesson.unit}</span>
