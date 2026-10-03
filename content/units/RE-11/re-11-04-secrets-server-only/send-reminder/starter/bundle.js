@@ -1,9 +1,12 @@
 // A pretend bundler. Like a real one, it starts at a client entry, follows every static import of a
 // project file and collects all the files it reaches — that is what the browser would download.
 // Like React Router, it refuses to put a `*.server.*` file into a client bundle.
+// Like a real one, it skips comments: a commented-out import brings nothing in.
 // It does not minify, tree-shake or follow packages such as "react".
 const EXTENSIONS = ["", ".ts", ".tsx", ".js", ".jsx"];
 const IMPORT = /(?:import|export)\s+(?:[^"';]*?\s+from\s+)?["'](\.{1,2}\/[^"']+)["']/g;
+// Block comments, and line comments that do not follow a ":" (so "https://…" in a string stays).
+const COMMENTS = /\/\*[\s\S]*?\*\/|(^|[^:\\])\/\/.*$/gm;
 
 export class BuildError extends Error {
   name = "BuildError";
@@ -28,7 +31,7 @@ export async function bundle(entry) {
       throw new BuildError(`${file} is server-only, but the client imports it: ${[...chain, file].join(" → ")}`);
     }
     files.push({ file, text });
-    for (const match of text.matchAll(IMPORT)) await visit(`./${match[1].replace(/^\.\//, "")}`, [...chain, file]);
+    for (const match of text.replace(COMMENTS, "$1").matchAll(IMPORT)) await visit(`./${match[1].replace(/^\.\//, "")}`, [...chain, file]);
   }
   await visit(entry, []);
   return files;
