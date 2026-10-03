@@ -19,11 +19,17 @@ async function mount() {
   });
   const root = createRoot(host);
   root.render(createElement(App));
+  mounted.push(() => { root.unmount(); host.remove(); });
   await waitFor(() => host.querySelector('p') !== null);
   await settle();
   return { host, sets };
 }
-const restore = () => { delete document.title; };
+const mounted = [];
+// Restores document.title and removes the copies a check mounted.
+const restore = () => {
+  delete document.title;
+  while (mounted.length > 0) mounted.pop()();
+};
 const filterButton = (host, label) => [...host.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
 const expected = (n) => `${L.titlePrefix} ${n}`;
 
