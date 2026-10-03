@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Text, View } from 'react-native';
 import { summarizeItems } from './domain/items.js';
 
-// Misconception: onClick on a View handles a tap, as on the web; a finger tap on a phone does not call it.
+// Misconception: a View with a button role and onClick is a button; a finger tap on a phone does not call onClick.
 export function WishSummary({ items, labels }) {
   const [showAcquired, setShowAcquired] = useState(false);
   const summary = summarizeItems(items);
@@ -11,7 +11,7 @@ export function WishSummary({ items, labels }) {
     <View>
       <Text role="heading">{labels.title}</Text>
       <Text>{labels.total}: {summary.wantedTotal}</Text>
-      <View onClick={() => setShowAcquired(!showAcquired)}>
+      <View role="button" onClick={() => setShowAcquired(!showAcquired)}>
         <Text>{labels.toggle}</Text>
       </View>
       <View>
