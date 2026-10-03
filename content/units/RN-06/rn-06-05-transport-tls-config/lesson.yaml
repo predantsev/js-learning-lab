@@ -1,0 +1,316 @@
+id: rn-06-05-transport-tls-config
+unit: RN-06
+title:
+  uk: "Транспорт, TLS і мережеві налаштування платформи"
+  en: "Transport, TLS context and platform network config"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Пояснювати, чому робочий трафік має йти через HTTPS зі звичайною перевіркою сертифіката і чому mock-сервіс на простому HTTP прийнятний лише для локального хоста розробки."
+    en: "Explain why production traffic must use HTTPS with normal certificate validation, and why the plain-HTTP mock service is acceptable only for the local development host."
+  - uk: "Знаходити налаштування платформ, що дозволяють чи блокують простий HTTP (мережеву конфігурацію безпеки Android, App Transport Security в iOS), і обмежувати будь-який виняток хостом розробки й debug-збірками."
+    en: "Locate the platform settings that allow or block cleartext HTTP (the Android network security configuration, iOS App Transport Security) and scope any exception to the development host and debug builds."
+prerequisites: [rn-06-04-offline-error-state, rn-01-03-env-versions-debug-release]
+subskills:
+  - { family: N-06, skill: "transport/TLS context", depth: intro }
+  - { family: N-06, skill: "platform network configuration", depth: intro }
+glossary: [cleartext-traffic, app-transport-security, network-security-config]
+selfCheck: [predict-release, release-transport]
+
+blocks:
+  - id: https-and-certificates
+    kind: explanation
+    title:
+      uk: "Навіщо HTTPS і перевірка сертифіката"
+      en: "Why HTTPS and certificate validation"
+    body:
+      uk: |
+        Mock-сервіс говорить [[cleartext-traffic|простим HTTP]]: усе, що йде мережею, видно й можна змінити дорогою. Для синтетичних записів на твоєму комп’ютері чи в домашньому Wi-Fi це прийнятно. Для справжнього застосунку — ні.
+
+        HTTPS дає дві речі:
+
+        - **шифрування** — сусід у кафе-Wi-Fi не прочитає й не підмінить дані;
+        - **перевірку, що це справді твій сервер**: сервер показує сертифікат, а система перевіряє ланцюжок підписів до кореневих сертифікатів, яким довіряє пристрій.
+
+        Друге не менш важливе за перше. Код, що «довіряє будь-якому сертифікату», щоб запит запрацював, шифрує трафік — але з ким завгодно, хто став посередині. Такий «тимчасовий» обхід легко потрапляє в реліз, тому його не пишуть узагалі, навіть у debug. Для розробки є чесніший шлях: простий HTTP лише до хоста розробки й лише в debug-збірці.
+      en: |
+        The mock service speaks [[cleartext-traffic|plain HTTP]]: everything on the wire can be seen and changed on the way. For synthetic records on your computer or home Wi-Fi that is acceptable. For a real app it is not.
+
+        HTTPS gives two things:
+
+        - **encryption** — a neighbour on café Wi-Fi cannot read or swap the data;
+        - **proof that it really is your server**: the server shows a certificate, and the system checks its chain of signatures up to the root certificates the device trusts.
+
+        The second matters as much as the first. Code that “trusts any certificate” to make a request work encrypts the traffic — but with whoever sat down in the middle. Such a “temporary” bypass easily reaches a release, so it is not written at all, not even in debug. Development has a more honest route: plain HTTP only to the development host and only in a debug build.
+
+  - id: platform-gates
+    kind: explanation
+    title:
+      uk: "Де платформи вирішують, чи пускати простий HTTP"
+      en: "Where the platforms decide whether plain HTTP may go out"
+    body:
+      uk: |
+        Ми згенерували нативні теки проєкту Expo SDK 57 командою `npx expo prebuild --no-install` і подивилися, що там:
+
+        **Android.** З Android 9 простий HTTP заборонено за замовчуванням. У `android/app/src/main/AndroidManifest.xml` дозволу немає, а в `android/app/src/debug/AndroidManifest.xml` стоїть `android:usesCleartextTraffic="true"` — тож debug-збірка пускає простий HTTP **куди завгодно**, а release — нікуди. Вужчий виняток дає [[network-security-config|мережева конфігурація безпеки]] — файл, де простий HTTP дозволено лише для названих хостів:
+
+        ```xml
+        <network-security-config>
+          <domain-config cleartextTrafficPermitted="true">
+            <domain includeSubdomains="false">10.0.2.2</domain>
+          </domain-config>
+        </network-security-config>
+        ```
+
+        **iOS.** [[app-transport-security|App Transport Security]] в `Info.plist` має `NSAllowsArbitraryLoads` = `false` і `NSAllowsLocalNetworking` = `true` — **в усіх збірках**. Звичайні доменні імена вимагають HTTPS; `localhost` і імена `.local` дозволяє `NSAllowsLocalNetworking`; а адреси на кшталт `192.168.1.20` під ATS не підпадають узагалі (з iOS 10 — так пояснює інженер Apple на форумах для розробників; на пристрої ми це не перевіряли).
+
+        У проєкті Expo ці файли не правлять руками: їх генерує prebuild, а налаштовує плагін `expo-build-properties` (наприклад, його параметр `android.usesCleartextTraffic`). Діють вони лише у збірці з твого проєкту. Expo Go — готовий застосунок зі своїми налаштуваннями, тож у ньому цих обмежень не видно.
+      en: |
+        We generated the native folders of an Expo SDK 57 project with `npx expo prebuild --no-install` and looked at what is there:
+
+        **Android.** Since Android 9 plain HTTP is forbidden by default. `android/app/src/main/AndroidManifest.xml` has no permission for it, while `android/app/src/debug/AndroidManifest.xml` has `android:usesCleartextTraffic="true"` — so the debug build lets plain HTTP go **anywhere**, and the release build nowhere. A narrower exception comes from a [[network-security-config|network security configuration]] — a file where plain HTTP is allowed only for named hosts:
+
+        ```xml
+        <network-security-config>
+          <domain-config cleartextTrafficPermitted="true">
+            <domain includeSubdomains="false">10.0.2.2</domain>
+          </domain-config>
+        </network-security-config>
+        ```
+
+        **iOS.** [[app-transport-security|App Transport Security]] in `Info.plist` has `NSAllowsArbitraryLoads` = `false` and `NSAllowsLocalNetworking` = `true` — **in every build**. Ordinary domain names require HTTPS; `localhost` and `.local` names are allowed by `NSAllowsLocalNetworking`; and addresses like `192.168.1.20` are not subject to ATS at all (since iOS 10 — as an Apple engineer explains on the developer forums; we did not check it on a device).
+
+        In an Expo project you do not edit these files by hand: prebuild generates them, and the `expo-build-properties` plugin configures them (for example, its `android.usesCleartextTraffic` option). They act only in a build made from your project. Expo Go is a ready-made app with its own settings, so you do not see these limits in it.
+
+  - id: two-gates
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Дві брами між застосунком і сервером"
+      en: "Two gates between the app and the server"
+    textEquivalent:
+      uk: "Запит проходить дві брами. Перша — політика платформи: чи дозволено простий HTTP до цього хоста в цій збірці. Друга — TLS: для HTTPS система перевіряє ланцюжок сертифіката сервера до довірених кореневих. Запит до mock-сервісу на http://10.0.2.2:7310 у debug-збірці Android проходить першу браму завдяки debug-маніфесту, а TLS у нього немає. Той самий запит у release-збірці Android зупиняє перша брама. Запит на https до справжнього API проходить політику й перевірку сертифіката. Якщо перевірку сертифіката вимкнено, друга брама пропускає будь-кого посередині."
+      en: "A request passes two gates. The first is the platform policy: is plain HTTP allowed to this host in this build. The second is TLS: for HTTPS the system checks the server's certificate chain against trusted roots. A request to the mock service at http://10.0.2.2:7310 in an Android debug build passes the first gate thanks to the debug manifest, and has no TLS. The same request in an Android release build is stopped by the first gate. An https request to the real API passes the policy and the certificate check. If certificate checking is turned off, the second gate lets anyone in the middle through."
+    spec:
+      layout: grid
+      nodes:
+        - { id: app, label: { uk: "застосунок", en: "app" }, col: 0, row: 0, w: 240 }
+        - { id: policy, label: { uk: "брама 1: політика платформи", en: "gate 1: platform policy" }, shape: round, col: 0, row: 1, w: 240 }
+        - { id: tls, label: { uk: "брама 2: перевірка TLS", en: "gate 2: TLS check" }, shape: round, col: 0, row: 2, w: 240 }
+        - { id: server, label: { uk: "сервер", en: "server" }, shape: cylinder, col: 0, row: 3, w: 240 }
+      edges:
+        - { id: out, from: app, to: policy }
+        - { id: through, from: policy, to: tls }
+        - { id: arrive, from: tls, to: server }
+      steps:
+        - highlight: [app, policy, out]
+          caption:
+            uk: "Спершу політика платформи: чи можна простим HTTP до цього хоста в цій збірці?"
+            en: "First the platform policy: may plain HTTP go to this host in this build?"
+        - highlight: [policy, server, through, arrive]
+          dim: [tls]
+          annotate:
+            - { id: policy, text: { uk: "debug: так", en: "debug: yes" } }
+          caption:
+            uk: "`http://10.0.2.2:7310` у debug-збірці Android: debug-маніфест дозволяє простий HTTP, і запит доходить до mock-сервісу. TLS тут немає взагалі."
+            en: "`http://10.0.2.2:7310` in an Android debug build: the debug manifest allows plain HTTP, and the request reaches the mock service. There is no TLS here at all."
+        - highlight: [policy]
+          dim: [tls, server]
+          annotate:
+            - { id: policy, text: { uk: "release: ні", en: "release: no" } }
+          caption:
+            uk: "Той самий запит у release-збірці Android: дозволу в головному маніфесті немає, і перша брама його зупиняє. Для коду це виглядає як будь-який збій з’єднання — відхилений `fetch` (на пристрої ми цього не перевіряли)."
+            en: "The same request in an Android release build: the main manifest has no permission, and the first gate stops it. To the code this looks like any connection failure — a rejected `fetch` (we did not check this on a device)."
+        - highlight: [policy, tls, server, through, arrive]
+          annotate:
+            - { id: tls, text: { uk: "ланцюжок → довірений корінь", en: "chain → trusted root" } }
+          caption:
+            uk: "`https://` до справжнього API: політика пропускає, а TLS перевіряє, що сертифікат підписано аж до кореня, якому довіряє пристрій."
+            en: "`https://` to the real API: the policy lets it through, and TLS checks the certificate is signed all the way up to a root the device trusts."
+        - highlight: [tls]
+          annotate:
+            - { id: tls, text: { uk: "вимкнено = пропускає будь-кого", en: "off = lets anyone through" } }
+          caption:
+            uk: "Якщо перевірку сертифіката вимкнути, друга брама пропускає будь-кого, хто став посередині: трафік зашифровано, але не з тим сервером."
+            en: "With certificate checking turned off, the second gate lets through anyone who sat down in the middle: the traffic is encrypted, but not with the right server."
+
+  - id: predict-release
+    kind: prediction
+    prompt:
+      uk: "Налаштування — ті, що згенерував шаблон Expo SDK 57 (debug-маніфест Android з `usesCleartextTraffic=\"true\"`, `Info.plist` з `NSAllowsLocalNetworking`). Застосунок шле простий HTTP до mock-сервісу: на Android — `http://10.0.2.2:7310`, на iOS — `http://localhost:7310`. Де запит пройде платформну політику?"
+      en: "The settings are those the Expo SDK 57 template generated (an Android debug manifest with `usesCleartextTraffic=\"true\"`, an `Info.plist` with `NSAllowsLocalNetworking`). The app sends plain HTTP to the mock service: on Android `http://10.0.2.2:7310`, on iOS `http://localhost:7310`. Where does the request pass the platform policy?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: right
+          text:
+            uk: "Android debug — так, Android release — ні; iOS debug — так, iOS release — так"
+            en: "Android debug — yes, Android release — no; iOS debug — yes, iOS release — yes"
+        - id: all-yes
+          text:
+            uk: "Скрізь так: якщо працює в debug, працюватиме й у release"
+            en: "Yes everywhere: if it works in debug, it works in release too"
+          why:
+            uk: "Дозвіл на Android лежить лише в debug-маніфесті. У release-збірку він не потрапляє, і Android 9+ блокує простий HTTP."
+            en: "On Android the permission sits only in the debug manifest. It does not get into the release build, and Android 9+ blocks plain HTTP."
+        - id: no-release
+          text:
+            uk: "Android і iOS: debug — так, release — ні"
+            en: "Android and iOS: debug — yes, release — no"
+          why:
+            uk: "В iOS налаштування ATS однакові для обох збірок, і `localhost` дозволяє `NSAllowsLocalNetworking`. Release на iOS цей запит пропустить — і саме тому release-конфігурацію треба перевіряти окремо, а не покладатися на те, що платформа зупинить."
+            en: "On iOS the ATS settings are the same for both builds, and `NSAllowsLocalNetworking` allows `localhost`. The iOS release lets this request through — which is exactly why the release configuration must be checked on its own rather than relying on the platform to stop it."
+      correct: [right]
+    explanation:
+      uk: "Платформи поводяться по-різному: Android прив’язує виняток до debug-збірки, iOS — до виду хоста. Відповідь зібрано з файлів, які згенерував prebuild, і з документації; release-збірки на пристроях під час підготовки уроку не запускали. Висновок для тебе: адресу mock-сервісу й винятки для простого HTTP у release не залишай — саме це перевіряє вправа «Перевірка транспорту перед релізом»."
+      en: "The platforms behave differently: Android ties the exception to the debug build, iOS to the kind of host. The answer is assembled from the files prebuild generated and from the documentation; release builds were not run on devices while preparing this lesson. The takeaway: do not leave the mock service address or plain-HTTP exceptions in a release — that is exactly what the exercise “A transport check before a release” checks."
+
+  - id: recall-debug-release
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: release-differs
+        from: rn-01-03-env-versions-debug-release
+        prompt:
+          uk: "Чим release-збірка нативного застосунку відрізняється від debug-збірки, яку ти запускав досі?"
+          en: "How does a native app's release build differ from the debug build you have been running so far?"
+        answer:
+          type: choice
+          options:
+            - id: bundled
+              text:
+                uk: "JavaScript вбудовано в застосунок і оптимізовано, dev-сервер і інструменти налагодження не потрібні"
+                en: "The JavaScript is bundled into the app and optimised, no dev server and no debugging tools are needed"
+            - id: same
+              text:
+                uk: "Нічим, крім назви: це той самий застосунок"
+                en: "Nothing but the name: it is the same app"
+              why:
+                uk: "Release не завантажує код з Metro, не має інструментів налагодження й може мати інші налаштування — як-от дозвіл на простий HTTP."
+                en: "A release does not load code from Metro, has no debugging tools and can have other settings — such as the plain-HTTP permission."
+            - id: slower
+              text:
+                uk: "Release повільніший, бо перевіряє більше"
+                en: "A release is slower because it checks more"
+              why:
+                uk: "Навпаки: release-збірка оптимізована й зазвичай швидша за debug."
+                en: "The other way round: a release build is optimised and usually faster than debug."
+          correct: [bundled]
+        explanation:
+          uk: "Різниця між збірками — не лише швидкість: і мережеві налаштування в них можуть бути різні."
+          en: "The difference between builds is not only speed: their network settings can differ as well."
+
+  - id: request-inspector
+    kind: example
+    runtime: concept-preview
+    dir: request-inspector
+    entry: main.jsx
+    strings:
+      build: { uk: "Збірка", en: "Build" }
+      allowed: { uk: "політика пропускає", en: "the policy lets it out" }
+      blocked: { uk: "політика блокує", en: "the policy blocks it" }
+    title:
+      uk: "Інспектор запиту"
+      en: "A request inspector"
+    body:
+      uk: |
+        `policy.js` — модель двох платформних брам, зібрана з файлів шаблону Expo SDK 57: маніфестів Android і `Info.plist` iOS. Інспектор показує, чи пропустить політика запит до mock-сервісу в обраній збірці.
+
+        Натисни **Запустити**: у debug обидві платформи пропускають простий HTTP.
+      en: |
+        `policy.js` is a model of the two platform gates, assembled from the Expo SDK 57 template's files: the Android manifests and the iOS `Info.plist`. The inspector shows whether the policy lets a request to the mock service out in the chosen build.
+
+        Press **Run**: in debug both platforms let plain HTTP out.
+    tryIt:
+      uk: |
+        1. Зміни `BUILD` на `'release'` і запусти: Android блокує, iOS пропускає `localhost`.
+        2. Зміни `IOS_URL` на `'http://api.planner.example/records/wishlist'` і запусти: звичайне доменне ім’я на простому HTTP iOS блокує.
+        3. Зміни обидві адреси на `https://api.planner.example/records/wishlist` і запусти: політика пропускає обидва — тепер черга перевірки сертифіката.
+      en: |
+        1. Change `BUILD` to `'release'` and run: Android blocks, iOS lets `localhost` out.
+        2. Change `IOS_URL` to `'http://api.planner.example/records/wishlist'` and run: iOS blocks an ordinary domain name over plain HTTP.
+        3. Change both addresses to `https://api.planner.example/records/wishlist` and run: the policy lets both out — now the certificate check takes its turn.
+    limits:
+      uk: "Це перегляд у браузері через react-native-web і модель політик, а не збірки застосунку: жоден запит не йде, і жодна платформа тут нічого не блокує. Справжню політику застосовує лише збірка з твого проєкту на заявленій цілі (не Expo Go, у якого власні налаштування)."
+      en: "This is a browser preview through react-native-web and a model of the policies, not an app build: no request goes out, and no platform blocks anything here. The real policy is applied only by a build made from your project on your declared target (not Expo Go, which has its own settings)."
+
+  - id: release-transport
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: release-transport
+    entry: index.js
+    editable: [transport.js]
+    title:
+      uk: "Перевірка транспорту перед релізом"
+      en: "A transport check before a release"
+    instructions:
+      uk: |
+        Напиши `assertReleaseTransport(config)` у `transport.js`. Вона нічого не повертає, коли налаштування безпечні, і **кидає `Error`**, коли ні. Поля `config` видно в `configs.js`.
+
+        - `tls.trustAllCertificates === true` — помилка **в будь-якій** збірці.
+        - Для `build: 'release'` додатково помилка, якщо:
+          - `apiBaseUrl` не починається з `https://`;
+          - `android.usesCleartextTraffic === true`;
+          - `android.cleartextDomains` не порожній;
+          - `ios.NSAllowsArbitraryLoads === true`.
+        - Debug-збірка з простим HTTP до хоста розробки — без помилки.
+        - Повідомлення помилки містить назву поля, через яке вона виникла (`apiBaseUrl`, `trustAllCertificates`, `usesCleartextTraffic`, `cleartextDomains` чи `NSAllowsArbitraryLoads`).
+      en: |
+        Write `assertReleaseTransport(config)` in `transport.js`. It returns nothing when the settings are safe and **throws an `Error`** when they are not. The fields of `config` are visible in `configs.js`.
+
+        - `tls.trustAllCertificates === true` — an error **in any** build.
+        - For `build: 'release'` also an error if:
+          - `apiBaseUrl` does not start with `https://`;
+          - `android.usesCleartextTraffic === true`;
+          - `android.cleartextDomains` is not empty;
+          - `ios.NSAllowsArbitraryLoads === true`.
+        - A debug build with plain HTTP to the development host — no error.
+        - The error message contains the name of the field that caused it (`apiBaseUrl`, `trustAllCertificates`, `usesCleartextTraffic`, `cleartextDomains` or `NSAllowsArbitraryLoads`).
+    testTitles:
+      "a safe release and a local debug build pass":
+        uk: "Безпечний release і локальний debug проходять без помилки"
+        en: "A safe release and a local debug build pass without an error"
+      "a release build with an http address fails and names apiBaseUrl":
+        uk: "Release з адресою `http://` дає помилку з `apiBaseUrl`"
+        en: "A release with an `http://` address fails, naming `apiBaseUrl`"
+      "release cleartext exceptions fail and are named":
+        uk: "Винятки для простого HTTP в release дають помилку з назвою поля"
+        en: "Plain-HTTP exceptions in a release fail, naming the field"
+      "trusting every certificate fails in every build":
+        uk: "`trustAllCertificates` дає помилку і в release, і в debug"
+        en: "`trustAllCertificates` fails in both release and debug"
+    hints:
+      nudge:
+        uk: "Яке правило діє для будь-якої збірки, а які — лише для release? Почни з першого, а потім виходь з функції, якщо збірка не release."
+        en: "Which rule holds for any build, and which only for a release? Start with the first one, then leave the function if the build is not a release."
+      explanation:
+        uk: "Перевірку зручно писати як ланцюжок «охоронців»: кожен `if` перевіряє одну умову й кидає `new Error(...)` з назвою поля в тексті, а ранній `return` пропускає правила, які до цієї збірки не стосуються. Так, наприклад, перевіряють форму замовлення: `if (!order.email) throw new Error('email is required');`, а для самовивозу правила адреси пропускають раннім `return`."
+        en: "The check is convenient to write as a chain of “guards”: each `if` tests one condition and throws `new Error(...)` with the field's name in the text, and an early `return` skips rules that do not apply to this build. An order form is checked like that, for example: `if (!order.email) throw new Error('email is required');`, and for a pickup the address rules are skipped with an early `return`."
+    solutionNote:
+      uk: "Перевірка сертифіката — правило без винятків, тож воно стоїть першим. Решта стосується лише release: простий HTTP і винятки для нього там не потрібні, бо справжній API працює по HTTPS. Таку функцію запускають перед кожною release-збіркою, щоб адреса mock-сервісу не потрапила до користувачів."
+      en: "Certificate validation is a rule without exceptions, so it comes first. The rest applies only to a release: plain HTTP and its exceptions are not needed there, because the real API works over HTTPS. Such a function runs before every release build, so the mock service's address never reaches users."
+    feedback:
+      - when: { test: "a safe release and a local debug build pass" }
+        message:
+          uk: "Ця перевірка чекає, що безпечний release і debug-збірка з `http://10.0.2.2:7310` проходять без помилки. Простий HTTP до хоста розробки в debug дозволено."
+          en: "This check expects a safe release and a debug build with `http://10.0.2.2:7310` to pass without an error. Plain HTTP to the development host is allowed in debug."
+      - when: { test: "release cleartext exceptions fail and are named" }
+        message:
+          uk: "Ця перевірка дає три release-конфігурації — з `usesCleartextTraffic: true`, з непорожнім `cleartextDomains` і з `NSAllowsArbitraryLoads: true` — і чекає помилку з назвою відповідного поля в кожній."
+          en: "This check gives three release configurations — with `usesCleartextTraffic: true`, with a non-empty `cleartextDomains` and with `NSAllowsArbitraryLoads: true` — and expects an error naming the matching field in each."
+      - when: { test: "trusting every certificate fails in every build" }
+        message:
+          uk: "Ця перевірка чекає помилку з `trustAllCertificates` і для release, і для debug. Вимкнена перевірка сертифіката небезпечна й у розробці: такий код легко потрапляє в реліз."
+          en: "This check expects an error naming `trustAllCertificates` for both release and debug. Disabled certificate validation is dangerous in development too: such code easily reaches a release."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-06
+    body:
+      uk: "У кроці проєкту адреса mock-сервісу живе лише в конфігурації розробки. Простий HTTP до нього прийнятний, бо це твій комп’ютер і синтетичні дані; справжній API в NO-06 підключатиметься вже інакше."
+      en: "In the project step the mock service's address lives only in the development config. Plain HTTP to it is acceptable because it is your computer and synthetic data; the real API in NO-06 will be connected differently."

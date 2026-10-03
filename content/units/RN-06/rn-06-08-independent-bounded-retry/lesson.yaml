@@ -1,0 +1,242 @@
+id: rn-06-08-independent-bounded-retry
+unit: RN-06
+title:
+  uk: "Самостійно: обмежені повтори й стан офлайну"
+  en: "Independent: bounded retry and offline state"
+kind: assessment
+minutes: 30
+contentVersion: 1
+purpose:
+  uk: "Перевірити, що ти без підказок будуєш завантаження даних, яке не зависає, не повторює безглуздо, не показує зламаних даних і чесно каже, що сталося. Спершу — політика й перевірка відповіді для нової стрічки з автоматичними перевірками, потім — екран на твоїй заявленій цілі з mock-сервісом і короткий письмовий висновок про транспорт."
+  en: "To check that, without hints, you build data loading that does not hang, does not retry pointlessly, does not show broken data and says honestly what happened. First the policy and the response check for a new feed with automatic checks, then a screen on your declared target with the mock service and a short written conclusion about transport."
+objectives:
+  - uk: "Без підказок зібрати екран даних, що завантажується з вбудованих фікстур чи mock-сервісу, повторює в межах бюджету, показує чесні стани офлайну й помилок і обґрунтовує вибір транспорту, — перевірено на заявленій цілі."
+    en: "Build, without hints, a data screen that loads from bundled fixtures or the mock service, retries within a budget, shows honest offline and error states and justifies its transport choices, verified on the declared target."
+prerequisites: [rn-06-07-debug-host-address]
+subskills:
+  - { family: N-06, skill: "fixture/mock-service before Node", depth: assess }
+  - { family: N-06, skill: "offline/error state", depth: assess }
+  - { family: N-06, skill: "transport/TLS context", depth: assess }
+glossary: []
+selfCheck: [bus-timetable]
+
+blocks:
+  - id: what-is-checked
+    kind: explanation
+    title:
+      uk: "Що перевіряється"
+      en: "What is checked"
+    body:
+      uk: |
+        Тема — синтетична автобусна зупинка: mock-сервіс віддає її розклад за адресою `/timetable` (ідентифікатори, маршрути, напрямки й час відправлення). Це нова стрічка, якої не було в уроках, — підказок немає, користуйся тим, що вивчив у цьому розділі.
+
+        Дві частини:
+
+        1. **У курсі** — `isValidTimetable` і `loadTimetable` з автоматичними перевірками: тайм-аут, 5xx, 4xx, скасування, неправильне тіло.
+        2. **На заявленій цілі** — екран розкладу з mock-сервісом, вбудованими фікстурами для офлайну й двома реченнями про транспорт. Якщо нативних інструментів немає, другу частину можна позначити як не виконану.
+      en: |
+        The topic is a synthetic bus stop: the mock service serves its timetable at `/timetable` (ids, routes, destinations and departure times). This is a new feed that did not appear in the lessons — there are no hints, use what you learned in this unit.
+
+        Two parts:
+
+        1. **In the course** — `isValidTimetable` and `loadTimetable` with automatic checks: a timeout, a 5xx, a 4xx, an abort, an invalid body.
+        2. **On your declared target** — a timetable screen with the mock service, bundled fixtures for offline and two sentences about transport. If you have no native tooling, the second part can be marked as not performed.
+
+  - id: bus-timetable
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: browser-js
+    dir: bus-timetable
+    entry: index.js
+    editable: [timetable.js]
+    strings:
+      station: { uk: "Вокзал", en: "Railway station" }
+      park: { uk: "Парк", en: "City park" }
+      university: { uk: "Університет", en: "University" }
+    title:
+      uk: "Розклад автобусної зупинки"
+      en: "A bus stop timetable"
+    instructions:
+      uk: |
+        У `timetable.js` напиши дві функції.
+
+        **`isValidTimetable(body)`** повертає `true` лише для масиву (може бути порожнім), де кожен елемент — об’єкт з рядками `id`, `route`, непорожнім рядком `destination` і рядком `departs` у форматі `ГГ:ХХ` (від `00:00` до `23:59`).
+
+        **`loadTimetable(url, { fetchFn, timeoutMs, maxAttempts, baseDelayMs, signal })`** надсилає запити лише через `fetchFn` і **виконується** з об’єктом стану:
+
+        | Що сталося | Результат | Повтор? |
+        |---|---|---|
+        | 2xx і тіло пройшло `isValidTimetable` | `{ status: 'fresh', departures }` | — |
+        | 2xx, але тіло не JSON чи не пройшло перевірку | `{ status: 'invalid' }` | ні |
+        | 4xx | `{ status: 'rejected', httpStatus }` | ні |
+        | 5xx | після бюджету — `{ status: 'server' }` | так |
+        | помилка мережі | після бюджету — `{ status: 'offline' }` | так |
+        | немає відповіді за `timeoutMs` (спробу скасовано) | після бюджету — `{ status: 'timeout' }` | так |
+
+        Разом не більше `maxAttempts` спроб, пауза перед кожною наступною більша за попередню. Після бюджету результат визначає остання спроба. Зовнішній `signal` скасовує все одразу: функція **відхиляється** з помилкою з назвою `AbortError`, і нових спроб немає. `AbortSignal.timeout()` і `AbortSignal.any()` у перевірках недоступні, як і в React Native 0.86.
+      en: |
+        Write two functions in `timetable.js`.
+
+        **`isValidTimetable(body)`** returns `true` only for an array (it may be empty) where every element is an object with string `id`, `route`, a non-empty string `destination` and a string `departs` in the `HH:MM` format (from `00:00` to `23:59`).
+
+        **`loadTimetable(url, { fetchFn, timeoutMs, maxAttempts, baseDelayMs, signal })`** sends requests only through `fetchFn` and **resolves** with a state object:
+
+        | What happened | Result | Retry? |
+        |---|---|---|
+        | 2xx and the body passed `isValidTimetable` | `{ status: 'fresh', departures }` | — |
+        | 2xx, but the body is not JSON or failed the check | `{ status: 'invalid' }` | no |
+        | 4xx | `{ status: 'rejected', httpStatus }` | no |
+        | 5xx | after the budget, `{ status: 'server' }` | yes |
+        | a network error | after the budget, `{ status: 'offline' }` | yes |
+        | no answer within `timeoutMs` (the attempt is aborted) | after the budget, `{ status: 'timeout' }` | yes |
+
+        No more than `maxAttempts` attempts in total, and the pause before each next one is longer than the previous. After the budget the last attempt decides the result. The outer `signal` stops everything at once: the function **rejects** with an error named `AbortError`, and there are no new attempts. `AbortSignal.timeout()` and `AbortSignal.any()` are unavailable in the checks, as in React Native 0.86.
+    testTitles:
+      "the validator accepts departures and rejects anything else":
+        uk: "`isValidTimetable` приймає відправлення й відхиляє решту"
+        en: "`isValidTimetable` accepts departures and rejects anything else"
+      "a valid answer gives fresh departures":
+        uk: "Правильна відповідь дає `fresh` з відправленнями за одну спробу"
+        en: "A valid answer gives `fresh` with departures in one attempt"
+      "5xx and network errors are retried within the budget":
+        uk: "5xx і помилки мережі повторюються в межах бюджету"
+        en: "5xx and network errors are retried within the budget"
+      "a silent service ends in timeout after the budget":
+        uk: "Мовчазний сервіс дає `timeout` після бюджету, кожну спробу скасовано"
+        en: "A silent service gives `timeout` after the budget, every attempt aborted"
+      "a 4xx is not retried":
+        uk: "4xx дає `rejected` без повтору"
+        en: "A 4xx gives `rejected` without a retry"
+      "an invalid body is not retried and never reaches the screen":
+        uk: "Неправильне тіло дає `invalid` без повтору й без даних"
+        en: "An invalid body gives `invalid` without a retry and without data"
+      "an outer abort rejects with AbortError and stops":
+        uk: "Зовнішнє скасування дає `AbortError` і зупиняє спроби"
+        en: "An outer abort gives `AbortError` and stops the attempts"
+    solutionNote:
+      uk: "Кожна спроба має свій контролер і таймер, зовнішній `signal` пересилається в неї й перевіряється першим після збою. Повторюються лише `server`, `offline` і `timeout`; `invalid` і `rejected` повертаються одразу, бо друга спроба дасть те саме. Зламане тіло не потрапляє в `departures`, тож екран далі показує останні правильні дані."
+      en: "Each attempt has its own controller and timer, the outer `signal` is forwarded into it and checked first after a failure. Only `server`, `offline` and `timeout` are retried; `invalid` and `rejected` return at once, because a second attempt gives the same. A broken body never gets into `departures`, so the screen keeps showing the last valid data."
+
+  - id: recall-fixture-fetch
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: ordering
+        from: js-08-12-independent-fixture-fetch
+        prompt:
+          uk: "Користувач швидко двічі змінює фільтр, і йдуть два запити. Перший відповідає пізніше за другий. Що має побачити користувач?"
+          en: "The user changes the filter twice quickly, and two requests go out. The first answers later than the second. What should the user see?"
+        answer:
+          type: choice
+          options:
+            - id: latest
+              text:
+                uk: "Результат другого, останнього запиту: перший треба скасувати чи проігнорувати"
+                en: "The result of the second, latest request: the first must be aborted or ignored"
+            - id: last-arrived
+              text:
+                uk: "Результат того, що прийшов останнім"
+                en: "The result of whichever arrived last"
+              why:
+                uk: "Останнім прийшов старий запит — і перекрив би новий. Порядок відповідей мережі не гарантований."
+                en: "The old request arrived last — and would overwrite the new one. The network does not guarantee the order of answers."
+            - id: both
+              text:
+                uk: "Обидва результати, об’єднані"
+                en: "Both results, merged"
+              why:
+                uk: "Перший запит був для фільтра, якого вже немає: його результат не відповідає тому, що бачить людина."
+                en: "The first request was for a filter that no longer exists: its result does not match what the person sees."
+          correct: [latest]
+        explanation:
+          uk: "Тому й тут зовнішній `signal` скасовує все: застарілий запит не має шансу змінити екран."
+          en: "That is also why here the outer `signal` stops everything: a stale request has no chance to change the screen."
+
+  - id: timetable-on-target
+    kind: local-task
+    runtime: local-native
+    title:
+      uk: "Екран розкладу на твоїй заявленій цілі"
+      en: "The timetable screen on your declared target"
+    intro:
+      uk: |
+        Самостійне завдання без підказок. Працюй у `~/js-course/rn06-lab` з уроку про налагодження адреси хоста (якщо його немає — створи проєкт кроками 1–3 того уроку) з mock-сервісом із `~/js-course/rn06-mock`.
+
+        Mock-сервіс віддає розклад за `/timetable?lang=uk` і вміє `?status=503`, `?fail=N&key=K`, `?invalid=1`, `?hang=1` (усе описано в коментарі на початку `mock-service.mjs`). Збирай екран з того, що вивчив у розділі; свій `timetable.js` з вправи вище можна перенести в проєкт.
+
+        Під час підготовки уроку на пристрої нічого не запускали: що показує твоя ціль, перевіряєш і записуєш ти.
+
+        Що має вийти:
+
+        - екран розкладу бере дані з mock-сервісу через адресу для твоєї цілі, з тайм-аутом і не більше ніж трьома спробами;
+        - коли сервіс недосяжний, екран показує вбудовані фікстури розкладу з позначкою, що це не свіжі дані;
+        - стани «немає зв’язку», «помилка сервера» й «неправильні дані» мають різні повідомлення;
+        - у файлі `TRANSPORT.md` у проєкті — два речення: чому простий HTTP до mock-сервісу тут прийнятний і чому він неприйнятний для справжнього застосунку.
+      en: |
+        An independent task without hints. Work in `~/js-course/rn06-lab` from the host-address debugging lesson (if it is missing, create the project with steps 1–3 of that lesson) with the mock service from `~/js-course/rn06-mock`.
+
+        The mock service serves the timetable at `/timetable?lang=en` and supports `?status=503`, `?fail=N&key=K`, `?invalid=1`, `?hang=1` (all described in the comment at the top of `mock-service.mjs`). Build the screen from what you learned in the unit; you may move your `timetable.js` from the exercise above into the project.
+
+        Nothing was run on a device while preparing this lesson: you check and write down what your target shows.
+
+        What you should end up with:
+
+        - the timetable screen gets its data from the mock service through the address for your target, with a timeout and no more than three attempts;
+        - when the service is unreachable, the screen shows the bundled timetable fixtures, marked as not fresh;
+        - the states “no connection”, “server error” and “invalid data” have different messages;
+        - a file `TRANSPORT.md` in the project holds two sentences: why plain HTTP to the mock service is acceptable here and why it is not acceptable for a real app.
+    tools:
+      - { name: "rn06-lab", note: { uk: "проєкт з уроку про налагодження адреси хоста", en: "the project from the host-address debugging lesson" } }
+      - { name: "mock-service.mjs", note: { uk: "з уроку про фікстури", en: "from the fixtures lesson" } }
+      - { name: "Declared target", version: "from RN-01", note: { uk: "емулятор Android, симулятор iOS або телефон з Expo Go для SDK 57", en: "an Android emulator, an iOS simulator or a phone with Expo Go for SDK 57" } }
+    steps:
+      - text:
+          uk: "Запусти mock-сервіс, переконайся з комп’ютера, що `/timetable` відповідає, і збери екран розкладу на своїй цілі."
+          en: "Start the mock service, make sure from the computer that `/timetable` answers, and build the timetable screen on your target."
+        command: "curl -sS \"http://127.0.0.1:7310/timetable?lang=en\""
+        expect:
+          uk: "Масив із чотирьох відправлень з полями `id`, `route`, `destination`, `departs`."
+          en: "An array of four departures with the fields `id`, `route`, `destination`, `departs`."
+      - text:
+          uk: "Перевір на цілі кожен стан: звичайний запит, `?fail=2&key=<нове слово>` (у журналі сервісу три спроби, екран зі свіжими даними), `?status=503`, `?invalid=1`, `?hang=1` і зупинений сервіс. Запиши в `DEBUG-NOTES.md`, що показав екран і журнал сервісу в кожному випадку."
+          en: "Check every state on the target: a normal request, `?fail=2&key=<a new word>` (three attempts in the service's log, a screen with fresh data), `?status=503`, `?invalid=1`, `?hang=1` and a stopped service. Write into `DEBUG-NOTES.md` what the screen and the service's log showed in each case."
+      - text:
+          uk: "Напиши `TRANSPORT.md` і закоміть роботу."
+          en: "Write `TRANSPORT.md` and commit the work."
+        command: "git add -A\ngit commit -m \"Add the bus timetable screen with bounded retry and offline fixtures\""
+    verify:
+      - id: fresh-and-retry
+        text:
+          uk: "На моїй цілі розклад завантажується, а з `?fail=2` журнал сервісу показує рівно три запити й екран — свіжі дані."
+          en: "On my target the timetable loads, and with `?fail=2` the service's log shows exactly three requests and the screen fresh data."
+      - id: honest-states
+        text:
+          uk: "`?status=503`, `?invalid=1` і зупинений сервіс дають три різні повідомлення, а `?hang=1` закінчується повідомленням, а не вічним завантаженням."
+          en: "`?status=503`, `?invalid=1` and a stopped service give three different messages, and `?hang=1` ends in a message, not an endless load."
+      - id: offline-fixtures
+        text:
+          uk: "Зі зупиненим сервісом екран показує вбудований розклад з позначкою, що дані не свіжі."
+          en: "With the service stopped the screen shows the bundled timetable marked as not fresh."
+      - id: transport-note
+        text:
+          uk: "`TRANSPORT.md` пояснює двома реченнями, чому простий HTTP прийнятний тут і неприйнятний у справжньому застосунку."
+          en: "`TRANSPORT.md` explains in two sentences why plain HTTP is acceptable here and not acceptable in a real app."
+    troubleshooting:
+      - problem:
+          uk: "З `?fail=2&key=…` уже перший запит отримує 200"
+          en: "With `?fail=2&key=…` the very first request already gets a 200"
+        fix:
+          uk: "Лічильник спроб для цього `key` живе, доки працює сервіс, і вже вичерпаний. Візьми нове значення `key` або перезапусти сервіс (Ctrl+C і `node mock-service.mjs`)."
+          en: "The attempt counter for this `key` lives as long as the service runs and is already used up. Take a new `key` value or restart the service (Ctrl+C and `node mock-service.mjs`)."
+      - problem:
+          uk: "Екран завжди показує «неправильні дані», навіть без `?invalid=1` у коді"
+          en: "The screen always shows “invalid data”, even without `?invalid=1` in the code"
+        fix:
+          uk: "Перевір відповідь з комп’ютера командою з кроку 1: вона має дати масив. Якщо масив є, а екран каже «неправильні дані», порівняй поля, які перевіряє твій валідатор, з полями відповіді (`id`, `route`, `destination`, `departs`)."
+          en: "Check the answer from the computer with the command from step 1: it must give an array. If it does and the screen says “invalid data”, compare the fields your validator checks with the answer's fields (`id`, `route`, `destination`, `departs`)."
+    recovery:
+      uk: "Проєкт під Git: `git status` покаже, що змінилося, а `git restore <файл>` поверне файл до останнього коміту. Mock-сервіс нічого не зберігає: якщо лічильник `?fail` уже вичерпано, візьми нове значення `key` або перезапусти сервіс."
+      en: "The project is under Git: `git status` shows what changed, and `git restore <file>` returns a file to the last commit. The mock service stores nothing: if a `?fail` counter is used up, take a new `key` value or restart the service."
