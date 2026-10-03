@@ -1,0 +1,392 @@
+id: rn-04-05-subscription-cleanup
+unit: RN-04
+title:
+  uk: "Прибираємо підписки"
+  en: "Subscription cleanup"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Ставити в пару кожній нативній підписці (AppState, Keyboard, Linking, обробник «Назад», таймери) її зняття в cleanup того самого ефекту."
+    en: "Pair every native subscription (AppState, Keyboard, Linking, the back handler, timers) with its removal in the cleanup of the same effect."
+  - uk: "Передбачити дубльовані події, коли ефект фокуса додає слухача при кожному фокусі й ніколи його не знімає."
+    en: "Predict the duplicate events produced when a focus effect adds a listener on every focus and never removes it."
+prerequisites: [rn-04-04-app-foreground-background, re-03-03-dependencies-cleanup]
+subskills:
+  - { family: N-03, skill: "subscription cleanup", depth: intro }
+glossary: [event-subscription]
+selfCheck: [predict-three-visits, refresh-hook]
+
+blocks:
+  - id: subscribe-remove
+    kind: explanation
+    title:
+      uk: "Кожна підписка має пару"
+      en: "Every subscription has a pair"
+    body:
+      uk: |
+        Нативні модулі React Native повідомляють про події через [[event-subscription|підписки]]. Виклик `addEventListener` повертає обʼєкт підписки, і зняти її можна лише його методом `remove()`:
+
+        | Що слухаємо | Підписка | Зняття |
+        |---|---|---|
+        | стан застосунку | `AppState.addEventListener('change', fn)` | `subscription.remove()` |
+        | клавіатуру | `Keyboard.addListener('keyboardDidShow', fn)` | `subscription.remove()` |
+        | вхідні посилання | `Linking.addEventListener('url', fn)` | `subscription.remove()` |
+        | кнопку «Назад» Android | `BackHandler.addEventListener('hardwareBackPress', fn)` | `subscription.remove()` |
+        | таймер | `setInterval(fn, ms)` | `clearInterval(id)` |
+        | подію стеку | `navigation.addListener('focus', fn)` | функція, яку він повернув |
+
+        Ніхто не знімає підписку за тебе: ні перехід на інший екран, ні втрата фокуса. Екран у стеку змонтований, а модуль `AppState` живе, поки живе застосунок, — тож слухач, якого не зняли, викликається далі.
+
+        Правило просте: підписуйся в ефекті й **повертай зняття з того самого ефекту**. Тоді React (чи `useFocusEffect`) зніме підписку рівно тоді, коли ефект закінчує роботу: перед повторним запуском, при blur, при демонтуванні.
+      en: |
+        React Native's native modules report events through [[event-subscription|subscriptions]]. Calling `addEventListener` returns a subscription object, and it can be removed only with its `remove()` method:
+
+        | What we listen to | Subscription | Removal |
+        |---|---|---|
+        | the app state | `AppState.addEventListener('change', fn)` | `subscription.remove()` |
+        | the keyboard | `Keyboard.addListener('keyboardDidShow', fn)` | `subscription.remove()` |
+        | incoming links | `Linking.addEventListener('url', fn)` | `subscription.remove()` |
+        | Android's Back button | `BackHandler.addEventListener('hardwareBackPress', fn)` | `subscription.remove()` |
+        | a timer | `setInterval(fn, ms)` | `clearInterval(id)` |
+        | a stack event | `navigation.addListener('focus', fn)` | the function it returned |
+
+        Nobody removes a subscription for you: neither moving to another screen nor losing focus. A screen on the stack stays mounted, and the `AppState` module lives as long as the app — so a listener nobody removed keeps being called.
+
+        The rule is simple: subscribe in an effect and **return the removal from that same effect**. Then React (or `useFocusEffect`) removes the subscription exactly when the effect is done: before a re-run, on blur, on unmount.
+
+  - id: predict-three-visits
+    kind: prediction
+    prompt:
+      uk: "Ефект фокуса екрана підсумків додає слухача AppState і нічого не повертає. Людина тричі побувала на екрані підсумків (відкрила його, двічі йшла на інший екран і поверталась), потім вийшла з застосунку й повернулась. Скільки разів спрацює обробник `active`?"
+      en: "A totals screen's focus effect adds an AppState listener and returns nothing. The person has been on the totals screen three times (opened it, twice went to another screen and came back), then left the app and came back. How many times does the `active` handler run?"
+    code: |
+      useFocusEffect(
+        useCallback(() => {
+          AppState.addEventListener('change', (next) => {
+            if (next === 'active') refreshTotals();
+          });
+        }, []),
+      );
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: three
+          text: { uk: "3 рази", en: "3 times" }
+        - id: one
+          text: { uk: "1 раз", en: "once" }
+          why:
+            uk: "Так було б, якби старі слухачі зникали самі. Але кожен фокус додав нового, а cleanup, що зняв би попереднього, немає: живих слухачів три."
+            en: "That would be so if old listeners disappeared by themselves. But each focus added a new one, and there is no cleanup to remove the previous one: three listeners are alive."
+        - id: zero
+          text: { uk: "0 разів: підписки зникли, коли екран втратив фокус", en: "0 times: the subscriptions disappeared when the screen lost focus" }
+          why:
+            uk: "Втрата фокуса знімає лише те, що ти повернув з ефекту. Тут не повернуто нічого, тож усі три підписки живі."
+            en: "Losing focus removes only what you returned from the effect. Nothing is returned here, so all three subscriptions are alive."
+        - id: two
+          text: { uk: "2 рази", en: "2 times" }
+          why:
+            uk: "Перший показ — теж фокус: ефект спрацював тричі, і кожен раз додав слухача."
+            en: "The first display is a focus too: the effect ran three times and added a listener each time."
+      correct: [three]
+    explanation:
+      uk: "Три фокуси — три виклики ефекту — три підписки, жодна не знята. Одна подія `active` викликає всіх трьох: підсумки перераховуються тричі, а з кожним новим відвідуванням — ще раз більше. Якщо ефект поверне `() => subscription.remove()`, при кожному blur слухач зніметься, і живим лишиться рівно один."
+      en: "Three focuses — three effect runs — three subscriptions, none removed. One `active` event calls all three: the totals are recomputed three times, and one more with every new visit. If the effect returns `() => subscription.remove()`, the listener is removed on every blur, and exactly one stays alive."
+
+  - id: leak-timeline
+    kind: visual
+    visual: render-timeline
+    title:
+      uk: "Три відвідування: без cleanup і з ним"
+      en: "Three visits: without cleanup and with it"
+    textEquivalent:
+      uk: "Екран підсумків монтується, і ефект фокуса додає підписку №1. Людина йде на інший екран і повертається: ефект фокуса виконується знову й додає підписку №2 — cleanup немає, тож №1 лишилась. Ще одне повернення додає №3. Подія active викликає всі три обробники, і підсумки перераховуються тричі. З cleanup, що повертає subscription.remove(), кожна втрата фокуса знімає підписку, тож при поверненні перед новою підпискою стара вже знята: живою завжди лишається одна, і подія active обробляється один раз."
+      en: "The totals screen mounts, and the focus effect adds subscription #1. The person goes to another screen and comes back: the focus effect runs again and adds subscription #2 — there is no cleanup, so #1 remains. Another return adds #3. The active event calls all three handlers, and the totals are recomputed three times. With a cleanup that returns subscription.remove(), every loss of focus removes the subscription, so on return the old one is already gone before the new one: exactly one stays alive, and the active event is handled once."
+    spec:
+      component: TotalsScreen
+      code: |
+        function TotalsScreen() {
+          const [totals, setTotals] = useState(initialTotals);
+          useFocusEffect(useCallback(() => {
+            const subscription = AppState.addEventListener('change', (next) => {
+              if (next === 'active') setTotals(computeTotals());
+            });
+            // without cleanup: nothing returned
+            // with cleanup: return () => subscription.remove();
+          }, []));
+          return <TotalsView totals={totals} />;
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 2
+          reason: { uk: "перший показ", en: "first display" }
+          snapshot: { state: { totals: "v1" } }
+          caption:
+            uk: "Екран підсумків показано вперше."
+            en: "The totals screen is shown for the first time."
+        - phase: commit
+          render: 1
+          line: 10
+          dom: "Totals v1"
+          caption:
+            uk: "Commit: підсумки на екрані."
+            en: "Commit: the totals are on the screen."
+        - phase: effect
+          render: 1
+          line: 4
+          run: ["addEventListener → #1"]
+          caption:
+            uk: "Фокус: ефект додає підписку №1. Живих: **1**."
+            en: "Focus: the effect adds subscription #1. Alive: **1**."
+        - phase: event
+          name: "blur → focus"
+          sees: { totals: "v1" }
+          actions: ["push('Detail')", "goBack()"]
+          caption:
+            uk: "Людина йде на інший екран і повертається. Без cleanup на blur нічого не знімається."
+            en: "The person goes to another screen and comes back. Without a cleanup nothing is removed on blur."
+        - phase: effect
+          render: 1
+          line: 4
+          run: ["addEventListener → #2"]
+          caption:
+            uk: "Новий фокус — нова підписка №2. №1 досі жива. Живих: **2**."
+            en: "A new focus — a new subscription #2. #1 is still alive. Alive: **2**."
+        - phase: event
+          name: "blur → focus"
+          sees: { totals: "v1" }
+          actions: ["push('Detail')", "goBack()"]
+          caption:
+            uk: "Ще одне відвідування."
+            en: "One more visit."
+        - phase: effect
+          render: 1
+          line: 4
+          run: ["addEventListener → #3"]
+          caption:
+            uk: "Підписка №3. Живих: **3**."
+            en: "Subscription #3. Alive: **3**."
+        - phase: event
+          name: "AppState: active"
+          sees: { totals: "v1" }
+          actions: ["#1: setTotals(computeTotals())", "#2: setTotals(computeTotals())", "#3: setTotals(computeTotals())"]
+          queued: { totals: "v2" }
+          caption:
+            uk: "Одна подія `active` — три обробники: підсумки рахуються тричі."
+            en: "One `active` event — three handlers: the totals are computed three times."
+        - phase: render
+          render: 2
+          line: 2
+          reason: { uk: "setTotals з обробників", en: "setTotals from the handlers" }
+          snapshot: { state: { totals: "v2" } }
+          caption:
+            uk: "Результат той самий, але робота зроблена тричі — і з кожним відвідуванням її більшає."
+            en: "The result is the same, but the work was done three times — and it grows with every visit."
+        - phase: effect
+          render: 2
+          line: 8
+          cleanup: ["subscription.remove() // #1, on blur"]
+          caption:
+            uk: "Із cleanup `return () => subscription.remove();` кожен blur знімає поточну підписку, тож наступний фокус починає з нуля. Живою завжди лишається **одна**."
+            en: "With the cleanup `return () => subscription.remove();` every blur removes the current subscription, so the next focus starts from zero. Exactly **one** is always alive."
+
+  - id: expense-totals
+    kind: example
+    runtime: concept-preview
+    dir: expense-totals
+    entry: main.jsx
+    strings:
+      food: { uk: "Їжа", en: "Food" }
+      transport: { uk: "Транспорт", en: "Transport" }
+      openDetail: { uk: "Відкрити витрати за день", en: "Open the day's expenses" }
+      detailText: { uk: "Витрати за 1 березня", en: "Expenses for 1 March" }
+      logRefresh: { uk: "Підсумки перераховано, усього разів:", en: "Totals recomputed, times in total:" }
+      simHeaderBack: { uk: "Назад", en: "Back" }
+      simStack: { uk: "Стек (імітація)", en: "Stack (simulated)" }
+      simHardwareBack: { uk: "Android: «Назад»", en: "Android: Back" }
+      simSwipeBack: { uk: "iOS: свайп назад", en: "iOS: swipe back" }
+      simAppState: { uk: "Стан застосунку (імітація)", en: "App state (simulated)" }
+      simLeaveIos: { uk: "iOS: піти з застосунку", en: "iOS: leave the app" }
+      simLeaveAndroid: { uk: "Android: піти з застосунку", en: "Android: leave the app" }
+      simReturn: { uk: "Повернутися", en: "Come back" }
+    title:
+      uk: "Підсумки, що рахуються все частіше"
+      en: "Totals that are computed more and more often"
+    body:
+      uk: |
+        Екран підсумків витрат перераховує їх, коли застосунок повертається на передній план. Його ефект фокуса підписується на `AppState`, але нічого не повертає.
+
+        Натисни **Запустити**. Двічі відкрий «Відкрити витрати за день» і повернись «‹ Назад». Потім «Android: піти з застосунку» і «Повернутися» — і порахуй рядки в консолі.
+      en: |
+        The expense totals screen recomputes them when the app comes back to the foreground. Its focus effect subscribes to `AppState` but returns nothing.
+
+        Press **Run**. Twice open “Open the day's expenses” and go “‹ Back”. Then “Android: leave the app” and “Come back” — and count the console lines.
+    tryIt:
+      uk: |
+        1. Після одного повернення в застосунок у консолі три рядки: три живі підписки.
+        2. У кінці функції в `useCallback` (замість коментаря `// No cleanup…`) додай `return () => subscription.remove();`.
+        3. Запусти знову й повтори ті самі кроки: тепер один рядок на кожне повернення, скільки б разів ти не відкривав інший екран.
+      en: |
+        1. After one return to the app the console has three lines: three live subscriptions.
+        2. At the end of the function in `useCallback` (in place of the `// No cleanup…` comment) add `return () => subscription.remove();`.
+        3. Run again and repeat the same steps: now one line per return, however many times you open the other screen.
+    limits:
+      uk: "Стек і `AppState` тут імітовані (`navSim.jsx`, `appStateSim.jsx`) у перегляді react-native-web, але підписки справжні обʼєкти з `remove()`, і дублікати рахуються чесно. Як це поводиться з нативним `AppState` на телефоні, перевіряють на заявленій цілі."
+      en: "The stack and `AppState` are simulated here (`navSim.jsx`, `appStateSim.jsx`) in the react-native-web preview, but the subscriptions are real objects with `remove()`, and duplicates are counted honestly. How it behaves with the native `AppState` on a phone is checked on your declared target."
+
+  - id: refresh-hook
+    kind: exercise
+    mode: guided
+    runtime: concept-preview
+    dir: refresh-hook
+    entry: main.jsx
+    editable: [useAppStateRefresh.js]
+    strings:
+      openToday: { uk: "Відкрити «Сьогодні»", en: "Open “Today”" }
+      chosen: { uk: "Обрана звичка:", en: "Chosen habit:" }
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      switchHabit: { uk: "Змінити звичку", en: "Switch habit" }
+      openHistory: { uk: "Відкрити історію", en: "Open history" }
+      historyText: { uk: "Історія виконання", en: "Completion history" }
+      refreshCount: { uk: "Оновлень:", en: "Refreshes:" }
+      simHeaderBack: { uk: "Назад", en: "Back" }
+      simStack: { uk: "Стек (імітація)", en: "Stack (simulated)" }
+      simHardwareBack: { uk: "Android: «Назад»", en: "Android: Back" }
+      simSwipeBack: { uk: "iOS: свайп назад", en: "iOS: swipe back" }
+      simAppState: { uk: "Стан застосунку (імітація)", en: "App state (simulated)" }
+      simLeaveIos: { uk: "iOS: піти з застосунку", en: "iOS: leave the app" }
+      simLeaveAndroid: { uk: "Android: піти з застосунку", en: "Android: leave the app" }
+      simReturn: { uk: "Повернутися", en: "Come back" }
+    title:
+      uk: "Хук useAppStateRefresh"
+      en: "The useAppStateRefresh hook"
+    instructions:
+      uk: |
+        Екран «Сьогодні» трекера звичок викликає `useAppStateRefresh(onActive)`, щоб оновлювати підсумок обраної звички, коли застосунок повертається. Напиши цей хук у `useAppStateRefresh.js`:
+
+        - поки екран у фокусі, він підписаний на `AppState` і при кожному `active` викликає `onActive`;
+        - коли екран втрачає фокус чи демонтується, підписку знято — перевірки рахують живі підписки й виклики;
+        - викликається **найновіша** `onActive`: якщо людина змінила звичку, оновлюється нова.
+
+        Перевірки кілька разів відкривають «Відкрити історію» й повертаються, перемикають звичку й імітують вихід з застосунку та повернення.
+      en: |
+        The habit tracker's “Today” screen calls `useAppStateRefresh(onActive)` to refresh the chosen habit's summary when the app comes back. Write this hook in `useAppStateRefresh.js`:
+
+        - while the screen is focused, it is subscribed to `AppState` and calls `onActive` on every `active`;
+        - when the screen loses focus or unmounts, the subscription is removed — the checks count live subscriptions and calls;
+        - the **latest** `onActive` is called: if the person switched the habit, the new one is refreshed.
+
+        The checks open “Open history” and come back several times, switch the habit, and simulate leaving the app and coming back.
+    limits:
+      uk: "Стек, події фокуса й `AppState` імітовані (`navSim.jsx`, `appStateSim.jsx`) у перегляді react-native-web. Той самий хук з `@react-navigation/native` і справжнім `AppState` перевіряють на заявленій цілі."
+      en: "The stack, focus events and `AppState` are simulated (`navSim.jsx`, `appStateSim.jsx`) in the react-native-web preview. The same hook with `@react-navigation/native` and the real `AppState` is checked on your declared target."
+    testTitles:
+      "one refresh per return after three visits to another screen":
+        uk: "Після трьох відвідувань іншого екрана — одне оновлення на повернення"
+        en: "One refresh per return after three visits to another screen"
+      "no refresh while another screen covers Today":
+        uk: "Поки «Сьогодні» накрито іншим екраном, оновлень немає"
+        en: "No refresh while another screen covers “Today”"
+      "leaving Today removes its subscription":
+        uk: "Вихід з «Сьогодні» знімає підписку"
+        en: "Leaving “Today” removes its subscription"
+      "the refresh uses the latest onActive":
+        uk: "Оновлення викликає найновішу `onActive`"
+        en: "The refresh uses the latest `onActive`"
+    hints:
+      nudge:
+        uk: "Три вимоги — три інструменти, які ти вже знаєш: ефект, привʼязаний до фокуса; cleanup, що знімає підписку; і спосіб читати найновішу функцію, не перепідписуючись."
+        en: "Three requirements — three tools you already know: an effect tied to focus; a cleanup that removes the subscription; and a way to read the latest function without re-subscribing."
+      explanation:
+        uk: "`useFocusEffect` з функцією в `useCallback` підписується при фокусі; те, що функція повертає, виконується при blur і демонтуванні — поверни звідти зняття підписки. Якщо слухач викликає `onActive`, яку він захопив при фокусі, після зміни звички він викличе стару. Effect Event (`useEffectEvent`) завжди бачить останній рендер — як у прикладі з автозбереженням: `const onTick = useEffectEvent(() => save(title));`, а в ефекті викликається `onTick()`."
+        en: "`useFocusEffect` with a function in `useCallback` subscribes on focus; whatever the function returns runs on blur and on unmount — return the subscription's removal from there. If the listener calls the `onActive` it captured on focus, after the habit changes it calls the old one. An Effect Event (`useEffectEvent`) always sees the latest render — as in the autosave example: `const onTick = useEffectEvent(() => save(title));`, and the effect calls `onTick()`."
+    solutionNote:
+      uk: "`useFocusEffect(useCallback(…, []))` підписується при кожному фокусі, а повернене `() => subscription.remove()` знімає підписку при blur і демонтуванні — живою завжди лишається щонайбільше одна. Слухач викликає Effect Event, тож бачить найновішу `onActive` і не перепідписується при кожному рендері. Працює й варіант з `onActive` у залежностях `useCallback`: тоді нова функція щоразу перепідписує, але cleanup знімає стару підписку першою."
+      en: "`useFocusEffect(useCallback(…, []))` subscribes on every focus, and the returned `() => subscription.remove()` removes it on blur and on unmount — at most one is ever alive. The listener calls an Effect Event, so it sees the latest `onActive` and does not re-subscribe on every render. The variant with `onActive` in `useCallback`'s dependencies also works: then each new function re-subscribes, but the cleanup removes the old subscription first."
+    feedback:
+      - when: { test: "one refresh per return after three visits to another screen" }
+        message:
+          uk: "Ця перевірка тричі відкриває історію й повертається, а потім чекає рівно 1 оновлення на одне повернення в застосунок. Більше — старі підписки не знято; 0 — підписки немає, поки екран у фокусі."
+          en: "This check opens the history and comes back three times, then expects exactly 1 refresh for one return to the app. More — old subscriptions were not removed; 0 — there is no subscription while the screen is focused."
+      - when: { test: "no refresh while another screen covers Today" }
+        message:
+          uk: "Ця перевірка накриває «Сьогодні» історією й чекає 0 живих підписок цього екрана й 0 оновлень. Ефект з `useEffect` живе, поки екран змонтований, — а він змонтований і під іншим екраном."
+          en: "This check covers “Today” with the history and expects 0 live subscriptions from this screen and 0 refreshes. An effect with `useEffect` lives as long as the screen is mounted — and it is mounted under the other screen too."
+      - when: { test: "leaving Today removes its subscription" }
+        message:
+          uk: "Ця перевірка закриває «Сьогодні» й чекає, що кількість підписок повернулась до попередньої. Підписку знімає лише `subscription.remove()`, повернений з ефекту."
+          en: "This check closes “Today” and expects the number of subscriptions to be back where it was. Only `subscription.remove()` returned from the effect removes a subscription."
+      - when: { test: "the refresh uses the latest onActive" }
+        message:
+          uk: "Ця перевірка перемикає звичку на «Пити воду» й чекає оновлення саме для неї (`h-03`). Слухач, що викликає `onActive` з моменту фокуса, бачить стару звичку."
+          en: "This check switches the habit to “Drink water” and expects the refresh to be for it (`h-03`). A listener that calls the `onActive` from the moment of focus sees the old habit."
+
+  - id: recall-cleanup
+    kind: review
+    title:
+      uk: "Пригадай: коли виконується cleanup"
+      en: "Recall: when cleanup runs"
+    items:
+      - id: cleanup-before-rerun
+        from: re-03-03-dependencies-cleanup
+        prompt:
+          uk: "Ефект з залежністю `[wishId]` підписується на оновлення бажання й повертає відписку. `wishId` змінюється з `w-01` на `w-02`. Що React робить і в якому порядку?"
+          en: "An effect with the dependency `[wishId]` subscribes to a wish's updates and returns the unsubscribe. `wishId` changes from `w-01` to `w-02`. What does React do, and in what order?"
+        answer:
+          type: choice
+          options:
+            - id: cleanup-first
+              text:
+                uk: "Спершу cleanup попереднього запуску (відписка від w-01), потім новий запуск (підписка на w-02)"
+                en: "First the previous run's cleanup (unsubscribe from w-01), then the new run (subscribe to w-02)"
+            - id: unmount-only
+              text:
+                uk: "Новий запуск підписується на w-02; відписка від w-01 буде, коли компонент демонтується"
+                en: "The new run subscribes to w-02; the unsubscribe from w-01 happens when the component unmounts"
+              why:
+                uk: "Cleanup виконується перед **кожним** повторним запуском, а не лише при демонтуванні. Інакше живих підписок ставало б дедалі більше."
+                en: "Cleanup runs before **every** re-run, not only on unmount. Otherwise more and more subscriptions would be alive."
+            - id: run-first
+              text:
+                uk: "Спершу підписка на w-02, потім відписка від w-01"
+                en: "First subscribe to w-02, then unsubscribe from w-01"
+              why:
+                uk: "React завжди спершу прибирає за попереднім запуском, а вже потім запускає новий: двох живих підписок не буває."
+                en: "React always cleans up after the previous run first, and only then starts the new one: there are never two live subscriptions."
+          correct: [cleanup-first]
+        explanation:
+          uk: "`useFocusEffect` додає до цих моментів ще один — blur. Тому підписку, повернену з ефекту фокуса, знімуть і при переході на інший екран."
+          en: "`useFocusEffect` adds one more moment to these — blur. So a subscription returned from a focus effect is also removed when moving to another screen."
+      - id: dom-listener-cleanup
+        from: js-13-06-cleanup-listeners-timers
+        prompt:
+          uk: "Віджет на вебсторінці додає слухача `resize` на `window` і запускає `setInterval`. Віджет прибирають зі сторінки. Що відбувається з ними, якщо їх не зняти?"
+          en: "A widget on a web page adds a `resize` listener on `window` and starts a `setInterval`. The widget is removed from the page. What happens to them if they are not removed?"
+        answer:
+          type: choice
+          options:
+            - id: keep-running
+              text:
+                uk: "Вони працюють далі: `window` і таймер не знають про віджет, а функції тримають його дані в памʼяті"
+                en: "They keep running: `window` and the timer know nothing about the widget, and the functions keep its data in memory"
+            - id: gone
+              text:
+                uk: "Зникають разом з елементом віджета"
+                en: "They disappear along with the widget's element"
+              why:
+                uk: "Слухач висить на `window`, а не на елементі, а таймер — у браузера. Прибрати елемент — не означає зняти їх."
+                en: "The listener hangs on `window`, not on the element, and the timer belongs to the browser. Removing the element does not remove them."
+          correct: [keep-running]
+        explanation:
+          uk: "Те саме з нативними модулями: `AppState` чи `Keyboard` живуть увесь час, тож їхні слухачі знімає лише твій `remove()`."
+          en: "The same with native modules: `AppState` or `Keyboard` live the whole time, so only your `remove()` takes their listeners away."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-04
+    body:
+      uk: "У кроці проєкту кожна підписка в `native/` — `AppState`, `Linking`, клавіатура, таймери — матиме зняття в cleanup того самого ефекту, і ти перевіриш на заявленій цілі, що після кількох переходів одна подія обробляється один раз."
+      en: "In the project step every subscription in `native/` — `AppState`, `Linking`, the keyboard, timers — will have its removal in the cleanup of the same effect, and you will check on your declared target that after several transitions one event is handled once."
