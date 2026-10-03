@@ -1,0 +1,336 @@
+id: re-02-05-derived-values-not-state
+unit: RE-02
+title:
+  uk: "Обчислюй, а не дублюй"
+  en: "Derive, don't duplicate"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Знайти стан, який можна обчислити з іншого стану чи props, і прибрати його."
+    en: "Identify state that can be computed from other state or props, and remove it."
+  - uk: "Обчислювати відфільтрований список і його підсумок під час рендеру із записів і вибраного фільтра, а не зберігати їх."
+    en: "Compute a filtered list and its summary during render from the records and the selected filter instead of storing them."
+prerequisites: [re-02-04-immutable-updates-in-state, js-05-04-reduce]
+subskills:
+  - { family: R-02, skill: "derived state", depth: intro }
+glossary: [redundant-state, single-source-of-truth]
+selfCheck: [count-drift, category-filter]
+
+blocks:
+  - id: one-fact-one-place
+    kind: explanation
+    title:
+      uk: "Один факт — одне місце"
+      en: "One fact, one place"
+    body:
+      uk: |
+        Не кожне число на екрані потребує свого `useState`. Кількість виконаних справ, сума витрат, відфільтрований список — це [[derived-value|похідні значення]]: їх можна обчислити з того, що вже лежить у стані.
+
+        Якщо зберегти таке значення ще й окремо, воно стає [[redundant-state|зайвим станом]]. Тепер той самий факт живе у двох місцях, і кожен обробник мусить оновлювати обидва. Варто одному забути — і копія розходиться з даними.
+
+        Краще мати [[single-source-of-truth|одне джерело правди]] — і обчислювати решту просто під час рендеру:
+
+        ```jsx
+        const [tasks, setTasks] = useState(startTasks);
+        const doneCount = tasks.filter((task) => task.done).length;
+        ```
+
+        Компонент рендериться після кожної зміни `tasks`, тож `doneCount` щоразу рахується заново й не може застаріти. Перевір кожен кандидат у стан питанням: «Чи можна це обчислити з того, що вже є?» Якщо так — це не стан.
+
+        А чи не швидше тримати готову копію? Ні: її теж треба оновлювати сетером, а це ще одне оновлення й ще один рендер. `filter` і `reduce` по тисячі записів займають соті частки мілісекунди (виміряно в Node.js на сучасному ноутбуці). Для справді важких обчислень React має окремі інструменти — про них пізніше.
+      en: |
+        Not every number on the screen needs its own `useState`. The number of done tasks, an expense total, a filtered list — these are [[derived-value|derived values]]: they can be computed from what is already in state.
+
+        If you store such a value separately as well, it becomes [[redundant-state]]. Now one fact lives in two places, and every handler has to update both. Once one of them forgets, the copy drifts away from the data.
+
+        Better to have a [[single-source-of-truth]] — and compute the rest right during render:
+
+        ```jsx
+        const [tasks, setTasks] = useState(startTasks);
+        const doneCount = tasks.filter((task) => task.done).length;
+        ```
+
+        The component renders after every change of `tasks`, so `doneCount` is computed afresh every time and cannot go stale. Test every candidate for state with the question: “Can this be computed from what is already there?” If it can, it is not state.
+
+        But isn’t keeping a ready copy faster? No: it also has to be updated with a setter, which means one more update and one more render. `filter` and `reduce` over a thousand records take hundredths of a millisecond (measured in Node.js on a recent laptop). For really heavy calculations React has separate tools — more on them later.
+
+  - id: count-drift
+    kind: prediction
+    lang: jsx
+    runnable: false
+    strings:
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+    prompt:
+      uk: "У списку три звички, дві з них активні, і `activeCount` дорівнює `2`. Людина додає активну звичку «%%walk%%», а потім одразу вилучає її. Що показує лічильник активних після кожної дії?"
+      en: "The list has three habits, two of them active, and `activeCount` is `2`. A person adds the active habit “%%walk%%” and then removes it right away. What does the active counter show after each action?"
+    code: |
+      const [habits, setHabits] = useState(startHabits);
+      const [activeCount, setActiveCount] = useState(2);
+
+      function handleAddWalk() {
+        setHabits([...habits, { id: "h-06", name: "%%walk%%", active: true }]);
+      }
+
+      function handleRemove(habit) {
+        setHabits(habits.filter((h) => h.id !== habit.id));
+        if (habit.active) {
+          setActiveCount(activeCount - 1);
+        }
+      }
+    answer:
+      type: choice
+      options:
+        - id: right
+          text: { uk: "`2`, потім `1`", en: "`2`, then `1`" }
+        - id: correct-counts
+          text: { uk: "`3`, потім `2`", en: "`3`, then `2`" }
+          why:
+            uk: "Так було б, якби лічильник рахувався з `habits`. Але це окремий стан, а `handleAddWalk` його не чіпає."
+            en: "That would happen if the counter were computed from `habits`. But it is separate state, and `handleAddWalk` does not touch it."
+        - id: two-two
+          text: { uk: "`2`, потім `2`", en: "`2`, then `2`" }
+          why:
+            uk: "`handleRemove` зменшує лічильник для будь-якої активної звички — і для щойно доданої теж."
+            en: "`handleRemove` decreases the counter for any active habit — the one just added included."
+        - id: three-one
+          text: { uk: "`3`, потім `1`", en: "`3`, then `1`" }
+          why:
+            uk: "Додавання не змінює `activeCount`, тож після першої дії там досі `2`."
+            en: "Adding does not change `activeCount`, so after the first action it is still `2`."
+      correct: [right]
+    explanation:
+      uk: "`handleAddWalk` оновлює `habits`, але забуває про `activeCount`: на екрані `2`, хоча активних уже три. `handleRemove` чесно віднімає одиницю — і лічильник показує `1`, хоча активних знову дві. Копія розійшлася з даними, і кожна наступна дія переносить помилку далі. `habits.filter((h) => h.active).length` під час рендеру помилитися не може."
+      en: "`handleAddWalk` updates `habits` but forgets `activeCount`: the screen shows `2`, although three habits are active now. `handleRemove` honestly subtracts one — and the counter shows `1`, although two habits are active again. The copy drifted from the data, and every further action carries the error along. `habits.filter((h) => h.active).length` during render cannot get it wrong."
+
+  - id: habit-count
+    kind: example
+    runtime: browser-react
+    dir: habit-count
+    entry: main.jsx
+    strings:
+      title: { uk: "Трекер звичок", en: "Habit tracker" }
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      words: { uk: "Вчити англійські слова", en: "Learn English words" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+      activeLabel: { uk: "Активних звичок", en: "Active habits" }
+      addWalk: { uk: "Додати прогулянку", en: "Add a walk" }
+      active: { uk: "активна", en: "active" }
+      paused: { uk: "на паузі", en: "paused" }
+      remove: { uk: "Вилучити", en: "Remove" }
+    title:
+      uk: "Лічильник, що розходиться з даними"
+      en: "A counter that drifts from the data"
+    body:
+      uk: |
+        Це компонент із передбачення. Лічильник активних звичок живе в окремому стані `activeCount`. Запусти й повтори на вкладці **Сторінка** дії з передбачення: додай прогулянку, потім вилучи її.
+      en: |
+        This is the component from the prediction. The active counter lives in separate state, `activeCount`. Run it and repeat the actions from the prediction on the **Page** tab: add a walk, then remove it.
+    tryIt:
+      uk: |
+        1. Після «Додати прогулянку» лічильник досі `2`, а активних звичок у списку три. Після вилучення прогулянки — `1`, хоча активних дві.
+        2. Прибери рядок коду з `useState(2)` і рядки з `setActiveCount` (разом з `if`, що їх обгортає). Натомість під `useState(startHabits)` напиши `const activeCount = habits.filter((h) => h.active).length;`.
+        3. Запусти й повтори дії: лічильник тепер завжди збігається зі списком — його більше нема кому забути оновити.
+      en: |
+        1. After “Add a walk” the counter still shows `2`, while three habits in the list are active. After removing the walk it shows `1`, although two are active.
+        2. Delete the line of code with `useState(2)` and the lines with `setActiveCount` (together with the `if` around them). Instead, below `useState(startHabits)` write `const activeCount = habits.filter((h) => h.active).length;`.
+        3. Run and repeat the actions: the counter now always matches the list — there is nobody left to forget to update it.
+
+  - id: state-and-computed
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Що зберігати, а що обчислювати"
+      en: "What to store and what to compute"
+    textEquivalent:
+      uk: >-
+        У стані лише два значення: список витрат expenses і вибрана категорія category. Під час кожного рендеру з них обчислюється
+        видимий список visible — фільтром за категорією, а з нього — кількість count і сума total. Якщо додати окремий стан
+        visibleState — копію відфільтрованого списку, яку оновлює лише клік фільтра, — то після вилучення витрати expenses
+        змінюється, а visibleState ні: копія показує вже вилучену витрату. Обчислене під час рендеру значення такої проблеми не
+        має, бо в нього одне джерело.
+      en: >-
+        State holds only two values: the expense list expenses and the selected category category. On every render the visible
+        list visible is computed from them — filtered by category — and from it the count count and the sum total. If you add
+        separate state visibleState — a copy of the filtered list that only a filter click updates — then after an expense is
+        removed, expenses changes but visibleState does not: the copy still shows the removed expense. A value computed during
+        render has no such problem, because it has one source.
+    spec:
+      layout: grid
+      groups:
+        - { id: state, label: { uk: "Стан", en: "State" } }
+        - { id: render, label: { uk: "Рендер", en: "Render" } }
+      nodes:
+        - { id: expenses, group: state, label: "expenses", shape: cylinder, col: 0, row: 0 }
+        - { id: category, group: state, label: "category", shape: cylinder, col: 0, row: 1 }
+        - { id: copy, group: state, label: "visibleState", shape: cylinder, w: 120, col: 0, row: 2 }
+        - { id: visible, group: render, label: "visible", shape: round, col: 1, row: 0 }
+        - { id: count, group: render, label: "count", shape: round, col: 1, row: 1 }
+        - { id: total, group: render, label: "total", shape: round, col: 1, row: 2 }
+      edges:
+        - { id: e-visible, from: expenses, to: visible, label: "filter" }
+        - { id: c-visible, from: category, to: visible }
+        - { id: v-count, from: visible, to: count, label: "length" }
+        - { id: v-total, from: visible, to: total, label: "reduce" }
+        - { id: c-copy, from: category, to: copy, label: { uk: "лише клік", en: "click only" }, kind: dashed }
+      hidden: [copy, c-copy]
+      steps:
+        - caption:
+            uk: "Стан тримає лише те, що не можна обчислити: список витрат і вибрану категорію."
+            en: "State holds only what cannot be computed: the expense list and the selected category."
+          highlight: [expenses, category]
+        - caption:
+            uk: "Під час рендеру `visible` обчислюється з обох — фільтром. Змінилося будь-що з двох — React рендерить, і `visible` рахується заново."
+            en: "During render `visible` is computed from both — with a filter. If either of them changes, React renders, and `visible` is computed afresh."
+          highlight: [visible, e-visible, c-visible]
+        - caption:
+            uk: "`count` і `total` обчислюються з `visible`. Жодне з трьох значень не має сетера — його нема кому забути викликати."
+            en: "`count` and `total` are computed from `visible`. None of the three values has a setter — there is nobody to forget to call it."
+          highlight: [count, total, v-count, v-total]
+        - caption:
+            uk: "А тепер зайвий стан: `visibleState` — копія відфільтрованого списку, яку оновлює лише клік фільтра. Від `expenses` до неї стрілки немає."
+            en: "Now redundant state: `visibleState` — a copy of the filtered list that only a filter click updates. There is no arrow from `expenses` to it."
+          show: [copy, c-copy]
+          highlight: [copy, c-copy]
+        - caption:
+            uk: "Вилучили витрату: `expenses` змінився, `visible` обчислився наново, а `visibleState` досі показує вилучену витрату. Дві копії одного факту розійшлися."
+            en: "An expense was removed: `expenses` changed, `visible` was computed afresh, but `visibleState` still shows the removed expense. Two copies of one fact drifted apart."
+          highlight: [expenses, visible, copy]
+          annotate:
+            - { id: copy, text: { uk: "застаріло", en: "stale" } }
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: filter і reduce"
+      en: "Recall: filter and reduce"
+    items:
+      - id: filter-subset
+        from: js-05-02-filter-find
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          const wishes = [
+            { id: "w-01", price: 80, acquired: false },
+            { id: "w-04", price: 25, acquired: true },
+            { id: "w-02", price: 45, acquired: false },
+          ];
+          const wanted = wishes.filter((w) => !w.acquired);
+          console.log(wanted.length, wishes.length);
+        verify:
+          logs: ["2 3"]
+        answer:
+          type: choice
+          options:
+            - id: right
+              code: "2 3"
+            - id: removed
+              code: "2 2"
+              why:
+                uk: "`filter` не змінює вихідний масив: він повертає новий, а `wishes` лишається з трьома записами."
+                en: "`filter` does not change the original array: it returns a new one, and `wishes` keeps three records."
+            - id: one
+              code: "1 3"
+              why:
+                uk: "Умова лишає записи, у яких `acquired` — `false`, а таких два."
+                en: "The condition keeps the records whose `acquired` is `false`, and there are two of them."
+          correct: [right]
+        explanation:
+          uk: "`filter` повертає новий масив із записами, для яких умова істинна, і не чіпає вихідний. Тому відфільтрований список можна спокійно обчислювати на кожен рендер: стан від цього не змінюється."
+          en: "`filter` returns a new array with the records for which the condition is true, and leaves the original alone. That is why a filtered list can safely be computed on every render: state does not change because of it."
+
+  - id: category-filter
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: category-filter
+    entry: main.jsx
+    editable: [App.jsx]
+    strings:
+      title: { uk: "Трекер витрат", en: "Expense tracker" }
+      all: { uk: "Усі", en: "All" }
+      food: { uk: "Їжа", en: "Food" }
+      transport: { uk: "Транспорт", en: "Transport" }
+      home: { uk: "Дім", en: "Home" }
+      fun: { uk: "Розваги", en: "Fun" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transitPass: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      shown: { uk: "Показано", en: "Shown" }
+      total: { uk: "Разом", en: "Total" }
+      currency: { uk: "грн", en: "UAH" }
+      remove: { uk: "Вилучити", en: "Remove" }
+    title:
+      uk: "Фільтр за категорією"
+      en: "A category filter"
+    instructions:
+      uk: |
+        Трекер витрат показує всі шість витрат і вміє вилучати їх. Кнопки фільтра й підсумок поки не працюють. Зроби фільтр:
+
+        1. Збережи в стані лише вибрану категорію: `"all"` спочатку або `id` категорії після кліку відповідної кнопки. Кнопка «%%all%%» повертає `"all"`.
+        2. Список показує лише витрати вибраної категорії (усі — для `"all"`).
+        3. Абзац `.summary` показує кількість показаних витрат і їхню суму, наприклад `%%shown%%: 2 · %%total%%: 1056.00 %%currency%%`. Суму рахуй у копійках з `amountMinor`, а `formatAmount` уже перетворює її на текст.
+        4. Список і підсумок одразу правильні й після вилучення витрати, коли фільтр уже вибрано.
+
+        Кожна перевірка показує власну, щойно створену копію трекера.
+      en: |
+        The expense tracker shows all six expenses and can remove them. The filter buttons and the summary do not work yet. Build the filter:
+
+        1. Keep only the selected category in state: `"all"` at first, or a category `id` after a click on its button. The “%%all%%” button brings back `"all"`.
+        2. The list shows only the expenses of the selected category (all of them for `"all"`).
+        3. The `.summary` paragraph shows the number of shown expenses and their sum, for example `%%shown%%: 2 · %%total%%: 1056.00 %%currency%%`. Sum the minor units from `amountMinor`; `formatAmount` already turns the sum into text.
+        4. The list and the summary are right straight away after an expense is removed too, when a filter is already selected.
+
+        Every check shows its own freshly created copy of the tracker.
+    testTitles:
+      "at first every expense is shown with the full total":
+        uk: "Спочатку показано всі витрати й повну суму"
+        en: "At first every expense is shown with the full total"
+      "a category button shows only that category and its total":
+        uk: "Кнопка категорії показує лише її витрати та їхню суму"
+        en: "A category button shows only that category and its total"
+      "the all button shows every expense again":
+        uk: "Кнопка «Усі» знову показує всі витрати"
+        en: "The “All” button shows every expense again"
+      "removing a shown expense updates the rows and the summary":
+        uk: "Вилучення показаної витрати оновлює рядки й підсумок"
+        en: "Removing a shown expense updates the rows and the summary"
+    hints:
+      nudge:
+        uk: "Скільки змінних стану тут справді потрібно? Що з того, що бачить людина, можна обчислити з `expenses` і вибраної категорії?"
+        en: "How many state variables are really needed here? What of what the person sees can be computed from `expenses` and the selected category?"
+      explanation:
+        uk: "Додай одну змінну стану для категорії, і нехай кнопки викликають її сетер. Потім, просто в тілі компонента, над `return`, обчисли видимий список фільтром — як `doneCount` у поясненні обчислено з `tasks`, — а з нього кількість і суму через `reduce`. Не зберігай видимий список чи суму в стані: тоді обробник вилучення мусив би оновлювати й їх."
+        en: "Add one state variable for the category, and let the buttons call its setter. Then, right in the component body above `return`, compute the visible list with a filter — the way `doneCount` in the explanation is computed from `tasks` — and from it the count and the sum with `reduce`. Do not keep the visible list or the sum in state: then the remove handler would have to update them too."
+    solutionNote:
+      uk: "У стані — лише `expenses` і `category`. Видимий список, кількість і сума обчислюються на кожен рендер, тож після кліку фільтра чи вилучення вони щоразу рахуються з поточних даних, і жоден обробник не мусить про них пам’ятати."
+      en: "State holds only `expenses` and `category`. The visible list, the count and the sum are computed on every render, so after a filter click or a removal they are computed from the current data every time, and no handler has to remember them."
+    feedback:
+      - when: { test: "at first every expense is shown with the full total" }
+        message:
+          uk: "Ця перевірка показує новий трекер і чекає 6 рядків і підсумок `%%shown%%: 6 · %%total%%: 2155.90 %%currency%%`. Початкова категорія — `\"all\"`. Якщо всі перевірки не пройшли разом, спершу виправ першу помилку в консолі."
+          en: "This check shows a new tracker and expects 6 rows and the summary `%%shown%%: 6 · %%total%%: 2155.90 %%currency%%`. The initial category is `\"all\"`. If every check fails at once, fix the first error in the console first."
+      - when: { test: "a category button shows only that category and its total" }
+        message:
+          uk: "Ця перевірка клацає «%%food%%» і чекає 2 рядки («%%groceries%%» і «%%lunch%%») та підсумок `%%shown%%: 2 · %%total%%: 1056.00 %%currency%%`. Кнопка категорії ставить у стан її `id`, а список і підсумок обчислюються з цього стану."
+          en: "This check clicks “%%food%%” and expects 2 rows (“%%groceries%%” and “%%lunch%%”) and the summary `%%shown%%: 2 · %%total%%: 1056.00 %%currency%%`. A category button puts its `id` into state, and the list and the summary are computed from that state."
+      - when: { test: "the all button shows every expense again" }
+        message:
+          uk: "Ця перевірка клацає «%%transport%%», потім «%%all%%» і чекає знову 6 рядків і повну суму `2155.90`."
+          en: "This check clicks “%%transport%%”, then “%%all%%”, and expects 6 rows and the full sum `2155.90` again."
+      - when: { test: "removing a shown expense updates the rows and the summary" }
+        message:
+          uk: "Ця перевірка вибирає «%%fun%%», вилучає «%%coffee%%» і чекає один рядок («%%cinema%%») і підсумок `%%shown%%: 1 · %%total%%: 300.00 %%currency%%`. Якщо видно старі значення, видимий список чи сума збережені в стані, який обробник вилучення не оновлює; обчислюй їх під час рендеру."
+          en: "This check selects “%%fun%%”, removes “%%coffee%%” and expects one row (“%%cinema%%”) and the summary `%%shown%%: 1 · %%total%%: 300.00 %%currency%%`. If old values are shown, the visible list or the sum is kept in state that the remove handler does not update; compute them during render."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-02
+    body:
+      uk: "У проєкті вже є чиста функція підсумку — вона обчислює кількість або суму зі списку. Наприкінці розділу фільтр статусу збереже в стані лише вибраний статус, а видимі записи й підсумок рахуватимуться під час рендеру з тих самих даних."
+      en: "Your project already has a pure summary function — it computes a count or a sum from the list. At the end of the unit the status filter keeps only the selected status in state, and the visible records and the summary are computed during render from the same data."
