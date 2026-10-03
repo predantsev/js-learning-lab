@@ -11,7 +11,8 @@ export default function CategoryPage() {
   // Derived during render from the route parameter: nothing here is copied into state.
   const category = categories.find((item) => item.id === id);
   const items: Expense[] = expenses.filter((expense) => expense.category === id);
-  const totalMinor = items.reduce((sum, expense) => sum + expense.amountMinor, 0);
+  // Sums every expense instead of this category's own.
+  const totalMinor = expenses.reduce((sum, expense) => sum + expense.amountMinor, 0);
   const title = category ? category.name : "%%notFound%%";
 
   useEffect(() => {

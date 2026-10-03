@@ -4,7 +4,7 @@ import { categories, expenses, formatMinor, type Expense } from "./expensesData"
 
 // The page of the route /categories/:id.
 export default function CategoryPage() {
-  const { id } = useParams() as { id: string };
+  const id: string | undefined = useParams().id;
   const { action } = useLocation();
   const heading = useRef<HTMLHeadingElement>(null);
 

@@ -1,4 +1,4 @@
-// Linters, TypeScript and Vite do not run in the browser sandbox. These are their real outputs,
+// Linters, TypeScript and Vite do not run in the browser sandbox. These are their real outputs, abridged,
 // recorded from release-lab on a computer (oxlint 1.86.0, TypeScript 6.0.3, Vite 8.3.2).
 // `ok` is what the command's exit code said: 0 means ok, anything else stops a pipeline.
 export const LINT = {
