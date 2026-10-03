@@ -1,0 +1,390 @@
+id: rn-06-03-fetch-cancel-timeout-retry
+unit: RN-06
+title:
+  uk: "fetch, скасування, тайм-аути й повтори"
+  en: "fetch, cancellation, timeouts, retry"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Загортати запит записів у тайм-аут на основі AbortController і скасовувати його, коли екран втрачає фокус чи демонтується."
+    en: "Wrap the records request in an AbortController-based timeout and cancel it when the screen loses focus or unmounts."
+  - uk: "Повторювати лише безпечні збої (помилку мережі, тайм-аут, 5xx на GET) з обмеженою кількістю спроб і зростаючою паузою, і ніколи не повторювати 4xx чи скасований запит."
+    en: "Retry only safe failures (network error, timeout, a 5xx on a GET) with a bounded attempt count and backoff, and never retry a 4xx or an aborted request."
+prerequisites: [rn-06-02-emulator-device-addressing, js-08-09-cancellation-abort, js-08-10-stale-responses-retry]
+subskills:
+  - { family: N-06, skill: "fetch/cancellation/timeouts/retry", depth: intro }
+glossary: [exponential-backoff]
+selfCheck: [predict-attempts, fetch-with-retry]
+
+blocks:
+  - id: no-deadline
+    kind: explanation
+    title:
+      uk: "У fetch немає власного дедлайну"
+      en: "fetch has no deadline of its own"
+    body:
+      uk: |
+        Якщо сервер прийняв з’єднання й мовчить, `fetch` у React Native чекає. У вихідному коді react-native 0.86.3 тайм-аут запиту за замовчуванням — `0`, тобто «без обмеження», а клієнт мережі на Android має нульові тайм-аути з’єднання й читання. (Що робить iOS з мовчазним сервером, ми на пристрої не перевіряли.) Екран у цей час показує «Завантаження…» без кінця.
+
+        Тому дедлайн ставиш ти: власний `AbortController` на кожну спробу і `setTimeout`, що його скасовує. Готових `AbortSignal.timeout()` і `AbortSignal.any()` у React Native 0.86 немає: його `AbortSignal` — поліфіл `abort-controller` 3.0.0, який підключає `setUpXHR.js`, і цих методів у ньому нема. У браузері вони працюють — і саме тому код, перевірений лише в браузері, падає на телефоні.
+
+        Помилки, які дає `fetch` React Native: збій мережі — `TypeError: Network request failed`, скасування — помилка з назвою `AbortError`.
+      en: |
+        If the server accepted the connection and stays silent, `fetch` in React Native waits. In react-native 0.86.3's source the default request timeout is `0`, meaning “no limit”, and the network client on Android has zero connect and read timeouts. (What iOS does with a silent server we did not check on a device.) Meanwhile the screen shows “Loading…” forever.
+
+        So you set the deadline: your own `AbortController` for each attempt and a `setTimeout` that aborts it. The ready-made `AbortSignal.timeout()` and `AbortSignal.any()` do not exist in React Native 0.86: its `AbortSignal` is the `abort-controller` 3.0.0 polyfill installed by `setUpXHR.js`, and it has neither method. In a browser they work — which is exactly why code checked only in a browser fails on a phone.
+
+        The errors React Native's `fetch` gives: a network failure is `TypeError: Network request failed`, an abort is an error named `AbortError`.
+
+  - id: which-to-retry
+    kind: explanation
+    title:
+      uk: "Що повторювати, скільки разів і коли зупинитися"
+      en: "What to retry, how many times, and when to stop"
+    body:
+      uk: |
+        Повтор має сенс лише тоді, коли друга спроба **може** дати інший результат і **безпечна**:
+
+        | Що сталося | Повторювати? |
+        |---|---|
+        | `TypeError: Network request failed` | так — мережа могла повернутися |
+        | тайм-аут спроби | так |
+        | 5xx на `GET` | так — сервер тимчасово не впорався, а `GET` нічого не змінює |
+        | 4xx (404, 400, 401) | ні — та сама відповідь прийде знову |
+        | скасування, бо екран втратив фокус | ні — результат уже нікому не потрібен |
+
+        Спроб — обмежена кількість, наприклад три. Між ними — пауза, що щоразу подвоюється: 300 мс, 600 мс… Це [[exponential-backoff|експоненційна пауза]]: сервер, якому зараз погано, не отримує лавину однакових запитів. «Повторювати, доки не вийде» — не надійність, а нескінченний спінер і зайве навантаження.
+
+        Скасування від екрана має зупиняти **все**: поточну спробу й паузу перед наступною.
+      en: |
+        A retry makes sense only when a second attempt **can** give another result and is **safe**:
+
+        | What happened | Retry? |
+        |---|---|
+        | `TypeError: Network request failed` | yes — the network may be back |
+        | the attempt timed out | yes |
+        | a 5xx on a `GET` | yes — the server failed for now, and a `GET` changes nothing |
+        | a 4xx (404, 400, 401) | no — the same answer will come again |
+        | an abort because the screen lost focus | no — nobody needs the result any more |
+
+        The attempts are bounded, for example three. Between them there is a pause that doubles each time: 300 ms, 600 ms… That is [[exponential-backoff|exponential backoff]]: a server that is struggling right now does not get an avalanche of identical requests. “Retry until it works” is not robustness but an endless spinner and needless load.
+
+        An abort from the screen must stop **everything**: the current attempt and the pause before the next one.
+
+  - id: one-request-over-time
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Один запит у часі"
+      en: "One request over time"
+    textEquivalent:
+      uk: "Екран просить записи. Спроба 1 іде до сервісу, той мовчить; через timeoutMs таймер скасовує спробу. Після паузи 300 мс спроба 2 отримує 503 — це варто повторити. Після паузи 600 мс спроба 3 отримує 200, і екран показує дані. Пізніше, під час іншого запиту, екран втрачає фокус: скасування зупиняє і запит, і заплановану паузу, тож нової спроби не буде."
+      en: "The screen asks for the records. Attempt 1 goes to the service, which stays silent; after timeoutMs the timer aborts the attempt. After a 300 ms pause attempt 2 gets a 503 — worth repeating. After a 600 ms pause attempt 3 gets a 200, and the screen shows the data. Later, during another request, the screen loses focus: the abort stops both the request and the scheduled pause, so no new attempt follows."
+    spec:
+      actors:
+        - { id: screen, label: { uk: "Екран", en: "Screen" } }
+        - { id: policy, label: "fetchWithRetry" }
+        - { id: service, label: { uk: "Mock-сервіс", en: "Mock service" } }
+      messages:
+        - from: screen
+          to: policy
+          label: "list(signal)"
+          caption:
+            uk: "Екран передає свій `signal`: його скасують, коли екран утратить фокус."
+            en: "The screen passes its `signal`: it is aborted when the screen loses focus."
+        - from: policy
+          to: service
+          label: { uk: "спроба 1", en: "attempt 1" }
+          caption:
+            uk: "Спроба 1 отримує власний `AbortController` і таймер на `timeoutMs`."
+            en: "Attempt 1 gets its own `AbortController` and a timer for `timeoutMs`."
+        - from: policy
+          to: policy
+          kind: note
+          label: { uk: "тайм-аут → abort()", en: "timeout → abort()" }
+          caption:
+            uk: "Сервіс мовчить. Таймер спрацьовує й скасовує спробу — це тайм-аут, його варто повторити."
+            en: "The service is silent. The timer fires and aborts the attempt — a timeout, worth repeating."
+        - from: policy
+          to: service
+          label: { uk: "спроба 2 (після 300 мс)", en: "attempt 2 (after 300 ms)" }
+          caption:
+            uk: "Після паузи 300 мс — спроба 2."
+            en: "After a 300 ms pause — attempt 2."
+        - from: service
+          to: policy
+          kind: return
+          label: "503"
+          caption:
+            uk: "503 на `GET` — сервер тимчасово не впорався. Пауза подвоюється: 600 мс."
+            en: "A 503 on a `GET` — the server failed for now. The pause doubles: 600 ms."
+        - from: policy
+          to: service
+          label: { uk: "спроба 3 (після 600 мс)", en: "attempt 3 (after 600 ms)" }
+          caption:
+            uk: "Третя й остання спроба з бюджету."
+            en: "The third and last attempt of the budget."
+        - from: service
+          to: policy
+          kind: return
+          label: "200 [ … ]"
+          caption:
+            uk: "200 — політика повертає відповідь."
+            en: "A 200 — the policy returns the response."
+        - from: policy
+          to: screen
+          kind: return
+          label: { uk: "записи", en: "records" }
+          caption:
+            uk: "Екран показує дані."
+            en: "The screen shows the data."
+        - from: screen
+          to: policy
+          label: "signal.abort()"
+          note: { uk: "пізніше, під час паузи іншого запиту", en: "later, during another request's pause" }
+          caption:
+            uk: "Інший запит, і екран утрачає фокус посеред паузи: скасування зупиняє таймер паузи, і нової спроби немає. Помилки на екрані теж немає — він уже не видимий."
+            en: "Another request, and the screen loses focus in the middle of a pause: the abort stops the pause timer, and there is no new attempt. No error on screen either — it is no longer visible."
+
+  - id: predict-attempts
+    kind: prediction
+    prompt:
+      uk: "Політика: щонайбільше 3 спроби, повторює помилку мережі, тайм-аут і 5xx, не повторює 4xx, зупиняється, коли екран утратив фокус. Скільки спроб буде в кожному випадку: (а) сервер щоразу мовчить; (б) сервер щоразу відповідає 503; (в) сервер відповідає 404; (г) під час першої спроби екран утратив фокус?"
+      en: "Policy: at most 3 attempts, retries a network error, a timeout and a 5xx, does not retry a 4xx, stops when the screen loses focus. How many attempts happen in each case: (a) the server is silent every time; (b) the server answers 503 every time; (c) the server answers 404; (d) the screen loses focus during the first attempt?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: right
+          text:
+            uk: "(а) 3 · (б) 3 · (в) 1 · (г) 1"
+            en: "(a) 3 · (b) 3 · (c) 1 · (d) 1"
+        - id: all-three
+          text:
+            uk: "(а) 3 · (б) 3 · (в) 3 · (г) 3"
+            en: "(a) 3 · (b) 3 · (c) 3 · (d) 3"
+          why:
+            uk: "404 прийде й утретє: повтор нічого не змінить. А після втрати фокуса результат уже нікому не потрібен — повтор лише марнує мережу."
+            en: "A 404 comes the third time too: a retry changes nothing. And after focus is lost nobody needs the result — a retry only wastes the network."
+        - id: until-works
+          text:
+            uk: "(а) і (б) — доки сервер не відповість, (в) 1 · (г) 1"
+            en: "(a) and (b) — until the server answers, (c) 1 · (d) 1"
+          why:
+            uk: "Бюджет — три спроби. «Доки не вийде» дає нескінченний спінер, коли сервер не повернеться."
+            en: "The budget is three attempts. “Until it works” gives an endless spinner when the server does not come back."
+        - id: silent-one
+          text:
+            uk: "(а) 1 · (б) 3 · (в) 1 · (г) 1"
+            en: "(a) 1 · (b) 3 · (c) 1 · (d) 1"
+          why:
+            uk: "Тайм-аут — теж збій, який варто повторити: наступна спроба може й дочекатися відповіді. Без власного тайм-ауту спроба (а) не закінчилася б зовсім."
+            en: "A timeout is also a failure worth repeating: the next attempt may well get an answer. Without your own timeout attempt (a) would not end at all."
+      correct: [right]
+    explanation:
+      uk: "Повторюються лише збої, після яких інший результат можливий і безпечний. 4xx і скасування зупиняють політику одразу; решта — до вичерпання бюджету."
+      en: "Only failures after which another result is possible and safe are repeated. A 4xx and an abort stop the policy at once; the rest go on until the budget is used up."
+
+  - id: recall-retry-abort
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: which-not-retried
+        from: js-08-10-stale-responses-retry
+        prompt:
+          uk: "У розділі про асинхронність твоя функція з повторами на одну з відповідей не питала вдруге, а одразу відхиляла promise. На яку?"
+          en: "In the async unit your retrying function did not ask a second time for one kind of answer and rejected at once instead. Which?"
+        answer:
+          type: choice
+          options:
+            - id: four
+              text:
+                uk: "Статус 4xx: повторний запит не змінить відповіді"
+                en: "A 4xx status: asking again will not change the answer"
+            - id: five
+              text:
+                uk: "Статус 5xx"
+                en: "A 5xx status"
+              why:
+                uk: "5xx — тимчасова біда сервера, її якраз повторюють."
+                en: "A 5xx is a temporary server problem — exactly what is retried."
+            - id: network
+              text:
+                uk: "Помилка мережі"
+                en: "A network error"
+              why:
+                uk: "Мережа може повернутися, тож помилку мережі повторюють."
+                en: "The network may come back, so a network error is retried."
+          correct: [four]
+        explanation:
+          uk: "Так само й тут: 4xx повертається одразу. Новим у цьому уроці є тайм-аут спроби й скасування ззовні."
+          en: "The same holds here: a 4xx returns at once. What is new in this lesson is the per-attempt timeout and the abort from outside."
+      - id: abort-rejects
+        from: js-08-09-cancellation-abort
+        prompt:
+          uk: "Що робить `fetch`, коли його `signal` скасували, поки відповіді ще немає?"
+          en: "What does `fetch` do when its `signal` is aborted while there is no answer yet?"
+        answer:
+          type: choice
+          options:
+            - id: rejects
+              text:
+                uk: "Відхиляє свій promise з помилкою, назва якої — `AbortError`"
+                en: "Rejects its promise with an error named `AbortError`"
+            - id: resolves-null
+              text:
+                uk: "Виконується з `null`"
+                en: "Resolves with `null`"
+              why:
+                uk: "Скасований `fetch` нічого не повертає: його promise відхиляється."
+                en: "An aborted `fetch` returns nothing: its promise rejects."
+            - id: keeps-waiting
+              text:
+                uk: "Нічого: запит доходить до кінця, просто результат ігнорується"
+                en: "Nothing: the request runs to the end, the result is just ignored"
+              why:
+                uk: "Ігнорувати результат — інший прийом (прапорець у cleanup). Скасування справді перериває запит."
+                en: "Ignoring the result is a different technique (a flag in cleanup). An abort really interrupts the request."
+          correct: [rejects]
+        explanation:
+          uk: "Тому в політиці треба відрізняти `AbortError` від справжнього збою: перший означає «стоп», а не «спробуй ще»."
+          en: "That is why the policy must tell an `AbortError` apart from a real failure: the first means “stop”, not “try again”."
+
+  - id: retry-timeline
+    kind: example
+    runtime: concept-preview
+    dir: retry-timeline
+    entry: main.jsx
+    strings:
+      heading: { uk: "Запит витрат у часі", en: "The expenses request over time" }
+      starts: { uk: "спроба {n} почалася", en: "attempt {n} starts" }
+      timedOut: { uk: "немає відповіді за {ms} мс → спробу скасовано (тайм-аут)", en: "no answer within {ms} ms → attempt aborted (timeout)" }
+      done: { uk: "{status} → готово, без повтору", en: "{status} → done, no retry" }
+      retryable: { uk: "{status} → варто спробувати ще", en: "{status} → worth another attempt" }
+      budget: { uk: "бюджет із {n} спроб вичерпано → стан помилки", en: "budget of {n} attempts used up → error state" }
+      wait: { uk: "пауза {ms} мс", en: "wait {ms} ms" }
+      blurDuring: { uk: "екран утратив фокус → запит скасовано, більше нічого не заплановано", en: "screen lost focus → request aborted, nothing more is scheduled" }
+      blurWaiting: { uk: "екран утратив фокус під час паузи → паузу скасовано, повтору немає", en: "screen lost focus during the pause → pause cancelled, no retry" }
+    title:
+      uk: "Таймлайн одного запиту"
+      en: "The timeline of one request"
+    body:
+      uk: |
+        `retryModel.js` — **модель** політики повторів на віртуальному годиннику: вона не надсилає запитів і не запускає таймерів, а лише виписує рішення в часі. Сервер у `SERVER` на першу спробу відповідає через 1200 мс, на другу — 503, на третю — 200.
+
+        Натисни **Запустити**: з тайм-аутом 2000 мс перша спроба дочікується відповіді.
+      en: |
+        `retryModel.js` is a **model** of the retry policy on a virtual clock: it sends no requests and starts no timers, it only writes the decisions out in time. The server in `SERVER` answers the first attempt after 1200 ms, the second with a 503, the third with a 200.
+
+        Press **Run**: with a 2000 ms timeout the first attempt gets its answer.
+    tryIt:
+      uk: |
+        1. Зміни `TIMEOUT_MS` на `800` і запусти: на 800 мс спробу 1 скасовано, після паузи 300 мс спроба 2 отримує 503, після паузи 600 мс спроба 3 отримує 200 на 1900 мс.
+        2. Тепер зміни `BLUR_AT_MS` на `1500` і запусти: на 1500 мс екран утрачає фокус посеред паузи, і спроби 3 вже немає.
+        3. Зміни `BLUR_AT_MS` на `400` і запусти: фокус утрачено під час першої спроби — запит скасовано, і нічого більше не заплановано.
+      en: |
+        1. Change `TIMEOUT_MS` to `800` and run: at 800 ms attempt 1 is aborted, after a 300 ms pause attempt 2 gets a 503, after a 600 ms pause attempt 3 gets a 200 at 1900 ms.
+        2. Now change `BLUR_AT_MS` to `1500` and run: at 1500 ms the screen loses focus in the middle of a pause, and there is no attempt 3.
+        3. Change `BLUR_AT_MS` to `400` and run: focus is lost during the first attempt — the request is aborted, and nothing more is scheduled.
+    limits:
+      uk: "Це перегляд у браузері через react-native-web, а не нативний застосунок, і показує він модель: ні запитів, ні таймерів, ні справжнього скасування тут немає. Як твій код скасовує спробу й паузу, перевіряє вправа нижче; як поводиться справжній мовчазний сервер на телефоні — завдання уроку з налагодження адреси хоста на заявленій цілі."
+      en: "This is a browser preview through react-native-web, not a native app, and it shows a model: there are no requests, timers or real aborts here. How your code aborts an attempt and a pause is checked by the exercise below; how a really silent server behaves on a phone is the task of the host-address debugging lesson on your declared target."
+
+  - id: fetch-with-retry
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: fetch-with-retry
+    entry: index.js
+    editable: [retry.js]
+    title:
+      uk: "fetchWithRetry з тайм-аутом і скасуванням"
+      en: "fetchWithRetry with a timeout and cancellation"
+    instructions:
+      uk: |
+        Допиши `fetchWithRetry(url, { fetchFn, timeoutMs, maxAttempts, baseDelayMs, signal })` у `retry.js`. Запити йдуть лише через переданий `fetchFn`, тож функцію можна перевірити без мережі.
+
+        1. Кожна спроба отримує **власний** `AbortController`, і `fetchFn` дістає його `signal`. Якщо за `timeoutMs` відповіді немає — скасуй спробу; така спроба вважається тайм-аутом.
+        2. Зовнішній `signal` (екран утратив фокус) скасовує поточну спробу й паузу, і функція одразу відхиляється з помилкою, назва якої — `AbortError`. Нових спроб після цього немає.
+        3. Відповідь з `status` менше 500 (і 2xx, і 4xx) повертай одразу, без повтору.
+        4. Помилку мережі, тайм-аут і 5xx повторюй, але не більше ніж `maxAttempts` спроб загалом. Перед спробою номер `n + 1` зачекай `baseDelayMs * 2 ** (n - 1)` мс через `wait(ms, signal)` з `wait.js`.
+        5. Після останньої спроби: якщо прийшла відповідь 5xx — поверни її; якщо був тайм-аут — відхили promise помилкою з назвою `TimeoutError`; якщо помилка мережі — відхили саме нею.
+        6. Не використовуй `AbortSignal.timeout()` і `AbortSignal.any()`: у React Native 0.86 їх немає, і перевірки запускаються без них.
+      en: |
+        Complete `fetchWithRetry(url, { fetchFn, timeoutMs, maxAttempts, baseDelayMs, signal })` in `retry.js`. Requests go only through the given `fetchFn`, so the function can be checked without a network.
+
+        1. Each attempt gets its **own** `AbortController`, and `fetchFn` receives its `signal`. If there is no answer within `timeoutMs`, abort the attempt; such an attempt counts as a timeout.
+        2. The outer `signal` (the screen lost focus) aborts the current attempt and the pause, and the function rejects at once with an error named `AbortError`. No new attempts after that.
+        3. An answer with `status` below 500 (both 2xx and 4xx) is returned at once, without a retry.
+        4. A network error, a timeout and a 5xx are retried, but with no more than `maxAttempts` attempts in total. Before attempt number `n + 1` wait `baseDelayMs * 2 ** (n - 1)` ms through `wait(ms, signal)` from `wait.js`.
+        5. After the last attempt: if a 5xx answer came, return it; if it was a timeout, reject with an error named `TimeoutError`; if a network error, reject with exactly that error.
+        6. Do not use `AbortSignal.timeout()` and `AbortSignal.any()`: React Native 0.86 has neither, and the checks run without them.
+    testTitles:
+      "an ok answer is returned at once":
+        uk: "Відповідь 200 повертається одразу, за одну спробу"
+        en: "A 200 answer is returned at once, in one attempt"
+      "a 503 is retried, and the 200 of the third attempt is returned":
+        uk: "503 повторюється, і повертається 200 третьої спроби"
+        en: "A 503 is retried, and the 200 of the third attempt is returned"
+      "a 404 is returned at once without a retry":
+        uk: "404 повертається одразу, без повтору"
+        en: "A 404 is returned at once, without a retry"
+      "after maxAttempts failures it stops with the last result":
+        uk: "Після `maxAttempts` невдач — зупинка з останнім результатом (503 чи `TypeError`)"
+        en: "After `maxAttempts` failures it stops with the last result (a 503 or a `TypeError`)"
+      "an attempt without an answer is aborted after timeoutMs":
+        uk: "Спроба без відповіді скасовується через `timeoutMs` з `TimeoutError`"
+        en: "An attempt without an answer is aborted after `timeoutMs` with a `TimeoutError`"
+      "an outer abort stops at once and starts no new attempt":
+        uk: "Зовнішнє скасування зупиняє все одразу, нової спроби немає"
+        en: "An outer abort stops everything at once, with no new attempt"
+      "the wait before each next attempt grows":
+        uk: "Пауза перед кожною наступною спробою довша за попередню"
+        en: "The wait before each next attempt is longer than the previous one"
+    hints:
+      nudge:
+        uk: "Почни з циклу `for` по номерах спроб. Для кожної спроби дай відповідь на три питання: що її скасовує, що вона повернула (відповідь чи помилку) і чи варто після цього пробувати знову."
+        en: "Start with a `for` loop over attempt numbers. For each attempt answer three questions: what aborts it, what did it produce (an answer or an error), and is it worth trying again after that."
+      explanation:
+        uk: |
+          Тайм-аут без `AbortSignal.timeout()` — це звичайний таймер, що викликає `abort()` контролера, плюс прапорець «це був тайм-аут», щоб потім відрізнити його від інших помилок. Приклад тієї самої ідеї з іншого місця: щоб кнопка «Зберегти» сама вимикалася через 5 секунд, ти ставиш `setTimeout(() => { expired = true; button.disabled = true; }, 5000)` і прибираєш таймер через `clearTimeout`, якщо користувач устиг натиснути.
+
+          Зовнішній `signal` під’єднай до контролера спроби слухачем події `'abort'` і зніми слухача, коли спроба закінчилася. А коли щось відхилилося — спершу перевір `signal.aborted`: якщо так, це не збій, а «стоп».
+        en: |
+          A timeout without `AbortSignal.timeout()` is an ordinary timer that calls the controller's `abort()`, plus a "this was a timeout" flag so you can tell it apart from other errors later. The same idea elsewhere: to make a “Save” button disable itself after 5 seconds you set `setTimeout(() => { expired = true; button.disabled = true; }, 5000)` and remove the timer with `clearTimeout` if the user pressed in time.
+
+          Connect the outer `signal` to the attempt's controller with an `'abort'` event listener, and remove the listener when the attempt is over. And when something rejects, check `signal.aborted` first: if it is set, this is not a failure but a “stop”.
+    solutionNote:
+      uk: "У кожної спроби свій контролер, тож тайм-аут однієї не зачіпає наступну. Зовнішній `signal` перевіряється до спроби, пересилається в контролер під час неї й передається у `wait`, тому скасування зупиняє і запит, і паузу. 4xx і 2xx повертаються одразу, а останню спробу функція завершує тим, що вона дала."
+      en: "Each attempt has its own controller, so one attempt's timeout does not touch the next. The outer `signal` is checked before an attempt, forwarded to the controller during it and passed to `wait`, so an abort stops both the request and the pause. A 4xx and a 2xx return at once, and the function ends the last attempt with whatever it produced."
+    feedback:
+      - when: { test: "a 404 is returned at once without a retry" }
+        message:
+          uk: "Ця перевірка чекає, що відповідь 404 повертається після однієї спроби. Повторюють лише помилку мережі, тайм-аут і статус від 500."
+          en: "This check expects a 404 answer to be returned after one attempt. Only a network error, a timeout and a status of 500 or above are retried."
+      - when: { test: "an attempt without an answer is aborted after timeoutMs" }
+        message:
+          uk: "Ця перевірка дає `fetchFn`, що ніколи не відповідає, з `maxAttempts: 1` і `timeoutMs: 80`, і чекає відхилення з назвою `TimeoutError` та скасованого `signal`, переданого в `fetchFn`. Якщо відповідь «still waiting», дедлайну немає: `fetch` сам не здається."
+          en: "This check gives a `fetchFn` that never answers, with `maxAttempts: 1` and `timeoutMs: 80`, and expects a rejection named `TimeoutError` and an aborted `signal` passed to `fetchFn`. If you see “still waiting”, there is no deadline: `fetch` does not give up by itself."
+      - when: { test: "an outer abort stops at once and starts no new attempt" }
+        message:
+          uk: "Ця перевірка скасовує зовнішній `signal` під час паузи після 503 і чекає відхилення `AbortError` протягом 200 мс та лише однієї спроби. Скасування — не збій мережі: після нього не повторюють і не чекають."
+          en: "This check aborts the outer `signal` during the pause after a 503 and expects an `AbortError` rejection within 200 ms and only one attempt. An abort is not a network failure: after it nothing is retried or waited for."
+      - when: { test: "the wait before each next attempt grows" }
+        message:
+          uk: "Ця перевірка чекає, що друга пауза щонайменше на 30 мс довша за першу (з `baseDelayMs: 60` це 60 і 120 мс). Пауза має залежати від номера спроби."
+          en: "This check expects the second pause to be at least 30 ms longer than the first (with `baseDelayMs: 60` that is 60 and 120 ms). The pause must depend on the attempt number."
+      - when: { error: TypeError }
+        message:
+          uk: "Якщо в повідомленні `AbortSignal.timeout is not a function` чи `AbortSignal.any is not a function` — перевірки, як і React Native 0.86, працюють без цих методів: зроби тайм-аут таймером і контролером. Якщо `fetchFn is not a function` — передавай запит саме через `fetchFn` з параметрів."
+          en: "If the message says `AbortSignal.timeout is not a function` or `AbortSignal.any is not a function`, the checks, like React Native 0.86, run without these methods: build the timeout from a timer and a controller. If it says `fetchFn is not a function`, send the request exactly through the `fetchFn` from the options."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-06
+    body:
+      uk: "У кроці проєкту джерело записів з mock-сервісу піде через твій `fetchWithRetry`: тайм-аут, щонайбільше три спроби, а `signal` скасовуватиметься, коли список утрачає фокус."
+      en: "In the project step the records source for the mock service goes through your `fetchWithRetry`: a timeout, at most three attempts, and the `signal` aborted when the list loses focus."
