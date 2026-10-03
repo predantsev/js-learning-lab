@@ -1,5 +1,6 @@
 // Content loading and compilation: YAML sources + real code files → JSON the app loads.
 // Used by build.mjs (compile) and validate.mjs (static + real-browser checks).
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -308,6 +309,47 @@ export function staticIssuesForLesson(lesson, ctx) {
   return issues;
 }
 
+// Names the repository's .gitignore drops (used when the content root is not inside a git work tree).
+const IGNORED_SEGMENT = /(^|\/)(dist|build|coverage|node_modules|\.idea|\.vscode)\//;
+const IGNORED_NAME = /(^|\/)(\.env(\.(?!example$)[^/]*)?|\.DS_Store|[^/]*\.log)$/;
+
+/** Every file a lesson reads from its block directories, as absolute paths. */
+function lessonFilePaths(lesson) {
+  const out = [];
+  for (const block of lesson.source?.blocks ?? []) {
+    const a = lesson.assets[block?.id];
+    if (!a || typeof block.dir !== 'string') continue;
+    const base = path.join(lesson.dir, block.dir);
+    if (block.kind === 'example') for (const rel of Object.keys(a.files ?? {})) out.push(path.join(base, rel));
+    if (block.kind === 'exercise') {
+      for (const [sub, files] of [['starter', a.starter], ['solution', a.solution], ...Object.entries(a.variants ?? {})]) for (const rel of Object.keys(files ?? {})) out.push(path.join(base, sub, rel));
+    }
+  }
+  return out;
+}
+
+/**
+ * Lesson files that git would not commit (they match .gitignore: dist/, build/, coverage/, .env…):
+ * they work locally and silently disappear from the repository. Asks git once for all lessons;
+ * outside a git work tree it applies the same patterns statically. Returns Map<lessonId, string[]>.
+ */
+export function gitIgnoredLessonFiles(lessons) {
+  const byLesson = new Map();
+  const all = [];
+  for (const [id, lesson] of lessons) for (const file of lessonFilePaths(lesson)) all.push([id, lesson.dir, file]);
+  if (all.length === 0) return byLesson;
+  let ignored = null;
+  const git = spawnSync('git', ['check-ignore', '--stdin'], { cwd: CONTENT_DIR, input: all.map(([, , f]) => f).join('\n'), encoding: 'utf8' });
+  // Exit 0: some paths ignored, 1: none; anything else (no git, not a work tree): use the static list.
+  if (!git.error && (git.status === 0 || git.status === 1)) ignored = new Set(git.stdout.split('\n').filter(Boolean).map((f) => path.resolve(CONTENT_DIR, f)));
+  for (const [id, dir, file] of all) {
+    const rel = path.relative(dir, file).split(path.sep).join('/');
+    const hit = ignored ? ignored.has(file) : IGNORED_SEGMENT.test(`/${rel}`) || IGNORED_NAME.test(rel);
+    if (hit) byLesson.set(id, [...(byLesson.get(id) ?? []), rel]);
+  }
+  return byLesson;
+}
+
 /** Compile one lesson to its runtime JSON. `visuals` is the optional shared/visuals module. */
 export async function compileLesson(lesson, ctx) {
   const { source, assets, dir } = lesson;
@@ -386,6 +428,9 @@ export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content')
   await fs.mkdir(path.join(outDir, 'capstones'), { recursive: true });
   const hash = createHash('sha256');
   const compiledMeta = new Map();
+  for (const [id, files] of gitIgnoredLessonFiles(all.lessons)) {
+    warnings.push({ path: `lesson ${id}`, message: `git ignores ${files.map((f) => `"${f}"`).join(', ')} (.gitignore: dist/, build/, coverage/, .env…): the lesson works locally, but these files are never committed. Rename the folder or file`, level: 'warning', file: path.relative(ROOT, all.lessons.get(id).dir) });
+  }
   for (const [id, lesson] of all.lessons) {
     const staticIssues = staticIssuesForLesson(lesson, ctx).map((i) => ({ ...i, file: path.relative(ROOT, lesson.dir) }));
     issues.push(...staticIssues.filter((i) => i.level !== 'warning'));

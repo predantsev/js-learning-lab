@@ -22,7 +22,7 @@ content/
     <exercise-dir>/tests.js       behavior tests
 ```
 
-The directory name equals the lesson id. Ids are stable: never rename a published lesson or block id (add a redirect in `content/redirects.yaml` instead).
+Names that the repository's `.gitignore` drops (`dist/`, `build/`, `coverage/`, `.env`, `.env.*`, `*.log`) work while you author but are never committed; the validator warns about them — name such folders differently (`dist-demo/`, `sample.env.txt`). The directory name equals the lesson id. Ids are stable: never rename a published lesson or block id (add a redirect in `content/redirects.yaml` instead).
 
 ## Commands
 

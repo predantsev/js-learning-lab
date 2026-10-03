@@ -1,7 +1,8 @@
 // Lesson compilation and static checks on small in-memory lessons (scripts/content/lib.mjs).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { compileLesson, createMarkdown, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
+import path from 'node:path';
+import { CONTENT_DIR, compileLesson, createMarkdown, gitIgnoredLessonFiles, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
 
 const md = createMarkdown(new Map([['closure', { id: 'closure', term: 'closure' }]]));
 const ctx = { md, glossary: new Map([['closure', { id: 'closure', term: 'closure' }]]), syllabus: new Map(), lessonOrder: null, competencies: { families: null }, release: false };
@@ -111,4 +112,18 @@ test('the shown text of a glossary link is inline Markdown: code spans and bold 
   assert.equal(md.inline('[[closure|`makeCounter` **closure**]]'), '<button type="button" class="term" data-term="closure"><code>makeCounter</code> <strong>closure</strong></button>');
   assert.equal(md.inline('[[closure|a <b>tag</b>]]'), '<button type="button" class="term" data-term="closure">a &lt;b&gt;tag&lt;/b&gt;</button>');
   assert.equal(md.inline('[[closure]]'), '<button type="button" class="term" data-term="closure">closure</button>');
+});
+
+test('lesson files that the repository ignores (dist/, build/, coverage/, .env) are reported', () => {
+  const dir = path.join(CONTENT_DIR, 'units', 'JS-01', 'js-01-99-ignored-files');
+  const lesson = {
+    dir,
+    source: { blocks: [{ id: 'demo', kind: 'example', dir: 'demo' }, { id: 'task', kind: 'exercise', dir: 'task' }] },
+    assets: {
+      demo: { files: { 'index.js': '', 'dist/bundle.js': '', '.env': '', '.env.example': '' } },
+      task: { starter: { 'index.js': '', 'coverage/report.json': '' }, solution: { 'build/out.js': '' }, variants: { wrong: { '.env.local': '' } } },
+    },
+  };
+  const found = gitIgnoredLessonFiles(new Map([['js-01-99-ignored-files', lesson]]));
+  assert.deepEqual(found.get('js-01-99-ignored-files')?.sort(), ['demo/.env', 'demo/dist/bundle.js', 'task/solution/build/out.js', 'task/starter/coverage/report.json', 'task/wrong/.env.local']);
 });
