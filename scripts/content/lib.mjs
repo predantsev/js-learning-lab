@@ -44,6 +44,37 @@ async function readTree(dir, base = dir) {
   return out;
 }
 
+// The glossary-link tokenizer of createMarkdown: `[[id]]` or `[[id|shown text]]` (`\|` in tables).
+const GLOSSARY_TOKEN = /^\[\[([a-z0-9-]+)(?:\\?\|([^\]]+))?\]\]/;
+
+/**
+ * `[[id|text]]` links in Markdown source that will not render as links (content/README.md, rule 46):
+ * the shown text ends at the first `]` — also one inside a code span such as `items[0]` — so the
+ * link stays raw text; and the shown text cannot hold another link. Code spans and fenced blocks
+ * outside a link are skipped (`[[k, v]]` in code is not a link). Returns a list of messages.
+ */
+export function glossaryLinkProblems(source) {
+  const text = String(source).replace(/^(\s*)(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1\2[^\n]*$/gm, '');
+  const problems = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '`') {
+      const run = /^`+/.exec(text.slice(i))[0];
+      const close = text.indexOf(run, i + run.length);
+      if (close !== -1) i = close + run.length - 1;
+      continue;
+    }
+    if (!text.startsWith('[[', i)) continue;
+    const attempt = /^\[\[([a-z0-9-]+)\\?\|/.exec(text.slice(i));
+    if (!attempt) continue;
+    const link = GLOSSARY_TOKEN.exec(text.slice(i));
+    const excerpt = text.slice(i, i + 50).split('\n')[0];
+    if (!link) problems.push(`the glossary link "${excerpt}…" does not close: its shown text ends at the first "]" (a code span such as \`items[0]\` included), so the learner sees the raw [[…]] text. Rephrase the shown text without "]" (content/README.md, rule 46)`);
+    else if (link[2].includes('[[')) problems.push(`the glossary link "${link[0]}" holds another link in its shown text; a link cannot contain a link (content/README.md, rule 46)`);
+    if (link) i += link[0].length - 1;
+  }
+  return problems;
+}
+
 /** Markdown renderer with glossary links, callouts and build-time syntax highlighting. */
 export function createMarkdown(glossary) {
   const highlight = (code, lang) => {
@@ -69,7 +100,7 @@ export function createMarkdown(glossary) {
         level: 'inline',
         start: (src) => src.indexOf('[['),
         tokenizer(src) {
-          const m = /^\[\[([a-z0-9-]+)(?:\|([^\]]+))?\]\]/.exec(src);
+          const m = GLOSSARY_TOKEN.exec(src);
           return m ? { type: 'glossaryLink', raw: m[0], id: m[1], shown: m[2] } : undefined;
         },
         renderer: (token) => termHtml(token.id, token.shown),
@@ -166,6 +197,7 @@ export async function loadGlossary(issues) {
     for (const term of list) {
       const termIssues = validateGlossaryTerm(term);
       issues.push(...termIssues.list.map((i) => ({ ...i, file: `content/glossary/${file}` })));
+      for (const [at, pair] of prosePairs({ definition: term.definition, context: term.context, note: term.example?.note })) for (const lang of LANGS) for (const message of glossaryLinkProblems(pair[lang])) issues.push({ path: `glossary ${term.id} › ${at}.${lang}`, message, file: `content/glossary/${file}` });
       if (terms.has(term.id)) issues.push({ path: `glossary ${term.id}`, message: `duplicate term id (also in ${terms.get(term.id).file})`, file: `content/glossary/${file}` });
       terms.set(term.id, { ...term, file });
     }
@@ -309,6 +341,12 @@ export function staticIssuesForLesson(lesson, ctx) {
     const missing = new Set();
     for (const text of texts) for (const m of String(text).matchAll(STRING_PLACEHOLDER)) if (!(block.strings && m[1] in block.strings)) missing.add(m[1]);
     for (const key of missing) add(`block "${block.id}"`, `placeholder %%${key}%% has no entry in strings${block.kind === 'review' ? ' (the review block\'s strings: its questions share one table)' : ''}`);
+  }
+  // Glossary links that would stay raw text (rule 46) — also in fields the smoke test never shows
+  // (hints, feedback, review questions, solution notes).
+  const { blocks: _blocks, ...meta } = source ?? {};
+  for (const [owner, value] of [['', meta], ...(source?.blocks ?? []).flatMap((b) => [[`block "${b?.id}"`, b], [`block "${b?.id}".spec`, b?.spec]])]) {
+    for (const [at, pair] of prosePairs(value)) for (const lang of LANGS) for (const message of glossaryLinkProblems(pair[lang])) add([owner, `${at}.${lang}`].filter(Boolean).join(' › '), message);
   }
   return issues;
 }

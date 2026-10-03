@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
 import * as visuals from '../../shared/visuals/index.js';
-import { CONTENT_DIR, compileLesson, createMarkdown, gitIgnoredLessonFiles, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
+import { CONTENT_DIR, compileLesson, createMarkdown, gitIgnoredLessonFiles, glossaryLinkProblems, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
 
 const md = createMarkdown(new Map([['closure', { id: 'closure', term: 'closure' }]]));
 const ctx = { md, glossary: new Map([['closure', { id: 'closure', term: 'closure' }]]), syllabus: new Map(), lessonOrder: null, competencies: { families: null }, release: false };
@@ -113,6 +113,22 @@ test('the shown text of a glossary link is inline Markdown: code spans and bold 
   assert.equal(md.inline('[[closure|`makeCounter` **closure**]]'), '<button type="button" class="term" data-term="closure"><code>makeCounter</code> <strong>closure</strong></button>');
   assert.equal(md.inline('[[closure|a <b>tag</b>]]'), '<button type="button" class="term" data-term="closure">a &lt;b&gt;tag&lt;/b&gt;</button>');
   assert.equal(md.inline('[[closure]]'), '<button type="button" class="term" data-term="closure">closure</button>');
+});
+
+test('a glossary link whose shown text holds "]" or another link is reported, wherever the text is (rule 46)', () => {
+  assert.deepEqual(glossaryLinkProblems('[[closure|`makeCounter` **closure**]] and [[closure]]'), []);
+  assert.deepEqual(glossaryLinkProblems('a table cell [[closure\\|the closure]]'), []);
+  // `[[k, v]]` in code is not a link; a fenced block is skipped as a whole.
+  assert.deepEqual(glossaryLinkProblems('write `[[k, v]]` and `[[closure|x` here\n\n```js\nconst a = [[closure|1]];\n```'), []);
+  const bracket = glossaryLinkProblems('see [[closure|`items[0]` closure]] here');
+  assert.equal(bracket.length, 1);
+  assert.match(bracket[0], /\[\[closure\|`items\[0\]` closure\]\] here…" does not close: its shown text ends at the first "\]"/);
+  assert.match(glossaryLinkProblems('[[closure|see [[scope]] first]]')[0], /holds another link/);
+  assert.match(glossaryLinkProblems('[[closure|a [[scope|b]]')[0], /holds another link/);
+  // Reported with the field path from every prose field, hints and feedback included.
+  const block = { ...exercise, strings: undefined, hints: { nudge: pair('[[closure|`a[0]`]]', 'n'), explanation: pair('е', 'e') }, instructions: pair('і', 'i'), testTitles: { 'prints the total': pair('т', 't') }, solutionNote: pair('р', 'r'), feedback: [{ when: { test: 'prints the total' }, message: pair('ф', '[[closure|`b[1]`]]') }] };
+  const found = staticIssuesForLesson(lessonWith([block], { cart: { ...exerciseAssets.cart, starter: { 'index.js': '' } } }), ctx).filter((i) => /rule 46/.test(i.message)).map((i) => i.path);
+  assert.deepEqual(found, ['lesson js-01-09-sample › block "cart" › hints.nudge.uk', 'lesson js-01-09-sample › block "cart" › feedback[0].message.en']);
 });
 
 test('lesson files that the repository ignores (dist/, build/, coverage/, .env) are reported', () => {
