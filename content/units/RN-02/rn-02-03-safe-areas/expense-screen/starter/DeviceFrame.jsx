@@ -1,4 +1,4 @@
-// Preview helper: a SIMULATED phone frame. The striped edges show the unsafe areas (status bar and notch,
+// Preview helper: a SIMULATED phone frame. The darkened edges show the unsafe areas (status bar and notch,
 // rounded corners, home indicator); the inset values are examples of a phone with a notch, not measurements.
 // On a device the real values come from useSafeAreaInsets() (react-native-safe-area-context).
 import { createContext, useContext } from 'react';
