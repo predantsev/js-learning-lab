@@ -10,6 +10,7 @@ export function moveAccessibilityFocus(ref) {
     target.focus();
     return;
   }
-  // On a device (React Native 0.86): screen-reader focus moves to this element. It should have accessible={true}.
+  // On a device (React Native 0.86): screen-reader focus moves to this element. The docs ask for accessible={true}
+  // on an element that should receive accessibility focus (a Text has it by default).
   AccessibilityInfo.sendAccessibilityEvent(target, 'focus');
 }
