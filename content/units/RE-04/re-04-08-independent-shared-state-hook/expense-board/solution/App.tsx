@@ -24,8 +24,8 @@ function ExpenseList({ expenses, selectedId, onSelect, onRemove }: {
     onRemove(id);
   }
 
-  // The next expense's button exists before and after the commit, but the removed row is gone
-  // only after it, so focus is moved here, once React has updated the DOM.
+  // Focus moves after the commit, once React has updated the DOM. (The next button and the
+  // heading are in the DOM before the click too, so the handler could also focus them at once.)
   useEffect(() => {
     const target = focusAfterRemove.current;
     focusAfterRemove.current = null;

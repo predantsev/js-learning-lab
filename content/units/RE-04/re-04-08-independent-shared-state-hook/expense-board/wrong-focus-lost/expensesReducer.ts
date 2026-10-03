@@ -16,7 +16,7 @@ function canAdd(expense: Expense, expenses: Expense[]): boolean {
   );
 }
 
-// Every invalid transition returns the same state object, so React skips the render.
+// Every invalid transition returns the same state object, so React commits nothing.
 export function expensesReducer(state: ExpensesState, action: ExpenseAction): ExpensesState {
   switch (action.type) {
     case "added": {
