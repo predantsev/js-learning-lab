@@ -40,6 +40,7 @@ async function fillForm(app, title, due, priority) {
 
 test("a valid task is added at the end and the form is cleared", async () => {
   const app = mount();
+  expect(app.form()?.querySelector("button"), "the submit button before editing").toHaveTextContent(L.add);
   await fillForm(app, L.dentist, "2026-03-10", "high");
   await user.submit(app.form());
   const last = app.rows().at(-1);
@@ -79,6 +80,7 @@ test("Edit fills the form, and switching tasks mid-edit shows the other task", a
   const app = mount();
   await user.click(app.rowButton(L.waterPlants, L.edit));
   expect(app.title(), "the title field after Edit").toHaveValue(L.waterPlants);
+  expect(app.form().querySelector("button"), "the submit button while editing").toHaveTextContent(L.save);
   await user.type(app.title(), L.more);
   await user.click(app.rowButton(L.libraryBooks, L.edit));
   expect(app.title(), "the title field after switching").toHaveValue(L.libraryBooks);
