@@ -172,7 +172,15 @@ export function QuestionView({ question, lang, answered, onAnswer, idPrefix }: Q
   };
   const move = (index: number, delta: number) => setOrder((o) => { const next = [...o]; const j = index + delta; if (j < 0 || j >= next.length) return o; [next[index], next[j]] = [next[j], next[index]]; return next; });
   const optionById = (id: string) => (a.type === 'order' ? a.items : a.type === 'text' ? [] : a.options).find((o) => o.id === id);
-  const optionLabel = (id: string) => { const o = optionById(id); return o?.codeHtml ? <code className="option-code" dangerouslySetInnerHTML={{ __html: o.codeHtml[lang] }} /> : <Html inline html={o?.text?.[lang] ?? ''} lang={lang} />; };
+  // A code option of several lines keeps its lines (a block); a one-line option stays inline code.
+  const optionLabel = (id: string) => {
+    const o = optionById(id);
+    if (!o?.codeHtml) return <Html inline html={o?.text?.[lang] ?? ''} lang={lang} />;
+    const html = o.codeHtml[lang].replace(/\n+$/, '');
+    return html.includes('\n')
+      ? <pre className="code option-code-block"><code dangerouslySetInnerHTML={{ __html: html }} /></pre>
+      : <code className="option-code" dangerouslySetInnerHTML={{ __html: html }} />;
+  };
 
   return (
     <div className="question">
