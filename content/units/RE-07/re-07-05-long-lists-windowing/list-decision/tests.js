@@ -14,7 +14,9 @@ test('both render times are measured and 5,000 tasks take longer', () => {
 });
 
 test('the choice follows the measurement at the realistic count', () => {
-  if (typeof decision.msAtRealistic === 'number' && decision.msAtRealistic > 0 && decision.msAtRealistic <= 16) {
+  expect(typeof decision.msAtRealistic, 'type of msAtRealistic').toBe('number');
+  expect(decision.msAtRealistic, 'msAtRealistic').toBeGreaterThan(0);
+  if (decision.msAtRealistic <= 16) {
     expect(decision.choice, 'choice for a render within one frame').toBe('plain');
   } else {
     expect(['paging', 'windowing'], 'choice for a render longer than one frame').toContain(decision.choice);
