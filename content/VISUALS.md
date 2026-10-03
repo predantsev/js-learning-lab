@@ -595,6 +595,9 @@ Common mistakes: `stage` of a file that was never `modify`-ed; `merge` of a bran
 ```yaml
 spec:
   component: Counter
+  screen: dom                    # optional: dom | native — the commit panel is "Screen (DOM)" or
+                                 #   "Screen (native views)"; default native in React Native lessons
+                                 #   (stage RN or a concept-preview block), dom elsewhere
   code: |                        # the component source (JSX), shown with the current line
     function Counter() {
       const [count, setCount] = useState(0);
@@ -631,7 +634,8 @@ spec:
 ```
 
 The player shows a timeline of phases, the snapshot the current render sees, the handler's view
-and queued updates on an event step, the effects on an effect step, and the DOM as of the last commit.
+and queued updates on an event step, the effects on an effect step, and the screen as of the last commit
+(the DOM, or native views in a React Native lesson; `dom` is the text of that panel either way).
 
 Common mistakes: render numbers out of order; `commit`/`effect` with a render number that is not
 the last `render` step; an `effect` step with neither `run` nor `cleanup`; `sees` values that

@@ -395,6 +395,16 @@ export function gitIgnoredLessonFiles(lessons) {
   return byLesson;
 }
 
+/**
+ * A render-timeline's commit panel shows native views in a React Native lesson (stage RN, or any
+ * concept-preview block) and the DOM elsewhere, unless the spec names its `screen`.
+ */
+function visualSpecFor(block, spec, source) {
+  if (block.visual !== 'render-timeline' || spec === null || typeof spec !== 'object' || spec.screen !== undefined) return spec;
+  const native = String(source.id ?? '').startsWith('rn-') || (source.blocks ?? []).some((b) => b?.runtime === 'concept-preview');
+  return { ...spec, screen: native ? 'native' : 'dom' };
+}
+
 /** Compile one lesson to its runtime JSON. `visuals` is the optional shared/visuals module. */
 export async function compileLesson(lesson, ctx) {
   const { source, assets, dir } = lesson;
@@ -411,7 +421,7 @@ export async function compileLesson(lesson, ctx) {
       compiled = renderLocalized({ ...meta, title: localizePair(meta.title, block), textEquivalent: localizePair(meta.textEquivalent, block) }, md);
       if (ctx.visuals) {
         try {
-          const out = await ctx.visuals.compileVisual(block.visual, spec, { readFile: (rel) => fs.readFile(path.join(dir, rel), 'utf8'), mdInline: md.inline, langs: LANGS, strings: block.strings });
+          const out = await ctx.visuals.compileVisual(block.visual, visualSpecFor(block, spec, source), { readFile: (rel) => fs.readFile(path.join(dir, rel), 'utf8'), mdInline: md.inline, langs: LANGS, strings: block.strings });
           compiled.spec = out.spec;
           for (const i of out.issues ?? []) issues.push({ path: `lesson ${source.id} › block "${block.id}".spec${i.path ? ` › ${i.path}` : ''}`, message: i.message });
           // The lesson column leaves a diagram about 450 px (content/VISUALS.md, section 6): wider ones

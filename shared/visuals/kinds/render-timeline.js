@@ -4,6 +4,8 @@
 import { IssueList, checkArray, checkEnum, checkText, isInt, isPlainObject, nonEmpty, renderText } from '../common.js';
 
 export const PHASES = ['render', 'commit', 'effect', 'event', 'idle'];
+/** What a commit updates: the browser DOM (React) or native views (React Native through the preview). */
+export const SCREENS = ['dom', 'native'];
 
 export const schema = {
   kind: 'render-timeline',
@@ -11,6 +13,7 @@ export const schema = {
   fields: {
     code: 'string — the component source shown beside the timeline (optional but recommended)',
     component: 'string — component name (default: Component)',
+    screen: 'dom | native — what the commit panel is: the browser DOM (React) or native views (React Native). Default: native in React Native lessons (stage RN or a concept-preview block), dom elsewhere',
     steps: '[{ phase: render|commit|effect|event|idle, render: n (render number, required for render/commit/effect), caption: { uk, en }, line?: n, …phase fields }]',
     'phase: render': '{ reason: { uk, en }, snapshot: { props?: { name: value }, state?: { name: value } } } — values are JSON literals',
     'phase: commit': '{ dom: string } — what the DOM shows after this commit (e.g. button → "Clicked 1")',
@@ -36,6 +39,7 @@ export function validate(spec, issues = new IssueList()) {
   if (!isPlainObject(spec)) { issues.add('spec', 'must be a mapping'); return issues; }
   if (spec.code !== undefined && !nonEmpty(spec.code)) issues.add('spec.code', 'must be a non-empty string when present');
   if (spec.component !== undefined && !nonEmpty(spec.component)) issues.add('spec.component', 'must be a non-empty string');
+  if (spec.screen !== undefined) checkEnum(issues, spec.screen, 'spec.screen', SCREENS);
   if (!checkArray(issues, spec.steps, 'spec.steps', { min: 2 })) return issues;
   let lastRender = 0;
   const lines = nonEmpty(spec.code) ? spec.code.split('\n').length : null;
@@ -103,5 +107,5 @@ export async function compile(spec, ctx, issues = new IssueList()) {
     if (s.phase === 'event') return { ...base, snapshot: current ? { props: current.props, state: current.state } : null, dom, event: { name: s.name, sees: s.sees, actions: s.actions, queued: s.queued ?? null } };
     return { ...base, snapshot: current ? { props: current.props, state: current.state } : null, dom };
   });
-  return { spec: { kind: 'render-timeline', code: spec.code ?? null, language: 'jsx', component: spec.component ?? 'Component', renders, steps }, issues };
+  return { spec: { kind: 'render-timeline', code: spec.code ?? null, language: 'jsx', component: spec.component ?? 'Component', screen: spec.screen ?? 'dom', renders, steps }, issues };
 }

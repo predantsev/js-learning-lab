@@ -219,6 +219,23 @@ test('a local-task tool version is a plain string or bilingual text, compiled as
   assert.match(toolIssues({ en: 'only English' })[0], /tools\[0\]\.version\.uk: missing or empty translation/);
 });
 
+test('a render-timeline commit panel shows native views in a React Native lesson and the DOM elsewhere, unless the spec says', async () => {
+  const timeline = (screen) => ({ id: 'tl', kind: 'visual', visual: 'render-timeline', title: pair('Т', 'T'), textEquivalent: pair('т', 't'), spec: { ...(screen ? { screen } : {}), steps: [{ phase: 'render', render: 1, reason: pair('п', 'r'), snapshot: { state: { n: 0 } }, caption: pair('к', 'c') }, { phase: 'commit', render: 1, dom: 'n = 0', caption: pair('к', 'c') }] } });
+  const screenOf = async (id, block, extra = []) => {
+    const lesson = lessonWith([block, ...extra]);
+    lesson.source = { ...lesson.source, id, unit: id.slice(0, 5).toUpperCase() };
+    const out = await compileLesson(lesson, { ...ctx, visuals });
+    assert.deepEqual(out.issues, []);
+    return out.lesson.blocks[0].spec.screen;
+  };
+  assert.equal(await screenOf('re-02-09-sample', timeline()), 'dom');
+  assert.equal(await screenOf('rn-04-09-sample', timeline()), 'native');
+  assert.equal(await screenOf('js-01-09-sample', timeline(), [{ id: 'demo', kind: 'example', runtime: 'concept-preview', dir: 'demo', entry: 'main.jsx', title: pair('Т', 'T'), body: pair('т', 't') }]), 'native');
+  assert.equal(await screenOf('rn-04-09-sample', timeline('dom')), 'dom');
+  const bad = await compileLesson(lessonWith([timeline('phone')]), { ...ctx, visuals });
+  assert.ok(bad.issues.some((i) => /spec › spec\.screen/.test(i.path)), JSON.stringify(bad.issues));
+});
+
 test('a local-task tool name is a product name (plain string) or bilingual text for a described tool', async () => {
   const task = (name) => ({ id: 'local', kind: 'local-task', runtime: 'local-web', title: pair('Т', 'T'), intro: pair('і', 'i'), tools: [{ name, version: '1' }], steps: [{ text: pair('к', 's') }], verify: [{ id: 'v', text: pair('в', 'v') }], troubleshooting: [{ problem: pair('п', 'p'), fix: pair('ф', 'f') }], recovery: pair('р', 'r') });
   assert.deepEqual((await compiledBlock(task({ uk: 'Редактор коду', en: 'A code editor' }))).tools[0].name, { uk: 'Редактор коду', en: 'A code editor' });
