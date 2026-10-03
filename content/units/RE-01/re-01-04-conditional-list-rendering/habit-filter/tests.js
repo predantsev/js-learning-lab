@@ -52,3 +52,20 @@ test("the page shows five active and one paused habit", async () => {
   await settle();
   expect(document.querySelectorAll("#root li"), "list items on the page").toHaveLength(6);
 });
+
+test("each item keeps its element when the habits are reordered", () => {
+  expect(typeof HabitList, "type of HabitList").toBe("function");
+  const host = document.createElement("div");
+  document.body.append(host);
+  const root = createRoot(host);
+  try {
+    flushSync(() => root.render(createElement(HabitList, { habits, status: "active" })));
+    const before = [...host.querySelectorAll("li")].find((li) => li.textContent.trim() === nameOf("h-02"));
+    flushSync(() => root.render(createElement(HabitList, { habits: habits.toReversed(), status: "active" })));
+    const after = [...host.querySelectorAll("li")].find((li) => li.textContent.trim() === nameOf("h-02"));
+    expect(after, `the <li> of “${nameOf("h-02")}” after the order is reversed is the same element as before`).toBe(before);
+  } finally {
+    root.unmount();
+    host.remove();
+  }
+});
