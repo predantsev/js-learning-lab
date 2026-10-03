@@ -58,7 +58,7 @@ const TEXT = {
   uk: {
     readmeIntro: 'Цей проєкт експортовано з js learning lab {date}. Тут ті самі файли, що були в платформі в момент експорту, разом із ще не збереженими змінами.',
     runTitle: 'Як запустити',
-    run1: 'Потрібен Node.js 18 або новіший. Перевір у терміналі: `node --version`.',
+    run1: 'Потрібен Node.js 22.13 або новіший (той самий, що й для платформи). Перевір у терміналі: `node --version`.',
     run2: 'Відкрий цю теку у VS Code (File → Open Folder…), а потім термінал (Terminal → New Terminal).',
     run3: 'Виконай `{start}`. Встановлювати нічого не треба: у проєкту немає залежностей, тож `npm install` не потрібен.',
     run4: 'Відкрий адресу, яку покаже термінал: {url}',
@@ -87,7 +87,7 @@ const TEXT = {
     merge5: 'Запусти проєкт і перевір результат.',
     troubleTitle: 'Якщо щось не так',
     trouble1: '`node: command not found` або `npm: command not found` — встанови Node.js з https://nodejs.org і відкрий новий термінал.',
-    trouble2: '`Port {port} is already in use` — інша програма вже використовує порт: `{startPort}`.',
+    trouble2: '`Порт {port} уже зайнятий` — інша програма вже використовує порт: `{startPort}`.',
     trouble3: 'Порожня сторінка — відкрий адресу з терміналу (не файл напряму) і подивись помилки в консолі браузера.',
     serveRunning: 'Проєкт працює: {url}',
     serveRestore: 'Відновити збережені дані: {url}',
@@ -121,7 +121,7 @@ const TEXT = {
   en: {
     readmeIntro: 'This project was exported from js learning lab on {date}. These are the same files the platform had at that moment, including changes that were not saved yet.',
     runTitle: 'How to run it',
-    run1: 'You need Node.js 18 or newer. Check in a terminal: `node --version`.',
+    run1: 'You need Node.js 22.13 or newer (the same as for the platform). Check in a terminal: `node --version`.',
     run2: 'Open this folder in VS Code (File → Open Folder…), then a terminal (Terminal → New Terminal).',
     run3: 'Run `{start}`. Nothing needs to be installed: the project has no dependencies, so `npm install` is not needed.',
     run4: 'Open the address the terminal prints: {url}',
@@ -193,7 +193,7 @@ export function exportName(capstoneId) {
 export function serveScript(lang, { restorePath, port = DEFAULT_LOCAL_PORT }) {
   const T = TEXT[lang] ?? TEXT.en;
   const msg = (key) => JSON.stringify(T[key]);
-  return `// Local static server for this exported project. No dependencies; Node.js 18 or newer.
+  return `// Local static server for this exported project. No dependencies; Node.js 22.13 or newer.
 // Serves only this folder and only on the loopback interface (127.0.0.1).
 //   npm start                    → http://127.0.0.1:${port}/
 //   npm start -- --port 4301     (or set the PORT environment variable)
@@ -257,6 +257,13 @@ const server = http.createServer(async (req, res) => {
     res.end(req.method === 'HEAD' ? undefined : body);
   } catch (error) {
     const missing = ['ENOENT', 'EISDIR', 'ENOTDIR'].includes(error.code);
+    // The browser asks for /favicon.ico by itself; without one it gets an empty answer, not a 404
+    // in the console that the project never caused.
+    if (missing && req.url.split('?')[0] === '/favicon.ico') {
+      res.writeHead(204, { 'cache-control': 'no-store' });
+      res.end();
+      return;
+    }
     res.writeHead(missing ? 404 : 500, { 'content-type': 'text/plain; charset=utf-8' });
     res.end(missing ? 'Not found' : 'Server error');
   }
@@ -285,7 +292,7 @@ export function packageJson({ capstoneId, title, servePath }) {
     description: `${title} — exported from js learning lab`,
     type: 'module',
     scripts: { start: `node ${servePath}` },
-    engines: { node: '>=18' },
+    engines: { node: '>=22.13' },
   }, null, 2)}\n`;
 }
 
