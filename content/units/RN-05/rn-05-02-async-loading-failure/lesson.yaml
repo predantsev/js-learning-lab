@@ -36,7 +36,7 @@ blocks:
         | `empty` | «Записів ще немає» — сховище відповіло `null` або порожнім списком |
         | `failed` | повідомлення й кнопка «Спробувати ще» |
 
-        Друга пастка — збереження. Effect, що зберігає список після кожної зміни, спрацьовує вже після першого кадру, коли в стані ще порожній масив. Без запобіжника він запише в сховище порожній список раніше, ніж прочитає справжній.
+        Друга пастка — збереження. Effect, що зберігає список після кожної зміни, спрацьовує вже після першого кадру, коли в стані ще порожній масив. Без запобіжника він запише в сховище порожній список раніше, ніж застосунок отримає справжній.
       en: |
         On the web the starting state could be read from `localStorage` at once, before the first frame. On a phone the store's answer comes later, so the app gets a gap the web did not have. An empty array in state during that time means nothing: there may well be records, they just have not been read yet.
 
@@ -49,7 +49,7 @@ blocks:
         | `empty` | “No records yet” — the store answered `null` or an empty list |
         | `failed` | a message and a “Try again” button |
 
-        The second trap is saving. An effect that saves the list after every change runs right after the first frame, while state still holds an empty array. Without a guard it writes an empty list into the store before it has read the real one.
+        The second trap is saving. An effect that saves the list after every change runs right after the first frame, while state still holds an empty array. Without a guard it writes an empty list into the store before the app has received the real one.
 
   - id: recall-sync
     kind: review
@@ -91,8 +91,8 @@ blocks:
   - id: predict-early-save
     kind: prediction
     prompt:
-      uk: "У сховищі на пристрої — 3 звички. Застосунок запускається з цим хуком, а читання триває 300 мс. Що лежить у сховищі через 100 мс після запуску?"
-      en: "The device store holds 3 habits. The app launches with this hook, and the read takes 300 ms. What does the store hold 100 ms after launch?"
+      uk: "У сховищі на пристрої — 3 звички. Застосунок запускається з цим хуком. Що передає в сховище перший виклик `setItem` — той, що стається одразу після першого кадру, поки відповідь `getItem` ще не дійшла до хука?"
+      en: "The device store holds 3 habits. The app launches with this hook. What does the first `setItem` call pass to the store — the one right after the first frame, while the `getItem` answer has not reached the hook yet?"
     code: |
       export function useHabits(storage) {
         const [habits, setHabits] = useState([]);
@@ -116,8 +116,8 @@ blocks:
       options:
         - id: three
           text:
-            uk: "Ті самі 3 звички: за 100 мс нічого не змінилося"
-            en: "The same 3 habits: nothing changed in 100 ms"
+            uk: "Ті самі 3 звички: хук зберігає те, що прочитав"
+            en: "The same 3 habits: the hook saves what it read"
           why:
             uk: "Другий effect виконався одразу після першого кадру, коли `habits` ще порожній масив. Він не чекає читання — і вже записав порожній список."
             en: "The second effect ran right after the first frame, while `habits` was still an empty array. It does not wait for the read — and it has already written an empty list."
@@ -127,11 +127,11 @@ blocks:
             en: "A snapshot with 0 habits"
         - id: nothing
           text:
-            uk: "Нічого: ключ видалено"
-            en: "Nothing: the key was removed"
+            uk: "Нічого: перший запис дочекається, поки читання завершиться"
+            en: "Nothing: the first write waits until the read has finished"
           why:
-            uk: "`removeItem` ніхто не викликає. `setItem` записує текст — у цьому випадку знімок з порожнім списком."
-            en: "Nobody calls `removeItem`. `setItem` writes text — here a snapshot with an empty list."
+            uk: "Effect збереження не знає про `Promise` іншого effect і нічого не чекає: `setItem` викликано одразу, з тим, що зараз у стані, — порожнім списком."
+            en: "The save effect knows nothing about the other effect's `Promise` and waits for nothing: `setItem` is called at once, with what state holds now — an empty list."
         - id: crash
           text:
             uk: "Застосунок падає, бо `habits` ще не завантажено"
@@ -141,8 +141,8 @@ blocks:
             en: "An empty array is a perfectly valid value: `JSON.stringify` happily writes it. That is exactly why the defect is silent."
       correct: [zero]
     explanation:
-      uk: "Обидва effects виконуються після першого кадру. Читання ще в дорозі, а запис порожнього списку вже в сховищі. Коли читання повернеться, екран покаже 3 звички й запише їх назад — але якщо читання впаде чи застосунок закриють у ці 300 мс, звички зникнуть назавжди."
-      en: "Both effects run after the first frame. The read is still on its way, while the write of an empty list is already in the store. When the read returns, the screen shows 3 habits and writes them back — but if the read fails or the app is closed during those 300 ms, the habits are gone for good."
+      uk: "Обидва effects виконуються після першого кадру, і запис порожнього списку вирушає в сховище ще до того, як хук отримав звички. Сховище виконує виклики по черзі, тож саме читання встигне повернути 3 звички, але одразу за ним на пристрої опиниться порожній список. Коли відповідь дійде до хука, екран покаже 3 звички й запише їх назад — та якщо застосунок закриють до цього чи читання впаде, звички зникнуть назавжди."
+      en: "Both effects run after the first frame, and the write of an empty list is on its way to the store before the hook has received the habits. The store serves calls in order, so the read itself still returns 3 habits, but right after it the device holds an empty list. When the answer reaches the hook, the screen shows 3 habits and writes them back — but if the app is closed before that, or the read fails, the habits are gone for good."
 
   - id: launch-sequence
     kind: visual
@@ -241,13 +241,13 @@ blocks:
         Press **Run** and read the **Console**: the store prints every read and every write and how many records the snapshot holds.
     tryIt:
       uk: |
-        1. Подивись на порядок у консолі: `setItem(…, 0 records)` стоїть **перед** відповіддю `getItem(…) → 3 records`. На 300 мс сховище тримало порожній список. А на сторінці ці 300 мс видно «Звичок ще немає», хоча звички є.
-        2. Натисни **Перезапустити, читання впаде**: читання падає, а порожній список уже записано. Тепер натисни **Перезапустити застосунок**: звичок немає й у сховищі — їх втрачено. Щоб повернути їх, знову натисни **Запустити**.
-        3. Додай у `useHabits.js` прапорець: `const [loaded, setLoaded] = useState(false);`, у `.then` після `setHabits(…)` виклич `setLoaded(true)`, а в effect збереження першим рядком напиши `if (!loaded) return;` і додай `loaded` у його залежності. Запусти й повтори крок 2: перед відповіддю читання записів немає, а після збою й перезапуску всі 3 звички на місці.
+        1. Подивись на порядок у консолі: `setItem(…, 0 records)` стоїть **перед** відповіддю `getItem(…) → 3 records`. У цій імітації сховище 300 мс тримало порожній список (справжнє виконало б запис одразу після читання, але порожній список так само замінив би звички). А на сторінці ці 300 мс видно «Звичок ще немає», хоча звички є.
+        2. Натисни **Перезапустити, читання впаде**: порожній список уже записано, а читання падає. У хука немає обробника для відхиленого `Promise`, тож з’явиться картка «Помилка під час виконання» про `Promise`, який ніхто не обробив, — тут це очікувано, обробку збою напишеш у вправі. Тепер натисни **Перезапустити застосунок**: у консолі `getItem(…) → 0 records` — звички втрачено. Щоб повернути їх, знову натисни **Запустити**.
+        3. Додай у `useHabits.js` прапорець: `const [loaded, setLoaded] = useState(false);`, у `.then` після `setHabits(…)` виклич `setLoaded(true)`, а в effect збереження першим рядком коду напиши `if (!loaded) return;` і додай `loaded` у його залежності. Запусти й повтори крок 2: картка про необроблений `Promise` з’явиться знову, але перед відповіддю читання записів немає, а після збою й перезапуску всі 3 звички на місці.
       en: |
-        1. Look at the order in the console: `setItem(…, 0 records)` comes **before** the answer `getItem(…) → 3 records`. For 300 ms the store held an empty list. And for those 300 ms the page shows “No habits yet”, although the habits exist.
-        2. Press **Relaunch with a failing read**: the read fails, while the empty list is already written. Now press **Relaunch the app**: the store has no habits either — they are lost. To bring them back, press **Run** again.
-        3. Add a flag to `useHabits.js`: `const [loaded, setLoaded] = useState(false);`, call `setLoaded(true)` in `.then` after `setHabits(…)`, and in the save effect write `if (!loaded) return;` as the first line and add `loaded` to its dependencies. Run and repeat step 2: there are no writes before the read's answer, and after the failure and a relaunch all 3 habits are in place.
+        1. Look at the order in the console: `setItem(…, 0 records)` comes **before** the answer `getItem(…) → 3 records`. In this imitation the store held an empty list for 300 ms (a real one would run the write right after the read, but the empty list would replace the habits all the same). And for those 300 ms the page shows “No habits yet”, although the habits exist.
+        2. Press **Relaunch with a failing read**: the empty list is already written, and the read fails. The hook has no handler for a rejected `Promise`, so an “Error while running” card about a `Promise` nobody handled appears — that is expected here; you write the failure handling in the exercise. Now press **Relaunch the app**: the console shows `getItem(…) → 0 records` — the habits are lost. To bring them back, press **Run** again.
+        3. Add a flag to `useHabits.js`: `const [loaded, setLoaded] = useState(false);`, call `setLoaded(true)` in `.then` after `setHabits(…)`, and in the save effect write `if (!loaded) return;` as the first line and add `loaded` to its dependencies. Run and repeat step 2: the card about an unhandled `Promise` appears again, but there are no writes before the read's answer, and after the failure and a relaunch all 3 habits are in place.
     limits:
       uk: "Це концептуальний перегляд у браузері через react-native-web, а не native-застосунок. «Перезапуск» тут лише знімає й знову монтує дерево React; сховище — імітація в пам’яті сторінки з навмисною затримкою, яка повторює контракт AsyncStorage (Promise, лише текст, виклики по черзі). Справжнього завершення процесу, нативного модуля, швидкості пристрою, native view і жестів тут немає."
       en: "This is a concept preview in the browser through react-native-web, not a native app. “Relaunch” here only unmounts and remounts the React tree; the store is an imitation in the page's memory with a deliberate delay that follows the AsyncStorage contract (Promise, text only, calls in order). There is no real process termination, native module, device speed, native views or gestures here."
