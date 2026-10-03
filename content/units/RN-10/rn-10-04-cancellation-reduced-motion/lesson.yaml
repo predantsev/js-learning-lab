@@ -1,0 +1,375 @@
+id: rn-10-04-cancellation-reduced-motion
+unit: RN-10
+title:
+  uk: "Скасування, життєвий цикл і зменшений рух"
+  en: "Cancellation, lifecycle and reduced motion"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Зупиняти анімацію чи жест, коли рядок демонтується, екран втрачає фокус або застосунок іде у фон, щоб жодне завершення не діяло на компонент, якого вже немає."
+    en: "Stop a running animation or gesture when the row unmounts, the screen loses focus or the app goes to the background, so no completion acts on a component that is gone."
+  - uk: "Прочитати налаштування ОС «зменшити рух», підписатися на його зміни й замінити рух миттєвим переходом чи згасанням, що приводить до того самого кінцевого стану."
+    en: "Read the OS reduce-motion setting, subscribe to its changes, and replace movement with an instant or fade-only transition that reaches the same end state."
+prerequisites: [rn-10-03-ui-js-work-frame-budget, rn-04-05-subscription-cleanup]
+subskills:
+  - { family: N-08, skill: "cancellation/lifecycle", depth: intro }
+  - { family: N-08, skill: "reduced motion", depth: intro }
+glossary: [interruptible-animation, reduce-motion-setting]
+selfCheck: [predict-interrupted, reduced-motion-hook]
+
+blocks:
+  - id: when-the-row-is-gone
+    kind: explanation
+    title:
+      uk: "Анімація, яку перервали"
+      en: "An animation that was interrupted"
+    body:
+      uk: |
+        Рядок звички від’їжджає секунду. За цю секунду може статися що завгодно:
+
+        - рядок **демонтується** — список оновився, справу видалили з іншого пристрою;
+        - екран **втрачає фокус** — користувач натиснув «Назад» чи перейшов на іншу вкладку;
+        - застосунок **іде у фон** — прийшов дзвінок.
+
+        Тому анімація має бути [[interruptible-animation|переривною]]: її зупиняють у cleanup того самого effect, де вона живе, — `return () => animation.stop()`. Для фону — так само, через підписку на `AppState`, яку теж прибирають у cleanup.
+
+        Важливе: після `stop()` колбек `start` **викликається** — з `finished: false`. Документація React Native 0.86 так і описує: `finished` — `true`, коли анімація дійшла до кінця, і `false`, коли її зупинили раніше. Тож колбек, який оновлює стан, мусить перевіряти `finished`. А якщо дія користувача має зарахуватися навіть тоді, коли анімацію перервали, — запиши її в стан домену одразу при натисканні, а анімація хай лише ховає рядок.
+      en: |
+        A habit row slides away for a second. A lot can happen during that second:
+
+        - the row **unmounts** — the list was updated, the task was removed from another device;
+        - the screen **loses focus** — the user pressed Back or switched to another tab;
+        - the app **goes to the background** — a call came in.
+
+        So an animation must be [[interruptible-animation|interruptible]]: it is stopped in the cleanup of the same effect it lives in — `return () => animation.stop()`. For the background it is the same, through an `AppState` subscription, which is also removed in a cleanup.
+
+        The important part: after `stop()` the `start` callback **is called** — with `finished: false`. The React Native 0.86 docs describe it exactly so: `finished` is `true` when the animation reached its end, and `false` when it was stopped earlier. So a callback that updates state must check `finished`. And if the user's action must count even when the animation was interrupted, write it into the domain state at once, on the press, and let the animation only hide the row.
+
+  - id: predict-interrupted
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Рядок звички «Ранкова зарядка» запускає 1-секундний виїзд; cleanup effect викликає `animation.stop()`. Через 300 мс користувач іде з екрана. Що надрукує консоль і що буде з записом?"
+      en: "The habit row “Morning exercise” starts a 1-second slide; the effect cleanup calls `animation.stop()`. After 300 ms the user leaves the screen. What does the console print, and what happens to the record?"
+    code: |
+      useEffect(() => () => running.current?.stop(), []);
+
+      animation.start(({ finished }) => {
+        console.log(`completion, finished: ${finished}`);
+        if (finished) onDone(habit.id);
+      });
+    answer:
+      type: choice
+      options:
+        - id: false-once
+          text:
+            uk: "Один рядок `completion, finished: false`; `onDone` не викликається"
+            en: "One line `completion, finished: false`; `onDone` is not called"
+        - id: nothing
+          text:
+            uk: "Нічого: перервана анімація просто не викликає колбека"
+            en: "Nothing: an interrupted animation simply does not call its callback"
+          why:
+            uk: "Колбек `start` викликається завжди рівно раз. Після `stop()` він приходить з `finished: false` — тому й треба перевіряти цей прапорець."
+            en: "The `start` callback is always called exactly once. After `stop()` it comes with `finished: false` — which is exactly why the flag must be checked."
+        - id: true-once
+          text:
+            uk: "`completion, finished: true` і `onDone` — анімація завершилася, хай і раніше"
+            en: "`completion, finished: true` and `onDone` — the animation ended, if early"
+          why:
+            uk: "`finished: true` означає «дійшла до кінцевого значення». Зупинена на 300-й мілісекунді анімація до −320 не дійшла."
+            en: "`finished: true` means “reached the end value”. An animation stopped at the 300th millisecond did not reach −320."
+        - id: twice
+          text:
+            uk: "Колбек двічі: при `stop()` і ще раз через секунду, тож запис видаляється двічі"
+            en: "The callback twice: on `stop()` and again after a second, so the record is removed twice"
+          why:
+            uk: "Зупинена анімація більше не йде, і колбек вдруге не приходить."
+            en: "A stopped animation does not run on, and the callback does not come a second time."
+      correct: [false-once]
+    explanation:
+      uk: "Cleanup зупиняє анімацію, колбек приходить один раз з `finished: false`, і перевірка `if (finished)` не дає `onDone` змінити стан екрана, якого вже немає. Перегляд курсу друкує саме це. (До речі, `Animated` зупиняє анімацію й сам, коли її значення втрачає останній view, але явний `stop()` у cleanup не залежить від того, чи значення ще десь використовується.)"
+      en: "The cleanup stops the animation, the callback comes once with `finished: false`, and the `if (finished)` check keeps `onDone` from changing the state of a screen that is gone. The course preview prints exactly that. (`Animated` also stops an animation by itself when its value loses its last view, but an explicit `stop()` in the cleanup does not depend on whether the value is still used somewhere.)"
+
+  - id: interrupt-then-reduce
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Перерваний dismiss, а потім зменшений рух"
+      en: "An interrupted dismiss, then reduced motion"
+    textEquivalent:
+      uk: "Рядок запускає анімацію виїзду. Користувач іде з екрана: екран втрачає фокус, рядок демонтується, і cleanup effect викликає stop. Анімація викликає колбек з finished: false, рядок нічого не змінює в стані. Потім користувач вмикає в налаштуваннях ОС «зменшити рух». Налаштування надсилають подію reduceMotionChanged зі значенням true підписаному рядку. Наступний dismiss — уже згасання на 150 мс замість виїзду. Воно завершується з finished: true, і рядок отримує той самий кінцевий стан, що й після виїзду: запис позначено, рядка немає."
+      en: "The row starts a slide-out animation. The user leaves the screen: the screen loses focus, the row unmounts, and the effect cleanup calls stop. The animation calls the callback with finished: false, and the row changes nothing in state. Later the user turns on “reduce motion” in the OS settings. The settings send a reduceMotionChanged event with the value true to the subscribed row. The next dismiss is a 150 ms fade instead of the slide. It ends with finished: true, and the row reaches the same end state as after the slide: the record is marked, the row is gone."
+    spec:
+      actors:
+        - { id: row, label: { uk: "Рядок", en: "Row" } }
+        - { id: anim, label: { uk: "Анімація", en: "Animation" } }
+        - { id: settings, label: { uk: "Налаштування ОС", en: "OS settings" } }
+      messages:
+        - from: row
+          to: anim
+          label: "start(slide, 1000 ms)"
+          caption:
+            uk: "Рядок запускає виїзд на 1 секунду."
+            en: "The row starts a 1-second slide-out."
+        - from: row
+          to: row
+          kind: note
+          label: { uk: "екран втратив фокус, демонтаж", en: "screen lost focus, unmount" }
+          caption:
+            uk: "Через 300 мс користувач іде з екрана: рядок демонтується, і запускається cleanup."
+            en: "After 300 ms the user leaves the screen: the row unmounts, and its cleanup runs."
+        - from: row
+          to: anim
+          label: "stop()"
+          caption:
+            uk: "Cleanup зупиняє анімацію."
+            en: "The cleanup stops the animation."
+        - from: anim
+          to: row
+          kind: return
+          label: "{ finished: false }"
+          caption:
+            uk: "Колбек приходить з `finished: false`. Перевірка `if (finished)` нічого не змінює в стані."
+            en: "The callback comes with `finished: false`. The `if (finished)` check changes nothing in state."
+        - from: settings
+          to: row
+          kind: async
+          label: "reduceMotionChanged: true"
+          caption:
+            uk: "Користувач вмикає «зменшити рух» в ОС. Підписаний рядок отримує подію й нове значення."
+            en: "The user turns on “reduce motion” in the OS. The subscribed row receives the event and the new value."
+        - from: row
+          to: anim
+          label: "start(fade, 150 ms)"
+          caption:
+            uk: "Наступний dismiss — лише згасання на 150 мс, без руху вбік."
+            en: "The next dismiss is only a 150 ms fade, with no sideways movement."
+        - from: anim
+          to: row
+          kind: return
+          label: "{ finished: true }"
+          caption:
+            uk: "Згасання завершилося: стан той самий, що й після виїзду, — запис позначено, рядка немає."
+            en: "The fade has ended: the state is the same as after the slide — the record is marked, the row is gone."
+
+  - id: leave-mid-dismiss
+    kind: example
+    runtime: concept-preview
+    dir: leave-mid-dismiss
+    entry: main.jsx
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      done: { uk: "Зроблено", en: "Done" }
+      leave: { uk: "Піти з екрана", en: "Leave the screen" }
+      back: { uk: "Повернутися на екран", en: "Back to the screen" }
+      otherScreen: { uk: "Інший екран", en: "Another screen" }
+      osSetting: { uk: "ОС: зменшити рух", en: "OS: reduce motion" }
+      on: { uk: "увімкнено", en: "on" }
+      off: { uk: "вимкнено", en: "off" }
+    title:
+      uk: "Піти посеред dismiss і змінити налаштування"
+      en: "Leave mid-dismiss and change the setting"
+    body:
+      uk: |
+        Екран звичок: «Зроблено» везе рядок ліворуч 1 секунду, cleanup зупиняє анімацію при демонтажі. Кнопка «ОС: зменшити рух» перемикає **симульоване** налаштування системи.
+
+        Натисни **Запустити**, потім «Зроблено» в першому рядку й одразу «Піти з екрана». У консолі: `h-01: slide started`, `--- leaving the screen ---`, `h-01: completion, finished: false` — і жодного `onDone`.
+      en: |
+        A habit screen: “Done” moves the row to the left for 1 second, and the cleanup stops the animation on unmount. The “OS: reduce motion” button toggles a **simulated** system setting.
+
+        Press **Run**, then “Done” in the first row and right away “Leave the screen”. The console shows `h-01: slide started`, `--- leaving the screen ---`, `h-01: completion, finished: false` — and no `onDone`.
+    tryIt:
+      uk: |
+        1. Натисни «Повернутися на екран», потім «ОС: зменшити рух» (тепер увімкнено) і «Зроблено». Рядок однаково **їде**: `useReduceMotionAtMount` прочитав налаштування лише під час монтування. Так само поводиться готовий `useReducedMotion` з Reanimated: його документація каже, що зміна налаштування не перерендерює компоненти.
+        2. Піди з екрана й повернися. Тепер «Зроблено» дає `h-03: fade started` (або `h-01`) — згасання на 150 мс, і після нього той самий `onDone`. Свіжий монтаж прочитав нове значення. Хук, що **підписаний** на зміни, ти напишеш у вправі.
+      en: |
+        1. Press “Back to the screen”, then “OS: reduce motion” (now on) and “Done”. The row still **slides**: `useReduceMotionAtMount` read the setting only on mount. Reanimated's ready-made `useReducedMotion` behaves the same: its docs say that a change of the setting does not re-render components.
+        2. Leave the screen and come back. Now “Done” gives `h-03: fade started` (or `h-01`) — a 150 ms fade, followed by the same `onDone`. The fresh mount read the new value. A hook that is **subscribed** to changes is what you will write in the exercise.
+    limits:
+      uk: "Це перегляд у браузері через react-native-web: налаштування «зменшити рух» тут симульоване (`motionSettings.js` має форму `AccessibilityInfo` з React Native 0.86), «піти з екрана» — це демонтаж, а не нативна навігація, і фону застосунку немає. `previewSetup.js` потрібен лише перегляду. Немає нативних модулів, жестів, крім миші й клавіатури, і продуктивності телефона. Справжнє налаштування ОС перевіряють на пристрої."
+      en: "This is a browser preview through react-native-web: the “reduce motion” setting is simulated here (`motionSettings.js` has the shape of `AccessibilityInfo` in React Native 0.86), “leave the screen” is an unmount rather than native navigation, and there is no app background. `previewSetup.js` is needed only by the preview. There are no native modules, no gestures beyond mouse and keyboard and no phone performance. The real OS setting is checked on a device."
+
+  - id: reduced-not-removed
+    kind: explanation
+    title:
+      uk: "Зменшений рух — не «жодної анімації»"
+      en: "Reduced motion is not “no animation”"
+    body:
+      uk: |
+        Людям з вестибулярними розладами рух через увесь екран може спричинити запаморочення, тому iOS і Android мають [[reduce-motion-setting|налаштування «зменшити рух»]]. Це те саме, що [[reduced-motion|prefers-reduced-motion]] у вебі, але читаєш його інакше:
+
+        ```js
+        AccessibilityInfo.isReduceMotionEnabled();            // Promise<boolean>
+        AccessibilityInfo.addEventListener('reduceMotionChanged', handler); // → { remove() }
+        ```
+
+        За документацією 0.86, на Android подія приходить і тоді, коли в «Параметрах розробника» вимкнено масштаб анімації переходів.
+
+        Що робити, коли налаштування ввімкнене:
+
+        - **прибрати рух**: виїзд, відскок пружини, паралакс;
+        - **лишити зворотний зв’язок**: коротке згасання або миттєва зміна — користувач має побачити, що дія вдалася;
+        - **той самий кінцевий стан**: запис позначено, рядок зник, фокус там само, де після анімації.
+
+        Налаштування можна змінити, поки застосунок відкритий, тож одного читання мало — потрібна підписка, яку знімають у cleanup.
+      en: |
+        For people with vestibular disorders, motion across the screen can cause dizziness, so iOS and Android have a [[reduce-motion-setting]]. It is the same as [[reduced-motion|prefers-reduced-motion]] on the web, but you read it differently:
+
+        ```js
+        AccessibilityInfo.isReduceMotionEnabled();            // Promise<boolean>
+        AccessibilityInfo.addEventListener('reduceMotionChanged', handler); // → { remove() }
+        ```
+
+        According to the 0.86 docs, on Android the event also fires when the transition animation scale is turned off in “Developer options”.
+
+        What to do when the setting is on:
+
+        - **remove motion**: slide-outs, spring bounces, parallax;
+        - **keep feedback**: a short fade or an instant change — the user must see that the action worked;
+        - **the same end state**: the record is marked, the row is gone, focus is where it would be after the animation.
+
+        The setting can change while the app is open, so a single read is not enough — you need a subscription, removed in the cleanup.
+
+  - id: recall-cleanup
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: focus-listener-without-cleanup
+        from: rn-04-05-subscription-cleanup
+        prompt:
+          uk: "Екран при кожному отриманні фокуса додає підписку на `AppState` і ніколи її не прибирає. Користувач відкрив цей екран тричі, а потім застосунок пішов у фон. Скільки разів обробиться ця одна подія?"
+          en: "A screen adds an `AppState` subscription every time it gets focus and never removes it. The user opened this screen three times, and then the app went to the background. How many times is this single event handled?"
+        answer:
+          type: choice
+          options:
+            - id: three
+              text:
+                uk: "Тричі — кожна підписка досі жива"
+                en: "Three times — every subscription is still alive"
+            - id: once
+              text:
+                uk: "Один раз: підписки прибираються самі, коли йдеш з екрана"
+                en: "Once: subscriptions are removed by themselves when you leave a screen"
+              why:
+                uk: "Нативна підписка живе, доки її не прибрали викликом `remove()`. Перехід з екрана сам її не знімає."
+                en: "A native subscription lives until it is removed with `remove()`. Leaving the screen does not remove it by itself."
+          correct: [three]
+        explanation:
+          uk: "Кожну підписку пару з її `remove()` у cleanup того самого effect. Так само з `reduceMotionChanged`: без cleanup кожен монтаж додає ще одного слухача."
+          en: "Pair every subscription with its `remove()` in the cleanup of the same effect. The same goes for `reduceMotionChanged`: without a cleanup every mount adds one more listener."
+      - id: css-reduced-motion
+        from: js-06-07-responsive-overflow-zoom-motion
+        prompt:
+          uk: "Як вебсторінка дізнається, що людина попросила зменшити рух?"
+          en: "How does a web page learn that the person asked to reduce motion?"
+        answer:
+          type: choice
+          options:
+            - id: media
+              text:
+                uk: "Через медіазапит `prefers-reduced-motion` у CSS"
+                en: "Through the `prefers-reduced-motion` media query in CSS"
+            - id: setting
+              text:
+                uk: "Ніяк: це налаштування бачать лише нативні застосунки"
+                en: "It cannot: only native apps see this setting"
+              why:
+                uk: "Браузер передає налаштування системи сторінці: `@media (prefers-reduced-motion: reduce)` спрацьовує, коли його ввімкнено."
+                en: "The browser passes the system setting to the page: `@media (prefers-reduced-motion: reduce)` matches when it is on."
+          correct: [media]
+        explanation:
+          uk: "Вебсторінка бачить його через CSS (`@media (prefers-reduced-motion: reduce)`), React Native — через `AccessibilityInfo`. Правило те саме: та сама зміна, але без руху."
+          en: "A web page sees it through CSS (`@media (prefers-reduced-motion: reduce)`), React Native through `AccessibilityInfo`. The rule is the same: the same change, without motion."
+
+  - id: reduced-motion-hook
+    kind: exercise
+    mode: guided
+    runtime: concept-preview
+    dir: reduced-motion-hook
+    entry: main.jsx
+    editable: [useReducedMotion.js]
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      fade: { uk: "згасне", en: "will fade" }
+      slide: { uk: "виїде", en: "will slide" }
+      osSetting: { uk: "ОС: зменшити рух", en: "OS: reduce motion" }
+      on: { uk: "увімкнено", en: "on" }
+      off: { uk: "вимкнено", en: "off" }
+      hide: { uk: "Сховати рядок", en: "Hide the row" }
+      show: { uk: "Показати рядок", en: "Show the row" }
+      count: { uk: "Активних підписок (оновити)", en: "Active subscriptions (refresh)" }
+    title:
+      uk: "Хук useReducedMotion, що чує зміни"
+      en: "A useReducedMotion hook that hears changes"
+    instructions:
+      uk: |
+        Допиши в `useReducedMotion.js` хук, який повертає поточне значення налаштування «зменшити рух»:
+
+        - під час монтування **читає** налаштування (`SimulatedAccessibilityInfo.isReduceMotionEnabled()` повертає Promise);
+        - **підписується** на подію `'reduceMotionChanged'` і оновлює значення при кожній зміні;
+        - у cleanup **прибирає** підписку (`subscription.remove()`), і на один змонтований компонент завжди припадає рівно одна підписка, хай скільки разів він рендериться.
+
+        На **Сторінці** рядок бажання показує, як він анімуватиметься, а кнопки перемикають налаштування, ховають рядок і показують кількість активних підписок. Перевірки монтують власні маленькі компоненти з твоїм хуком. `motionSettings.js` і `main.jsx` редагувати не можна.
+      en: |
+        Finish the hook in `useReducedMotion.js` that returns the current value of the “reduce motion” setting:
+
+        - on mount it **reads** the setting (`SimulatedAccessibilityInfo.isReduceMotionEnabled()` returns a Promise);
+        - it **subscribes** to the `'reduceMotionChanged'` event and updates the value on every change;
+        - in the cleanup it **removes** the subscription (`subscription.remove()`), and one mounted component always has exactly one subscription, however many times it renders.
+
+        On the **Page** a wish row shows how it will animate, and the buttons toggle the setting, hide the row and show the number of active subscriptions. The checks mount small components of their own with your hook. `motionSettings.js` and `main.jsx` cannot be edited.
+    limits:
+      uk: "Налаштування тут симульоване: `motionSettings.js` має ту саму форму, що й `AccessibilityInfo` у React Native 0.86, але перемикається кнопкою, а не в налаштуваннях ОС. На пристрої заміни імпорт на `import { AccessibilityInfo } from 'react-native'` — і перевір справжній перемикач у налаштуваннях доступності."
+      en: "The setting is simulated here: `motionSettings.js` has the same shape as `AccessibilityInfo` in React Native 0.86, but it is toggled with a button, not in the OS settings. On a device replace the import with `import { AccessibilityInfo } from 'react-native'` — and check the real switch in the accessibility settings."
+    testTitles:
+      "a component mounted while the setting is on gets true":
+        uk: "Компонент, змонтований при ввімкненому налаштуванні, отримує `true`"
+        en: "A component mounted while the setting is on gets `true`"
+      "the value follows changes of the setting while mounted":
+        uk: "Значення йде за змінами налаштування, поки компонент змонтований"
+        en: "The value follows changes of the setting while mounted"
+      "unmounting removes the subscription":
+        uk: "Демонтаж прибирає підписку"
+        en: "Unmounting removes the subscription"
+      "one mounted component keeps one subscription however often it renders":
+        uk: "Один змонтований компонент тримає одну підписку, хай скільки рендериться"
+        en: "One mounted component keeps one subscription however often it renders"
+    hints:
+      nudge:
+        uk: "Де в компоненті місце для роботи «при монтуванні» і для прибирання «при демонтажі»? І що повертає `addEventListener` — збережи це."
+        en: "Where in a component is the place for work “on mount” and for cleaning up “on unmount”? And what does `addEventListener` return — keep it."
+      explanation:
+        uk: "Одне `useEffect` з порожнім масивом залежностей виконується один раз після монтування, а функція, яку він повертає, — при демонтажі. Наприклад, хук розміру вікна у вебі: `useEffect(() => { const onResize = () => setWidth(innerWidth); addEventListener('resize', onResize); return () => removeEventListener('resize', onResize); }, [])`. Тут те саме, але подія інша, а прибирає її `remove()` з об’єкта підписки. Початкове значення приходить з Promise — онови стан у `.then`."
+        en: "One `useEffect` with an empty dependency array runs once after mounting, and the function it returns runs on unmount. For example, a web window-size hook: `useEffect(() => { const onResize = () => setWidth(innerWidth); addEventListener('resize', onResize); return () => removeEventListener('resize', onResize); }, [])`. Here it is the same, but the event is different, and `remove()` on the subscription object removes it. The initial value comes from a Promise — update the state in `.then`."
+    solutionNote:
+      uk: "Один effect робить усе: читає початкове значення, підписується й повертає cleanup, що знімає підписку. Прапорець `active` не дає Promise, що повернувся після демонтажу, оновити стан компонента, якого вже немає. Підписка в тілі компонента додавала б нову на кожному рендері. На пристрої той самий код працює з `AccessibilityInfo` з `react-native`."
+      en: "One effect does everything: reads the initial value, subscribes and returns a cleanup that removes the subscription. The `active` flag keeps a Promise that resolves after unmount from updating the state of a component that is gone. A subscription in the component body would add a new one on every render. On a device the same code works with `AccessibilityInfo` from `react-native`."
+    feedback:
+      - when: { test: "a component mounted while the setting is on gets true" }
+        message:
+          uk: "Ця перевірка вмикає налаштування, монтує компонент з хуком і чекає до 1 с, що він покаже `true`. Підписка чує лише майбутні зміни — початкове значення треба прочитати через `isReduceMotionEnabled()`."
+          en: "This check turns the setting on, mounts a component with the hook and waits up to 1 s for it to show `true`. A subscription hears only future changes — the initial value must be read through `isReduceMotionEnabled()`."
+      - when: { test: "the value follows changes of the setting while mounted" }
+        message:
+          uk: "Ця перевірка монтує компонент при вимкненому налаштуванні, вмикає його, а потім вимикає, і щоразу чекає до 1 с на нове значення. Одного читання при монтуванні мало: потрібна підписка на `'reduceMotionChanged'`."
+          en: "This check mounts a component with the setting off, turns it on and then off, each time waiting up to 1 s for the new value. A single read on mount is not enough: a subscription to `'reduceMotionChanged'` is needed."
+      - when: { test: "unmounting removes the subscription" }
+        message:
+          uk: "Ця перевірка монтує й демонтує компонент і очікує, що кількість активних підписок повернулася до попередньої. Cleanup effect має викликати `remove()` об’єкта, який повернув `addEventListener`."
+          en: "This check mounts and unmounts a component and expects the number of active subscriptions to return to what it was. The effect cleanup must call `remove()` on the object `addEventListener` returned."
+      - when: { test: "one mounted component keeps one subscription however often it renders" }
+        message:
+          uk: "Ця перевірка рендерить один компонент шість разів і очікує рівно одну додаткову активну підписку. Підписку створюють в effect, а не в тілі компонента."
+          en: "This check renders one component six times and expects exactly one extra active subscription. The subscription is created in an effect, not in the component body."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-10
+    body:
+      uk: "У кроці проєкту анімацію свайпу зупиняє cleanup рядка, а при ввімкненому «зменшити рух» рядок лише згасає чи змінюється миттєво: бажання так само стає отриманим, справа — виконаною, звичка — позначеною сьогодні, витрата — видаленою."
+      en: "In the project step the row's cleanup stops the swipe animation, and with “reduce motion” on the row only fades or changes instantly: a wish still becomes acquired, a task done, a habit marked for today, an expense removed."

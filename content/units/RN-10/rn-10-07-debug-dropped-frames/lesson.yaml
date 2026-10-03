@@ -1,0 +1,616 @@
+id: rn-10-07-debug-dropped-frames
+unit: RN-10
+title:
+  uk: "Налагодження: пропущені кадри й ідентичність у списку"
+  en: "Debug: dropped frames and list identity"
+kind: local-task
+minutes: 25
+contentVersion: 1
+purpose:
+  uk: "Список із жестом свайпу на телефоні сіпається, а відкритий свайпом рядок «перескакує» на сусідній після видалення. Тут ти відтвориш обидві вади, знайдеш їхні причини — спершу в перегляді з перевірками, потім у release-профілі на своєму пристрої — полагодиш і доведеш покращення числами до й після."
+  en: "A list with a swipe gesture stutters on a phone, and a row opened by a swipe “jumps” to its neighbour after a delete. Here you reproduce both defects, find their causes — first in the preview with checks, then in a release profile on your device — repair them and prove the improvement with before and after numbers."
+objectives:
+  - uk: "Знайти за release-профілем на заявленій цілі причини пропущених кадрів у засіяному списку зі свайпом."
+    en: "Locate, from a release-mode profile on the declared target, the causes of dropped frames in a seeded swipeable list."
+  - uk: "Полагодити їх і показати вимірювання release до й після, зберігши стан свайпу кожного рядка й підпис доступності під час прокрутки."
+    en: "Repair them and show before/after release measurements while each row's swiped state and accessibility label survive scrolling."
+prerequisites: [rn-10-06-profiling-release-vs-debug]
+subskills:
+  - { family: N-04, skill: "frame budget", depth: assess }
+  - { family: N-04, skill: "JS vs UI work", depth: assess }
+  - { family: N-04, skill: "profiling release vs debug", depth: assess }
+  - { family: N-08, skill: "UI/JS work limits", depth: assess }
+glossary: []
+selfCheck: [predict-jumping-open, swipe-list]
+
+blocks:
+  - id: recipe
+    kind: explanation
+    title:
+      uk: "Рецепт: відтворити, виміряти, одна причина за раз"
+      en: "The recipe: reproduce, measure, one cause at a time"
+    body:
+      uk: |
+        Скарги дві: «свайп сіпається» і «після видалення відкритим стає не той рядок». Лагодження починається не з коду, а з рецепта:
+
+        1. **Відтвори** точною послідовністю дій і запиши, що бачиш.
+        2. **Виміряй** у release на заявленій цілі — той самий сценарій, що дав скаргу.
+        3. **Шукай причину** в тому, що виконується в потоці JS **на кожне оновлення жесту** (бюджет кадру — 16,67 мс на 60 Гц), і в тому, **за чим іде стан рядка** — за записом чи за позицією.
+        4. **Одна правка — одне вимірювання.** Інакше не знатимеш, що саме допомогло.
+        5. **Перевір, що нічого не зламав**: стан свайпу, підпис доступності, дію без жесту.
+
+        Спершу пройди цей шлях у перегляді, де перевірки рахують роботу, а потім — на своєму пристрої, де рахуються кадри.
+      en: |
+        There are two complaints: “the swipe stutters” and “after a delete the wrong row is open”. Repairing starts not with the code but with a recipe:
+
+        1. **Reproduce** with an exact sequence of actions and write down what you see.
+        2. **Measure** in release on the declared target — the same scenario that produced the complaint.
+        3. **Look for the cause** in what runs on the JS thread **on every gesture update** (the frame budget is 16.67 ms at 60 Hz), and in **what a row's state follows** — the record or the position.
+        4. **One change, one measurement.** Otherwise you will not know what actually helped.
+        5. **Check that nothing broke**: the swiped state, the accessibility label, the action without a gesture.
+
+        First walk this path in the preview, where the checks count work, then on your device, where frames are counted.
+
+  - id: predict-jumping-open
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "У списку витрат «Продукти», «Проїзний», «Кава», «Лампочки» ключі — індекси, а відкритість після свайпу — `useState` кожного рядка. Користувач відкрив свайпом «Каву» і видалив «Продукти». Що тепер відкрито?"
+      en: "In an expense list “Groceries”, “Transit pass”, “Coffee”, “Light bulbs” the keys are indexes, and the opened state after a swipe is each row's `useState`. The user opened “Coffee” with a swipe and deleted “Groceries”. What is open now?"
+    answer:
+      type: choice
+      options:
+        - id: bulbs
+          text:
+            uk: "«Лампочки», а «Кава» закрита"
+            en: "“Light bulbs”, while “Coffee” is closed"
+        - id: coffee
+          text:
+            uk: "«Кава», як і раніше"
+            en: "“Coffee”, as before"
+          why:
+            uk: "Так було б із ключами за `id`. Із ключами-індексами відкритий стан лишився в компонента з ключем `2`, а на позиції 2 тепер «Лампочки»."
+            en: "That is what keys by `id` would give. With index keys the open state stayed with the component keyed `2`, and position 2 now holds “Light bulbs”."
+        - id: nothing
+          text:
+            uk: "Нічого: після видалення всі рядки створюються заново"
+            en: "Nothing: after a delete all rows are created anew"
+          why:
+            uk: "React створює рядок заново лише для нового ключа. Ключі `0`, `1`, `2` лишилися, зник лише `3`."
+            en: "React creates a row anew only for a new key. The keys `0`, `1`, `2` stayed; only `3` disappeared."
+      correct: [bulbs]
+    explanation:
+      uk: "Стан рядка прив’язаний до ключа. Після видалення «Кава» переїхала на позицію 1 (компонент із закритим станом), а компонент із ключем `2`, що тримав «відкрито», тепер показує «Лампочки». На телефоні з анімованим зсувом це виглядає як рядок, що сам від’їхав."
+      en: "A row's state is tied to its key. After the delete “Coffee” moved to position 1 (a component with a closed state), and the component keyed `2`, which held “open”, now shows “Light bulbs”. On a phone with an animated offset it looks like a row that slid open by itself."
+
+  - id: recall-keys
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: default-key
+        from: rn-03-04-flatlist-keys
+        prompt:
+          uk: "Який ключ бере `FlatList`, якщо `keyExtractor` не задано, а в записів є поле `id`?"
+          en: "Which key does a `FlatList` take when no `keyExtractor` is given and the records have an `id` field?"
+        answer:
+          type: choice
+          options:
+            - id: item-id
+              text:
+                uk: "`item.key`, а якщо його немає, — `item.id`"
+                en: "`item.key`, and if there is none, `item.id`"
+            - id: index
+              text:
+                uk: "Завжди індекс"
+                en: "Always the index"
+              why:
+                uk: "Індекс — лише останній запасний варіант, коли немає ні `key`, ні `id`."
+                en: "The index is only the last fallback, when there is neither `key` nor `id`."
+          correct: [item-id]
+        explanation:
+          uk: "Типовий `keyExtractor` бере `key`, потім `id`, потім індекс. Явний `keyExtractor={(item, index) => String(index)}` відмовляється від `id` — і стан рядків починає йти за позицією."
+          en: "The default `keyExtractor` takes `key`, then `id`, then the index. An explicit `keyExtractor={(item, index) => String(index)}` gives up the `id` — and row state starts following the position."
+
+  - id: swipe-list
+    kind: exercise
+    mode: debug
+    runtime: concept-preview
+    dir: swipe-list
+    entry: main.jsx
+    editable: [ExpenseSwipeList.jsx]
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      pass: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      opened: { uk: "відкрито", en: "opened" }
+      delete: { uk: "Видалити", en: "Delete" }
+      openCoffee: { uk: "Свайп: відкрити «Кава з друзями»", en: "Swipe: open “Coffee with friends”" }
+      deleteFirst: { uk: "Свайп: видалити перший рядок", en: "Swipe: delete the first row" }
+    title:
+      uk: "Список, що сіпається й плутає рядки"
+      en: "A list that stutters and mixes up rows"
+    instructions:
+      uk: |
+        Свайп ліворуч до −80 відкриває рядок (з’являється «Видалити»), до −200 — видаляє витрату. Над списком — підсумки за категоріями. Дві скарги: свайп сіпається, а після видалення відкритим стає не той рядок.
+
+        1. **Відтвори** на **Сторінці**: «Свайп: відкрити…», потім «Свайп: видалити перший рядок». Який рядок тепер відкритий?
+        2. **Знайди обидві причини** в `ExpenseSwipeList.jsx` і полагодь їх, нічого не прибираючи з можливостей екрана.
+
+        Кнопки й перевірки **симулюють** свайп: 30 оновлень руху, потім кінець жесту. Перевірки дивляться, який рядок відкритий після видалення іншого, **скільки разів за один свайп рахуються підсумки** (через `totals.js`), чи правильні підсумки після видалення й чи кожен рядок підписаний своїм записом. `main.jsx`, `swipeSim.js` і `totals.js` редагувати не можна.
+      en: |
+        A swipe left to −80 opens a row (“Delete” appears), to −200 deletes the expense. Above the list are the category totals. Two complaints: the swipe stutters, and after a delete the wrong row is open.
+
+        1. **Reproduce** it on the **Page**: “Swipe: open…”, then “Swipe: delete the first row”. Which row is open now?
+        2. **Find both causes** in `ExpenseSwipeList.jsx` and repair them without removing anything the screen can do.
+
+        The buttons and the checks **simulate** a swipe: 30 movement updates, then the end of the gesture. The checks look at which row is open after another one is deleted, **how many times the totals are computed during one swipe** (through `totals.js`), whether the totals are right after a delete, and whether every row is labelled with its own record. `main.jsx`, `swipeSim.js` and `totals.js` cannot be edited.
+    limits:
+      uk: "Свайп тут симульований (`swipeSim.js` надсилає події тієї ж форми, що й Pan у react-native-gesture-handler 2.32), а перевірки рахують роботу на кожне оновлення, а не кадри. Пропущені кадри, потоки JS і UI й відчуття жесту видно лише на пристрої — це друга частина уроку."
+      en: "The swipe is simulated here (`swipeSim.js` sends events of the same shape as Pan in react-native-gesture-handler 2.32), and the checks count work per update, not frames. Dropped frames, the JS and UI threads and the feel of the gesture are visible only on a device — that is the second part of the lesson."
+    testTitles:
+      "an opened row stays opened when a row above it is deleted":
+        uk: "Відкритий рядок лишається відкритим, коли видаляють рядок над ним"
+        en: "An opened row stays opened when a row above it is deleted"
+      "a swipe of 30 movement updates computes the totals at most once":
+        uk: "Свайп із 30 оновлень руху рахує підсумки не більше одного разу"
+        en: "A swipe of 30 movement updates computes the totals at most once"
+      "the totals match the remaining expenses after a delete":
+        uk: "Після видалення підсумки відповідають витратам, що лишилися"
+        en: "The totals match the remaining expenses after a delete"
+      "every row is labelled with its own record":
+        uk: "Кожен рядок підписаний своїм записом"
+        en: "Every row is labelled with its own record"
+    hints:
+      nudge:
+        uk: "Дві різні причини. Перша: за чим React вирішує, який компонент рядка який? Друга: що виконується на **кожне** оновлення руху і чи потрібне воно саме тоді?"
+        en: "Two different causes. First: what does React use to decide which row component is which? Second: what runs on **every** movement update, and is it needed right then?"
+      explanation:
+        uk: "Стан «відкрито» живе в компоненті рядка, а React зберігає його за ключем — ключ має описувати запис, а не позицію. Підсумки залежать лише від списку витрат, а не від того, куди зараз посунувся палець: їх досить рахувати, коли список змінився. Схоже: лічильник слів у редакторі рахують, коли змінився текст, а не на кожен рух миші над ним."
+        en: "The “open” state lives in the row component, and React keeps it by key — the key must describe the record, not the position. The totals depend only on the list of expenses, not on where the finger is right now: it is enough to compute them when the list changed. Similar: an editor's word counter is computed when the text changes, not on every mouse move over it."
+    solutionNote:
+      uk: "Ключ `expense.id` прив’язує стан «відкрито» до запису: видалення демонтує лише свій рядок. Підсумки рахуються тільки при видаленні (або через `useMemo` від списку), а обробник оновлення руху не робить роботи в потоці JS — на пристрої рядок іде за пальцем у потоці UI. Підписи доступності беруться з пропсів, тож лишаються правильними. Відкрити й видалити рядок без жесту можна кнопкою «Видалити» та дією доступності, як у лабораторії."
+      en: "The `expense.id` key ties the open state to the record: a delete unmounts only its own row. The totals are computed only on a delete (or through `useMemo` over the list), and the movement-update handler does no JS-thread work — on a device the row follows the finger on the UI thread. The accessibility labels come from props, so they stay right. Opening and deleting without a gesture is done with the “Delete” button and the accessibility action, as in the lab."
+    feedback:
+      - when: { test: "an opened row stays opened when a row above it is deleted" }
+        message:
+          uk: "Ця перевірка відкриває свайпом «Кава з друзями» (e-03), видаляє e-01 і очікує, що відкритим лишився e-03, а не e-04. Якщо відкритим став сусід, стан рядків іде за позицією."
+          en: "This check opens “Coffee with friends” (e-03) with a swipe, deletes e-01 and expects e-03 to stay open, not e-04. If the neighbour became open, row state follows the position."
+      - when: { test: "a swipe of 30 movement updates computes the totals at most once" }
+        message:
+          uk: "Ця перевірка робить свайп із 30 оновлень руху й очікує не більше одного виклику `categoryTotals`. Сортування й підсумки на кожне оновлення — це робота в потоці JS у кожному кадрі жесту."
+          en: "This check makes a swipe of 30 movement updates and expects at most one `categoryTotals` call. Sorting and summing on every update is JS-thread work in every frame of the gesture."
+      - when: { test: "the totals match the remaining expenses after a delete" }
+        message:
+          uk: "Ця перевірка видаляє e-06 свайпом і очікує в рядку підсумків суму кожної категорії лише з витрат, що лишилися на екрані, у форматі `food: 845.50`."
+          en: "This check deletes e-06 with a swipe and expects the totals line to show each category's sum of only the expenses left on screen, as `food: 845.50`."
+      - when: { test: "every row is labelled with its own record" }
+        message:
+          uk: "Ця перевірка очікує, що підпис доступності кожного рядка починається з назви й суми його власної витрати."
+          en: "This check expects every row's accessibility label to start with the name and amount of its own expense."
+
+  - id: device-lab
+    kind: local-task
+    runtime: local-native
+    title:
+      uk: "Ті самі вади в release на твоєму пристрої"
+      en: "The same defects in release on your device"
+    intro:
+      uk: |
+        Ти продовжиш у проєкті `rn10-perf-lab` з попереднього уроку: додаси бібліотеки жестів, заміниш `App.tsx` засіяним списком зі свайпом, виміряєш його в release, полагодиш і виміряєш ще раз. Якщо теки `~/js-course/rn10-perf-lab` немає, спершу виконай кроки 1–3 лабораторії з уроку «Профілювання: release проти debug».
+
+        > [!warning]
+        > Команди описано за документацією **Expo SDK 57**, **React Native 0.86**, **react-native-gesture-handler 2.32** і **react-native-reanimated 4.5** (жовтень 2026). На машині, де писали урок, `npx expo install` для цих бібліотек виконали (він поставив `react-native-gesture-handler ~2.32.0`, `react-native-reanimated 4.5.1`, `react-native-worklets 0.10.1`), `App.tsx` нижче й виправлений варіант пройшли `npx tsc --noEmit` без помилок, а `npx expo export --platform android` зібрав JavaScript. Запуск на пристрої й вимірювання **не виконувалися** — прикладів їхнього виводу тут немає.
+
+        Немає нативної цілі — познач завдання як **невиконане**: вправа в перегляді вище вже перевірила саме виправлення, а на числах наступні уроки не тримаються.
+
+        **Крок 2 — `App.tsx` (заміни весь файл; `expenses.ts` і `perfTools.ts` лишаються з попереднього уроку):**
+
+        ```tsx
+        // App.tsx: RN-10 swipe lab — swipe a row left to open it (reveals the delete button) or far left to delete it.
+        // Seeded defects: rows are keyed by index, and every movement update recomputes the category totals.
+        import { useRef, useState } from 'react';
+        import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+        import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+        import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+        import { scheduleOnRN } from 'react-native-worklets';
+        import { expenses as allExpenses, type Expense } from './expenses';
+        import { measureJsFrames, runScrollScript, type FrameReport } from './perfTools';
+
+        const OPEN_AT = -80;
+        const DELETE_AT = -200;
+
+        function categoryTotals(list: Expense[]): Record<string, number> {
+          const totals: Record<string, number> = {};
+          for (const expense of [...list].sort((a, b) => a.date.localeCompare(b.date))) {
+            totals[expense.category] = (totals[expense.category] ?? 0) + expense.amountMinor;
+          }
+          return totals;
+        }
+
+        type RowProps = { expense: Expense; onDelete: (id: string) => void; onSwipeProgress: () => void };
+
+        function SwipeRow({ expense, onDelete, onSwipeProgress }: RowProps) {
+          const [open, setOpen] = useState(false);
+          const translateX = useSharedValue(0);
+
+          const pan = Gesture.Pan()
+            .activeOffsetX([-12, 12])
+            .failOffsetY([-8, 8])
+            .onUpdate((event) => {
+              translateX.value = Math.min(0, event.translationX + (open ? OPEN_AT : 0));
+              scheduleOnRN(onSwipeProgress);
+            })
+            .onEnd(() => {
+              if (translateX.value <= DELETE_AT) {
+                scheduleOnRN(onDelete, expense.id);
+              } else if (translateX.value <= OPEN_AT) {
+                translateX.value = withTiming(OPEN_AT);
+                scheduleOnRN(setOpen, true);
+              } else {
+                translateX.value = withTiming(0);
+                scheduleOnRN(setOpen, false);
+              }
+            });
+
+          const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translateX.value }] }));
+          const amount = (expense.amountMinor / 100).toFixed(2);
+
+          return (
+            <View style={styles.rowFrame}>
+              {open && (
+                <Pressable accessibilityRole="button" onPress={() => onDelete(expense.id)} style={styles.delete}>
+                  <Text style={styles.deleteText}>Видалити</Text>
+                </Pressable>
+              )}
+              <GestureDetector gesture={pan}>
+                <Animated.View
+                  style={[styles.row, rowStyle]}
+                  accessible
+                  accessibilityLabel={`${expense.label}, ${amount}${open ? ', відкрито' : ''}`}
+                  accessibilityActions={[{ name: 'delete', label: 'Видалити' }]}
+                  onAccessibilityAction={(event) => {
+                    if (event.nativeEvent.actionName === 'delete') onDelete(expense.id);
+                  }}
+                >
+                  <Text style={styles.label}>{expense.label}</Text>
+                  <Text>{amount}</Text>
+                </Animated.View>
+              </GestureDetector>
+            </View>
+          );
+        }
+
+        export default function App() {
+          const listRef = useRef<FlatList<Expense>>(null);
+          const [expenses, setExpenses] = useState(allExpenses);
+          const [totals, setTotals] = useState(() => categoryTotals(allExpenses));
+          const [report, setReport] = useState<FrameReport | null>(null);
+
+          function handleDelete(id: string) {
+            const next = expenses.filter((expense) => expense.id !== id);
+            setExpenses(next);
+            setTotals(categoryTotals(next));
+          }
+
+          async function measure() {
+            listRef.current?.scrollToOffset({ offset: 0, animated: false });
+            const [result] = await Promise.all([measureJsFrames(10000), runScrollScript(listRef.current)]);
+            setReport(result);
+          }
+
+          async function measureWhileSwiping() {
+            setReport(await measureJsFrames(10000)); // swipe rows back and forth during these 10 s
+          }
+
+          return (
+            <GestureHandlerRootView style={styles.screen}>
+              <Pressable accessibilityRole="button" onPress={measure} style={styles.button}>
+                <Text style={styles.buttonText}>Запустити 10-секундну прокрутку</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" onPress={measureWhileSwiping} style={[styles.button, styles.second]}>
+                <Text style={styles.buttonText}>Виміряти 10 с, поки я свайпаю</Text>
+              </Pressable>
+              <Text style={styles.report}>
+                {`${__DEV__ ? 'DEV JS' : 'PROD JS'} · ${expenses.length} rows`}
+                {report ? ` · JS ${report.jsFps} fps · long frames ${report.longFrames} · worst ${report.worstMs} ms` : ''}
+              </Text>
+              <Text style={styles.report}>
+                {Object.entries(totals).map(([category, minor]) => `${category} ${(minor / 100).toFixed(2)}`).join(' · ')}
+              </Text>
+              <FlatList
+                ref={listRef}
+                data={expenses}
+                keyExtractor={(item, index) => String(index)}
+                renderItem={({ item }) => (
+                  <SwipeRow expense={item} onDelete={handleDelete} onSwipeProgress={() => setTotals(categoryTotals(expenses))} />
+                )}
+              />
+            </GestureHandlerRootView>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, paddingTop: 56, backgroundColor: '#ffffff' },
+          button: { minHeight: 48, marginHorizontal: 16, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1d4ed8', borderRadius: 6 },
+          buttonText: { color: '#ffffff', fontWeight: '600' },
+          second: { marginTop: 8 },
+          report: { marginHorizontal: 16, marginVertical: 4, fontSize: 14 },
+          rowFrame: { borderBottomWidth: 1, borderColor: '#e5e7eb' },
+          row: { paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#ffffff' },
+          label: { fontSize: 16, fontWeight: '600' },
+          delete: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 80, minHeight: 48, justifyContent: 'center', alignItems: 'center', backgroundColor: '#b91c1c' },
+          deleteText: { color: '#ffffff', fontWeight: '600' },
+        });
+        ```
+
+        **Крок 6 — дописати в `PERF.md`:**
+
+        ```text
+        ## RN-10 swipe list (before → after), release, same target
+        | Scenario            | JS fps    | Long frames | Worst ms | Janky frames (gfxinfo) |
+        | scroll script       | … → …     | … → …       | … → …    | … → …                  |
+        | 10 s of swiping     | … → …     | … → …       | … → …    | … → …                  |
+        Fixed: <one line per cause>
+        Checked after the fix: opened row survives a delete above it; labels; Delete action without a gesture
+        Not measured: …
+        ```
+      en: |
+        You will continue in the `rn10-perf-lab` project from the previous lesson: add the gesture libraries, replace `App.tsx` with the seeded swipe list, measure it in release, repair it and measure again. If there is no `~/js-course/rn10-perf-lab` folder, first do steps 1–3 of the lab in the lesson “Profiling release vs debug”.
+
+        > [!warning]
+        > The commands are described from the documentation of **Expo SDK 57**, **React Native 0.86**, **react-native-gesture-handler 2.32** and **react-native-reanimated 4.5** (October 2026). On the machine this lesson was written on, `npx expo install` for these libraries was run (it installed `react-native-gesture-handler ~2.32.0`, `react-native-reanimated 4.5.1`, `react-native-worklets 0.10.1`), the `App.tsx` below and the repaired version passed `npx tsc --noEmit` with no errors, and `npx expo export --platform android` bundled the JavaScript. Running on a device and the measurements were **not run** — there is no sample of their output here.
+
+        No native target — mark this task **not performed**: the preview exercise above has already checked the repair itself, and the next lessons do not rely on the numbers.
+
+        **Step 2 — `App.tsx` (replace the whole file; `expenses.ts` and `perfTools.ts` stay from the previous lesson):**
+
+        ```tsx
+        // App.tsx: RN-10 swipe lab — swipe a row left to open it (reveals the delete button) or far left to delete it.
+        // Seeded defects: rows are keyed by index, and every movement update recomputes the category totals.
+        import { useRef, useState } from 'react';
+        import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+        import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+        import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+        import { scheduleOnRN } from 'react-native-worklets';
+        import { expenses as allExpenses, type Expense } from './expenses';
+        import { measureJsFrames, runScrollScript, type FrameReport } from './perfTools';
+
+        const OPEN_AT = -80;
+        const DELETE_AT = -200;
+
+        function categoryTotals(list: Expense[]): Record<string, number> {
+          const totals: Record<string, number> = {};
+          for (const expense of [...list].sort((a, b) => a.date.localeCompare(b.date))) {
+            totals[expense.category] = (totals[expense.category] ?? 0) + expense.amountMinor;
+          }
+          return totals;
+        }
+
+        type RowProps = { expense: Expense; onDelete: (id: string) => void; onSwipeProgress: () => void };
+
+        function SwipeRow({ expense, onDelete, onSwipeProgress }: RowProps) {
+          const [open, setOpen] = useState(false);
+          const translateX = useSharedValue(0);
+
+          const pan = Gesture.Pan()
+            .activeOffsetX([-12, 12])
+            .failOffsetY([-8, 8])
+            .onUpdate((event) => {
+              translateX.value = Math.min(0, event.translationX + (open ? OPEN_AT : 0));
+              scheduleOnRN(onSwipeProgress);
+            })
+            .onEnd(() => {
+              if (translateX.value <= DELETE_AT) {
+                scheduleOnRN(onDelete, expense.id);
+              } else if (translateX.value <= OPEN_AT) {
+                translateX.value = withTiming(OPEN_AT);
+                scheduleOnRN(setOpen, true);
+              } else {
+                translateX.value = withTiming(0);
+                scheduleOnRN(setOpen, false);
+              }
+            });
+
+          const rowStyle = useAnimatedStyle(() => ({ transform: [{ translateX: translateX.value }] }));
+          const amount = (expense.amountMinor / 100).toFixed(2);
+
+          return (
+            <View style={styles.rowFrame}>
+              {open && (
+                <Pressable accessibilityRole="button" onPress={() => onDelete(expense.id)} style={styles.delete}>
+                  <Text style={styles.deleteText}>Delete</Text>
+                </Pressable>
+              )}
+              <GestureDetector gesture={pan}>
+                <Animated.View
+                  style={[styles.row, rowStyle]}
+                  accessible
+                  accessibilityLabel={`${expense.label}, ${amount}${open ? ', opened' : ''}`}
+                  accessibilityActions={[{ name: 'delete', label: 'Delete' }]}
+                  onAccessibilityAction={(event) => {
+                    if (event.nativeEvent.actionName === 'delete') onDelete(expense.id);
+                  }}
+                >
+                  <Text style={styles.label}>{expense.label}</Text>
+                  <Text>{amount}</Text>
+                </Animated.View>
+              </GestureDetector>
+            </View>
+          );
+        }
+
+        export default function App() {
+          const listRef = useRef<FlatList<Expense>>(null);
+          const [expenses, setExpenses] = useState(allExpenses);
+          const [totals, setTotals] = useState(() => categoryTotals(allExpenses));
+          const [report, setReport] = useState<FrameReport | null>(null);
+
+          function handleDelete(id: string) {
+            const next = expenses.filter((expense) => expense.id !== id);
+            setExpenses(next);
+            setTotals(categoryTotals(next));
+          }
+
+          async function measure() {
+            listRef.current?.scrollToOffset({ offset: 0, animated: false });
+            const [result] = await Promise.all([measureJsFrames(10000), runScrollScript(listRef.current)]);
+            setReport(result);
+          }
+
+          async function measureWhileSwiping() {
+            setReport(await measureJsFrames(10000)); // swipe rows back and forth during these 10 s
+          }
+
+          return (
+            <GestureHandlerRootView style={styles.screen}>
+              <Pressable accessibilityRole="button" onPress={measure} style={styles.button}>
+                <Text style={styles.buttonText}>Run the 10-second scroll script</Text>
+              </Pressable>
+              <Pressable accessibilityRole="button" onPress={measureWhileSwiping} style={[styles.button, styles.second]}>
+                <Text style={styles.buttonText}>Measure 10 s while I swipe</Text>
+              </Pressable>
+              <Text style={styles.report}>
+                {`${__DEV__ ? 'DEV JS' : 'PROD JS'} · ${expenses.length} rows`}
+                {report ? ` · JS ${report.jsFps} fps · long frames ${report.longFrames} · worst ${report.worstMs} ms` : ''}
+              </Text>
+              <Text style={styles.report}>
+                {Object.entries(totals).map(([category, minor]) => `${category} ${(minor / 100).toFixed(2)}`).join(' · ')}
+              </Text>
+              <FlatList
+                ref={listRef}
+                data={expenses}
+                keyExtractor={(item, index) => String(index)}
+                renderItem={({ item }) => (
+                  <SwipeRow expense={item} onDelete={handleDelete} onSwipeProgress={() => setTotals(categoryTotals(expenses))} />
+                )}
+              />
+            </GestureHandlerRootView>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, paddingTop: 56, backgroundColor: '#ffffff' },
+          button: { minHeight: 48, marginHorizontal: 16, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1d4ed8', borderRadius: 6 },
+          buttonText: { color: '#ffffff', fontWeight: '600' },
+          second: { marginTop: 8 },
+          report: { marginHorizontal: 16, marginVertical: 4, fontSize: 14 },
+          rowFrame: { borderBottomWidth: 1, borderColor: '#e5e7eb' },
+          row: { paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#ffffff' },
+          label: { fontSize: 16, fontWeight: '600' },
+          delete: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 80, minHeight: 48, justifyContent: 'center', alignItems: 'center', backgroundColor: '#b91c1c' },
+          deleteText: { color: '#ffffff', fontWeight: '600' },
+        });
+        ```
+
+        **Step 6 — add to `PERF.md`:**
+
+        ```text
+        ## RN-10 swipe list (before → after), release, same target
+        | Scenario            | JS fps    | Long frames | Worst ms | Janky frames (gfxinfo) |
+        | scroll script       | … → …     | … → …       | … → …    | … → …                  |
+        | 10 s of swiping     | … → …     | … → …       | … → …    | … → …                  |
+        Fixed: <one line per cause>
+        Checked after the fix: opened row survives a delete above it; labels; Delete action without a gesture
+        Not measured: …
+        ```
+    tools:
+      - name: "Expo SDK"
+        version: "57 (React Native 0.86)"
+        note: { uk: "проєкт `rn10-perf-lab` з попереднього уроку", en: "the `rn10-perf-lab` project from the previous lesson" }
+      - name: "react-native-gesture-handler"
+        version: "2.32"
+        note: { uk: "`npx expo install` обирає версію під SDK", en: "`npx expo install` picks the version for the SDK" }
+      - name: "react-native-reanimated"
+        version: "4.5 (react-native-worklets 0.10)"
+        note: { uk: "worklet-и для руху в потоці UI", en: "worklets for movement on the UI thread" }
+      - name: "Declared target"
+        note: { uk: "та сама ціль, що в базовій лінії", en: "the same target as in the baseline" }
+    steps:
+      - text:
+          uk: "Перейди в проєкт і встанови бібліотеки жестів і анімацій у версіях для свого SDK."
+          en: "Go to the project and install the gesture and animation libraries in the versions for your SDK."
+        command: "cd ~/js-course/rn10-perf-lab\nnpx expo install react-native-gesture-handler react-native-reanimated react-native-worklets"
+        expect:
+          uk: "У `package.json` з’явилися три залежності (у нашій перевірці `~2.32.0`, `4.5.1`, `0.10.1`)."
+          en: "Three dependencies appeared in `package.json` (in our check `~2.32.0`, `4.5.1`, `0.10.1`)."
+      - text:
+          uk: "Заміни `App.tsx` файлом з кроку 2 вступу, перевір типи й зафіксуй засіяний стан."
+          en: "Replace `App.tsx` with the step 2 file from the intro, check the types and commit the seeded state."
+        command: "npx tsc --noEmit\ngit add -A\ngit commit -m \"RN-10 swipe lab: seeded defects\""
+        expect:
+          uk: "`npx tsc --noEmit` нічого не друкує; commit створено."
+          en: "`npx tsc --noEmit` prints nothing; the commit is created."
+      - text:
+          uk: "Збери й запусти **release** своєї цілі (таблиця з попереднього уроку; на P — `--no-dev --minify`). Нові нативні бібліотеки потребують нової збірки: старий застосунок їх не має. Відтвори: відкрий свайпом третій рядок, видали свайпом перший і запиши, який рядок тепер відкритий."
+          en: "Build and start the **release** of your target (the table from the previous lesson; on P `--no-dev --minify`). New native libraries need a new build: the old app does not have them. Reproduce: open the third row with a swipe, delete the first one with a swipe and write down which row is open now."
+        expect:
+          uk: "Відкритим стає не той рядок, що ти відкривав, а наступний — як у перегляді."
+          en: "The open row is not the one you opened but the next one — as in the preview."
+      - text:
+          uk: "Виміряй «до»: тричі натисни «Запустити 10-секундну прокрутку», потім тричі «Виміряти 10 с, поки я свайпаю», щоразу 10 секунд повільно тягаючи рядки вліво-вправо. На **A** перед кожним вимірюванням виконай `reset`, після — збери `gfxinfo`. Запиши медіани."
+          en: "Measure “before”: press “Run the 10-second scroll script” three times, then “Measure 10 s while I swipe” three times, each time slowly dragging rows left and right for 10 seconds. On **A**, run `reset` before each measurement and collect `gfxinfo` after. Write down the medians."
+        command: "adb shell dumpsys gfxinfo com.example.rn10perflab reset\nadb shell dumpsys gfxinfo com.example.rn10perflab"
+        expect:
+          uk: "Рядки `PROD JS · 1000 rows · JS … fps · long frames …`. Розумно очікувати під час свайпу помітно більше довгих кадрів, ніж під час самої прокрутки (тут не виміряно)."
+          en: "Lines `PROD JS · 1000 rows · JS … fps · long frames …`. It is reasonable to expect noticeably more long frames while swiping than during scrolling alone (not measured here)."
+      - text:
+          uk: "Полагодь обидві причини так само, як у вправі, — по одній. Після кожної правки збери release наново й повтори вимірювання з кроку 4. Перевір руками: відкритий рядок переживає видалення рядка над ним, підписи доступності правильні, а «Видалити» й дія доступності працюють без жесту."
+          en: "Repair both causes the same way as in the exercise — one at a time. After each change rebuild release and repeat the measurement from step 4. Check by hand: an opened row survives a delete above it, the accessibility labels are right, and “Delete” and the accessibility action work without a gesture."
+        command: "git diff -- App.tsx"
+        expect:
+          uk: "`git diff` показує лише твої правки двох причин, без інших змін."
+          en: "`git diff` shows only your changes for the two causes, with no other changes."
+      - text:
+          uk: "Допиши в `PERF.md` таблицю «до → після» за зразком з кроку 6 вступу, з тим, що виправлено, перевірено й не виміряно. Зафіксуй."
+          en: "Add the “before → after” table to `PERF.md` following the sample in step 6 of the intro, with what was fixed, checked and not measured. Commit."
+        command: "git add -A\ngit commit -m \"Fix list identity and per-update totals; record before/after\""
+        expect:
+          uk: "Commit створено; у `PERF.md` дві таблиці — базова лінія й «до → після»."
+          en: "The commit is created; `PERF.md` has two tables — the baseline and “before → after”."
+    verify:
+      - id: reproduced
+        text:
+          uk: "Я відтворив на заявленій цілі в release обидві вади: ривки під час свайпу й відкритий «не той» рядок після видалення."
+          en: "I reproduced both defects on my declared target in release: stutter while swiping and the “wrong” open row after a delete."
+      - id: measured-both
+        text:
+          uk: "У `PERF.md` є вимірювання release до й після для прокрутки й свайпу на тій самій цілі."
+          en: "`PERF.md` has release measurements before and after for scrolling and swiping on the same target."
+      - id: nothing-broke
+        text:
+          uk: "Після виправлення відкритий рядок переживає видалення над ним, підписи доступності правильні, а видалення без жесту працює."
+          en: "After the repair an opened row survives a delete above it, the accessibility labels are right, and deleting without a gesture works."
+    troubleshooting:
+      - problem:
+          uk: "Застосунок падає на старті після `npx expo install` з повідомленням про відсутній нативний модуль (наприклад, worklets чи RNGestureHandler)"
+          en: "The app crashes on launch after `npx expo install` with a message about a missing native module (for example worklets or RNGestureHandler)"
+        fix:
+          uk: "Ти запустив стару збірку без нових нативних бібліотек. Збери наново командою `run:android` / `run:ios`; для Expo Go перевір, що версія Expo Go відповідає SDK 57."
+          en: "You started an old build without the new native libraries. Rebuild with `run:android` / `run:ios`; for Expo Go check that the Expo Go version matches SDK 57."
+      - problem:
+          uk: "Свайп не працює зовсім, рядок не рухається"
+          en: "The swipe does not work at all, the row does not move"
+        fix:
+          uk: "Жести працюють лише всередині `GestureHandlerRootView`: перевір, що весь екран загорнуто в нього, як у файлі з кроку 2."
+          en: "Gestures work only inside a `GestureHandlerRootView`: check that the whole screen is wrapped in it, as in the step 2 file."
+      - problem:
+          uk: "Після правки числа майже не змінилися"
+          en: "After the change the numbers barely moved"
+        fix:
+          uk: "Перевір, що вимірюєш release (рядок починається з `PROD JS`) і що збірку зроблено після правки. Якщо так, запиши чесно «не покращилося» і шукай наступну причину за тим самим рецептом — це теж результат."
+          en: "Check that you measure release (the line starts with `PROD JS`) and that the build was made after the change. If so, write down honestly “no improvement” and look for the next cause with the same recipe — that is a result too."
+    recovery:
+      uk: "Усе зафіксовано в git: `git restore App.tsx` повертає засіяний файл, `git log` показує кроки. Бібліотеки можна прибрати командою `npm uninstall` з їхніми назвами, але наступний урок теж їх використовує."
+      en: "Everything is committed in git: `git restore App.tsx` brings back the seeded file, `git log` shows the steps. The libraries can be removed with `npm uninstall` and their names, but the next lesson uses them too."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-10
+    body:
+      uk: "У кроці проєкту ти так само знайдеш і виправиш одну виміряну проблему довгого списку свого домену — ключі рядків чи роботу на кожне оновлення жесту — і запишеш числа release до й після на заявленій цілі."
+      en: "In the project step you will find and fix one measured problem of your domain's long list the same way — row keys or work on every gesture update — and record release numbers before and after on the declared target."
