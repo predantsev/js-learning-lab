@@ -339,6 +339,16 @@ test('focus stays in the list, then moves to the heading when the list empties',
   } finally {
     second.remove();
   }
+  const third = await mounted(stored(sample()));
+  try {
+    const buttons = third.querySelectorAll('.due button');
+    buttons[2].focus();
+    await user.click(buttons[2]);
+    const left = third.querySelectorAll('.due button');
+    expect(document.activeElement, 'focused element after watering the last plant').toBe(left[left.length - 1]);
+  } finally {
+    third.remove();
+  }
 });
 
 test('your tests pass with the reference modules', async () => {

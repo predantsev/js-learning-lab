@@ -31,13 +31,57 @@ test('an integration test fails on the pull request', async () => {
   expect(results.some((result) => kind(result) === 'integration' && !result.passed), 'an "integration: …" test that fails on the pull request').toBe(true);
 });
 
+// Runs bookingTests once more with fresh copies of testing.js and service.js that record, per test,
+// whether service.book was called and with which rules object.
+const moduleUrl = (code) => URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+const rewrite = (source, urls) => source.replace(/(["'])\.\/([\w./-]+)\1/g, (match, quote, path) => JSON.stringify(urls[path] ?? `~/${path}`));
+async function recordedSuite(rules) {
+  const source = files['bookings.test.js'];
+  if (typeof source !== 'string') throw new Error('bookings.test.js is missing');
+  const realTesting = moduleUrl(files['testing.js']);
+  const realService = moduleUrl(files['service.js']);
+  const urls = {
+    'testing.js': moduleUrl(`import * as real from ${JSON.stringify(realTesting)};
+export const { expect, reset, run } = real;
+export function test(name, fn) {
+  real.test(name, async () => {
+    globalThis.__jsllCurrentTest = name;
+    try { return await fn(); } finally { globalThis.__jsllCurrentTest = null; }
+  });
+}`),
+    'service.js': moduleUrl(`import * as real from ${JSON.stringify(realService)};
+export const { memoryStore } = real;
+export function createBookingService(store, rules) {
+  const service = real.createBookingService(store, rules);
+  return { book(request) { globalThis.__jsllBooked.push({ test: globalThis.__jsllCurrentTest, rules }); return service.book(request); } };
+}`),
+  };
+  const booked = [];
+  globalThis.__jsllBooked = booked;
+  try {
+    const { bookingTests } = await import(moduleUrl(rewrite(source, urls)));
+    expect(typeof bookingTests, 'type of the bookingTests export of bookings.test.js').toBe('function');
+    const runner = await import(realTesting);
+    bookingTests(rules);
+    const results = await runner.run({ print: false });
+    return results.map((result) => ({ ...result, standIn: booked.some((call) => call.test === result.name && call.rules !== rules && typeof call.rules?.canBook === 'function') }));
+  } finally {
+    delete globalThis.__jsllBooked;
+    delete globalThis.__jsllCurrentTest;
+  }
+}
+
 test('a mocked test passes on both versions', async () => {
-  const onMain = await suite(await rulesOnMain());
-  const inPullRequest = await suite(await rulesInPullRequest());
-  const passingEverywhere = onMain
-    .filter((result) => kind(result) === 'mocked' && result.passed)
+  const onMain = await recordedSuite(await rulesOnMain());
+  const inPullRequest = await recordedSuite(await rulesInPullRequest());
+  const mocked = onMain.filter((result) => kind(result) === 'mocked');
+  expect(mocked.length, '"mocked: …" tests').toBeGreaterThan(0);
+  const withStandIn = mocked.filter((result) => result.standIn);
+  expect(withStandIn.length, '"mocked: …" tests that call service.book with your own object instead of rules').toBeGreaterThan(0);
+  const passingEverywhere = withStandIn
+    .filter((result) => result.passed)
     .filter((result) => inPullRequest.some((other) => other.name === result.name && other.passed));
-  expect(passingEverywhere.length, '"mocked: …" tests that pass on main and on the pull request').toBeGreaterThan(0);
+  expect(passingEverywhere.length, '"mocked: …" tests with a stand-in that pass on main and on the pull request').toBeGreaterThan(0);
 });
 
 test('failingCase is accepted by the pull request and refused on main', async () => {
@@ -64,7 +108,8 @@ test('the mock explanation says what the stand-in replaced', async () => {
 
 test('the decision is request-changes', async () => {
   const { decision } = await loadReview();
-  expect(decision, 'decision').toBe('request-changes');
+  // A boolean comparison: a failure message must not print the expected decision.
+  expect(decision === 'request-changes', `decision (${JSON.stringify(decision ?? null)}) follows the evidence`).toBe(true);
 });
 
 test('the write-up records the decision with its evidence', async () => {

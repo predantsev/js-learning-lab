@@ -18,7 +18,9 @@ const sentences = (text) => String(text ?? '').trim().split(/(?<=[.!?])\s+/).fil
 
 for (const key of Object.keys(OUTCOMES)) {
   test(`${key}: the outcome is what really happens`, async () => {
-    expect((await item(key)).outcome, `answers.${key}.outcome`).toBe(OUTCOMES[key]);
+    // A boolean comparison: a failure message must not print the expected outcome.
+    const { outcome } = await item(key);
+    expect(outcome === OUTCOMES[key], `answers.${key}.outcome (${JSON.stringify(outcome ?? null)}) is what really happens`).toBe(true);
   });
   test(`${key}: the reason has two sentences and names the code word`, async () => {
     const { reason } = await item(key);

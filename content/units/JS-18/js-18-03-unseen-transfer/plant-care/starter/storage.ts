@@ -8,4 +8,6 @@ export function savePlants(storage, plants) {}
 
 // Reads the plants back and never throws: missing data, text that is not JSON, another
 // schemaVersion or a "plants" that is not an array give []; invalid plant records are left out.
-export function loadPlants(storage) {}
+export function loadPlants(storage) {
+  return [];
+}
