@@ -270,6 +270,8 @@ export function staticIssuesForLesson(lesson, ctx) {
   const result = validateLessonSource(source, { glossary: known, lessonOrder: ctx.lessonOrder, competencies: ctx.competencies.families });
   const issues = [...result.list];
   const add = (p, message) => issues.push({ path: `lesson ${source?.id} › ${p}`, message });
+  // Warnings do not fail validation: they point at content that is probably wrong (the validator lists them).
+  const warn = (p, message) => issues.push({ path: `lesson ${source?.id} › ${p}`, message, level: 'warning' });
   for (const block of source?.blocks ?? []) {
     const a = assets[block.id];
     if (block.kind === 'example') {
@@ -284,6 +286,14 @@ export function staticIssuesForLesson(lesson, ctx) {
       for (const f of block.editable ?? []) if (!(f in a.starter)) add(`block "${block.id}".editable`, `"${f}" does not exist in the starter`);
       for (const f of Object.keys(a.solution)) if (!(f in a.starter) && !(block.allowNewFiles === true)) add(`block "${block.id}"`, `solution adds "${f}" which is not in the starter (set allowNewFiles: true if the learner must create files)`);
       if (!Object.keys(a.variants).some((v) => v.startsWith('wrong'))) add(`block "${block.id}"`, `needs at least one deliberately failing fixture directory ${block.dir}/wrong/ (or wrong-<name>/)`);
+      // A learner-written test suite runs inside the course runner (testing.js), which catches what a
+      // learner test throws and reports that test as failed: the error never reaches the platform, so
+      // `when: { error: ReferenceError }` fires only for an error while the program loads or one thrown
+      // by a check itself.
+      const courseRunner = 'testing.js' in a.starter || /from\s*['"]\.\/testing\.js['"]/.test(a.tests ?? '');
+      for (const [i, rule] of (block.feedback ?? []).entries()) {
+        if (courseRunner && rule?.when?.error === 'ReferenceError') warn(`block "${block.id}".feedback[${i}]`, 'when: { error: ReferenceError } does not fire for errors inside the learner\'s own tests: the course runner (testing.js) catches them and reports a failed learner test. It matches only an error while the program loads or one thrown by a check; if this advice is for an error inside the learner\'s tests, put it into the feedback of the check that runs them (when: { test }) — content/README.md, "Feedback and course runners"');
+      }
     }
     // Every %%key%% used in code or prose must exist in the block's strings table. (A visual's spec
     // and the files it reads are checked when it compiles: shared/visuals/index.js compileVisual.)
@@ -361,10 +371,11 @@ export async function compileLesson(lesson, ctx) {
 
 export const sha = (text) => createHash('sha256').update(text).digest('hex');
 
-/** Build everything into dist/content. Returns { index, issues }. */
+/** Build everything into dist/content. Returns { index, issues, warnings, all }. */
 export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content'), quiet = false, release = false, capstonesDir } = {}) {
   const all = await loadAll({ capstonesDir });
   const issues = [...all.issues];
+  const warnings = [];
   const md = createMarkdown(all.glossary);
   let visuals = null;
   if (await exists(path.join(ROOT, 'shared', 'visuals', 'index.js'))) visuals = await import(path.join(ROOT, 'shared', 'visuals', 'index.js'));
@@ -375,8 +386,9 @@ export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content')
   const hash = createHash('sha256');
   const compiledMeta = new Map();
   for (const [id, lesson] of all.lessons) {
-    const staticIssues = staticIssuesForLesson(lesson, ctx);
-    issues.push(...staticIssues.map((i) => ({ ...i, file: path.relative(ROOT, lesson.dir) })));
+    const staticIssues = staticIssuesForLesson(lesson, ctx).map((i) => ({ ...i, file: path.relative(ROOT, lesson.dir) }));
+    issues.push(...staticIssues.filter((i) => i.level !== 'warning'));
+    warnings.push(...staticIssues.filter((i) => i.level === 'warning'));
     try {
       const { lesson: compiled, issues: compileIssues } = await compileLesson(lesson, ctx);
       issues.push(...compileIssues.map((i) => ({ ...i, file: path.relative(ROOT, lesson.dir) })));
@@ -438,6 +450,6 @@ export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content')
     counts: { lessonsAuthored: compiledMeta.size, lessonsPlanned: all.order.length, glossaryTerms: glossary.length },
   };
   await fs.writeFile(path.join(outDir, 'index.json'), JSON.stringify(index));
-  if (!quiet) console.log(`content: ${compiledMeta.size}/${all.order.length} lessons, ${glossary.length} glossary terms, version ${index.contentVersion}, ${issues.length} issue(s)`);
-  return { index, issues, all };
+  if (!quiet) console.log(`content: ${compiledMeta.size}/${all.order.length} lessons, ${glossary.length} glossary terms, version ${index.contentVersion}, ${issues.length} issue(s)${warnings.length > 0 ? `, ${warnings.length} warning(s)` : ''}`);
+  return { index, issues, warnings, all };
 }

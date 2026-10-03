@@ -37,11 +37,14 @@ const notes = [];
 const error = (where, message) => errors.push({ where, message });
 
 const tmpOut = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-content-'));
-const { issues, all, index } = await buildContent({ outDir: tmpOut, quiet: true, release });
-for (const issue of issues) {
+const warnings = [];
+const { issues, warnings: contentWarnings, all, index } = await buildContent({ outDir: tmpOut, quiet: true, release });
+for (const issue of [...issues, ...contentWarnings]) {
   const lessonId = /lesson ([a-z0-9-]+)/.exec(issue.path)?.[1];
   if (lessonId && !selected(lessonId)) continue;
-  error(issue.file ? `${issue.file} · ${issue.path}` : issue.path, issue.message);
+  const where = issue.file ? `${issue.file} · ${issue.path}` : issue.path;
+  if (issue.level === 'warning') warnings.push({ where, message: issue.message });
+  else error(where, issue.message);
 }
 
 const lessons = [...all.lessons.entries()].filter(([id]) => selected(id));
@@ -330,12 +333,13 @@ if (release) {
 }
 
 await fs.rm(tmpOut, { recursive: true, force: true });
-const report = { ok: errors.length === 0, verified: executed.nodeUnverified === 0, lessons: lessons.length, capstoneSteps: capstoneSteps.length, executed, errors, notes, contentVersion: index.contentVersion };
+const report = { ok: errors.length === 0, verified: executed.nodeUnverified === 0, lessons: lessons.length, capstoneSteps: capstoneSteps.length, executed, errors, warnings, notes, contentVersion: index.contentVersion };
 if (jsonOut) await fs.writeFile(jsonOut, JSON.stringify(report, null, 2));
 for (const e of errors) console.error(`✖ ${e.where} — ${e.message}`);
+for (const w of warnings) console.error(`⚠ ${w.where} — warning: ${w.message}`);
 for (const n of notes) console.error(`· ${n.where} — ${n.message}`);
 const nodeSummary = `${executed.nodeRuns} isolated-node run(s)${executed.nodeUnverified > 0 ? ` (${executed.nodeUnverified} isolated-node block(s) UNVERIFIED: executor unavailable)` : ''}`;
 // Blocks that could not be executed are never reported as valid (a note now; an error with --release).
 const verdict = errors.length > 0 ? 'CONTENT INVALID' : executed.nodeUnverified > 0 ? 'CONTENT UNVERIFIED' : 'CONTENT VALID';
-console.log(`${verdict}: ${lessons.length} lesson(s), ${executed.examples} example run(s), ${executed.fixtures} exercise fixture run(s), ${executed.predictions} verified prediction(s), ${nodeSummary}, ${capstoneSteps.length} capstone step variant(s) with ${executed.capstoneRuns} capstone run(s), ${errors.length} error(s)`);
+console.log(`${verdict}: ${lessons.length} lesson(s), ${executed.examples} example run(s), ${executed.fixtures} exercise fixture run(s), ${executed.predictions} verified prediction(s), ${nodeSummary}, ${capstoneSteps.length} capstone step variant(s) with ${executed.capstoneRuns} capstone run(s), ${errors.length} error(s)${warnings.length > 0 ? `, ${warnings.length} warning(s)` : ''}`);
 process.exit(errors.length === 0 ? 0 : 1);

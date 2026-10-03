@@ -79,6 +79,18 @@ test('review questions share the review block strings; strings on a question are
   assert.ok(misplaced.some((m) => /placeholder %%hi%% has no entry in strings \(the review block's strings/.test(m)), misplaced.join('\n'));
 });
 
+test('a ReferenceError feedback rule in an exercise whose checks run a course runner is a warning, not an error', () => {
+  const rules = [{ when: { error: 'ReferenceError' }, message: pair('Імпортуй назву.', 'Import the name.') }, { when: { error: 'TypeError' }, message: pair('т', 't') }];
+  const withRunner = { ...exercise, feedback: rules };
+  const runnerAssets = { cart: { ...exerciseAssets.cart, starter: { 'index.js': '', 'testing.js': 'export function run() {}', 'cart.test.js': '' }, tests: 'import * as testing from "./testing.js";\ntest("prints the total", async () => {});' } };
+  const found = staticIssuesForLesson(lessonWith([withRunner], runnerAssets), ctx).filter((i) => i.level === 'warning');
+  assert.equal(found.length, 1);
+  assert.match(found[0].path, /block "cart"\.feedback\[0\]/);
+  assert.match(found[0].message, /course runner \(testing\.js\) catches them/);
+  // Without a course runner the rule is fine: a check that calls the learner's code throws it itself.
+  assert.deepEqual(staticIssuesForLesson(lessonWith([withRunner], exerciseAssets), ctx).filter((i) => i.level === 'warning'), []);
+});
+
 test('raw HTML in Markdown prose is shown as text, never as markup (block, inline and text equivalents)', async () => {
   const sample = 'Look: <img src=x onerror="alert(1)"> and <b>bold</b>';
   for (const html of [md.block(sample), md.inline(sample), md.block(`<div>\n${sample}\n</div>`)]) {

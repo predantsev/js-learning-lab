@@ -279,6 +279,12 @@ test('keeps only items at or under the limit', () => {
 
   Only the entry module is evaluated again: modules it imports and the page (DOM) are shared, not reset. Await each `rerun` before the next; injected globals are removed after the test. Only globals can be injected: a value declared in the learner's file (`const temperature = 30`) or imported from another module cannot be replaced, so the starter reads its input from a global, as in the example.
 
+### Feedback and course runners
+
+`feedback` rules `when: { error: Name }` match an error that reaches the platform: one the program throws while it loads (shown with the error card) or one a check in `tests.js` throws itself (shown with that check). When the learner writes their own tests and a check runs them through a course runner (`testing.js`, rule 38), an error inside a learner test — a missing import name (`ReferenceError`), a call of `undefined` — is caught by that runner and becomes a failed learner test; the check then fails with an assertion, and no `error:` rule fires. Per-check feedback (`when: { test }`) is the only path for such failures: name the precondition and say that the runner's own output in the console shows which learner test threw. The validator warns about a `when: { error: ReferenceError }` rule in an exercise whose checks use a course runner; keep such a rule only for errors while the program loads.
+
+The validator gives each browser run — one example, prediction or fixture together with all its checks — 15 s in total and then reports `run ended with status "timeout"`, even when every check stays within its own 4 s. Keep the checks of one exercise well below that sum.
+
 Write failure-proof tests: check observable behavior, cover the boundary cases the lesson teaches, and make each test name a sentence a learner can act on (it is translated in `testTitles`).
 
 ## isolated-node (real Node.js)
