@@ -1,0 +1,443 @@
+id: rn-09-06-debug-denied-permission
+unit: RN-09
+title:
+  uk: "Налагодження: відхилений дозвіл і відсутнє обладнання"
+  en: "Debug: denied permission and missing device"
+kind: local-task
+minutes: 20
+contentVersion: 1
+purpose:
+  uk: "Дві вади екранів із камерою трапляються найчастіше: застосунок падає, коли людина відмовила в дозволі, і безкінечно чекає на камеру, якої немає. Обидві можна відтворити й тут, на симульованому пристрої, — і полагодити з перевірками. Але справжні діалог дозволу, налаштування й відсутню камеру показує лише твоя ціль: там ти відтвориш обидві вади, полагодиш і запишеш, що бачив."
+  en: "Two defects of camera screens are the most common: the app crashes when the person denied the permission, and it waits forever for a camera that does not exist. Both can be reproduced here too, on a simulated device — and repaired with checks. But only your target shows the real permission dialog, Settings and a missing camera: there you reproduce both defects, repair them and write down what you saw."
+objectives:
+  - uk: "Відтворити на своїй цілі засіяне падіння, коли дозвіл камери відхилено, і зависання, коли камери немає, через справжні системні налаштування чи конфігурацію емулятора."
+    en: "Reproduce on the declared target a seeded crash when camera permission is denied and a hang when no camera is available, using real system settings or emulator configuration."
+  - uk: "Полагодити обидві вади так, щоб лабораторія показувала обхідний шлях, і записати побачене як підтверджене тобою свідчення з назвою цілі."
+    en: "Repair both defects so the lab app shows its fallback path, and record the observed behavior as learner-confirmed evidence with the target named."
+prerequisites: [rn-09-05-deny-revoke-unavailable]
+subskills:
+  - { family: N-07, skill: "permission request/deny/revoke", depth: assess }
+  - { family: N-07, skill: "capability/platform checks", depth: assess }
+glossary: []
+selfCheck: [predict-deny-crash, seeded-lab]
+
+blocks:
+  - id: two-recipes
+    kind: explanation
+    title:
+      uk: "Два рецепти відтворення"
+      en: "Two recipes to reproduce"
+    body:
+      uk: |
+        Засіяна лабораторія — екран «фото прогресу» для відмітки звички. Користувачі скаржаться на дві речі, і кожна має точний рецепт:
+
+        - **падіння після відмови**: торкнутися «Зробити фото прогресу» й відповісти в системному діалозі «Не дозволяти»;
+        - **безкінечне «Камера запускається…»**: запустити лабораторію на цілі **без камери**, дозволити доступ і чекати.
+
+        Спершу відтвори й запиши, що бачиш, **до** будь-яких правок. Потім знайди причину в коді: падіння — це код, що вважає відповідь завжди позитивною; зависання — код, що слухає лише «камера готова» й ігнорує «камера не змогла запуститися».
+
+        Важлива деталь для цілі: модуль камери Expo SDK 57 документує перевірку «чи є камера» (`isAvailableAsync`) лише для вебу. Тож на телефоні лабораторія дізнається, що камери немає, коли попередній перегляд камери повідомляє про помилку запуску — через `onMountError`.
+      en: |
+        The seeded lab is a “progress photo” screen for a habit check-in. Users complain about two things, and each has an exact recipe:
+
+        - **a crash after a denial**: tap “Take a progress photo” and answer “Don't allow” in the system dialog;
+        - **an endless “Starting the camera…”**: run the lab on a target **without a camera**, allow access and wait.
+
+        First reproduce and write down what you see, **before** any edits. Then find the cause in the code: the crash is code that assumes the answer is always yes; the hang is code that listens only for “camera ready” and ignores “the camera could not start”.
+
+        An important detail for the target: the Expo SDK 57 camera module documents the “is there a camera” check (`isAvailableAsync`) for the web only. So on a phone the lab learns there is no camera when the camera preview reports a start failure — through `onMountError`.
+
+  - id: predict-deny-crash
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Після запиту засіяний код робить `setLens(result.granted ? { label: 'Задня камера' } : undefined)` і `setStep('camera')`, а екран камери показує `<Text>{lens.label}</Text>`. Що станеться, якщо людина відповість «Не дозволяти»?"
+      en: "After the request the seeded code does `setLens(result.granted ? { label: 'Back camera' } : undefined)` and `setStep('camera')`, and the camera screen shows `<Text>{lens.label}</Text>`. What happens if the person answers “Don't allow”?"
+    answer:
+      type: choice
+      options:
+        - id: crash
+          text:
+            uk: "Під час рендеру екрана камери `lens` — `undefined`, і `lens.label` кидає `TypeError`: застосунок падає"
+            en: "While the camera screen renders, `lens` is `undefined`, and `lens.label` throws a `TypeError`: the app crashes"
+        - id: empty-text
+          text:
+            uk: "Нічого страшного: `Text` просто покаже порожній рядок"
+            en: "Nothing bad: the `Text` just shows an empty string"
+          why:
+            uk: "Порожнім був би `lens?.label`. Звертання до властивості `undefined` без `?.` кидає `TypeError` ще до того, як `Text` щось отримає."
+            en: "`lens?.label` would be empty. Reading a property of `undefined` without `?.` throws a `TypeError` before `Text` receives anything."
+        - id: dialog-again
+          text:
+            uk: "Система покаже діалог ще раз, бо дозволу немає"
+            en: "The system shows the dialog again, because there is no permission"
+          why:
+            uk: "Діалог з’являється лише у відповідь на запит. Код не питає вдруге — він одразу переходить на екран камери, ніби дозвіл є."
+            en: "The dialog appears only in response to a request. The code does not ask again — it goes straight to the camera screen as if the permission were there."
+      correct: [crash]
+    explanation:
+      uk: "Вада не в `lens.label`, а рядком вище: код переходить на екран камери за **будь-якої** відповіді. `?.` сховав би падіння, але залишив би людину на екрані камери, якою користуватися не можна. Правка — розгалуження за відповіддю: дозволено, відмовлено (можна спитати ще раз) чи заблоковано."
+      en: "The defect is not in `lens.label` but one line above: the code goes to the camera screen on **any** answer. `?.` would hide the crash but leave the person on a camera screen they cannot use. The repair is a branch on the answer: granted, denied (may ask again) or blocked."
+
+  - id: seeded-lab
+    kind: exercise
+    mode: debug
+    runtime: concept-preview
+    dir: seeded-lab
+    entry: main.jsx
+    editable: [ProgressPhoto.jsx, main.jsx]
+    strings:
+      habit: { uk: "Ранкова зарядка — відмітка", en: "Morning exercise — check-in" }
+      takePhoto: { uk: "Зробити фото прогресу", en: "Take a progress photo" }
+      backCamera: { uk: "Задня камера", en: "Back camera" }
+      starting: { uk: "Камера запускається…", en: "Starting the camera…" }
+      ready: { uk: "Камера готова.", en: "The camera is ready." }
+      rationale: { uk: "Без камери фото не зробити. Відмітку можна зберегти й без фото.", en: "Without the camera there is no photo. The check-in can be saved without one." }
+      askAgain: { uk: "Спитати ще раз", en: "Ask again" }
+      blocked: { uk: "Камеру вимкнено в налаштуваннях.", en: "The camera is turned off in Settings." }
+      openSettings: { uk: "Відкрити налаштування", en: "Open settings" }
+      noCamera: { uk: "Камера на цьому пристрої недоступна.", en: "The camera is not available on this device." }
+      withoutPhoto: { uk: "Зберегти без фото", en: "Save without a photo" }
+      savedWithout: { uk: "Відмітку збережено без фото.", en: "Check-in saved without a photo." }
+      dialogText: { uk: "Дозволити застосунку доступ до камери?", en: "Allow the app to access the camera?" }
+      allow: { uk: "Дозволити", en: "Allow" }
+      dontAllow: { uk: "Не дозволяти", en: "Don't allow" }
+    title:
+      uk: "Падіння після відмови й камера, що не запускається"
+      en: "A crash after a denial, and a camera that never starts"
+    instructions:
+      uk: |
+        `ProgressPhoto.jsx` — засіяний екран. Під ним — системний діалог симульованого пристрою з `labDevice.jsx`.
+
+        1. **Відтвори** першу ваду на **Сторінці**: «Зробити фото прогресу» → «Не дозволяти». Потім друга: у `main.jsx` можна тимчасово поставити `hasCamera: false` і дозволити доступ — «Камера запускається…» не зникає.
+        2. **Полагодь** `ProgressPhoto.jsx`, щоб екран поводився так:
+           - дозволено й камера є — «Камера готова.»;
+           - відмовлено, але `canAskAgain: true` — текст «Без камери фото не зробити…», кнопки «Спитати ще раз» і «Зберегти без фото»;
+           - відмовлено з `canAskAgain: false` — кнопки «Відкрити налаштування» (`device.openSettings()`) і «Зберегти без фото», і жодного «Спитати ще раз»;
+           - камера не змогла запуститися (`onMountError` у `CameraPreview`) — «Камера на цьому пристрої недоступна.» і «Зберегти без фото»;
+           - «Зберегти без фото» показує «Відмітку збережено без фото.»
+
+        Перевірки щоразу створюють свіжий симульований пристрій і відповідають у діалозі самі, тож зміна в `main.jsx` їм не заважає. `labDevice.jsx` і `DialogPanel.jsx` редагувати не можна.
+      en: |
+        `ProgressPhoto.jsx` is the seeded screen. Under it is the system dialog of the simulated device from `labDevice.jsx`.
+
+        1. **Reproduce** the first defect on the **Page**: “Take a progress photo” → “Don't allow”. Then the second: in `main.jsx` you may temporarily set `hasCamera: false` and allow access — “Starting the camera…” never goes away.
+        2. **Repair** `ProgressPhoto.jsx` so the screen behaves like this:
+           - granted and a camera exists — “The camera is ready.”;
+           - denied, but `canAskAgain: true` — the text “Without the camera there is no photo…”, the buttons “Ask again” and “Save without a photo”;
+           - denied with `canAskAgain: false` — the buttons “Open settings” (`device.openSettings()`) and “Save without a photo”, and no “Ask again”;
+           - the camera could not start (`onMountError` of `CameraPreview`) — “The camera is not available on this device.” and “Save without a photo”;
+           - “Save without a photo” shows “Check-in saved without a photo.”
+
+        The checks create a fresh simulated device each time and answer the dialog themselves, so a change in `main.jsx` does not affect them. `labDevice.jsx` and `DialogPanel.jsx` cannot be edited.
+    limits:
+      uk: "Перевірки працюють у перегляді react-native-web на симульованому пристрої: `labDevice.jsx` відтворює задокументоване правило Android про другу відмову й зворотні виклики `CameraView` (`onCameraReady`, `onMountError`), але це модель лабораторії, а не камера. Справжнього діалогу дозволу, налаштувань, камери, нативних модулів і жестів, крім миші й клавіатури, тут немає — їх перевіряють на твоїй цілі в завданні нижче."
+      en: "The checks run in the react-native-web preview on a simulated device: `labDevice.jsx` reproduces the documented Android rule about the second denial and the `CameraView` callbacks (`onCameraReady`, `onMountError`), but it is the lab's model, not a camera. There is no real permission dialog, Settings, camera, native modules or gestures beyond mouse and keyboard here — they are checked on your target in the task below."
+    testTitles:
+      "with a camera and Allow the camera starts":
+        uk: "З камерою й «Дозволити» камера запускається"
+        en: "With a camera and Allow the camera starts"
+      "a deny shows the explanation, Ask again and a way on without a photo":
+        uk: "Відмова показує пояснення, «Спитати ще раз» і шлях без фото"
+        en: "A deny shows the explanation, Ask again and a way on without a photo"
+      "a second deny offers Settings and no further request":
+        uk: "Друга відмова пропонує налаштування й більше не питає"
+        en: "A second deny offers Settings and no further request"
+      "without a camera the screen falls back instead of waiting":
+        uk: "Без камери екран переходить на обхідний шлях, а не чекає"
+        en: "Without a camera the screen falls back instead of waiting"
+      "saving without a photo finishes the check-in":
+        uk: "«Зберегти без фото» завершує відмітку"
+        en: "Saving without a photo finishes the check-in"
+    hints:
+      nudge:
+        uk: "Відтвори першу ваду й прочитай першу помилку в консолі: у якому рядку і яке значення там `undefined`? Потім подивись на рядок, що вирішує, куди йти після запиту, — скільки різних відповідей він розрізняє?"
+        en: "Reproduce the first defect and read the first error in the console: on which line, and which value is `undefined` there? Then look at the line that decides where to go after the request — how many different answers does it tell apart?"
+      explanation:
+        uk: "Відповідь ОС має три корисні випадки: `granted`, відмова з `canAskAgain: true` і відмова з `canAskAgain: false`, — і кожному потрібен свій екран. Зручно тримати один стан «крок» з кількома значеннями й обирати розмітку за ним. `CameraPreview` повідомляє два результати запуску; якщо слухати лише один, екран чекатиме вічно на другий. Обробник другого так само змінює крок — на екран, що пояснює й пропонує обхідний шлях."
+        en: "The OS answer has three useful cases: `granted`, a denial with `canAskAgain: true` and a denial with `canAskAgain: false` — and each needs its own screen. It is handy to keep one “step” state with several values and pick the markup by it. `CameraPreview` reports two start outcomes; if you listen to only one, the screen waits forever for the other. The handler of the second changes the step too — to a screen that explains and offers a workaround."
+    solutionNote:
+      uk: "Падіння сиділо не в `lens.label`, а в переході на екран камери за будь-якої відповіді; тепер відповідь розгалужується на три екрани, а «Спитати ще раз» з’являється лише при `canAskAgain: true`. Зависання сиділо у `CameraPreview` без `onMountError`: камера, що не може запуститися, тепер веде на пояснення. І кожен шлях закінчується тим, що людина може зберегти відмітку без фото."
+      en: "The crash was not in `lens.label` but in going to the camera screen on any answer; now the answer branches into three screens, and “Ask again” appears only with `canAskAgain: true`. The hang was in a `CameraPreview` without `onMountError`: a camera that cannot start now leads to an explanation. And every path ends with the person able to save the check-in without a photo."
+    feedback:
+      - when: { test: "with a camera and Allow the camera starts" }
+        message:
+          uk: "Ця перевірка натискає «Зробити фото прогресу», відповідає «Дозволити» й очікує текст «Камера готова.»."
+          en: "This check presses “Take a progress photo”, answers “Allow” and expects the text “The camera is ready.”."
+      - when: { test: "a deny shows the explanation, Ask again and a way on without a photo" }
+        message:
+          uk: "Ця перевірка відповідає «Не дозволяти» один раз і очікує текст «Без камери фото не зробити. Відмітку можна зберегти й без фото.» та кнопки «Спитати ще раз» і «Зберегти без фото». Якщо в консолі `TypeError` — екран після відмови все одно переходить на камеру."
+          en: "This check answers “Don't allow” once and expects the text “Without the camera there is no photo. The check-in can be saved without one.” and the buttons “Ask again” and “Save without a photo”. If the console shows a `TypeError`, the screen still goes to the camera after a denial."
+      - when: { test: "a second deny offers Settings and no further request" }
+        message:
+          uk: "Ця перевірка відмовляє двічі (вдруге — через «Спитати ще раз») і очікує кнопки «Відкрити налаштування» й «Зберегти без фото», жодної «Спитати ще раз» і рівно 2 показані діалоги. Обирай екран за `canAskAgain`."
+          en: "This check denies twice (the second time through “Ask again”) and expects the buttons “Open settings” and “Save without a photo”, no “Ask again” and exactly 2 dialogs shown. Pick the screen by `canAskAgain`."
+      - when: { test: "without a camera the screen falls back instead of waiting" }
+        message:
+          uk: "Ця перевірка створює пристрій без камери, дозволяє доступ і очікує «Камера на цьому пристрої недоступна.» та «Зберегти без фото», а не «Камера запускається…». `CameraPreview` повідомляє про це через `onMountError`."
+          en: "This check creates a device without a camera, allows access and expects “The camera is not available on this device.” and “Save without a photo”, not “Starting the camera…”. `CameraPreview` reports this through `onMountError`."
+      - when: { test: "saving without a photo finishes the check-in" }
+        message:
+          uk: "Ця перевірка відмовляє, натискає «Зберегти без фото» й очікує текст «Відмітку збережено без фото.»."
+          en: "This check denies, presses “Save without a photo” and expects the text “Check-in saved without a photo.”."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` під час рендеру — це падіння з першого рецепта: екран читає властивість значення, якого після відмови немає. Знайди, чому після відмови взагалі показується екран камери."
+          en: "A `TypeError` during rendering is the crash from the first recipe: the screen reads a property of a value that does not exist after a denial. Find why the camera screen is shown at all after a denial."
+
+  - id: device-lab
+    kind: local-task
+    runtime: local-native
+    title:
+      uk: "Обидві вади на твоїй цілі"
+      en: "Both defects on your target"
+    intro:
+      uk: |
+        Ти створиш маленький проєкт Expo з засіяними вадами, відтвориш їх на своїй заявленій цілі, полагодиш і запишеш свідчення. Потрібен інтернет (для пакетів), облікові записи — ні.
+
+        > [!warning]
+        > Команди й поведінку тут описано за документацією **Expo SDK 57** (`expo-camera`, `useCameraPermissions`, `CameraView` з `onCameraReady` і `onMountError`) і **React Native 0.86**. Автори курсу **не запускали** їх: на машині, де писали урок, не було нативних інструментів. Тому прикладів виводу тут немає, а те, що саме покаже твоя ціль без камери, — невідомо заздалегідь. Вір тому, що бачиш, і записуй це.
+
+        Якщо в тебе немає працездатної нативної цілі, познач завдання як **невиконане** й переходь далі: вправа вище вже перевірила логіку, а в журналі прогресу завдання лишиться невиконаним.
+
+        **Про Expo Go.** У Expo Go дозвіл камери належить самому Expo Go, тож у налаштуваннях системи шукай саме його. Після лабораторії поверни дозвіл, якщо він потрібен іншим проєктам.
+
+        **Ціль без камери.** В Android Studio відкрий Device Manager, зміни свій віртуальний пристрій і в додаткових налаштуваннях постав для обох камер (Front і Back) значення None — так описано в налаштуваннях AVD; назви пунктів у твоїй версії можуть трохи відрізнятися. Для симулятора iOS перевір сам, чи є в ньому камера, і запиши, що показує лабораторія.
+
+        Вміст файла для кроку 2 — заміни ним весь `App.tsx` (копіюй точно, **з вадами**):
+
+        **Крок 2 — `App.tsx`:**
+
+        ```tsx
+        // App.tsx: seeded defects for RN-09 — a crash after a denial and a wait for a camera that cannot start.
+        import { useState } from 'react';
+        import { Pressable, StyleSheet, Text, View } from 'react-native';
+        import { CameraView, useCameraPermissions } from 'expo-camera';
+
+        export default function App() {
+          const [, requestPermission] = useCameraPermissions();
+          const [step, setStep] = useState<'start' | 'camera'>('start');
+          const [lens, setLens] = useState<{ label: string } | undefined>(undefined);
+          const [cameraReady, setCameraReady] = useState(false);
+
+          async function takePhoto() {
+            const result = await requestPermission();
+            setLens(result.granted ? { label: 'Задня камера' } : undefined);
+            setStep('camera');
+          }
+
+          if (step === 'camera') {
+            return (
+              <View style={styles.screen}>
+                <Text style={styles.heading}>{lens!.label}</Text>
+                <CameraView style={styles.camera} facing="back" onCameraReady={() => setCameraReady(true)} />
+                <Text>{cameraReady ? 'Камера готова.' : 'Камера запускається…'}</Text>
+              </View>
+            );
+          }
+
+          return (
+            <View style={styles.screen}>
+              <Text style={styles.heading}>Ранкова зарядка — відмітка</Text>
+              <Pressable accessibilityRole="button" style={styles.button} onPress={takePhoto}>
+                <Text style={styles.buttonText}>Зробити фото прогресу</Text>
+              </Pressable>
+            </View>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, padding: 24, paddingTop: 64, gap: 12, backgroundColor: '#ffffff' },
+          heading: { fontSize: 18, fontWeight: '700' },
+          camera: { height: 240 },
+          button: { minHeight: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1d4ed8', borderRadius: 6 },
+          buttonText: { color: '#ffffff', fontWeight: '600' },
+        });
+        ```
+
+        **Свідчення.** Створи в корені проєкту `EVIDENCE.md` і після кожного кроку з позначкою «запиши» додавай туди один рядок: що зробив і що побачив. Перший рядок — ціль: тип, версія ОС, версія `expo` з `package.json`.
+      en: |
+        You will create a small Expo project with seeded defects, reproduce them on your declared target, repair them and record evidence. Internet access is needed (for the packages), accounts are not.
+
+        > [!warning]
+        > The commands and behavior here are described from the documentation of **Expo SDK 57** (`expo-camera`, `useCameraPermissions`, `CameraView` with `onCameraReady` and `onMountError`) and **React Native 0.86**. The course authors **did not run** them: the machine this lesson was written on had no native tooling. That is why there is no sample output here, and what exactly your target shows without a camera is not known in advance. Trust what you see, and write it down.
+
+        If you have no working native target, mark this task **not performed** and move on: the exercise above has already checked the logic, and the task stays recorded as not performed in your progress.
+
+        **About Expo Go.** In Expo Go the camera permission belongs to Expo Go itself, so look for Expo Go in the system settings. After the lab, give the permission back if other projects need it.
+
+        **A target without a camera.** In Android Studio open the Device Manager, edit your virtual device and in its advanced settings set both cameras (Front and Back) to None — that is how the AVD settings describe it; the item names in your version may differ slightly. For the iOS simulator check yourself whether it has a camera, and write down what the lab shows.
+
+        File content for step 2 — replace the whole `App.tsx` with it (copy it exactly, **with its defects**):
+
+        **Step 2 — `App.tsx`:**
+
+        ```tsx
+        // App.tsx: seeded defects for RN-09 — a crash after a denial and a wait for a camera that cannot start.
+        import { useState } from 'react';
+        import { Pressable, StyleSheet, Text, View } from 'react-native';
+        import { CameraView, useCameraPermissions } from 'expo-camera';
+
+        export default function App() {
+          const [, requestPermission] = useCameraPermissions();
+          const [step, setStep] = useState<'start' | 'camera'>('start');
+          const [lens, setLens] = useState<{ label: string } | undefined>(undefined);
+          const [cameraReady, setCameraReady] = useState(false);
+
+          async function takePhoto() {
+            const result = await requestPermission();
+            setLens(result.granted ? { label: 'Back camera' } : undefined);
+            setStep('camera');
+          }
+
+          if (step === 'camera') {
+            return (
+              <View style={styles.screen}>
+                <Text style={styles.heading}>{lens!.label}</Text>
+                <CameraView style={styles.camera} facing="back" onCameraReady={() => setCameraReady(true)} />
+                <Text>{cameraReady ? 'The camera is ready.' : 'Starting the camera…'}</Text>
+              </View>
+            );
+          }
+
+          return (
+            <View style={styles.screen}>
+              <Text style={styles.heading}>Morning exercise — check-in</Text>
+              <Pressable accessibilityRole="button" style={styles.button} onPress={takePhoto}>
+                <Text style={styles.buttonText}>Take a progress photo</Text>
+              </Pressable>
+            </View>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, padding: 24, paddingTop: 64, gap: 12, backgroundColor: '#ffffff' },
+          heading: { fontSize: 18, fontWeight: '700' },
+          camera: { height: 240 },
+          button: { minHeight: 48, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1d4ed8', borderRadius: 6 },
+          buttonText: { color: '#ffffff', fontWeight: '600' },
+        });
+        ```
+
+        **Evidence.** Create `EVIDENCE.md` in the project root, and after every step marked “record” add one line to it: what you did and what you saw. The first line is the target: its type, OS version and the `expo` version from `package.json`.
+    tools:
+      - name: "Node.js"
+        version: "22.13 or newer"
+        note:
+          uk: "Мінімум для Expo SDK 57 за таблицею версій Expo."
+          en: "The minimum for Expo SDK 57 according to the Expo version table."
+      - name: "Expo SDK"
+        version: "57 (React Native 0.86)"
+        note:
+          uk: "`npx expo install` добирає версію `expo-camera`, сумісну з SDK проєкту."
+          en: "`npx expo install` picks the `expo-camera` version compatible with the project's SDK."
+      - name: "Declared target"
+        note:
+          uk: "Емулятор Android, симулятор iOS (лише macOS) чи фізичний пристрій з RN-01; для другої вади — ціль без камери."
+          en: "An Android emulator, an iOS simulator (macOS only) or a physical device from RN-01; for the second defect, a target without a camera."
+    steps:
+      - text:
+          uk: "Створи проєкт у теці курсу й перейди в нього."
+          en: "Create the project in your course folder and change into it."
+        command: "npx create-expo-app@latest rn-09-camera-lab --template blank-typescript"
+        expect:
+          uk: "З’явилася тека `rn-09-camera-lab` з `App.tsx` і `package.json`; у `package.json` залежність `expo` версії 57 або новішої."
+          en: "A `rn-09-camera-lab` folder appeared with `App.tsx` and `package.json`; `package.json` lists the `expo` dependency at version 57 or newer."
+      - text:
+          uk: "Встанови модуль камери через Expo, щоб версія збіглася з SDK. Потім заміни весь `App.tsx` файлом із кроку 2 угорі."
+          en: "Install the camera module through Expo so its version matches the SDK. Then replace the whole `App.tsx` with the step 2 file above."
+        command: "npx expo install expo-camera"
+        expect:
+          uk: "У `package.json` з’явилася залежність `expo-camera`."
+          en: "The `expo-camera` dependency appeared in `package.json`."
+      - text:
+          uk: "Зафіксуй початковий стан, щоб `git diff` потім показав рівно твої правки. Якщо шаблон не створив репозиторій, спершу виконай `git init`."
+          en: "Commit the starting state, so that `git diff` later shows exactly your repairs. If the template did not create a repository, run `git init` first."
+        command: "git add -A && git commit -m \"Start from the seeded RN-09 camera defects\""
+        expect:
+          uk: "Commit створено; `git status` показує чисте робоче дерево."
+          en: "The commit is created; `git status` shows a clean working tree."
+      - text:
+          uk: "Запусти dev-сервер і відкрий лабораторію на цілі з камерою так само, як у RN-01."
+          en: "Start the dev server and open the lab on a target with a camera the same way as in RN-01."
+        command: "npx expo start"
+        expect:
+          uk: "На цілі видно заголовок «Ранкова зарядка — відмітка» і кнопку «Зробити фото прогресу»."
+          en: "The target shows the heading “Morning exercise — check-in” and the “Take a progress photo” button."
+      - text:
+          uk: "Відтвори першу ваду: торкнися кнопки й відповідай у системному діалозі «Не дозволяти». Запиши, що бачиш. Якщо діалогу немає (дозвіл уже надавали раніше), забери дозвіл камери в Expo Go у системних налаштуваннях і спробуй знову."
+          en: "Reproduce the first defect: tap the button and answer “Don't allow” in the system dialog. Record what you see. If no dialog appears (the permission was granted before), take the camera permission away from Expo Go in the system settings and try again."
+        expect:
+          uk: "Найімовірніше, у режимі розробки — екран помилки з `TypeError` про `label` чи `undefined`. Запиши точний текст, який бачиш."
+          en: "Most likely, in development mode — an error screen with a `TypeError` about `label` or `undefined`. Record the exact text you see."
+      - text:
+          uk: "Відтвори другу ваду на цілі без камери (дивись угорі): дозволь доступ і почекай хвилину. Запиши, що показує екран."
+          en: "Reproduce the second defect on a target without a camera (see above): allow access and wait a minute. Record what the screen shows."
+        expect:
+          uk: "Найімовірніше, «Камера запускається…» не зникає. Якщо твоя ціль показує щось інше, запиши саме це."
+          en: "Most likely “Starting the camera…” never goes away. If your target shows something else, record exactly that."
+      - text:
+          uk: "Полагодь обидві вади так само, як у вправі цього уроку: розгалуж відповідь на дозволено / відмовлено з `canAskAgain` / заблоковано (кнопка «Відкрити налаштування» викликає `Linking.openSettings()` з `react-native`), додай до `CameraView` обробник `onMountError`, що веде на екран «Камера недоступна», і кнопку «Зберегти без фото» на кожному такому екрані. Якщо твоя ціль у кроці 6 не показала помилки взагалі, додай ще й таймер: якщо за 5 секунд не прийшло ні `onCameraReady`, ні `onMountError`, теж показуй екран «Камера недоступна»."
+          en: "Repair both defects the same way as in this lesson's exercise: branch the answer into granted / denied with `canAskAgain` / blocked (the “Open settings” button calls `Linking.openSettings()` from `react-native`), add an `onMountError` handler to `CameraView` that leads to a “camera unavailable” screen, and a “Save without a photo” button on every such screen. If your target showed no error at all in step 6, also add a timer: if neither `onCameraReady` nor `onMountError` arrives within 5 seconds, show the “camera unavailable” screen too."
+        expect:
+          uk: "Файл збережено, застосунок на цілі оновився (якщо ні — натисни `r` у терміналі Expo)."
+          en: "The file is saved, and the app on the target updated (if not, press `r` in the Expo terminal)."
+      - text:
+          uk: "Повтори обидва рецепти на тих самих цілях. Для першої вади відмов двічі: на Android після другої відмови має з’явитися «Відкрити налаштування»; на iOS — уже після першої. Торкнися «Відкрити налаштування» й переконайся, що відкрилися налаштування. Запиши все, що бачиш."
+          en: "Repeat both recipes on the same targets. For the first defect deny twice: on Android “Open settings” should appear after the second denial; on iOS already after the first. Tap “Open settings” and make sure the settings opened. Record everything you see."
+        expect:
+          uk: "Після відмови — пояснення й «Зберегти без фото» замість падіння; без камери — «Камера недоступна» замість безкінечного очікування."
+          en: "After a denial — an explanation and “Save without a photo” instead of a crash; without a camera — “camera unavailable” instead of an endless wait."
+      - text:
+          uk: "Подивись свої правки й зафіксуй їх разом зі свідченнями."
+          en: "Review your repairs and commit them together with the evidence."
+        command: "git diff && git add -A && git commit -m \"Handle camera denial and a camera that cannot start\""
+        expect:
+          uk: "`git diff` показує зміни лише в `App.tsx` і новий `EVIDENCE.md`."
+          en: "`git diff` shows changes only in `App.tsx` and the new `EVIDENCE.md`."
+    verify:
+      - id: target-recorded
+        text:
+          uk: "У `EVIDENCE.md` записано мою ціль (тип, версію ОС) і версію `expo` з `package.json`."
+          en: "`EVIDENCE.md` records my target (type, OS version) and the `expo` version from `package.json`."
+      - id: both-reproduced
+        text:
+          uk: "Я відтворив обидві вади на цілі й записав, що бачив, до будь-яких правок (або записав, що ціль поводилася інакше)."
+          en: "I reproduced both defects on the target and recorded what I saw before any edits (or recorded that the target behaved differently)."
+      - id: deny-fixed
+        text:
+          uk: "Після правки відмова на цілі показує пояснення й «Зберегти без фото», а заблокований дозвіл — «Відкрити налаштування», яка справді відкриває налаштування."
+          en: "After the repair a denial on the target shows an explanation and “Save without a photo”, and a blocked permission shows “Open settings”, which really opens the settings."
+      - id: no-camera-fixed
+        text:
+          uk: "Після правки на цілі без камери лабораторія показує «Камера недоступна» й дає зберегти відмітку без фото."
+          en: "After the repair, on a target without a camera the lab shows “camera unavailable” and lets me save the check-in without a photo."
+    troubleshooting:
+      - problem:
+          uk: "У тебе немає нативної цілі або її не вдається запустити."
+          en: "You have no native target, or it does not start."
+        fix:
+          uk: "Познач завдання як невиконане й переходь далі: вправа в перегляді вже перевірила логіку. Повернися сюди, коли налаштуєш ціль за RN-01."
+          en: "Mark the task not performed and move on: the preview exercise has already checked the logic. Come back here once you have set up a target following RN-01."
+      - problem:
+          uk: "Системний діалог не з’являється — застосунок одразу отримує дозвіл чи відмову."
+          en: "The system dialog does not appear — the app gets a grant or a denial at once."
+        fix:
+          uk: "Дозвіл камери для Expo Go вже вирішено раніше. Зміни його в системних налаштуваннях (застосунок Expo Go → дозволи → камера) і спробуй знову; запиши, що зробив."
+          en: "The camera permission for Expo Go was already decided earlier. Change it in the system settings (the Expo Go app → permissions → camera) and try again; record what you did."
+      - problem:
+          uk: "Ціль без камери однаково показує зображення з камери."
+          en: "The target without a camera still shows a camera picture."
+        fix:
+          uk: "Емулятор міг не підхопити змінені налаштування AVD: повністю зупини його й запусти знову. Якщо камера лишається, запиши це як свідчення й познач другу ваду як невідтворену на цій цілі."
+          en: "The emulator may not have picked up the changed AVD settings: stop it completely and start it again. If the camera stays, record that as evidence and mark the second defect as not reproduced on this target."
+    recovery:
+      uk: "Перший commit «Start from the seeded RN-09 camera defects» — твоя точка повернення: `git diff` показує все, що ти змінив відтоді, а `git restore App.tsx` повертає засіяний файл, якщо хочеш почати лагодити заново. Свідчення в `EVIDENCE.md` при цьому не зникають."
+      en: "The first commit, “Start from the seeded RN-09 camera defects”, is your return point: `git diff` shows everything you changed since, and `git restore App.tsx` brings back the seeded file if you want to start repairing again. The evidence in `EVIDENCE.md` is not lost by that."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-RN
+    body:
+      uk: "Твій проєкт камери не використовує, але звичка цього уроку переноситься прямо: на контрольній точці CP-RN кожну ваду, яку знайдеш у `native/`, спершу відтвори за точним рецептом і запиши, що бачиш на цілі, а вже потім лагодь — і назви ціль у записі."
+      en: "Your project does not use the camera, but this lesson's habit carries over directly: at the CP-RN checkpoint, reproduce every defect you find in `native/` with an exact recipe first and write down what you see on the target, and only then repair it — naming the target in the record."

@@ -1,0 +1,297 @@
+id: rn-09-02-no-embedded-secrets
+unit: RN-09
+title:
+  uk: "Жодних вшитих секретів"
+  en: "No embedded secrets"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Пояснити, чому будь-який ключ чи секрет, що потрапив у пакет застосунку чи JavaScript-bundle, треба вважати публічним."
+    en: "Explain why any key or secret shipped inside an app binary or JS bundle must be treated as public."
+  - uk: "Замінити вшитий синтетичний секрет API схемою, у якій застосунок знає лише публічний ідентифікатор, а короткоживучий токен отримує під час роботи."
+    en: "Replace an embedded synthetic API secret with a design where the app holds only a public identifier and a short-lived token obtained at runtime."
+prerequisites: [rn-09-01-secure-vs-ordinary-storage, js-16-08-secrets-storage-privacy]
+subskills:
+  - { family: N-07, skill: "no embedded secrets", depth: intro }
+glossary: [embedded-secret, public-client]
+selfCheck: [predict-unpack, config-review]
+
+blocks:
+  - id: package-is-public
+    kind: explanation
+    title:
+      uk: "Пакет застосунку — відкрита книжка"
+      en: "The app package is an open book"
+    body:
+      uk: |
+        Застосунок для фото надсилає з кожним запитом ключ фотосервісу `sk_lab_4f9e2b7c`. Після release-збірки здається, що ключ сховано: тепер це «скомпільований застосунок», а не текст.
+
+        Насправді застосунок на телефоні — це **архів**: `.apk` на Android, `.ipa` на iOS. Його можна дістати й розпакувати, як zip (на Android для цього досить кількох команд `adb`, для iOS є свої інструменти). Усередині — JavaScript-bundle, `Info.plist`, скомпільований код Android. А далі — звичайний пошук рядка по файлах.
+
+        Документація Expo прямо попереджає: змінні з префіксом `EXPO_PUBLIC_` вбудовуються в bundle і видні у зібраному застосунку відкритим текстом, тож приватним ключам там не місце. Документація React Native каже те саме про будь-який ключ у коді. Це той самий висновок, що й у JS-16 для вебу: [[embedded-secret|секрет, вшитий у пакет]], — уже не секрет.
+      en: |
+        A photo app sends the photo service's key `sk_lab_4f9e2b7c` with every request. After a release build it seems the key is hidden: it is a “compiled app” now, not text.
+
+        In fact an app on a phone is an **archive**: an `.apk` on Android, an `.ipa` on iOS. It can be pulled off and unpacked like a zip (on Android a few `adb` commands are enough; iOS has its own tools). Inside are the JavaScript bundle, `Info.plist` and the compiled Android code. After that it is an ordinary text search over the files.
+
+        The Expo documentation warns directly: variables prefixed with `EXPO_PUBLIC_` are inlined into the bundle and visible as plain text in the compiled app, so private keys do not belong there. The React Native documentation says the same about any key in the code. It is the same conclusion as in JS-16 for the web: a [[embedded-secret|secret embedded in the package]] is no longer a secret.
+
+  - id: predict-unpack
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "У конфігурації Expo є `EXPO_PUBLIC_PHOTO_SECRET: 'sk_lab_4f9e2b7c'`. Хтось розпакував release-пакет і шукає по всіх файлах рядок `sk_lab_4f9e2b7c`. Що він знайде — і що зміниться, якщо перенести ключ із `EXPO_PUBLIC_` в `Info.plist` чи в поле Android `BuildConfig` з Gradle?"
+      en: "An Expo configuration has `EXPO_PUBLIC_PHOTO_SECRET: 'sk_lab_4f9e2b7c'`. Someone unpacked the release package and searches all its files for the string `sk_lab_4f9e2b7c`. What do they find — and what changes if the key moves from `EXPO_PUBLIC_` into `Info.plist` or into an Android `BuildConfig` field from Gradle?"
+    answer:
+      type: choice
+      options:
+        - id: found-everywhere
+          text:
+            uk: "Знайде в bundle, а після перенесення — в `Info.plist` чи в скомпільованому коді Android: усе це частини того самого пакета"
+            en: "They find it in the bundle, and after the move in `Info.plist` or in the compiled Android code: all of these are parts of the same package"
+        - id: binary-hides
+          text:
+            uk: "Нічого: release-збірка компілює застосунок у бінарний файл, і рядків там не прочитати"
+            en: "Nothing: a release build compiles the app into a binary, and strings cannot be read there"
+          why:
+            uk: "Компіляція перекладає код, але текст у лапках лишається текстом: йому треба дожити до запуску, щоб застосунок міг його надіслати. Пошук рядка знаходить його і в bundle, і в скомпільованому коді."
+            en: "Compilation translates code, but text in quotes stays text: it has to survive until runtime so the app can send it. A string search finds it in the bundle and in compiled code alike."
+        - id: native-hides
+          text:
+            uk: "У bundle знайде, а після перенесення в `Info.plist` чи Gradle — ні: нативна конфігурація не в JavaScript"
+            en: "They find it in the bundle, but not after the move into `Info.plist` or Gradle: native configuration is not JavaScript"
+          why:
+            uk: "`Info.plist` — файл усередині `.ipa`, а значення з Gradle стають константами в коді Android усередині `.apk`. Перенесення змінює лише файл, у якому шукати."
+            en: "`Info.plist` is a file inside the `.ipa`, and values from Gradle become constants in the Android code inside the `.apk`. The move only changes which file to search."
+        - id: minified
+          text:
+            uk: "Нічого: release-bundle мініфіковано"
+            en: "Nothing: the release bundle is minified"
+          why:
+            uk: "Як і в JS-16, мініфікація скорочує назви змінних, а текст у лапках лишає як є."
+            en: "As in JS-16, minification shortens variable names and leaves text in quotes as it is."
+      correct: [found-everywhere]
+    explanation:
+      uk: "Усе, що потрібно застосунку під час роботи, лежить у його пакеті, а пакет є в кожного, хто встановив застосунок. Місце всередині пакета нічого не змінює: пошук рядка знаходить ключ і в bundle, і в `Info.plist`, і в коді Android."
+      en: "Everything the app needs at runtime lies in its package, and everyone who installed the app has the package. Where exactly inside the package changes nothing: a string search finds the key in the bundle, in `Info.plist` and in the Android code alike."
+
+  - id: unpack-search
+    kind: example
+    runtime: browser-js
+    dir: unpack-search
+    entry: index.js
+    title:
+      uk: "Розпакуй і пошукай"
+      en: "Unpack and search"
+    body:
+      uk: |
+        `build.js` імітує release-збірку: каже, **куди** потрапляє кожне значення з `app.config.js` — у bundle, в `Info.plist` чи в константу Android. `index.js` збирає обидва пакети й шукає в них рядок ключа, як людина, що розпакувала застосунок. `server.js` — mock-сервіс, який працює на комп’ютері й у пакет не потрапляє.
+
+        Натисни **Запустити**: ключ знайдено в обох bundle — для Android і для iOS.
+      en: |
+        `build.js` imitates a release build: it shows **where** each value from `app.config.js` ends up — in the bundle, in `Info.plist` or in an Android constant. `index.js` builds both packages and searches them for the key's string, like a person who unpacked the app. `server.js` is the mock service, which runs on a computer and is not part of any package.
+
+        Press **Run**: the key is found in both bundles — for Android and for iOS.
+    tryIt:
+      uk: |
+        1. У `app.config.js` перенеси ключ із `env` в `ios.infoPlist` як `PhotoSecret: 'sk_lab_4f9e2b7c'`. Запусти: тепер ключ знайдено в `Info.plist`.
+        2. Перенеси його з `infoPlist` в `android.buildConfigFields` як `PHOTO_SECRET: 'sk_lab_4f9e2b7c'`. Запусти: знайдено в коді Android.
+        3. Прибери ключ з `app.config.js` зовсім, допиши в `serverEnv` у `server.js` рядок `PHOTO_SECRET: 'sk_lab_4f9e2b7c',`, а в `env` додай `EXPO_PUBLIC_TOKEN_URL: 'https://photos.lab.example/token'`. Запусти: ключа немає в жодному пакеті. Застосунок тепер знає лише адресу, де отримати токен, а секрет живе на сервері.
+      en: |
+        1. In `app.config.js` move the key from `env` into `ios.infoPlist` as `PhotoSecret: 'sk_lab_4f9e2b7c'`. Run: the key is now found in `Info.plist`.
+        2. Move it from `infoPlist` into `android.buildConfigFields` as `PHOTO_SECRET: 'sk_lab_4f9e2b7c'`. Run: found in the Android code.
+        3. Remove the key from `app.config.js` entirely, add the line `PHOTO_SECRET: 'sk_lab_4f9e2b7c',` to `serverEnv` in `server.js`, and add `EXPO_PUBLIC_TOKEN_URL: 'https://photos.lab.example/token'` to `env`. Run: the key is in neither package. The app now knows only the address where it gets a token, and the secret lives on the server.
+
+  - id: three-kinds
+    kind: explanation
+    title:
+      uk: "Ідентифікатор, токен, секрет"
+      en: "Identifier, token, secret"
+    body:
+      uk: |
+        Кожне значення в конфігурації належить до одного з трьох видів:
+
+        | Вид | Приклад | Де живе |
+        |---|---|---|
+        | Публічний ідентифікатор | адреса сервера, `clientId` | у конфігурації застосунку |
+        | Токен, отриманий під час роботи | токен доступу після входу | у захищеному сховищі (урок 1) |
+        | Секрет сервера | ключ сервісу, `clientSecret` | лише в середовищі сервера |
+
+        Ідентифікатор лише **називає**: знаючи адресу чи `clientId`, нікуди не ввійдеш. Тому застосунок — [[public-client|публічний клієнт]]: він не вдає, що тримає секрет. Токен **дає доступ**, але належить одній людині, живе хвилини й його можна відкликати — витік одного токена не відкриває весь сервіс. Секрет дає доступ **усім і назавжди**, тому з’являється лише на сервері: той перевіряє людину й видає їй токен.
+
+        Пастка: «покладу ключ у захищене сховище під час першого запуску». Щоб скопіювати ключ при запуску, він мусить уже бути в пакеті, — а отже, він уже публічний.
+      en: |
+        Every value in a configuration is one of three kinds:
+
+        | Kind | Example | Where it lives |
+        |---|---|---|
+        | Public identifier | a server address, `clientId` | in the app configuration |
+        | Token obtained at runtime | an access token after sign-in | in secure storage (lesson 1) |
+        | Server secret | a service key, `clientSecret` | only in the server's environment |
+
+        An identifier only **names**: knowing an address or a `clientId` gets you in nowhere. That is why the app is a [[public-client|public client]]: it does not pretend to hold a secret. A token **grants access**, but it belongs to one person, lives for minutes and can be revoked — one leaked token does not open the whole service. A secret grants access **to everyone, forever**, so it appears only on the server: the server checks the person and gives them a token.
+
+        A trap: “I will put the key into secure storage on first launch.” To copy the key at launch, it must already be in the package — so it is already public.
+
+  - id: predict-first-launch
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Розробник прибрав `EXPO_PUBLIC_PHOTO_SECRET` і зробив інакше: ключ записано в окремий файл `keys.ts`, а під час першого запуску застосунок копіює його в `expo-secure-store` і більше з `keys.ts` не читає. Чи став ключ секретом?"
+      en: "A developer removed `EXPO_PUBLIC_PHOTO_SECRET` and did it differently: the key is written in a separate file `keys.ts`, and on first launch the app copies it into `expo-secure-store` and never reads `keys.ts` again. Has the key become a secret?"
+    answer:
+      type: choice
+      options:
+        - id: still-public
+          text:
+            uk: "Ні: `keys.ts` потрапляє в bundle, тож ключ лежить у пакеті кожного встановленого застосунку"
+            en: "No: `keys.ts` goes into the bundle, so the key lies in the package of every installed app"
+        - id: secret-now
+          text:
+            uk: "Так: після першого запуску ключ лежить у Keychain/Keystore"
+            en: "Yes: after the first launch the key lies in the Keychain/Keystore"
+          why:
+            uk: "Копія в захищеному сховищі справді захищена, але оригінал лишився в bundle. Пошук рядка по пакету знаходить його так само, як раніше."
+            en: "The copy in secure storage is indeed protected, but the original stayed in the bundle. A string search over the package finds it just as before."
+        - id: separate-file
+          text:
+            uk: "Так: окремий файл `.ts` не входить у збірку, якщо його не імпортують у `App.tsx`"
+            en: "Yes: a separate `.ts` file is not part of the build unless `App.tsx` imports it"
+          why:
+            uk: "Застосунок імпортує `keys.ts`, щоб скопіювати ключ, — інакше копіювати не було б що. Усе, що імпортовано, збирається в bundle."
+            en: "The app imports `keys.ts` to copy the key — otherwise there would be nothing to copy. Everything imported is built into the bundle."
+      correct: [still-public]
+    explanation:
+      uk: "Захищене сховище береже значення, які з’явилися на телефоні **під час роботи** — наприклад, токен від сервера після входу. Значення, яке приїхало в пакеті, уже публічне, хоч куди його потім скопіювати."
+      en: "Secure storage guards values that appeared on the phone **at runtime** — for example a token from the server after sign-in. A value that arrived in the package is already public, wherever it is copied afterwards."
+
+  - id: recall-bundle
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: who-reads-the-bundle
+        from: js-16-08-secrets-storage-privacy
+        prompt:
+          uk: "Вебсторінка будує адресу `https://rates.example/latest?key=${RATES_API_KEY}`, а значення ключа збирач вписує з `.env` під час `npm run build`. Хто може дізнатися ключ?"
+          en: "A web page builds the address `https://rates.example/latest?key=${RATES_API_KEY}`, and the bundler writes the key's value in from `.env` during `npm run build`. Who can find out the key?"
+        answer:
+          type: choice
+          options:
+            - id: every-visitor
+              text:
+                uk: "Кожен відвідувач: значення стало текстом у файлі, який браузер завантажує"
+                en: "Every visitor: the value became text in a file that the browser downloads"
+            - id: only-dev
+              text:
+                uk: "Лише розробник: `.env` лишився на його комп’ютері"
+                en: "Only the developer: `.env` stayed on their computer"
+              why:
+                uk: "Файл лишився, а його **значення** під час збірки стало частиною bundle — того, що отримує кожен відвідувач."
+                en: "The file stayed, but its **value** became part of the bundle during the build — the thing every visitor gets."
+            - id: with-source-maps
+              text:
+                uk: "Лише той, хто має source map"
+                en: "Only someone with the source map"
+              why:
+                uk: "Ключ лежить у самому bundle; source map для цього не потрібен."
+                en: "The key lies in the bundle itself; no source map is needed for that."
+          correct: [every-visitor]
+        explanation:
+          uk: "Те, що читає клієнтський код, отримує кожен клієнт. Для нативного застосунку «відвідувач» — кожен, хто його встановив, а «завантажений файл» — пакет `.apk` чи `.ipa`."
+          en: "Whatever client code reads, every client gets. For a native app the “visitor” is everyone who installed it, and the “downloaded file” is the `.apk` or `.ipa` package."
+
+  - id: config-review
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: config-review
+    entry: index.js
+    editable: [review.js]
+    title:
+      uk: "Нотатка рецензента для конфігурації"
+      en: "A reviewer's note for a configuration"
+    instructions:
+      uk: |
+        `labConfig.js` — усі значення, з якими працює лабораторія фото, разом із тим, що про кожне каже його документація (`about`). Ти рецензуєш цю конфігурацію перед release.
+
+        Заповни в `review.js` нотатку для **кожного** з восьми значень:
+
+        - `kind` — `'public-identifier'`, `'runtime-token'` або `'server-secret'`;
+        - `livesIn` — де значення має жити: публічний ідентифікатор — `'app-config'`, токен — `'secure-storage'`, секрет — `'server'`;
+        - `reason` — одне речення своїми словами (щонайменше 15 символів): чому цей вид і чому саме там.
+
+        Читай `about`, а не назву: важить, що значення **дає** тому, хто його має. `labConfig.js` і `index.js` редагувати не можна. Демо друкує твою нотатку й те, що потрапило б у пакет.
+      en: |
+        `labConfig.js` holds every value the photo lab works with, together with what its documentation says about it (`about`). You are reviewing this configuration before a release.
+
+        Fill in a note in `review.js` for **each** of the eight values:
+
+        - `kind` — `'public-identifier'`, `'runtime-token'` or `'server-secret'`;
+        - `livesIn` — where the value must live: a public identifier in `'app-config'`, a token in `'secure-storage'`, a secret on the `'server'`;
+        - `reason` — one sentence in your own words (at least 15 characters): why this kind, and why there.
+
+        Read `about`, not the name: what matters is what the value **gives** whoever holds it. `labConfig.js` and `index.js` cannot be edited. The demo prints your note and what would end up in the package.
+    testTitles:
+      "every config entry is reviewed exactly once":
+        uk: "Кожне значення конфігурації має рівно одну нотатку"
+        en: "Every config entry is reviewed exactly once"
+      "every note has a kind, a place and a reason":
+        uk: "Кожна нотатка має вид, місце й пояснення"
+        en: "Every note has a kind, a place and a reason"
+      "each kind lives in its own place":
+        uk: "Кожен вид живе у своєму місці"
+        en: "Each kind lives in its own place"
+      "the addresses and the client id are public identifiers":
+        uk: "Адреси й `clientId` — публічні ідентифікатори"
+        en: "The addresses and the `clientId` are public identifiers"
+      "the tokens that arrive after sign-in are runtime tokens":
+        uk: "Токени, що приходять після входу, — токени часу роботи"
+        en: "The tokens that arrive after sign-in are runtime tokens"
+      "the client secret, the push key and the webhook secret stay on the server":
+        uk: "`clientSecret`, ключ сповіщень і секрет вебхуків лишаються на сервері"
+        en: "The `clientSecret`, the push key and the webhook secret stay on the server"
+    hints:
+      nudge:
+        uk: "Для кожного значення спитай: що зможе зробити незнайомець, у якого є лише це значення? Нічого — ідентифікатор. Діяти від імені однієї людини якийсь час — токен. Діяти від імені сервісу чи всіх користувачів — секрет."
+        en: "For each value ask: what could a stranger do who has only this value? Nothing — an identifier. Act as one person for a while — a token. Act as the service or as every user — a secret."
+      explanation:
+        uk: "Значення `null` у конфігурації означає, що його ще немає під час збірки, — воно приходить, коли застосунок працює. Документація, яка просить тримати значення «конфіденційним», відповідає на питання за тебе. Значення, що дозволяє щось робити з **усіма** користувачами чи підробляти повідомлення **серверу**, ніколи не потрапляє в пакет, навіть якщо застосунок «пов’язаний» із цією функцією: наприклад, застосунок банку показує баланс, але ключ, яким банк підписує перекази, у застосунку не лежить."
+        en: "A `null` value in the configuration means it does not exist yet at build time — it arrives while the app runs. Documentation that asks to keep a value “confidential” answers the question for you. A value that lets someone do something to **every** user or forge messages to the **server** never goes into the package, even if the app is “related” to that feature: a bank's app shows the balance, for example, but the key the bank signs transfers with is not in the app."
+    solutionNote:
+      uk: "Три адреси й `clientId` лише називають — вони в конфігурації застосунку, і демо показує, що в пакет потрапляють тільки вони. Обидва токени з’являються після входу, належать одній людині й мають пережити перезапуск — тому захищене сховище. `clientSecret`, ключ сповіщень і секрет вебхуків дають владу над сервісом чи над усіма користувачами — тож лише сервер. Застосунок працює як публічний клієнт: свою людину він доводить токеном, а не ключем."
+      en: "The three addresses and the `clientId` only name things — they live in the app configuration, and the demo shows that only they end up in the package. Both tokens appear after sign-in, belong to one person and must survive a restart — hence secure storage. The `clientSecret`, the push key and the webhook secret give power over the service or over every user — so only the server. The app works as a public client: it proves its person with a token, not with a key."
+    feedback:
+      - when: { test: "every config entry is reviewed exactly once" }
+        message:
+          uk: "Ця перевірка очікує в `review` рівно ті вісім назв, що є в `labConfig.js`, — не більше й не менше."
+          en: "This check expects exactly the eight names of `labConfig.js` in `review` — no more and no fewer."
+      - when: { test: "every note has a kind, a place and a reason" }
+        message:
+          uk: "Ця перевірка очікує в кожній нотатці `kind` з трьох дозволених значень, `livesIn` з трьох дозволених місць і `reason` щонайменше з 15 символів. Перевір написання: `'public-identifier'`, `'runtime-token'`, `'server-secret'`, `'app-config'`, `'secure-storage'`, `'server'`."
+          en: "This check expects every note to have a `kind` from the three allowed values, a `livesIn` from the three allowed places and a `reason` of at least 15 characters. Check the spelling: `'public-identifier'`, `'runtime-token'`, `'server-secret'`, `'app-config'`, `'secure-storage'`, `'server'`."
+      - when: { test: "each kind lives in its own place" }
+        message:
+          uk: "Ця перевірка очікує, що публічний ідентифікатор живе в `'app-config'`, токен — у `'secure-storage'`, а секрет — на `'server'`. Токен у конфігурації застосунку опинився б у пакеті."
+          en: "This check expects a public identifier to live in `'app-config'`, a token in `'secure-storage'` and a secret on the `'server'`. A token in the app configuration would end up in the package."
+      - when: { test: "the addresses and the client id are public identifiers" }
+        message:
+          uk: "Ця перевірка очікує `'public-identifier'` для `authIssuer`, `clientId` і `photoUploadUrl`: знаючи їх, ніхто нікуди не ввійде."
+          en: "This check expects `'public-identifier'` for `authIssuer`, `clientId` and `photoUploadUrl`: knowing them gets nobody in anywhere."
+      - when: { test: "the tokens that arrive after sign-in are runtime tokens" }
+        message:
+          uk: "Ця перевірка очікує `'runtime-token'` для `accessToken` і `refreshToken`: під час збірки їх ще немає, вони приходять після входу людини."
+          en: "This check expects `'runtime-token'` for `accessToken` and `refreshToken`: they do not exist at build time, they arrive after the person signs in."
+      - when: { test: "the client secret, the push key and the webhook secret stay on the server" }
+        message:
+          uk: "Ця перевірка очікує `'server-secret'` для `clientSecret`, `pushServerKey` і `webhookSigningSecret`. Кожен із них дає владу над сервісом чи над усіма користувачами — те, що компіляція не ховає."
+          en: "This check expects `'server-secret'` for `clientSecret`, `pushServerKey` and `webhookSigningSecret`. Each gives power over the service or over every user — something compilation does not hide."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-RN
+    body:
+      uk: "Mock-сервіс твого проєкту з RN-06 відповідає без жодного ключа, тож конфігурація `native/` знає про сервер лише його адресу — публічне значення. На контрольній точці CP-RN перевір це пошуком: у конфігурації й коді проєкту немає ні змінних `EXPO_PUBLIC_` з ключами, ні рядків, схожих на ключ."
+      en: "Your project's mock service from RN-06 answers without any key, so the `native/` configuration knows only the server's address — a public value. At the CP-RN checkpoint check it with a search: the project's configuration and code hold no `EXPO_PUBLIC_` variables with keys and no strings that look like a key."
