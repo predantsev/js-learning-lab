@@ -22,6 +22,8 @@ content/
     <exercise-dir>/tests.js       behavior tests
 ```
 
+Block folders hold text files only; the loader reads `.js .mjs .cjs .jsx .ts .tsx .json .html .css .md .txt .sql .yaml .yml .svg .csv .xml .env .gitignore` and files without an extension, and silently skips anything else. A configuration file that the learner edits as a file (an Android `network_security_config.xml`) is a real `.xml` file in the block, not a JavaScript string: the editor highlights it, `fetch("./res/xml/…")` answers it as `application/xml`, and project files may be `.xml` too.
+
 Names that the repository's `.gitignore` drops (`dist/`, `build/`, `coverage/`, `.env`, `.env.*`, `*.log`) work while you author but are never committed; the validator warns about them — name such folders differently (`dist-demo/`, `sample.env.txt`). The directory name equals the lesson id. Ids are stable: never rename a published lesson or block id (add a redirect in `content/redirects.yaml` instead).
 
 ## Commands

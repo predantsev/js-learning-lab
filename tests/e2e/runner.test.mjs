@@ -172,6 +172,8 @@ test('network is denied by default and limited to lab fixtures when enabled', as
 test('project files are served to fetch() without any network', async () => {
   const r = await run({ files: { 'index.js': 'const r = await fetch("./data/items.json"); console.log(r.status, (await r.json()).length);\nconst missing = await fetch("./nope.json"); console.log(missing.status);', 'data/items.json': '[1,2]' } });
   assert.deepEqual(logs(r), ['200 2', '404']);
+  const xml = await run({ files: { 'index.js': 'const r = await fetch("./res/xml/config.xml"); const doc = new DOMParser().parseFromString(await r.text(), "application/xml"); console.log(r.headers.get("content-type"), doc.documentElement.tagName);', 'res/xml/config.xml': '<?xml version="1.0" encoding="utf-8"?>\n<network-security-config/>\n' } });
+  assert.deepEqual(logs(xml), ['application/xml; charset=utf-8 network-security-config']);
 });
 
 test('learner code cannot reach the platform page, its storage or the API', async () => {

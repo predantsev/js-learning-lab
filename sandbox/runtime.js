@@ -430,7 +430,7 @@
   // ---------- network policy ----------
   function installNetwork() {
     const files = run.files;
-    const mime = (p) => (p.endsWith('.json') ? 'application/json' : p.endsWith('.html') ? 'text/html' : p.endsWith('.css') ? 'text/css' : /\.(m?js|jsx|ts|tsx)$/.test(p) ? 'text/javascript' : 'text/plain');
+    const mime = (p) => (p.endsWith('.json') ? 'application/json' : p.endsWith('.html') ? 'text/html' : p.endsWith('.css') ? 'text/css' : p.endsWith('.xml') ? 'application/xml' : /\.(m?js|jsx|ts|tsx)$/.test(p) ? 'text/javascript' : 'text/plain');
     window.fetch = (input, init) => trackFetch(policyFetch(input, init));
     const policyFetch = (input, init) => {
       let url;

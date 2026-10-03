@@ -20,7 +20,7 @@ export const CONTENT_DIR = process.env.JSLL_CONTENT_ROOT ? path.resolve(process.
 const INLINE_KEYS = new Set(['title', 'text', 'why', 'label', 'name', 'problem', 'note', 'objectives']);
 const PLAIN_KEYS = new Set(['title', 'name', 'placeholder', 'version']);
 const RAW_KEYS = new Set(['strings', 'spec']);
-const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.env', '.gitignore', '']);
+const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.xml', '.env', '.gitignore', '']);
 
 const exists = (p) => fs.access(p).then(() => true, () => false);
 const readYaml = async (file) => YAML.parse(await fs.readFile(file, 'utf8'));
