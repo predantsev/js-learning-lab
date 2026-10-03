@@ -56,6 +56,8 @@ export function createOs({ platform, hasCamera }) {
         status = 'granted';
         notifyPanel();
       },
+      // The lab's own choice: a revoke reads as blocked (canAskAgain: false). The cited documentation does not say
+      // what canAskAgain a real device reports after a revoke; check it on your target.
       settingsRevoke() {
         status = 'denied';
         canAskAgain = false;

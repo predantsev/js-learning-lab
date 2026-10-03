@@ -1,4 +1,7 @@
-import { capabilityReducer, initialCapabilityState, uiModeOf } from './capability.ts';
+import { capabilityReducer, uiModeOf } from './capability.ts';
+
+// A fresh start for every check: the demo in index.js may already have changed the exported initialCapabilityState.
+const start = () => ({ hasCamera: null, permission: null, requesting: false });
 
 const UNDETERMINED = { status: 'undetermined', canAskAgain: true };
 const DENIED = { status: 'denied', canAskAgain: true };
@@ -7,7 +10,7 @@ const GRANTED = { status: 'granted', canAskAgain: true };
 
 // Plays events from the initial state and returns the final state.
 function play(...events) {
-  return events.reduce((state, event) => capabilityReducer(state, event), initialCapabilityState);
+  return events.reduce((state, event) => capabilityReducer(state, event), start());
 }
 const camera = (hasCamera) => ({ type: 'capability-checked', hasCamera });
 const read = (permission) => ({ type: 'permission-read', permission });
@@ -21,7 +24,7 @@ const guard = () => {
 
 test('nothing checked yet is checking', () => {
   guard();
-  expect(uiModeOf(initialCapabilityState), 'the initial state').toBe('checking');
+  expect(uiModeOf(start()), 'the initial state').toBe('checking');
   expect(uiModeOf(play(camera(true))), 'camera checked, permission not read').toBe('checking');
 });
 
