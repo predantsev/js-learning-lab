@@ -73,6 +73,37 @@ test("a failed delete brings the expense and the totals back and says which one 
   expect(totals(), "the totals after the failure").toBe(before);
 });
 
+test("a failed load shows the error, and the retry button loads the list", async () => {
+  resetApi(START);
+  settings.failNextRead = 2; // the list and the summary both ask first
+  render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+
+  const retry = await screen.findByRole("button", { name: "%%retryLoadLabel%%" });
+  expect(screen.queryAllByRole("status").some((line) => line.textContent?.includes("%%listLoadFailedMessage%%")), "the error in a status line").toBe(true);
+  await user.click(retry);
+  await screen.findByText("%%fixture1Name%%");
+});
+
+test("after three failed retries the retry button is gone", async () => {
+  resetApi(START);
+  settings.failNextRead = 100;
+  render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await user.click(await screen.findByRole("button", { name: "%%retryLoadLabel%%" }));
+  }
+  await screen.findByText("%%noMoreRetriesMessage%%");
+  expect(screen.queryByRole("button", { name: "%%retryLoadLabel%%" }), "the retry button").toBe(null);
+});
+
 test("a quick filter change aborts the older request and shows the last filter", async () => {
   showApp();
   await screen.findByText("%%fixture1Name%%");

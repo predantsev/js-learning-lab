@@ -102,7 +102,8 @@ export function useItemsList(filter: ListFilter): ListQuery {
   }, [key, cache.version, attempt]);
 
   const items = cache.entries[key] ?? null;
-  const retriesLeft = MAX_RETRIES - request.failures;
+  // The first failure is not a retry: after it the button may be pressed MAX_RETRIES times.
+  const retriesLeft = MAX_RETRIES + 1 - request.failures;
   let status: ListQuery["status"] = "ready";
   if (request.pending) {
     status = items === null ? "loading" : "refreshing";
