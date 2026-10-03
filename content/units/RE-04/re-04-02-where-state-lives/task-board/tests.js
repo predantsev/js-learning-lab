@@ -68,12 +68,14 @@ test('typing a note re-renders only NotePad', async () => {
   } finally { copy.finish(); }
 });
 
-test('expanding a task re-renders only TaskList', async () => {
+// A row component that keeps its own expanded flag is even lower and also fine, so only the
+// components outside the list are counted here; the first check proves that expanding works.
+test('expanding a task re-renders nothing outside the list', async () => {
   const copy = await mount();
   try {
     const before = counts();
     await user.click(taskButton(copy.host, L.plants));
-    expect(delta(before, 'TaskList'), 'TaskList renders after expanding').toBeGreaterThan(0);
+    expect(taskButton(copy.host, L.plants), 'the expanded task button').toHaveAttribute('aria-expanded', 'true');
     for (const name of ['App', 'Toolbar', 'Summary', 'NotePad']) expect(delta(before, name), `${name} renders after expanding a task`).toBe(0);
   } finally { copy.finish(); }
 });
