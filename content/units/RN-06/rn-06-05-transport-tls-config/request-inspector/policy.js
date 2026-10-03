@@ -15,13 +15,13 @@ export function androidAllows(url, build) {
   return manifest.usesCleartextTraffic === true;
 }
 
-// iOS App Transport Security: IP addresses are not subject to it (iOS 10+, per Apple's developer forums),
-// unqualified names such as localhost and *.local are allowed by NSAllowsLocalNetworking,
-// any other name needs HTTPS unless NSAllowsArbitraryLoads is on.
+// iOS App Transport Security, per Apple's NSAllowsLocalNetworking documentation: unqualified names
+// such as localhost, *.local names and IP addresses are allowed by NSAllowsLocalNetworking (since iOS 17
+// IP addresses are no longer allowed without it); any other name needs HTTPS unless NSAllowsArbitraryLoads is on.
 export function iosAllows(url) {
   const { protocol, hostname } = new URL(url);
   if (protocol === 'https:') return true;
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return true;
-  if (!hostname.includes('.') || hostname.endsWith('.local')) return template.ios.NSAllowsLocalNetworking;
+  const isIpAddress = /^\d+\.\d+\.\d+\.\d+$/.test(hostname);
+  if (isIpAddress || !hostname.includes('.') || hostname.endsWith('.local')) return template.ios.NSAllowsLocalNetworking;
   return template.ios.NSAllowsArbitraryLoads;
 }

@@ -31,7 +31,7 @@ function ExpensesScreen() {
       const records = await loadExpenses();
       setState({ records, loadedAt: Date.now(), problem: null, busy: false });
     } catch (error) {
-      // On any failure: clear the list.
+      // On any failure: clear the list. (Is that what the person needs?)
       setState({ records: [], loadedAt: null, problem: error.kind, busy: false });
     }
   }
