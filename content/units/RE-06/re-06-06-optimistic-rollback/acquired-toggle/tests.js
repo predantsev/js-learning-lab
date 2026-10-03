@@ -42,6 +42,18 @@ test('a successful toggle stays and announces nothing', async () => {
   } finally { copy.finish(); }
 });
 
+test('a successful toggle after a failure clears the message', async () => {
+  const copy = await mount(1);
+  try {
+    await user.click(box(copy.host, L.headphones));
+    await answered();
+    await user.click(box(copy.host, L.lamp));
+    await answered();
+    expect(box(copy.host, L.lamp).checked, 'the lamp checkbox after its change succeeded').toBe(true);
+    expect(statusText(copy.host), 'the role="status" text after a failed toggle and then a successful one').toBe('');
+  } finally { copy.finish(); }
+});
+
 test('a failed toggle puts the wish back', async () => {
   const copy = await mount(1);
   try {
