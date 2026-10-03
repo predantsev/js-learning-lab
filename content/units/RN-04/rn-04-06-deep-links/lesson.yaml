@@ -1,0 +1,354 @@
+id: rn-04-06-deep-links
+unit: RN-04
+title:
+  uk: "Deep links і перевірка параметрів"
+  en: "Deep links and parameter validation"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Простежити синтетичний deep link на власній схемі від операційної системи до екрана — і під час холодного старту, і коли застосунок уже працює."
+    en: "Trace a synthetic deep link on a custom scheme from the operating system to a screen, both on a cold start and while the app is already running."
+  - uk: "Розбирати й перевіряти параметри посилання як неперевірені вхідні дані до переходу, а для невідомого чи зіпсованого id відкривати безпечний екран."
+    en: "Parse and validate link params as untrusted input before navigating, falling back to a safe screen for an unknown or malformed id."
+prerequisites: [rn-04-05-subscription-cleanup, js-16-01-url-query-encoding]
+subskills:
+  - { family: N-03, skill: "deep links", depth: intro }
+glossary: [deep-link, custom-url-scheme, cold-start]
+selfCheck: [predict-link-stack, task-link-parser]
+
+blocks:
+  - id: links-into-the-app
+    kind: explanation
+    title:
+      uk: "Посилання, що відкриває екран усередині застосунку"
+      en: "A link that opens a screen inside the app"
+    body:
+      uk: |
+        [[deep-link|Deep link]] — це адреса, яка відкриває не сайт, а конкретний екран застосунку: `courselab://task/t-02` — деталі справи `t-02`. Початок `courselab:` — [[custom-url-scheme|власна схема]] застосунку: у проєкті Expo її задають у `app.json` (`"scheme": "courselab"`), і система знає, що такі адреси відкриває саме він.
+
+        До коду посилання доходить двома шляхами, і обробити треба обидва:
+
+        - **застосунок закрито** — посилання запускає його. Це [[cold-start|холодний старт]]: подію ніхто ще не слухає, тож адресу читають з `Linking.getInitialURL()` (проміс з адресою або `null`);
+        - **застосунок працює** — посилання приходить подією: `Linking.addEventListener('url', ({ url }) => …)`. Це підписка, тож її знімають у cleanup.
+
+        А далі головне: **посилання приходить ззовні**. Його може надіслати будь-хто, зібрати вручну чи зіпсувати при копіюванні. Тому, перш ніж кудись переходити, його розбирають і перевіряють: схема, місце, id за правилом домену. Що не пройшло перевірку — відкриває безпечний екран «не знайдено», а не падає.
+      en: |
+        A [[deep-link]] is an address that opens not a website but a specific screen of an app: `courselab://task/t-02` — the details of task `t-02`. The beginning `courselab:` is the app's [[custom-url-scheme]]: in an Expo project it is set in `app.json` (`"scheme": "courselab"`), and the system knows that this app opens such addresses.
+
+        A link reaches the code in two ways, and both have to be handled:
+
+        - **the app is closed** — the link starts it. This is a [[cold-start]]: nobody is listening for events yet, so the address is read with `Linking.getInitialURL()` (a promise of the address or `null`);
+        - **the app is running** — the link arrives as an event: `Linking.addEventListener('url', ({ url }) => …)`. That is a subscription, so it is removed in the cleanup.
+
+        And then the main thing: **the link comes from outside**. Anyone can send it, build it by hand or break it while copying. So before going anywhere, it is parsed and checked: the scheme, the place, the id by the domain's rule. Whatever fails the check opens a safe “not found” screen instead of crashing.
+
+  - id: predict-url-parts
+    kind: prediction
+    prompt:
+      uk: "Що виведуть ці чотири виклики `console.log`?"
+      en: "What do these four `console.log` calls print?"
+    code: |
+      const link = new URL('courselab://task/t%2D05?utm=share');
+      console.log(link.protocol);
+      console.log(link.host);
+      console.log(link.pathname);
+      console.log(link.searchParams.get('utm'));
+    verify: { logs: ["courselab:", "task", "/t%2D05", "share"] }
+    answer:
+      type: choice
+      options:
+        - id: right
+          code: "courselab:\ntask\n/t%2D05\nshare"
+        - id: decoded
+          code: "courselab:\ntask\n/t-05\nshare"
+          why:
+            uk: "`URL` розбирає адресу на частини, але шлях не декодує: `%2D` лишається як є. Декодувати — твоя робота (`decodeURIComponent`), і вона може кинути помилку на зіпсованому кодуванні."
+            en: "`URL` splits the address into parts but does not decode the path: `%2D` stays as it is. Decoding is your job (`decodeURIComponent`), and it can throw on broken encoding."
+        - id: no-host
+          code: "courselab:\n\n/task/t%2D05\nshare"
+          why:
+            uk: "Після `//` іде хост навіть у власній схемі: `task` стає `host`, а шлях — лише те, що після нього."
+            en: "After `//` comes the host even in a custom scheme: `task` becomes the `host`, and the path is only what follows it."
+      correct: [right]
+    explanation:
+      uk: "Chrome розбирає власну схему так само, як `https:`: схема, хост `task`, шлях `/t%2D05` (ще закодований) і параметри запиту. Тому перевірка йде по частинах: схема й хост — ті, що чекаємо; у шляху рівно один сегмент; його декодують у `try`; результат перевіряють правилом id."
+      en: "Chrome parses a custom scheme the same way as `https:`: the scheme, the host `task`, the path `/t%2D05` (still encoded) and the query params. So the check goes part by part: the scheme and host are the expected ones; the path has exactly one segment; it is decoded inside `try`; the result is checked against the id rule."
+
+  - id: link-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Два шляхи посилання до екрана"
+      en: "Two paths from a link to a screen"
+    textEquivalent:
+      uk: "Холодний старт: система запускає закритий застосунок з посиланням. Код застосунку викликає Linking.getInitialURL і отримує адресу. Застосунок уже працює: система надсилає подію url з адресою слухачеві, підписаному через Linking.addEventListener. Обидва шляхи ведуть в одну функцію: вона розбирає адресу, декодує id і перевіряє його правилом домену. Правильний id відкриває екран деталей, а невідомий чи зіпсований — екран «не знайдено»."
+      en: "Cold start: the system starts the closed app with a link. The app's code calls Linking.getInitialURL and gets the address. The app is already running: the system sends a url event with the address to the listener subscribed through Linking.addEventListener. Both paths lead to one function: it parses the address, decodes the id and checks it against the domain's rule. A valid id opens the detail screen, an unknown or broken one the “not found” screen."
+    spec:
+      actors:
+        - { id: os, label: { uk: "Система", en: "System" } }
+        - { id: app, label: { uk: "Код застосунку", en: "App code" } }
+        - { id: stack, label: { uk: "Стек", en: "Stack" } }
+      messages:
+        - from: os
+          to: app
+          label: { uk: "запуск з посиланням", en: "start with a link" }
+          caption:
+            uk: "Холодний старт: застосунок закрито, посилання його запускає. Слухачів ще немає."
+            en: "Cold start: the app is closed, the link starts it. There are no listeners yet."
+        - from: app
+          to: os
+          label: "Linking.getInitialURL()"
+          caption:
+            uk: "Код сам питає, з якою адресою його запустили."
+            en: "The code asks itself which address it was started with."
+        - from: os
+          to: app
+          kind: return
+          label: "'courselab://task/t-02'"
+          caption:
+            uk: "Відповідь — адреса (або `null`, якщо застосунок запустили звичайно)."
+            en: "The answer is the address (or `null` if the app was started normally)."
+        - from: os
+          to: app
+          kind: async
+          label: "url { url }"
+          caption:
+            uk: "Інший шлях: застосунок уже працює, і посилання приходить подією `url` до підписаного слухача."
+            en: "The other path: the app is already running, and the link arrives as a `url` event to the subscribed listener."
+        - from: app
+          to: app
+          kind: note
+          label: "parseRecordLink(url)"
+          caption:
+            uk: "Обидва шляхи ведуть в одну функцію: розібрати, декодувати, перевірити id правилом домену."
+            en: "Both paths lead into one function: parse, decode, check the id against the domain's rule."
+        - from: app
+          to: stack
+          label: "navigate('Detail', { id }) | NotFound"
+          caption:
+            uk: "Правильний id відкриває деталі; невідомий чи зіпсований — екран «не знайдено»."
+            en: "A valid id opens the details; an unknown or broken one the “not found” screen."
+
+  - id: predict-link-stack
+    kind: prediction
+    prompt:
+      uk: "Застосунок обробляє посилання через `navigate('Detail', { id })`. Людина на екрані редагування (стек `List › Detail › Edit`) щойно змінила назву справи й не зберегла. Приходить посилання `courselab://task/t-05`. Що буде зі стеком і чернеткою?"
+      en: "The app handles a link with `navigate('Detail', { id })`. The person is on the edit screen (stack `List › Detail › Edit`) and has just changed a task's title without saving. The link `courselab://task/t-05` arrives. What happens to the stack and the draft?"
+    answer:
+      type: choice
+      options:
+        - id: pushed
+          text:
+            uk: "Стек стає `List › Detail › Edit › Detail`: нові деталі лягають згори, а Edit з чернеткою лишається змонтованим під ними"
+            en: "The stack becomes `List › Detail › Edit › Detail`: the new details go on top, and Edit with its draft stays mounted underneath"
+        - id: replaced
+          text:
+            uk: "Стек стає `List › Detail`: посилання замінює все, що було відкрито, і чернетку втрачено"
+            en: "The stack becomes `List › Detail`: the link replaces everything that was open, and the draft is lost"
+          why:
+            uk: "`navigate` на інший екран кладе його згори — нічого не знімається. Так було б лише з діями, що знімають екрани (наприклад `replace` чи скидання стеку), і тоді спрацювала б охорона незбережених змін."
+            en: "`navigate` to another screen puts it on top — nothing is taken off. That would only happen with actions that remove screens (such as `replace` or a stack reset), and then the unsaved-edits guard would fire."
+        - id: cold
+          text:
+            uk: "Нічого: посилання обробляється лише під час холодного старту"
+            en: "Nothing: a link is handled only on a cold start"
+          why:
+            uk: "Під час роботи посилання приходить подією `url` — якщо на неї підписано, вона спрацює."
+            en: "While the app is running, a link arrives as a `url` event — if there is a subscription, it fires."
+      correct: [pushed]
+    explanation:
+      uk: "У React Navigation 7 `navigate` на екран з іншою назвою, ніж верхній, кладе його згори. Edit не знімається, тож `usePreventRemove` не питає — і чернетка не губиться: вона лежить під новим екраном. Після холодного старту ж стек починається заново: `List`, а над ним деталі з посилання."
+      en: "In React Navigation 7, `navigate` to a screen with a name different from the top one puts it on top. Edit is not taken off, so `usePreventRemove` does not ask — and the draft is not lost: it lies under the new screen. After a cold start, by contrast, the stack starts afresh: `List`, with the details from the link above it."
+
+  - id: wish-links
+    kind: example
+    runtime: concept-preview
+    dir: wish-links
+    entry: main.jsx
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      notFound: { uk: "Такого бажання немає", en: "There is no such wish" }
+      linkValid: { uk: "правильне", en: "valid" }
+      linkUnknown: { uk: "невідомий id", en: "unknown id" }
+      linkMalformed: { uk: "зіпсоване", en: "broken" }
+      simLinks: { uk: "Посилання (імітація)", en: "Links (simulated)" }
+      simSendRunning: { uk: "Надіслати в запущений застосунок", en: "Send to the running app" }
+      simColdStart: { uk: "Холодний старт з цим посиланням", en: "Cold start with this link" }
+      simHeaderBack: { uk: "Назад", en: "Back" }
+      simStack: { uk: "Стек (імітація)", en: "Stack (simulated)" }
+      simHardwareBack: { uk: "Android: «Назад»", en: "Android: Back" }
+      simSwipeBack: { uk: "iOS: свайп назад", en: "iOS: swipe back" }
+    title:
+      uk: "Посилання на бажання: лише один шлях і жодної перевірки"
+      en: "Links to a wish: one path only and no check"
+    body:
+      uk: |
+        Список бажань слухає подію `url` (з `linkingSim.jsx` — той самий API, що в `Linking` React Native) і відкриває деталі з останньою частиною адреси як id. Під телефоном — три синтетичні посилання; кожне можна надіслати в запущений застосунок або ним «запустити» застосунок з нуля.
+
+        Натисни **Запустити**. Надішли правильне посилання в запущений застосунок, потім «невідомий id», потім «зіпсоване».
+      en: |
+        The wishlist listens for the `url` event (from `linkingSim.jsx` — the same API as React Native's `Linking`) and opens the details with the last part of the address as the id. Under the phone are three synthetic links; each can be sent to the running app or used to “start” the app from scratch.
+
+        Press **Run**. Send the valid link to the running app, then “unknown id”, then “broken”.
+    tryIt:
+      uk: |
+        1. Правильне посилання відкриває «Велосипед», невідомий id — «Такого бажання немає», а зіпсоване кидає `URIError` у консолі: `decodeURIComponent` не розібрав `%E0%A4%A`, і нічого не відкрилося.
+        2. Натисни «Холодний старт з цим посиланням» біля правильного: застосунок запускається знову, але відкривається лише список — `getInitialURL` ніхто не читає.
+        3. В ефекті після рядка з `addEventListener` додай `Linking.getInitialURL().then((url) => { if (url) openLink(url); });`.
+        4. Запусти й повтори холодний старт: тепер одразу видно деталі «Велосипед», а під ними в стеку — список. Зіпсоване посилання й далі кидає помилку — перевірку параметрів напишеш у вправі.
+      en: |
+        1. The valid link opens “Bicycle”, the unknown id “There is no such wish”, and the broken one throws a `URIError` in the console: `decodeURIComponent` could not read `%E0%A4%A`, and nothing opened.
+        2. Press “Cold start with this link” next to the valid one: the app starts again, but only the list opens — nobody reads `getInitialURL`.
+        3. In the effect, after the `addEventListener` line, add `Linking.getInitialURL().then((url) => { if (url) openLink(url); });`.
+        4. Run and repeat the cold start: now the “Bicycle” details show at once, with the list under them on the stack. The broken link still throws — you write the param check in the exercise.
+    limits:
+      uk: "Це перевірка в перегляді react-native-web: `Linking` і стек імітовані (`linkingSim.jsx`, `navSim.jsx`), а «холодний старт» лише монтує застосунок заново. Справжня доставка посилання системою, реєстрація схеми й запуск закритого застосунку бувають лише на заявленій цілі."
+      en: "This is a react-native-web preview: `Linking` and the stack are simulated (`linkingSim.jsx`, `navSim.jsx`), and the “cold start” only mounts the app again. Real link delivery by the system, scheme registration and starting a closed app happen only on your declared target."
+
+  - id: task-link-parser
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: task-link-parser
+    entry: index.js
+    editable: [links.js]
+    title:
+      uk: "Розбір посилання на справу"
+      en: "Parsing a link to a task"
+    instructions:
+      uk: |
+        Напиши в `links.js` чисту функцію `parseRecordLink(url)` для посилань планувальника `courselab://task/<id>`. Вона повертає `{ screen: 'Detail', params: { id } }` або `{ screen: 'NotFound' }` і ніколи не кидає помилку:
+
+        - схема — `courselab:`, місце (хост) — `task`, а в шляху рівно один сегмент — id;
+        - id декодують (`%2D` → `-`) **перед** перевіркою; зіпсоване кодування дає `NotFound`;
+        - id відповідає правилу планувальника: `t-` і рівно дві цифри;
+        - у `params` іде **лише** перевірений id — параметри запиту (`?utm=…`) далі не передаються.
+
+        `index.js` друкує результати для кількох посилань — запусти його, щоб бачити, що повертає функція.
+      en: |
+        In `links.js` write a pure function `parseRecordLink(url)` for planner links `courselab://task/<id>`. It returns `{ screen: 'Detail', params: { id } }` or `{ screen: 'NotFound' }` and never throws:
+
+        - the scheme is `courselab:`, the place (host) is `task`, and the path has exactly one segment — the id;
+        - the id is decoded (`%2D` → `-`) **before** it is checked; broken encoding gives `NotFound`;
+        - the id matches the planner's rule: `t-` and exactly two digits;
+        - **only** the checked id goes into `params` — query params (`?utm=…`) are not passed on.
+
+        `index.js` prints the results for several links — run it to see what the function returns.
+    testTitles:
+      "a valid link opens Detail with its id":
+        uk: "Правильне посилання відкриває `Detail` зі своїм id"
+        en: "A valid link opens `Detail` with its id"
+      "an encoded id is decoded before it is checked":
+        uk: "Закодований id декодується перед перевіркою"
+        en: "An encoded id is decoded before it is checked"
+      "extra query params are not passed on":
+        uk: "Зайві параметри запиту далі не йдуть"
+        en: "Extra query params are not passed on"
+      "an id that breaks the id rule is not found":
+        uk: "id не за правилом — `NotFound`"
+        en: "An id that breaks the rule gives `NotFound`"
+      "a missing id is not found":
+        uk: "Без id — `NotFound`"
+        en: "A missing id gives `NotFound`"
+      "a malformed link gives not found instead of an error":
+        uk: "Зіпсоване посилання — `NotFound`, а не помилка"
+        en: "A malformed link gives `NotFound`, not an error"
+      "another scheme or another place is not found":
+        uk: "Інша схема чи інше місце — `NotFound`"
+        en: "Another scheme or another place gives `NotFound`"
+    hints:
+      nudge:
+        uk: "Пройди посилання по частинах, як у передбаченні цього уроку: що кожна частина має містити, і що робити, якщо хоч одна не така? Де тут може виникнути виняток?"
+        en: "Walk through the link part by part, as in this lesson's prediction: what must each part contain, and what to do if any one of them is wrong? Where can an exception occur here?"
+      explanation:
+        uk: "`new URL(…)` кидає `TypeError` на тексті, що не є адресою, а `decodeURIComponent` — `URIError` на зіпсованому `%…`; обидва виклики загорни в `try`/`catch`, що повертає «не знайдено». Шлях `/a/b` після `split('/')` дає порожній перший елемент — відфільтруй порожні й вимагай рівно один. Регулярний вираз з `^` і `$` перевіряє весь рядок, а не його частину: наприклад, `/^w-\\d{2}$/` пропустить `w-03`, але не `w-003`. І збирай `params` заново з одного id, а не з усього, що прийшло."
+        en: "`new URL(…)` throws a `TypeError` on text that is not an address, and `decodeURIComponent` a `URIError` on a broken `%…`; wrap both calls in a `try`/`catch` that returns “not found”. The path `/a/b` gives an empty first element after `split('/')` — filter out the empty ones and require exactly one. A regular expression with `^` and `$` checks the whole string, not a part of it: for example, `/^w-\\d{2}$/` lets `w-03` through but not `w-003`. And build `params` afresh from the single id, not from everything that came in."
+    solutionNote:
+      uk: "Функція відкидає посилання на кожному кроці, де щось не так: не адреса, інша схема чи місце, не один сегмент, зіпсоване кодування, id не за правилом. Декодування йде **до** перевірки, тому `t%2D05` стає `t-05` і проходить, а `..%2Fwish%2Fw-01` після декодування не проходить правило. `params` містить лише перевірений id. Так само можна працювати з текстом адреси без `URL` — як в альтернативному розвʼязку."
+      en: "The function rejects the link at every step where something is wrong: not an address, another scheme or place, not one segment, broken encoding, an id against the rule. Decoding comes **before** the check, so `t%2D05` becomes `t-05` and passes, while `..%2Fwish%2Fw-01` fails the rule after decoding. `params` holds only the checked id. You can also work with the address text without `URL` — as in the alternative solution."
+    feedback:
+      - when: { test: "an encoded id is decoded before it is checked" }
+        message:
+          uk: "Ця перевірка чекає, що `courselab://task/t%2D05` дає id `t-05`. `URL` не декодує шлях — це робить `decodeURIComponent`, і до перевірки правилом."
+          en: "This check expects `courselab://task/t%2D05` to give the id `t-05`. `URL` does not decode the path — `decodeURIComponent` does, and before the rule check."
+      - when: { test: "extra query params are not passed on" }
+        message:
+          uk: "Ця перевірка чекає `params` рівно `{ id: 't-02' }` для посилання з `?utm=share&admin=1`. Усе, що не перевірено, далі не передається."
+          en: "This check expects `params` to be exactly `{ id: 't-02' }` for a link with `?utm=share&admin=1`. Whatever was not checked is not passed on."
+      - when: { test: "an id that breaks the id rule is not found" }
+        message:
+          uk: "Ця перевірка дає id `x-01`, `t-2`, `t-002`, `w-03`, зайвий сегмент `/delete` і закодований `../wish/w-01` і для кожного чекає `{ screen: 'NotFound' }`. Посилання прийшло ззовні: id перевіряють правилом цілком."
+          en: "This check passes the ids `x-01`, `t-2`, `t-002`, `w-03`, an extra `/delete` segment and an encoded `../wish/w-01`, and expects `{ screen: 'NotFound' }` for each. The link came from outside: the id is checked against the rule as a whole."
+      - when: { test: "a malformed link gives not found instead of an error" }
+        message:
+          uk: "Ця перевірка чекає `NotFound` для `%E0%A4%A`, для тексту, що не є адресою, і для порожнього рядка. Якщо в повідомленні є `threw URIError` чи `threw TypeError`, виняток вийшов назовні — перехопи його."
+          en: "This check expects `NotFound` for `%E0%A4%A`, for text that is not an address and for an empty string. If the message says `threw URIError` or `threw TypeError`, an exception escaped — catch it."
+
+  - id: recall-links
+    kind: review
+    title:
+      uk: "Пригадай: адреси й неперевірені дані"
+      en: "Recall: addresses and untrusted data"
+    items:
+      - id: encode-param
+        from: js-16-01-url-query-encoding
+        prompt:
+          uk: "Чому значення параметра в адресі кодують (`encodeURIComponent`) і чому код, що його читає, мусить декодувати?"
+          en: "Why is a param value in an address encoded (`encodeURIComponent`), and why must the code that reads it decode it?"
+        answer:
+          type: choice
+          options:
+            - id: reserved
+              text:
+                uk: "Символи на кшталт `/`, `?`, `&` чи пробілу мають в адресі своє значення; закодовані, вони стають частиною значення, і читач має повернути їх назад"
+                en: "Characters like `/`, `?`, `&` or a space have their own meaning in an address; encoded, they become part of the value, and the reader has to turn them back"
+            - id: security
+              text:
+                uk: "Кодування шифрує значення, щоб ніхто не прочитав його в адресі"
+                en: "Encoding encrypts the value so that nobody can read it in the address"
+              why:
+                uk: "Кодування нічого не приховує: `%2D` — це просто `-`. Воно лише відокремлює дані від розмітки адреси."
+                en: "Encoding hides nothing: `%2D` is just `-`. It only separates data from the address's markup."
+            - id: optional
+              text:
+                uk: "Це звичка зі старих браузерів; сучасні адреси можна не кодувати"
+                en: "It is a habit from old browsers; modern addresses need no encoding"
+              why:
+                uk: "Без кодування `/` у значенні розірвав би шлях, а `&` — параметри. Правило діє і для власних схем."
+                en: "Without encoding a `/` in a value would split the path and a `&` the params. The rule applies to custom schemes too."
+          correct: [reserved]
+        explanation:
+          uk: "Тому парсер посилання спершу декодує сегмент, а вже потім перевіряє: інакше `t%2D05` не впізнали б, а `..%2F…` після декодування міг би стати шляхом в інше місце."
+          en: "That is why the link parser decodes the segment first and only then checks it: otherwise `t%2D05` would not be recognized, and `..%2F…` could become a path to another place after decoding."
+      - id: untrusted
+        from: js-16-06-untrusted-input-safe-output
+        prompt:
+          uk: "Які дані вважають неперевіреними вхідними даними?"
+          en: "Which data counts as untrusted input?"
+        answer:
+          type: choice
+          options:
+            - id: outside
+              text:
+                uk: "Усе, що прийшло ззовні коду: поля форм, адреси, відповіді сервера, файли — навіть якщо ти сам їх колись створив"
+                en: "Everything that came from outside the code: form fields, addresses, server answers, files — even if you created them yourself at some point"
+            - id: strangers
+              text:
+                uk: "Лише те, що вводять незнайомі люди; власним даним застосунку можна довіряти"
+                en: "Only what strangers type; the app's own data can be trusted"
+              why:
+                uk: "Дані, що вийшли за межі коду, могли змінитися: адресу можна відредагувати, файл — зіпсувати. Перевіряють усе, що повертається ззовні."
+                en: "Data that left the code may have changed: an address can be edited, a file corrupted. Everything that comes back from outside is checked."
+          correct: [outside]
+        explanation:
+          uk: "Deep link — саме такі дані: його може скласти будь-хто, тож id з нього проходить ту саму перевірку, що й поле форми."
+          en: "A deep link is exactly such data: anyone can compose it, so the id from it goes through the same check as a form field."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-04
+    body:
+      uk: "У кроці проєкту застосунок у `native/` відкриватиме деталі одного запису з фікстур (наприклад, `w-03`, `t-02`, `h-01` чи `e-02`) за синтетичним deep link — і при холодному старті, і коли вже працює, — а невідомий чи зіпсований id вестиме на екран «не знайдено»."
+      en: "In the project step the app in `native/` will open one fixture record's details (for example `w-03`, `t-02`, `h-01` or `e-02`) from a synthetic deep link — both on a cold start and while running — and an unknown or broken id will lead to the “not found” screen."

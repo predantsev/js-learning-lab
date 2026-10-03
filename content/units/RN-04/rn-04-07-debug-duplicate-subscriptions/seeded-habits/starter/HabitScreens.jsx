@@ -1,0 +1,46 @@
+import { useCallback } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { AppState } from './appStateSim.jsx';
+import { habits } from './habits.js';
+import { useFocusEffect } from './navSim.jsx';
+
+// Every refresh of the list is recorded here.
+export const refreshLog = [];
+
+export function ListScreen({ navigation }) {
+  useFocusEffect(
+    useCallback(() => {
+      AppState.addEventListener('change', (next) => {
+        if (next === 'active') {
+          refreshLog.push(next);
+          console.log(`%%logRefresh%% ${refreshLog.length}`);
+        }
+      });
+    }, []),
+  );
+  return habits.map((habit) => (
+    <Pressable key={habit.id} accessibilityRole="button" style={styles.row} onPress={() => navigation.push('Detail', { habit })}>
+      <Text>{habit.name}</Text>
+    </Pressable>
+  ));
+}
+
+export function DetailScreen({ route }) {
+  const { habit } = route.params;
+  return (
+    <View style={styles.column}>
+      <Text testID="detail-name" style={styles.title}>
+        {habit.name}
+      </Text>
+      <Text>
+        %%doneDays%% {habit.completions.length}
+      </Text>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  column: { gap: 8 },
+  row: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8, borderBottomWidth: 1, borderColor: '#d4d4d4' },
+  title: { fontSize: 20, fontWeight: '600' },
+});
