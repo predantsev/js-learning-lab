@@ -1,0 +1,351 @@
+id: rn-05-03-schema-migration
+unit: RN-05
+title:
+  uk: "Міграція схеми"
+  en: "Schema migration"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Написати чисту функцію `migrate(snapshot)`, що крок за кроком доводить старі знімки до поточної `schemaVersion` і повертає поточні дані без змін."
+    en: "Write a pure `migrate(snapshot)` that upgrades older snapshots step by step to the current `schemaVersion` and returns current data unchanged."
+  - uk: "Вирішити, що робити зі знімком, новішим, ніж розуміє застосунок (лишити й не перезаписувати), і зі знімком невідомої форми (відхилити й відкласти)."
+    en: "Decide what happens to a snapshot newer than the app understands (keep it and do not overwrite) and to one with an unknown shape (reject it and keep it aside)."
+prerequisites: [rn-05-02-async-loading-failure, js-14-08-compile-time-vs-runtime]
+subskills:
+  - { family: N-05, skill: "schema migration", depth: intro }
+glossary: [schema-migration, migration-chain]
+selfCheck: [predict-four-snapshots, planner-migrate]
+
+blocks:
+  - id: data-does-not-move
+    kind: explanation
+    title:
+      uk: "Код оновився, а дані — ні"
+      en: "The code was updated, the data was not"
+    body:
+      uk: |
+        Ти випускаєш нову версію застосунку, у якій у звички з’явилося поле `frequency`. Код тепер на нього розраховує. Але на телефонах людей лежать знімки, які записала **стара** версія: там цього поля немає. Оновлення застосунку не чіпає сховище — дані самі не «підтягнуться».
+
+        Тому під час завантаження стоїть [[schema-migration|міграція]] — чиста функція `migrate(snapshot)`. Вона дивиться на [[schema-version|`schemaVersion`]] усередині знімка:
+
+        - **поточна версія** — повертає дані без змін, скільки разів її не виклич;
+        - **старіша** — проводить знімок через [[migration-chain|ланцюжок кроків]]: v0 → v1, далі v1 → v2 і так до поточної, кожен крок рівно на одну версію;
+        - **новіша, ніж знає застосунок** (людина відкотилася на стару версію) — не чіпає: такий знімок не можна ні читати як свій, ні перезаписувати, інакше нова версія втратить свої поля;
+        - **невідома форма** (немає версії чи списку записів) — відхиляє. Такі дані відкладають під резервний ключ і показують повідомлення. «Почати з порожнього» не можна: це тихо знищує записи.
+
+        А як щодо ключа `jsll.habits.v1`? Ключ — це назва «полиці», де лежить знімок, а форму описує `schemaVersion` усередині. Міграція читає й перезаписує ту саму полицю: зміни застосунок ключ, він просто не знайшов би старих даних.
+      en: |
+        You release a new app version in which a habit got a `frequency` field. The code now relies on it. But people's phones hold snapshots written by the **old** version: that field is not there. Updating the app does not touch the store — the data will not “catch up” by itself.
+
+        That is why loading includes a [[schema-migration|migration]] — a pure function `migrate(snapshot)`. It looks at the [[schema-version|`schemaVersion`]] inside the snapshot:
+
+        - **the current version** — returns the data unchanged, however many times it is called;
+        - **an older one** — passes the snapshot through a [[migration-chain|chain of steps]]: v0 → v1, then v1 → v2 and on to the current one, each step exactly one version;
+        - **newer than the app knows** (the person went back to an old version) — leaves it alone: such a snapshot may neither be read as one's own nor overwritten, or the newer version loses its fields;
+        - **an unknown shape** (no version or no records list) — rejects it. Such data is set aside under a backup key and a notice is shown. “Start from empty” is not allowed: it silently destroys records.
+
+        What about the key `jsll.habits.v1`? The key is the name of the “shelf” the snapshot sits on, and `schemaVersion` inside describes its shape. A migration reads and rewrites the same shelf: had the app changed the key, it would simply not find the old data.
+
+  - id: predict-four-snapshots
+    kind: prediction
+    prompt:
+      uk: "Застосунок зараз на версії схеми 1. Що надрукують чотири виклики `console.log`?"
+      en: "The app is now at schema version 1. What do the four `console.log` calls print?"
+    code: |
+      const CURRENT = 1;
+      const steps = {
+        0: (records) => records.map((habit) => ({ ...habit, frequency: habit.frequency ?? "daily" })),
+      };
+
+      function migrate(snapshot) {
+        if (typeof snapshot?.schemaVersion !== "number" || !Array.isArray(snapshot.records)) return "invalid";
+        if (snapshot.schemaVersion > CURRENT) return "newer";
+        let { schemaVersion, records } = snapshot;
+        while (schemaVersion < CURRENT) {
+          records = steps[schemaVersion](records);
+          schemaVersion += 1;
+        }
+        return records.map((habit) => habit.frequency).join(",");
+      }
+
+      console.log(migrate({ schemaVersion: 0, records: [{ id: "h-01" }, { id: "h-04", frequency: "weekly" }] }));
+      console.log(migrate({ schemaVersion: 1, records: [{ id: "h-02", frequency: "daily" }] }));
+      console.log(migrate({ schemaVersion: 2, records: [] }));
+      console.log(migrate({ schemaVersion: 1 }));
+    verify: { logs: ["daily,weekly", "daily", "newer", "invalid"] }
+    answer:
+      type: choice
+      options:
+        - id: right
+          code: "daily,weekly\ndaily\nnewer\ninvalid"
+        - id: not-migrated
+          code: ",weekly\ndaily\nnewer\ninvalid"
+          why:
+            uk: "Знімок v0 не «підтягується» сам — але тут його й не лишають як є: `while` проводить його через крок 0 → 1, і звичка без `frequency` отримує `\"daily\"`."
+            en: "A v0 snapshot does not “catch up” by itself — but here it is not left as it is either: `while` passes it through step 0 → 1, and the habit without `frequency` gets `\"daily\"`."
+        - id: overwrite
+          code: "daily,daily\ndaily\nnewer\ninvalid"
+          why:
+            uk: "`??` підставляє `\"daily\"` лише замість відсутнього значення. У `h-04` уже є `\"weekly\"`, і крок його зберігає."
+            en: "`??` puts in `\"daily\"` only for a missing value. `h-04` already has `\"weekly\"`, and the step keeps it."
+        - id: empty-reset
+          code: "daily,weekly\ndaily\n\n"
+          why:
+            uk: "Новіший знімок і знімок без `records` не стають порожнім списком: функція розпізнає їх і повертає `newer` та `invalid`. Порожній список означав би, що записи тихо зникли."
+            en: "A newer snapshot and a snapshot without `records` do not turn into an empty list: the function recognizes them and returns `newer` and `invalid`. An empty list would mean the records silently vanished."
+      correct: [right]
+    explanation:
+      uk: "Знімок v0 пройшов один крок і отримав `frequency` там, де його не було. Поточний пройшов без змін — цикл не виконався жодного разу. Знімок версії 2 застосунок не розуміє, тож не чіпає його. А знімок без списку записів — невідомої форми: його відхилено, а не «обнулено»."
+      en: "The v0 snapshot went through one step and got `frequency` where it was missing. The current one passed unchanged — the loop did not run once. The app does not understand the version 2 snapshot, so it leaves it alone. And the snapshot without a records list has an unknown shape: it is rejected, not “reset”."
+
+  - id: chain-diagram
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Знімок проходить ланцюжок міграцій"
+      en: "A snapshot passes the migration chain"
+    textEquivalent:
+      uk: "Збережений знімок спершу потрапляє на перевірку версії. Якщо його форма невідома (немає schemaVersion чи списку records), перевірка відхиляє його: текст відкладають під резервний ключ і показують повідомлення. Якщо версія новіша за поточну, знімок лишають як є, лише для читання, і нічого не записують. Якщо версія старіша, знімок проходить кроки ланцюжка по черзі: v0 → v1, потім v1 → v2, кожен крок перетворює записи на одну версію вперед. Знімок поточної версії, тут v2, проходить повз кроки без змін. Наприкінці застосунок отримує знімок поточної версії."
+      en: "A stored snapshot first reaches the version check. If its shape is unknown (no schemaVersion or no records list), the check rejects it: the text is set aside under a backup key and a notice is shown. If the version is newer than the current one, the snapshot is kept as it is, read-only, and nothing is written. If the version is older, the snapshot passes the chain's steps in order: v0 → v1, then v1 → v2, each step transforming the records one version forward. A snapshot of the current version, here v2, passes by the steps unchanged. At the end the app gets a snapshot of the current version."
+    spec:
+      layout: grid
+      nodes:
+        - { id: stored, label: { uk: "збережений знімок", en: "stored snapshot" }, shape: cylinder, w: 150, col: 0, row: 0 }
+        - { id: check, label: { uk: "перевірка версії", en: "version check" }, shape: round, w: 150, col: 0, row: 1 }
+        - { id: reject, label: { uk: "відхилити й відкласти", en: "reject, set aside" }, shape: note, w: 160, col: 1, row: 1 }
+        - { id: step0, label: "v0 → v1", w: 110, col: 0, row: 2 }
+        - { id: newer, label: { uk: "новіший: лише читати", en: "newer: read-only" }, shape: note, w: 160, col: 1, row: 2 }
+        - { id: step1, label: "v1 → v2", w: 110, col: 0, row: 3 }
+        - { id: current, label: { uk: "поточний v2", en: "current v2" }, shape: pill, w: 140, col: 0, row: 4 }
+      edges:
+        - { id: stored-check, from: stored, to: check }
+        - { id: check-reject, from: check, to: reject, label: { uk: "невідома форма", en: "unknown shape" }, kind: dashed }
+        - { id: check-newer, from: check, to: newer, label: "v > 2", kind: dashed }
+        - { id: check-step0, from: check, to: step0, label: "v0" }
+        - { id: step0-step1, from: step0, to: step1 }
+        - { id: step1-current, from: step1, to: current }
+      steps:
+        - caption:
+            uk: "Збережений знімок завжди спершу йде на перевірку версії: там вирішується, яким шляхом він піде далі."
+            en: "A stored snapshot always goes to the version check first: that is where its further path is decided."
+          highlight: [stored, check, stored-check]
+          dim: [reject, newer, step0, step1, current]
+        - caption:
+            uk: "Знімок v0 проходить **кожен** крок по черзі: спершу v0 → v1, потім v1 → v2. Кожен крок знає лише про одну зміну схеми."
+            en: "A v0 snapshot passes **every** step in order: first v0 → v1, then v1 → v2. Each step knows about just one schema change."
+          highlight: [check-step0, step0, step0-step1, step1, step1-current, current]
+          dim: [reject, newer]
+        - caption:
+            uk: "Знімок поточної версії v2 обминає кроки й виходить без змін — тому повторна міграція нічого не псує."
+            en: "A snapshot of the current version v2 skips the steps and comes out unchanged — so migrating again breaks nothing."
+          highlight: [check, current]
+          dim: [step0, step1, reject, newer]
+          annotate:
+            - { id: current, text: { uk: "без змін", en: "unchanged" } }
+        - caption:
+            uk: "Знімок новішої версії записала новіша версія застосунку. Його лишають як є й нічого не записують, щоб не стерти поля, яких цей код не знає."
+            en: "A newer snapshot was written by a newer app version. It is kept as it is and nothing is written, so fields this code does not know are not erased."
+          highlight: [check-newer, newer]
+          dim: [step0, step1, current, reject]
+        - caption:
+            uk: "Знімок невідомої форми відхиляють: оригінальний текст іде під резервний ключ, людина бачить повідомлення. Сховище не обнуляють."
+            en: "A snapshot of an unknown shape is rejected: the original text goes under a backup key, and the person sees a notice. The store is not wiped."
+          highlight: [check-reject, reject]
+          dim: [step0, step1, current, newer]
+
+  - id: migration-chain
+    kind: example
+    runtime: browser-js
+    dir: migration-chain
+    entry: index.js
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+    title:
+      uk: "Ланцюжок міграцій звичок"
+      en: "A migration chain for habits"
+    body:
+      uk: |
+        Та сама функція, що й у передбаченні, але вона повертає `{ ok, snapshot }` або `{ ok: false, reason }` і друкує кожен крок, який виконує. Натисни **Запустити**: чотири збережені знімки проходять через `migrate`.
+      en: |
+        The same function as in the prediction, but it returns `{ ok, snapshot }` or `{ ok: false, reason }` and prints every step it runs. Press **Run**: four stored snapshots go through `migrate`.
+    tryIt:
+      uk: |
+        1. Знайди в консолі `step 0 → 1`: його надруковано лише для `v0`. Знімок `v1` пройшов без кроків.
+        2. Уяви, що нова версія застосунку додала нагадування. Додай у `steps` крок `1: (records) => records.map((habit) => ({ ...habit, reminder: habit.reminder ?? null })),` і зміни `CURRENT_VERSION` на `2`. Запусти: `v0` тепер проходить **два** кроки по черзі, `v1` — один, а знімок `v2`, який досі був «newer», став поточним і проходить без змін.
+        3. Поверни `CURRENT_VERSION` на `1`, але крок `1` залиш: `v2` знову «newer», а зайвий крок не виконується, бо цикл зупиняється на поточній версії.
+      en: |
+        1. Find `step 0 → 1` in the console: it is printed only for `v0`. The `v1` snapshot passed with no steps.
+        2. Imagine a new app version added reminders. Add the step `1: (records) => records.map((habit) => ({ ...habit, reminder: habit.reminder ?? null })),` to `steps` and change `CURRENT_VERSION` to `2`. Run: `v0` now passes **two** steps in order, `v1` one, and the `v2` snapshot, which used to be “newer”, became current and passes unchanged.
+        3. Set `CURRENT_VERSION` back to `1` but keep step `1`: `v2` is “newer” again, and the extra step does not run, because the loop stops at the current version.
+
+  - id: recall-runtime
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: type-does-not-check
+        from: js-14-08-compile-time-vs-runtime
+        prompt:
+          uk: "У новій версії застосунку тип `Habit` має обов’язкове поле `frequency`, і `tsc` не показує жодної помилки. Застосунок читає старий знімок так: `const habits = JSON.parse(text).records as Habit[];`. Що з цього правда?"
+          en: "In the new app version the `Habit` type has a required `frequency` field, and `tsc` reports no errors. The app reads an old snapshot like this: `const habits = JSON.parse(text).records as Habit[];`. What is true?"
+        answer:
+          type: choice
+          options:
+            - id: no-check
+              text:
+                uk: "`as Habit[]` нічого не перевіряє: у звичок зі старого знімка `frequency` буде `undefined`"
+                en: "`as Habit[]` checks nothing: habits from the old snapshot have `frequency` as `undefined`"
+            - id: tsc-catches
+              text:
+                uk: "`tsc` знайшов би звички без `frequency`, якби вони були"
+                en: "`tsc` would find habits without `frequency` if there were any"
+              why:
+                uk: "`tsc` перевіряє код, а не дані на телефоні: він ніколи не бачить, що лежить у сховищі."
+                en: "`tsc` checks code, not the data on a phone: it never sees what is in the store."
+            - id: runtime-fills
+              text:
+                uk: "JavaScript сам підставить значення за замовчуванням з типу"
+                en: "JavaScript fills in a default value from the type by itself"
+              why:
+                uk: "Типи прибираються перед запуском; у JavaScript від них нічого не лишається, тож і значень за замовчуванням немає."
+                en: "Types are removed before running; nothing of them remains in JavaScript, so there are no defaults either."
+          correct: [no-check]
+        explanation:
+          uk: "Тип — обіцянка для компілятора, а не перевірка даних. Старі знімки доводить до поточної форми міграція, а перевіряє — валідатор під час виконання."
+          en: "A type is a promise to the compiler, not a check of the data. Old snapshots are brought to the current shape by a migration and checked by a validator at runtime."
+      - id: json-loses
+        from: js-07-04-json
+        prompt:
+          uk: "Що повертає `JSON.parse(JSON.stringify({ id: \"h-01\", remindAt: undefined }))`?"
+          en: "What does `JSON.parse(JSON.stringify({ id: \"h-01\", remindAt: undefined }))` return?"
+        answer:
+          type: choice
+          options:
+            - id: dropped
+              code: "{ id: \"h-01\" }"
+            - id: kept
+              code: "{ id: \"h-01\", remindAt: undefined }"
+              why:
+                uk: "У JSON немає `undefined`: `JSON.stringify` пропускає таку властивість, тож після розбору її просто немає."
+                en: "JSON has no `undefined`: `JSON.stringify` skips such a property, so after parsing it is simply gone."
+            - id: null-value
+              code: "{ id: \"h-01\", remindAt: null }"
+              why:
+                uk: "`null` з’явився б, лише якби там був `null`. `undefined` у властивості об’єкта JSON пропускає."
+                en: "`null` would appear only if the value were `null`. JSON skips a property whose value is `undefined`."
+          correct: [dropped]
+        explanation:
+          uk: "Тому крок міграції підставляє `null` для відсутнього значення (`?? null`), а не `undefined`: `null` переживає запис і читання, а `undefined` зникає разом із властивістю."
+          en: "That is why a migration step fills in `null` for a missing value (`?? null`), not `undefined`: `null` survives a write and a read, while `undefined` disappears together with the property."
+
+  - id: planner-migrate
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: planner-migrate
+    entry: index.js
+    editable: [migrate.js]
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+    title:
+      uk: "Міграція планувальника: due → dueDate"
+      en: "A planner migration: due → dueDate"
+    instructions:
+      uk: |
+        Стара версія планувальника зберігала термін справи в полі `due`: дата `'YYYY-MM-DD'`, а без дати — порожній текст `''` або поля зовсім не було. Поточна версія 1 тримає його в `dueDate`: дата або `null`, і поля `due` більше немає.
+
+        Напиши в `migrate.js` функцію `migrate(snapshot)`:
+
+        - знімок версії 0 перетворюється на версію 1: у кожній справі `due` стає `dueDate`, порожній текст і відсутнє поле — `null`, решта полів і порядок справ не змінюються;
+        - знімок поточної версії повертається таким самим — і тому повторна міграція нічого не змінює;
+        - переданий знімок не змінюється: міграція повертає нові об’єкти;
+        - знімок новішої версії дає `{ ok: false, reason: 'newer' }`;
+        - знімок без числової `schemaVersion` або без масиву `records` дає `{ ok: false, reason: 'invalid' }`.
+
+        Вдалий результат — `{ ok: true, snapshot }`.
+      en: |
+        The old planner version kept a task's due date in the `due` field: a date `'YYYY-MM-DD'`, and without a date an empty text `''` or no field at all. The current version 1 keeps it in `dueDate`: a date or `null`, and there is no `due` field any more.
+
+        Write `migrate(snapshot)` in `migrate.js`:
+
+        - a version 0 snapshot becomes version 1: in every task `due` becomes `dueDate`, empty text and a missing field become `null`, the other fields and the order of the tasks do not change;
+        - a snapshot of the current version comes back the same — so migrating again changes nothing;
+        - the snapshot passed in is not changed: the migration returns new objects;
+        - a snapshot of a newer version gives `{ ok: false, reason: 'newer' }`;
+        - a snapshot without a numeric `schemaVersion` or without a `records` array gives `{ ok: false, reason: 'invalid' }`.
+
+        A successful result is `{ ok: true, snapshot }`.
+    testTitles:
+      "a v0 snapshot becomes v1 with dueDate":
+        uk: "Знімок v0 стає v1 з `dueDate`"
+        en: "A v0 snapshot becomes v1 with `dueDate`"
+      "a current snapshot comes back unchanged":
+        uk: "Поточний знімок повертається без змін"
+        en: "A current snapshot comes back unchanged"
+      "migrating the result again changes nothing":
+        uk: "Повторна міграція результату нічого не змінює"
+        en: "Migrating the result again changes nothing"
+      "no task is dropped, added or reordered":
+        uk: "Жодну справу не втрачено, не додано й не переставлено"
+        en: "No task is dropped, added or reordered"
+      "the stored snapshot passed in is not changed":
+        uk: "Переданий збережений знімок не змінено"
+        en: "The stored snapshot passed in is not changed"
+      "a snapshot from a newer app version is reported as newer":
+        uk: "Знімок новішої версії позначено як `newer`"
+        en: "A snapshot from a newer app version is reported as `newer`"
+      "a snapshot without a version or a records list is invalid":
+        uk: "Знімок без версії чи списку записів — `invalid`"
+        en: "A snapshot without a version or a records list is `invalid`"
+    hints:
+      nudge:
+        uk: "Почни з перевірок форми й версії, а вже потім перетворюй записи. Що має статися зі знімком, у якого версія вже поточна?"
+        en: "Start with the shape and version checks, and only then transform the records. What should happen to a snapshot whose version is already current?"
+      explanation:
+        uk: "Крок міграції стосується лише знімків старішої версії: поточний проходить повз, тому повторний виклик безпечний. Новий об’єкт без старого поля зручно зробити деструктуризацією з rest: `const { legacy, ...rest } = item;` дає `rest` без `legacy`, і далі `{ ...rest, current: … }`. Для «порожній текст або відсутнє поле → `null`» подумай, яке значення `''` і `undefined` мають в умові: обидва falsy, на відміну від дати. Зверни увагу, що `??` замінює лише `null` і `undefined`, а `''` лишає."
+        en: "A migration step concerns only snapshots of an older version: the current one passes by, so calling it again is safe. A new object without the old field is easy to make with rest destructuring: `const { legacy, ...rest } = item;` gives `rest` without `legacy`, and then `{ ...rest, current: … }`. For “empty text or a missing field → `null`”, think about what `''` and `undefined` are in a condition: both are falsy, unlike a date. Note that `??` replaces only `null` and `undefined`, and keeps `''`."
+    solutionNote:
+      uk: "Перевірки форми й версії стоять першими: невідома форма й новіша версія ніколи не доходять до кроків. Крок `0` будує нові об’єкти через rest-деструктуризацію, тож вхідний знімок лишається цілим, а `due ? due : null` перетворює і `''`, і відсутнє поле на `null`. Цикл `while` зупиняється на поточній версії, тож поточний знімок проходить без змін. Для v1 → v2 у майбутньому додаси ще один крок, не чіпаючи цей."
+      en: "The shape and version checks come first: an unknown shape and a newer version never reach the steps. Step `0` builds new objects with rest destructuring, so the input snapshot stays intact, and `due ? due : null` turns both `''` and a missing field into `null`. The `while` loop stops at the current version, so a current snapshot passes unchanged. For a future v1 → v2 you add one more step without touching this one."
+    feedback:
+      - when: { test: "a v0 snapshot becomes v1 with dueDate" }
+        message:
+          uk: "Ця перевірка мігрує знімок v0 з чотирма справами й чекає `schemaVersion: 1`, `dueDate` замість `due`, `null` для `''` і для відсутнього `due`, решту полів без змін."
+          en: "This check migrates a v0 snapshot with four tasks and expects `schemaVersion: 1`, `dueDate` instead of `due`, `null` for `''` and for a missing `due`, the other fields unchanged."
+      - when: { test: "a current snapshot comes back unchanged" }
+        message:
+          uk: "Ця перевірка мігрує знімок версії 1 і чекає його назад без змін. Якщо крок v0 → v1 виконується для будь-якої версії, справжні `dueDate` перетворюються на `null`."
+          en: "This check migrates a version 1 snapshot and expects it back unchanged. If the v0 → v1 step runs for any version, real `dueDate` values turn into `null`."
+      - when: { test: "the stored snapshot passed in is not changed" }
+        message:
+          uk: "Ця перевірка порівнює вхідний знімок до й після виклику. Присвоєння чи `delete` на справах вхідного масиву змінюють збережені дані — будуй нові об’єкти."
+          en: "This check compares the input snapshot before and after the call. Assigning to or `delete` on the tasks of the input array changes the stored data — build new objects."
+      - when: { test: "a snapshot from a newer app version is reported as newer" }
+        message:
+          uk: "Ця перевірка передає знімок версії 2 і чекає `{ ok: false, reason: 'newer' }`. Знімок новішої версії не можна вважати поточним: тоді його поля, яких цей код не знає, буде перезаписано."
+          en: "This check passes a version 2 snapshot and expects `{ ok: false, reason: 'newer' }`. A newer snapshot must not count as current: its fields this code does not know would then be overwritten."
+      - when: { test: "a snapshot without a version or a records list is invalid" }
+        message:
+          uk: "Ця перевірка передає п’ять зламаних значень, зокрема `null`, текст і версію-текст `'1'`, і для кожного чекає `{ ok: false, reason: 'invalid' }` — не порожній знімок."
+          en: "This check passes five broken values, including `null`, a text and the version as text `'1'`, and expects `{ ok: false, reason: 'invalid' }` for each — not an empty snapshot."
+      - when: { error: TypeError }
+        message:
+          uk: "Якщо повідомлення каже «Cannot read properties of null» чи «of undefined», функція звертається до поля, не перевіривши, що знімок — об’єкт. Перевір форму першою (`?.` допомагає). Якщо всі перевірки падають разом, виправ першу помилку в консолі."
+          en: "If the message says “Cannot read properties of null” or “of undefined”, the function reads a field without checking that the snapshot is an object. Check the shape first (`?.` helps). If every check fails at once, fix the first error in the console."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-05
+    body:
+      uk: "У проєктному кроці ти напишеш міграцію свого проєкту з наданого застарілого знімка v0 до поточної версії з тестами — за тим самим правилом: поточні дані без змін, новіший знімок не чіпати, невідому форму відхилити й відкласти."
+      en: "In the project step you write your project's migration from a supplied legacy v0 snapshot to the current version, with tests — by the same rule: current data unchanged, a newer snapshot left alone, an unknown shape rejected and set aside."
