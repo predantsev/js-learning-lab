@@ -1,0 +1,306 @@
+id: re-06-03-loading-retry
+unit: RE-06
+title:
+  uk: "Завантаження та повторна спроба"
+  en: "Loading and retry"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Розрізняти перше завантаження, фонове оновлення й збій і показувати кожен доступно, не ховаючи даних, які людина вже бачить."
+    en: "Distinguish first load, background refresh and failure, and show each accessibly without hiding data the user already has."
+  - uk: "Написати повторну спробу, яку запускає людина, з обмеженою кількістю спроб і без дублікатів, поки запит у дорозі."
+    en: "Implement a user-triggered, bounded retry that never sends duplicate requests while one is in flight."
+prerequisites: [re-06-02-races-cancellation, re-05-06-loading-empty-error-states]
+subskills:
+  - { family: R-06, skill: "loading/retry", depth: intro }
+glossary: [refetch, background-refresh]
+selfCheck: [predict-refresh-fails, bounded-retry]
+
+blocks:
+  - id: three-situations
+    kind: explanation
+    title:
+      uk: "Завантаження буває різним"
+      en: "Loading is not always the same"
+    body:
+      uk: |
+        Список можна запитувати не один раз: людина тисне «Оновити», повертається на екран, або дані просто застаріли. Повторний запит тих самих даних — це [[refetch]]. Важливо, **що вже є на екрані**:
+
+        | Ситуація | Дані на екрані | Що показати |
+        |---|---|---|
+        | перше завантаження | немає | повідомлення «Завантажую…» |
+        | [[background-refresh\|фонове оновлення]] | є | **лишити список**, поруч — тихе «Оновлюю…» |
+        | збій першого завантаження | немає | що сталося + кнопка повторити |
+        | збій оновлення | є | **лишити список**, сказати, що він може бути не найсвіжішим |
+
+        Спінер на місці списку під час оновлення відбирає в людини те, що вона читала, — і нічого не дає натомість.
+
+        Повідомлення про стан пиши в [[live-region|live region]] — `<p role="status">`. Програма зчитування з екрана озвучує **зміну** його тексту, тому сам елемент має бути на сторінці з першого рендеру, а змінюється лише текст усередині.
+      en: |
+        A list can be requested more than once: the person presses “Refresh”, comes back to the screen, or the data simply got old. Asking for the same data again is a [[refetch]]. What matters is **what is already on the screen**:
+
+        | Situation | Data on screen | What to show |
+        |---|---|---|
+        | first load | none | a “Loading…” message |
+        | [[background-refresh]] | yes | **keep the list**, next to it a quiet “Refreshing…” |
+        | first load failed | none | what happened + a retry button |
+        | refresh failed | yes | **keep the list**, say it may not be the latest |
+
+        A spinner in place of the list during a refresh takes away what the person was reading — and gives nothing in return.
+
+        Write status messages into a [[live-region]] — `<p role="status">`. A screen reader announces a **change** of its text, so the element itself must be on the page from the first render, and only the text inside it changes.
+
+  - id: predict-refresh-fails
+    kind: prediction
+    strings:
+      loading: { uk: "Завантажую…", en: "Loading…" }
+      refreshing: { uk: "Оновлюю…", en: "Refreshing…" }
+      loadFailed: { uk: "Не вдалося завантажити.", en: "Could not load." }
+      refreshFailed: { uk: "Не вдалося оновити. Показано попередній список.", en: "Could not refresh. Showing the earlier list." }
+    prompt:
+      uk: "Список звичок уже на екрані. Людина тисне «Оновити», а сервер цього разу відповідає помилкою. Компонент нижче вирішує, що показати. Що людина бачить і що озвучить `role=\"status\"`?"
+      en: "The habit list is already on the screen. The person presses “Refresh”, and this time the server answers with an error. The component below decides what to show. What does the person see, and what does `role=\"status\"` announce?"
+    code: |
+      let message = "";
+      if (status === "loading") message = habits === null ? "%%loading%%" : "%%refreshing%%";
+      if (status === "failed") message = habits === null ? "%%loadFailed%%" : "%%refreshFailed%%";
+
+      return (
+        <section>
+          <p role="status">{message}</p>
+          {habits !== null && <ul>{habits.map(…)}</ul>}
+        </section>
+      );
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: list-stays
+          text:
+            uk: "Той самий список звичок, а над ним озвучено «Не вдалося оновити. Показано попередній список.»"
+            en: "The same habit list, and above it the announcement “Could not refresh. Showing the earlier list.”"
+        - id: error-replaces
+          text:
+            uk: "Лише повідомлення про помилку — список зник, бо запит провалився"
+            en: "Only the error message — the list is gone because the request failed"
+          why:
+            uk: "Невдалий запит не стирає `habits`: у стані лишаються дані з останньої успішної відповіді. Список ховається лише тоді, коли `habits === null`, а тут він уже завантажений."
+            en: "A failed request does not erase `habits`: state keeps the data of the last successful answer. The list is hidden only when `habits === null`, and here it has already loaded."
+        - id: silent
+          text:
+            uk: "Той самий список і нічого не озвучено — помилка тиха, бо дані ж є"
+            en: "The same list and no announcement — the error is silent, since there is data"
+          why:
+            uk: "`status === \"failed\"` дає непорожній текст, а зміна тексту в `role=\"status\"` озвучується. Мовчати про збій погано: людина вирішила б, що бачить найсвіжіші дані."
+            en: "`status === \"failed\"` gives a non-empty text, and a change of text in `role=\"status\"` is announced. Staying silent about the failure is bad: the person would think they see the latest data."
+      correct: [list-stays]
+    explanation:
+      uk: "Дані з останньої успішної відповіді лишаються в стані, тому список на місці, а `role=\"status\"` чесно каже, що він може бути не найсвіжішим. Так поводиться приклад нижче — перевір кнопкою, що провалює наступний запит."
+      en: "The data of the last successful answer stays in state, so the list remains, and `role=\"status\"` honestly says it may not be the latest. The example below behaves exactly like this — check it with the button that makes the next request fail."
+
+  - id: habit-retry
+    kind: example
+    runtime: browser-react
+    dir: habit-retry
+    entry: main.jsx
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      read: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+      loading: { uk: "Завантажую звички…", en: "Loading habits…" }
+      refreshing: { uk: "Оновлюю…", en: "Refreshing…" }
+      loadFailed: { uk: "Не вдалося завантажити звички.", en: "Could not load the habits." }
+      refreshFailed: { uk: "Не вдалося оновити. Показано попередній список.", en: "Could not refresh. Showing the earlier list." }
+      tryAgain: { uk: "Спробувати ще раз", en: "Try again" }
+      refresh: { uk: "Оновити", en: "Refresh" }
+      failSwitch: { uk: "Сервер: провалити наступний запит", en: "Server: fail the next request" }
+    title:
+      uk: "Два збої, потім успіх"
+      en: "Two failures, then success"
+    body:
+      uk: |
+        `main.jsx` налаштовує фікстуру так, що перші два запити провалюються (`settings.failNext = 2`). Стан `round` — номер «раунду» завантаження: кнопки збільшують його, і ефект із `[round]` надсилає новий запит. Кнопка зверху — не частина застосунку, а пульт несправжнього сервера.
+
+        Натисни **Запустити**. На **Сторінці** двічі **Спробувати ще раз** і стеж за текстом над списком і за журналом запитів у **Консолі**.
+      en: |
+        `main.jsx` sets up the fixture so that the first two requests fail (`settings.failNext = 2`). The `round` state is the number of the loading “round”: the buttons increase it, and the effect with `[round]` sends a new request. The button at the top is not part of the app — it is the remote control of the fake server.
+
+        Press **Run**. On the **Page** press **Try again** twice and watch the text above the list and the request log in the **Console**.
+    tryIt:
+      uk: |
+        1. Після `← #3 200` список на місці, кнопка тепер **Оновити**. Натисни **Сервер: провалити наступний запит**, а потім **Оновити**: поки йде запит, над списком «Оновлюю…», а після `← #4 503` — «Не вдалося оновити…», і список не зник.
+        2. Перший раз спробуй інакше: у `main.jsx` зміни `settings.failNext` на `5` і запусти знову. Скільки б ти не тиснув, кнопка лишається — тут спроби ніхто не рахує. Цю межу ти додаси у вправі. Поверни `2`.
+      en: |
+        1. After `← #3 200` the list is there and the button is now **Refresh**. Press **Server: fail the next request** and then **Refresh**: while the request is out, “Refreshing…” is above the list, and after `← #4 503` it says “Could not refresh…”, and the list did not disappear.
+        2. Try the first load differently: in `main.jsx` change `settings.failNext` to `5` and run again. However often you press it, the button stays — nobody counts the attempts here. You will add that limit in the exercise. Set it back to `2`.
+
+  - id: retry-rules
+    kind: explanation
+    title:
+      uk: "Повторювати — коли просить людина і не безкінечно"
+      en: "Retry — when the person asks, and not forever"
+    body:
+      uk: |
+        Спокуса — повторювати самому: «упав запит — одразу ще раз, доки не вийде». Так компонент б’є по серверу, якому й так погано, а людина дивиться на вічне «Завантажую…» замість чесного «не працює». Тому:
+
+        - **Повтор запускає людина** кнопкою — вона бачить, що сталося, і вирішує сама.
+        - **Спроби обмежені** — це [[bounded-retry|обмежений повтор]] із JS-08. Після останньої пиши, що робити далі («спробуй пізніше»), а не пропонуй кнопку, яка вже не допоможе.
+        - **Поки запит у дорозі, кнопка `disabled`.** Другий клік не має надіслати другий такий самий запит.
+        - **Успіх скидає лічильник:** наступний збій — знову перша спроба.
+      en: |
+        The temptation is to retry by yourself: “a request failed — again at once, until it works”. That way the component hammers a server that is already struggling, and the person stares at an endless “Loading…” instead of an honest “it is not working”. So:
+
+        - **The person starts a retry** with a button — they see what happened and decide.
+        - **Attempts are limited** — the [[bounded-retry]] from JS-08. After the last one, say what to do next (“try later”) instead of offering a button that will not help any more.
+        - **While a request is on its way, the button is `disabled`.** A second click must not send a second identical request.
+        - **A success resets the counter:** the next failure is attempt one again.
+
+  - id: bounded-retry
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: bounded-retry
+    entry: main.jsx
+    editable: [App.jsx]
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      loading: { uk: "Завантажую витрати…", en: "Loading expenses…" }
+      refreshing: { uk: "Оновлюю…", en: "Refreshing…" }
+      failed: { uk: "Не вдалося завантажити витрати — спроба {attempt} з 3.", en: "Could not load the expenses — attempt {attempt} of 3." }
+      giveUp: { uk: "Не вдається вже 3 спроби поспіль. Спробуй пізніше.", en: "Failed 3 times in a row. Please try again later." }
+      tryAgain: { uk: "Спробувати ще раз", en: "Try again" }
+      refresh: { uk: "Оновити", en: "Refresh" }
+    title:
+      uk: "Обмежена повторна спроба"
+      en: "A bounded retry"
+    instructions:
+      uk: |
+        Список витрат уже завантажується й оновлюється кнопкою. Але після збою він зникає, кнопка пропадає, а спроби ніхто не рахує. Допиши `App.jsx`:
+
+        - рахуй невдалі спроби поспіль; успіх скидає лічильник до нуля. Перше завантаження — теж спроба;
+        - після збою список, який уже був, **лишається** на екрані, а `role="status"` каже «Не вдалося завантажити витрати — спроба N з 3.», де N — номер невдалої спроби; кнопка називається «Спробувати ще раз»;
+        - поки запит у дорозі, кнопка `disabled`;
+        - після третьої невдалої спроби поспіль кнопка `disabled` (або її немає), а `role="status"` каже «Не вдається вже 3 спроби поспіль. Спробуй пізніше.»;
+        - елемент `role="status"` лишається тим самим від першого рендеру — не перемальовуй його в іншій гілці.
+
+        Перевірки монтують власні копії, роблять фікстуру швидкою (120 мс), провалюють потрібні запити й **рахують запити**: два швидкі кліки — один запит, три невдалі спроби — рівно три.
+      en: |
+        The expense list already loads and refreshes with a button. But after a failure it disappears, the button is gone, and nobody counts the attempts. Complete `App.jsx`:
+
+        - count failed attempts in a row; a success resets the counter to zero. The first load is an attempt too;
+        - after a failure the list that was already there **stays** on the screen, and `role="status"` says “Could not load the expenses — attempt N of 3.”, where N is the number of the failed attempt; the button is called “Try again”;
+        - while a request is on its way, the button is `disabled`;
+        - after the third failed attempt in a row the button is `disabled` (or gone), and `role="status"` says “Failed 3 times in a row. Please try again later.”;
+        - the `role="status"` element stays the same from the first render — do not draw it again in another branch.
+
+        The checks mount their own copies, make the fixture fast (120 ms), make the needed requests fail and **count requests**: two quick clicks — one request, three failed attempts — exactly three.
+    testTitles:
+      "the first load lists the expenses":
+        uk: "Перше завантаження показує витрати"
+        en: "The first load lists the expenses"
+      "a failed refresh keeps the earlier list and announces the failure":
+        uk: "Невдале оновлення лишає попередній список і повідомляє про збій"
+        en: "A failed refresh keeps the earlier list and announces the failure"
+      "the button is disabled while a request is pending":
+        uk: "Поки запит у дорозі, кнопка `disabled`"
+        en: "The button is `disabled` while a request is pending"
+      "try again after a failure loads the list":
+        uk: "«Спробувати ще раз» після збою завантажує список"
+        en: "“Try again” after a failure loads the list"
+      "three failed attempts stop the retries":
+        uk: "Три невдалі спроби зупиняють повтори"
+        en: "Three failed attempts stop the retries"
+      "the status region stays the same element from the first render":
+        uk: "`role=\"status\"` — той самий елемент від першого рендеру"
+        en: "`role=\"status\"` stays the same element from the first render"
+    hints:
+      nudge:
+        uk: "Чому список зникає після збою? Подивись на ранній `return` у гілці `failed`. А для лічильника потрібен ще один шматок стану, який змінюється в тих самих місцях, що й `status`."
+        en: "Why does the list disappear after a failure? Look at the early `return` in the `failed` branch. And the counter needs one more piece of state that changes in the same places as `status`."
+      explanation:
+        uk: |
+          Прибери окрему гілку для збою: одна розмітка показує і повідомлення, і список, якщо він уже є. Невдалі спроби зберігай у стані: у `.catch` збільшуй лічильник функцією-оновлювачем, у `.then` скидай до нуля. Кнопці дай `disabled`, коли статус «loading» або лічильник досяг межі, а текст повідомлення обчислюй з лічильника.
+
+          Схоже, з іншою задачею: кнопка «Надіслати код», що працює не частіше трьох разів — `<button disabled={sending || sent >= 3}>`, а `sent` росте в обробнику успішного надсилання.
+        en: |
+          Remove the separate branch for a failure: one markup shows both the message and the list, if there already is one. Keep the failed attempts in state: in `.catch` increase the counter with an updater function, in `.then` reset it to zero. Give the button `disabled` when the status is “loading” or the counter reached the limit, and compute the message text from the counter.
+
+          Similar, with a different task: a “Send code” button that works at most three times — `<button disabled={sending || sent >= 3}>`, where `sent` grows in the handler of a successful send.
+    solutionNote:
+      uk: "Лічильник `failures` живе в стані: `.catch` збільшує його оновлювачем, `.then` скидає. Кнопка `disabled`, коли запит у дорозі (`status === \"loading\"`) або спроби вичерпано, тож другий клік не надсилає дубліката, а четвертої спроби не буде. Одна розмітка для всіх статусів лишає і список, і той самий `role=\"status\"`, — змінюється лише текст, і програма зчитування його озвучує. Автоматичний повтор у `.catch` бив би по серверу без відома людини."
+      en: "The `failures` counter lives in state: `.catch` increases it with an updater, `.then` resets it. The button is `disabled` while a request is on its way (`status === \"loading\"`) or when the attempts are used up, so a second click sends no duplicate, and there is no fourth attempt. One markup for every status keeps both the list and the same `role=\"status\"` — only the text changes, and a screen reader announces it. An automatic retry in `.catch` would hammer the server behind the person's back."
+    feedback:
+      - when: { test: "the first load lists the expenses" }
+        message:
+          uk: "Ця перевірка чекає першої відповіді й очікує чотири витрати в списку та порожній текст `role=\"status\"`. Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі."
+          en: "This check waits for the first answer and expects four expenses in the list and an empty `role=\"status\"` text. If every check fails at once, fix the first error in the console first."
+      - when: { test: "a failed refresh keeps the earlier list and announces the failure" }
+        message:
+          uk: "Ця перевірка завантажує список, провалює оновлення й очікує ті самі чотири витрати та текст «Не вдалося завантажити витрати — спроба 1 з 3.» у `role=\"status\"`. Список не має ховатися через збій, якщо він уже є."
+          en: "This check loads the list, makes the refresh fail and expects the same four expenses and the text “Could not load the expenses — attempt 1 of 3.” in `role=\"status\"`. The list must not hide because of a failure when it is already there."
+      - when: { test: "the button is disabled while a request is pending" }
+        message:
+          uk: "Ця перевірка клікає кнопку, одразу перевіряє, що вона `disabled`, клікає ще раз і очікує рівно один новий запит. Кнопці потрібен `disabled`, поки статус — завантаження."
+          en: "This check clicks the button, checks right away that it is `disabled`, clicks again and expects exactly one new request. The button needs `disabled` while the status is loading."
+      - when: { test: "try again after a failure loads the list" }
+        message:
+          uk: "Ця перевірка провалює перше завантаження й очікує кнопку з текстом «Спробувати ще раз»; після кліку — чотири витрати й порожній `role=\"status\"`."
+          en: "This check makes the first load fail and expects a button with the text “Try again”; after the click — four expenses and an empty `role=\"status\"`."
+      - when: { test: "three failed attempts stop the retries" }
+        message:
+          uk: "Ця перевірка провалює всі запити, тисне кнопку, доки вона доступна, і очікує рівно 3 запити разом із першим завантаженням, кнопку `disabled` (або її відсутність) і текст «Не вдається вже 3 спроби поспіль. Спробуй пізніше.» Більше запитів означає, що спроби не обмежено або повтор іде сам."
+          en: "This check makes every request fail, presses the button while it is available and expects exactly 3 requests including the first load, the button `disabled` (or gone) and the text “Failed 3 times in a row. Please try again later.” More requests mean the attempts are not limited or the retry runs by itself."
+      - when: { test: "the status region stays the same element from the first render" }
+        message:
+          uk: "Ця перевірка запам’ятовує елемент `role=\"status\"` з першого рендеру й після збою очікує той самий елемент. Окремий `return` для збою малює новий елемент — програма зчитування може не озвучити його текст."
+          en: "This check remembers the `role=\"status\"` element of the first render and after a failure expects the same element. A separate `return` for a failure draws a new element — a screen reader may not announce its text."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: empty-vs-error
+        from: re-05-06-loading-empty-error-states
+        prompt:
+          uk: "Екран списку показує одне й те саме «Записів немає», коли сервер повернув порожній список і коли запит провалився. Чому це погано?"
+          en: "A list screen shows the same “No records” both when the server returned an empty list and when the request failed. Why is that bad?"
+        answer:
+          type: choice
+          options:
+            - id: different-next-step
+              text:
+                uk: "Це різні стани з різними наступними кроками: для порожнього — створити запис, для помилки — повторити запит. Одне повідомлення ще й бреше, що записів немає"
+                en: "These are different states with different next steps: for empty — create a record, for an error — retry the request. One message also lies that there are no records"
+            - id: only-style
+              text:
+                uk: "Нічого страшного: різниця лише в тому, якого кольору текст"
+                en: "Nothing serious: the only difference is the colour of the text"
+              why:
+                uk: "Після збою записи можуть бути — ми їх просто не отримали. «Записів немає» підштовхне людину створювати те, що вже існує, і не дасть кнопки повторити."
+                en: "After a failure there may be records — we just did not get them. “No records” pushes the person to create what already exists and gives no retry button."
+            - id: empty-is-error
+              text:
+                uk: "Порожній список — теж помилка, тож одне повідомлення правильне"
+                en: "An empty list is an error too, so one message is right"
+              why:
+                uk: "Порожній список — нормальна успішна відповідь: у людини просто ще немає записів."
+                en: "An empty list is a normal successful answer: the person simply has no records yet."
+          correct: [different-next-step]
+        explanation:
+          uk: "Порожньо, помилка, завантаження й готові дані — окремі стани, і кожен показують рівно один раз, зі своєю дією. Цей урок додає ще одну різницю: чи є на екрані дані з попередньої відповіді."
+          en: "Empty, error, loading and ready are separate states, and each is shown exactly once, with its own action. This lesson adds one more difference: whether the screen has data from an earlier answer."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-06
+    body:
+      uk: "У кроці проєкту цього розділу список записів має пережити невдале оновлення: дані лишаються, повідомлення в `role=\"status\"` каже, що сталося, а повторну спробу запускає людина — з обмеженням і кнопкою `disabled`, поки запит у дорозі."
+      en: "In this unit's project step the record list must survive a failed refresh: the data stays, a message in `role=\"status\"` says what happened, and the person starts the retry — with a limit and a button that is `disabled` while a request is on its way."

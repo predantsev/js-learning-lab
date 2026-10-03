@@ -1,0 +1,436 @@
+id: re-06-02-races-cancellation
+unit: RE-06
+title:
+  uk: "Гонки запитів і скасування"
+  en: "Races and cancellation"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Відтворити відповідь не в тому порядку, коли фільтр швидко змінюється, і пояснити, чому старша, повільніша відповідь перекриває новішу."
+    en: "Reproduce an out-of-order response when the filter changes quickly and explain why the older, slower response overwrites the newer one."
+  - uk: "Запобігти цьому cleanup-ом ефекту, який скасовує запит або ігнорує його запізнілий результат, і не вважати скасування помилкою."
+    en: "Prevent it with an effect cleanup that aborts the request or ignores its late result, and treat an abort as not an error."
+prerequisites: [re-06-01-fetch-lifecycle, js-08-09-cancellation-abort]
+subskills:
+  - { family: R-06, skill: "fetch lifecycle/cancellation/races", depth: practice }
+glossary: [ignore-flag]
+selfCheck: [predict-race, latest-search]
+
+blocks:
+  - id: out-of-order
+    kind: explanation
+    title:
+      uk: "Хто прийшов останнім — той і на екрані"
+      en: "Whoever arrives last is on the screen"
+    body:
+      uk: |
+        Ефект завантаження зі списком залежностей `[filter]` запускає новий запит щоразу, коли змінюється фільтр. Людина клікає «Усі», а одразу за тим «Невиконані» — у дорозі два запити.
+
+        Сервер не обіцяє відповідати в тому порядку, в якому його питали: повний список збирати довше, ніж короткий. Кожна відповідь у своєму `.then` викликає `setTasks` — а React просто застосовує **останній** виклик. Тож на екрані опиняється не відповідь на останнє питання, а та, що **прийшла** останньою.
+
+        Це вже знайомі з JS-08 [[race-condition|перегони]] і [[stale-response|застаріла відповідь]] — лише тепер запити запускає ефект, і в React є готове місце, щоб їх зупинити.
+      en: |
+        A loading effect with the dependency list `[filter]` starts a new request every time the filter changes. Someone clicks “All” and right after it “Pending” — two requests are on their way.
+
+        A server does not promise to answer in the order it was asked: the full list takes longer to collect than a short one. Each answer calls `setTasks` in its own `.then` — and React simply applies the **last** call. So the screen ends up with not the answer to the last question, but the answer that **arrived** last.
+
+        These are the [[race-condition|race]] and the [[stale-response]] you know from JS-08 — only now an effect starts the requests, and React has a ready-made place to stop them.
+
+  - id: predict-race
+    kind: prediction
+    prompt:
+      uk: "Фільтр «Усі» сервер відповідає за 1200 мс, «Невиконані» — за 200 мс. Людина клікає «Усі», а одразу за ним «Невиконані». Що буде на екрані через 1,5 с, якщо в ефекту **немає** cleanup, і що — якщо cleanup скасовує запит через `AbortController`?"
+      en: "The server answers the “All” filter in 1200 ms and “Pending” in 200 ms. Someone clicks “All” and right after it “Pending”. What is on the screen after 1.5 s if the effect has **no** cleanup, and what if the cleanup aborts the request with an `AbortController`?"
+    code: |
+      useEffect(() => {
+        listTasks(filter).then((data) => setTasks(data));
+      }, [filter]);
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: stale-then-fixed
+          text:
+            uk: "Без cleanup — усі шість справ під натиснутою кнопкою «Невиконані»; з cleanup — лише чотири невиконані"
+            en: "Without cleanup — all six tasks under the pressed “Pending” button; with cleanup — only the four pending ones"
+        - id: in-order
+          text:
+            uk: "В обох випадках чотири невиконані: відповіді приходять у тому порядку, в якому пішли запити"
+            en: "Four pending tasks in both cases: answers arrive in the order the requests were sent"
+          why:
+            uk: "Порядок відповідей залежить від того, скільки кожна займає, а не від того, коли пішов запит. Відповідь «Невиконані» приходить на 200 мс, «Усі» — на 1200 мс, і `setTasks` з повним списком спрацює останнім."
+            en: "The order of answers depends on how long each one takes, not on when the request was sent. “Pending” arrives at 200 ms, “All” at 1200 ms, and `setTasks` with the full list runs last."
+        - id: cancel-only-unmount
+          text:
+            uk: "В обох випадках усі шість: cleanup спрацьовує лише тоді, коли компонент зникає"
+            en: "All six in both cases: a cleanup only runs when the component disappears"
+          why:
+            uk: "Cleanup запускається й перед кожним повторним запуском ефекту. Коли `filter` змінюється на «Невиконані», React спершу викликає cleanup запуску «Усі» — і той запит скасовано ще до відповіді."
+            en: "A cleanup also runs before every re-run of the effect. When `filter` changes to “Pending”, React first calls the cleanup of the “All” run — and that request is aborted before it answers."
+      correct: [stale-then-fixed]
+    explanation:
+      uk: "Без cleanup список спершу правильний (на 200 мс), а на 1200 мс його перекриває запізніла відповідь «Усі». З cleanup React скасовує запит «Усі» до того, як піде запит «Невиконані», і запізнілої відповіді немає. Перевірено в пісочниці: без cleanup лічильник показує `4`, а через секунду — `6`; з cleanup лишається `4`."
+      en: "Without cleanup the list is right at first (at 200 ms), and at 1200 ms the late “All” answer overwrites it. With cleanup React aborts the “All” request before the “Pending” request goes out, and there is no late answer. Checked in the sandbox: without cleanup the counter shows `4` and a second later `6`; with cleanup it stays `4`."
+
+  - id: race-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Два запити без cleanup і з cleanup"
+      en: "Two requests without cleanup and with cleanup"
+    textEquivalent:
+      uk: >-
+        Учасники: людина, компонент TaskList з ефектом і фікстура API. Без cleanup: людина клікає «Усі»,
+        ефект надсилає запит A (filter=all), який триває 1200 мс. Людина одразу клікає «Невиконані»,
+        ефект надсилає запит B (filter=pending), що триває 200 мс. Відповідь B приходить першою, і
+        setTasks показує чотири справи — правильно. Через 1200 мс приходить відповідь A, і setTasks
+        показує всі шість справ під кнопкою «Невиконані» — застаріла відповідь перекрила новішу. З
+        cleanup: людина знову клікає «Усі», ефект надсилає запит A′. Людина клікає «Невиконані»;
+        перед новим запуском ефекту React викликає cleanup попереднього, той викликає
+        controller.abort(), і запит A′ відхиляється з AbortError — відповіді не буде. Потім ефект
+        надсилає запит B′, його відповідь показує чотири справи, і більше нічого їх не перекриває.
+      en: >-
+        Participants: the person, the TaskList component with its effect, and the fixture API.
+        Without cleanup: the person clicks "All", the effect sends request A (filter=all), which takes
+        1200 ms. The person clicks "Pending" right away, the effect sends request B (filter=pending),
+        which takes 200 ms. Answer B arrives first, and setTasks shows four tasks — correct. At
+        1200 ms answer A arrives, and setTasks shows all six tasks under the "Pending" button — the
+        stale answer overwrote the newer one. With cleanup: the person clicks "All" again, the effect
+        sends request A′. The person clicks "Pending"; before re-running the effect React calls the
+        previous cleanup, which calls controller.abort(), and request A′ rejects with AbortError —
+        there will be no answer. Then the effect sends request B′, its answer shows four tasks, and
+        nothing overwrites them any more.
+    spec:
+      actors:
+        - { id: user, label: { uk: "Людина", en: "Person" } }
+        - { id: list, label: { uk: "TaskList (ефект)", en: "TaskList (effect)" } }
+        - { id: api, label: "fixtureApi" }
+      intro:
+        uk: "Без cleanup: ефект з `[filter]` просто викликає `listTasks(filter).then(setTasks)`."
+        en: "Without cleanup: the effect with `[filter]` simply calls `listTasks(filter).then(setTasks)`."
+      messages:
+        - from: user
+          to: list
+          label: { uk: "клік «Усі»", en: "click “All”" }
+          caption:
+            uk: "Людина клікає «Усі»: новий рендер, ефект перезапускається."
+            en: "The person clicks “All”: a new render, the effect re-runs."
+        - from: list
+          to: api
+          label: "A: filter=all"
+          kind: async
+          note: { uk: "відповідь за 1200 мс", en: "answers in 1200 ms" }
+          caption:
+            uk: "Ефект надсилає запит **A**. Повний список збирати довго — 1200 мс."
+            en: "The effect sends request **A**. The full list takes long to collect — 1200 ms."
+        - from: user
+          to: list
+          label: { uk: "клік «Невиконані»", en: "click “Pending”" }
+          caption:
+            uk: "Одразу клік «Невиконані». Cleanup немає, тож запит A живе далі."
+            en: "Right away a click on “Pending”. There is no cleanup, so request A lives on."
+        - from: list
+          to: api
+          label: "B: filter=pending"
+          kind: async
+          note: { uk: "відповідь за 200 мс", en: "answers in 200 ms" }
+          caption:
+            uk: "Ефект надсилає запит **B**. У дорозі два запити."
+            en: "The effect sends request **B**. Two requests are on their way."
+        - from: api
+          to: list
+          label: { uk: "B: 4 справи", en: "B: 4 tasks" }
+          kind: return
+          caption:
+            uk: "На 200 мс приходить B, `setTasks` показує чотири невиконані — поки що правильно."
+            en: "At 200 ms B arrives, `setTasks` shows four pending tasks — correct so far."
+        - from: api
+          to: list
+          label: { uk: "A: 6 справ", en: "A: 6 tasks" }
+          kind: return
+          caption:
+            uk: "На 1200 мс приходить **A** і перекриває список: шість справ під натиснутою кнопкою «Невиконані». Це застаріла відповідь."
+            en: "At 1200 ms **A** arrives and overwrites the list: six tasks under the pressed “Pending” button. That is a stale answer."
+        - from: list
+          to: list
+          kind: note
+          label: { uk: "тепер з cleanup: abort()", en: "now with cleanup: abort()" }
+          caption:
+            uk: "Те саме ще раз, але ефект створює `AbortController` і повертає `() => controller.abort()`."
+            en: "The same again, but the effect creates an `AbortController` and returns `() => controller.abort()`."
+        - from: list
+          to: api
+          label: "A′: filter=all"
+          kind: async
+          caption:
+            uk: "Клік «Усі» — ефект надсилає **A′** зі своїм `signal`."
+            en: "A click on “All” — the effect sends **A′** with its own `signal`."
+        - from: list
+          to: api
+          label: "abort(A′)"
+          caption:
+            uk: "Клік «Невиконані». Перед новим запуском React викликає cleanup попереднього: `controller.abort()`. Запит A′ відхиляється з `AbortError` — відповіді не буде."
+            en: "A click on “Pending”. Before the new run React calls the previous cleanup: `controller.abort()`. Request A′ rejects with `AbortError` — there will be no answer."
+        - from: list
+          to: api
+          label: "B′: filter=pending"
+          kind: async
+          caption:
+            uk: "Тільки тепер ефект надсилає **B′**."
+            en: "Only now does the effect send **B′**."
+        - from: api
+          to: list
+          label: { uk: "B′: 4 справи", en: "B′: 4 tasks" }
+          kind: return
+          caption:
+            uk: "Відповідь B′ показує чотири невиконані, і перекрити їх більше нікому."
+            en: "Answer B′ shows four pending tasks, and nothing is left to overwrite them."
+
+  - id: filter-race
+    kind: example
+    runtime: browser-react
+    dir: filter-race
+    entry: main.jsx
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+      all: { uk: "Усі", en: "All" }
+      pending: { uk: "Невиконані", en: "Pending" }
+      done: { uk: "Виконані", en: "Done" }
+      shown: { uk: "Показано справ:", en: "Tasks shown:" }
+    title:
+      uk: "Відтвори гонку, а потім зупини її"
+      en: "Reproduce the race, then stop it"
+    body:
+      uk: |
+        Фікстура відповідає для «Усі» за 1200 мс, для «Невиконані» й «Виконані» — за 200 мс (об’єкт `delays` у `fixtureApi.js`). Консоль — журнал запитів: `→` пішов, `←` прийшов, `×` скасовано; рядок `setTasks:` каже, чия відповідь потрапила на екран.
+
+        Натисни **Запустити**. На **Сторінці** швидко, один за одним, клікни **Усі** й **Невиконані** і секунду подивись на лічильник.
+      en: |
+        The fixture answers “All” in 1200 ms and “Pending” and “Done” in 200 ms (the `delays` object in `fixtureApi.js`). The console is the request log: `→` sent, `←` arrived, `×` aborted; a `setTasks:` line says whose answer reached the screen.
+
+        Press **Run**. On the **Page** quickly click **All** and then **Pending**, and watch the counter for a second.
+    tryIt:
+      uk: |
+        1. Лічильник показує `4`, а потім `6`, хоча натиснуто «Невиконані». У консолі `← #3` приходить раніше за `← #2`, і останнім іде `setTasks: the answer for "all"`.
+        2. Додай прапорець ігнорування: першим рядком ефекту — `let ignore = false;`, на початку `.then` — `if (ignore) return;`, а в кінці ефекту — `return () => { ignore = true; };`. Запусти й повтори кліки: `← #2` у консолі ще є, але `setTasks` для `"all"` уже ні, і лічильник лишається `4`.
+        3. Тепер заміни прапорець на скасування: `const controller = new AbortController();`, виклик `listTasks(filter, { signal: controller.signal })`, наприкінці `.catch((error) => { if (error.name !== "AbortError") throw error; })` і `return () => controller.abort();`. Повтори: у консолі `× #2 aborted`, а `← #2` не приходить зовсім.
+      en: |
+        1. The counter shows `4` and then `6`, although “Pending” is pressed. In the console `← #3` arrives before `← #2`, and the last line is `setTasks: the answer for "all"`.
+        2. Add an ignore flag: as the first line of the effect `let ignore = false;`, at the start of `.then` `if (ignore) return;`, and at the end of the effect `return () => { ignore = true; };`. Run and repeat the clicks: `← #2` is still in the console, but there is no `setTasks` for `"all"` any more, and the counter stays at `4`.
+        3. Now replace the flag with cancellation: `const controller = new AbortController();`, the call `listTasks(filter, { signal: controller.signal })`, at the end `.catch((error) => { if (error.name !== "AbortError") throw error; })` and `return () => controller.abort();`. Repeat: the console shows `× #2 aborted`, and `← #2` never arrives at all.
+
+  - id: two-ways
+    kind: explanation
+    title:
+      uk: "Ігнорувати чи скасувати"
+      en: "Ignore or abort"
+    body:
+      uk: |
+        Обидва способи живуть у cleanup — функції, яку React викликає перед наступним запуском ефекту й під час демонтування.
+
+        | Спосіб | Що робить cleanup | Що з запитом |
+        |---|---|---|
+        | [[ignore-flag\|прапорець ігнорування]] | `ignore = true` | дійде до кінця, але результат викинуто |
+        | [[abort-controller\|AbortController]] | `controller.abort()` | зупинено; проміс відхилено з `AbortError` |
+
+        Прапорець працює з будь-якою асинхронною функцією. Скасування ще й звільняє мережу та сервер — для `fetch` і API, які приймають `signal`, обирай його.
+
+        **Скасування — не помилка.** Скасований запит відхиляє проміс, тож `.catch` його отримає. Якщо `.catch` бездумно ставить стан помилки, кожен швидкий клік показуватиме «Не вдалося завантажити». Перевір `error.name === "AbortError"` (або `controller.signal.aborted`) і просто вийди.
+
+        У `<StrictMode>` React запускає ефект двічі під час монтування: setup → cleanup → setup. З правильним cleanup перший запит скасовується одразу — `×` у журналі на старті нормальний.
+      en: |
+        Both ways live in the cleanup — the function React calls before the effect's next run and on unmount.
+
+        | Way | What the cleanup does | What happens to the request |
+        |---|---|---|
+        | [[ignore-flag]] | `ignore = true` | runs to the end, but its result is thrown away |
+        | [[abort-controller\|AbortController]] | `controller.abort()` | stopped; the promise rejects with `AbortError` |
+
+        The flag works with any async function. Aborting also frees the network and the server — for `fetch` and APIs that accept a `signal`, choose it.
+
+        **An abort is not an error.** An aborted request rejects its promise, so `.catch` receives it. If `.catch` blindly sets the error state, every quick click shows “Could not load”. Check `error.name === "AbortError"` (or `controller.signal.aborted`) and just return.
+
+        In `<StrictMode>` React runs the effect twice on mount: setup → cleanup → setup. With a correct cleanup the first request is aborted at once — an `×` in the log at the start is normal.
+
+  - id: latest-search
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: latest-search
+    entry: main.jsx
+    editable: [App.jsx]
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      read: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      words: { uk: "Вчити англійські слова", en: "Learn English words" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+      query: { uk: "пр", en: "wa" }
+      hitOne: { uk: "Прибирання", en: "Drink water" }
+      hitTwo: { uk: "Прогулянка", en: "Go for a walk" }
+      searchLabel: { uk: "Знайти звичку", en: "Find a habit" }
+      searchError: { uk: "Пошук не вдався. Спробуй ще раз.", en: "The search failed. Try again." }
+    title:
+      uk: "Пошук, у якому перемагає останній запит"
+      en: "A search where the latest request wins"
+    instructions:
+      uk: |
+        Пошук звичок запускає запит після кожної літери. Сервер-фікстура відповідає на одну літеру за 450 мс, а на дві — за 150 мс, тож під час швидкого набору відповідь на першу літеру приходить **останньою** й перекриває правильний результат.
+
+        Виправ ефект у `App.jsx`:
+
+        - створи `AbortController` і передай його `signal` у `searchHabits(query, { signal })`;
+        - поверни cleanup, який скасовує запит;
+        - скасований запит (`AbortError`) не показує повідомлення про помилку, а справжній збій — показує.
+
+        Перевірки набирають «пр» у власних копіях пошуку, дивляться, які звички лишилися в списку, і **читають журнал фікстури**: запит для першої літери має завершитися як скасований (`aborted`).
+      en: |
+        The habit search starts a request after every letter. The fixture server answers one letter in 450 ms and two letters in 150 ms, so during fast typing the answer for the first letter arrives **last** and overwrites the right result.
+
+        Fix the effect in `App.jsx`:
+
+        - create an `AbortController` and pass its `signal` to `searchHabits(query, { signal })`;
+        - return a cleanup that aborts the request;
+        - an aborted request (`AbortError`) does not show the error message, while a real failure does.
+
+        The checks type “wa” into their own copies of the search, look at which habits stay in the list and **read the fixture's log**: the request for the first letter must end as aborted (`aborted`).
+    testTitles:
+      "a query typed slowly lists the matching habits":
+        uk: "Повільно набраний запит показує відповідні звички"
+        en: "A query typed slowly lists the matching habits"
+      "after fast typing only the latest query's habits stay":
+        uk: "Після швидкого набору лишаються звички лише для останнього запиту"
+        en: "After fast typing only the latest query's habits stay"
+      "the request for the older query is aborted":
+        uk: "Запит для старішого тексту скасовано"
+        en: "The request for the older query is aborted"
+      "an aborted request does not show the error message":
+        uk: "Скасований запит не показує повідомлення про помилку"
+        en: "An aborted request does not show the error message"
+      "a failed search shows the error message":
+        uk: "Невдалий пошук показує повідомлення про помилку"
+        en: "A failed search shows the error message"
+    hints:
+      nudge:
+        uk: "Коли `query` змінюється, React перед новим запуском ефекту викликає функцію, яку повернув попередній запуск. Що ця функція могла б зробити з запитом, який іще в дорозі?"
+        en: "When `query` changes, React calls the function the previous run returned before it runs the effect again. What could that function do to the request that is still on its way?"
+      explanation:
+        uk: |
+          Кожен запуск ефекту створює власний `AbortController`, передає його `signal` у запит і повертає функцію, що викликає `abort()` саме цього контролера. Скасований запит відхиляє проміс з помилкою, чия `name` — `"AbortError"`: у `.catch` перевір це й вийди, а стан помилки став лише для інших помилок.
+
+          Схоже, з іншою задачею: підказки адрес — `useEffect(() => { const controller = new AbortController(); suggest(street, { signal: controller.signal }).then(setHints).catch((e) => { if (e.name !== "AbortError") setBroken(true); }); return () => controller.abort(); }, [street]);`.
+        en: |
+          Every run of the effect creates its own `AbortController`, passes its `signal` to the request and returns a function that calls `abort()` on exactly that controller. An aborted request rejects the promise with an error whose `name` is `"AbortError"`: check that in `.catch` and return, and set the error state only for other errors.
+
+          Similar, with a different task: address suggestions — `useEffect(() => { const controller = new AbortController(); suggest(street, { signal: controller.signal }).then(setHints).catch((e) => { if (e.name !== "AbortError") setBroken(true); }); return () => controller.abort(); }, [street]);`.
+    solutionNote:
+      uk: "Коли `query` змінюється, React викликає cleanup попереднього запуску, і `controller.abort()` зупиняє запит для старого тексту — його відповідь уже не прийде. `.catch` відрізняє скасування (`AbortError`) від справжнього збою. Прапорець ігнорування теж прибрав би неправильний список, але запит для першої літери дійшов би до кінця й навантажив сервер даремно — тому в цій вправі потрібне саме скасування."
+      en: "When `query` changes, React calls the previous run's cleanup, and `controller.abort()` stops the request for the old text — its answer never arrives. `.catch` tells an abort (`AbortError`) from a real failure. An ignore flag would also remove the wrong list, but the request for the first letter would run to the end and load the server for nothing — that is why this exercise asks for cancellation."
+    feedback:
+      - when: { test: "a query typed slowly lists the matching habits" }
+        message:
+          uk: "Ця перевірка набирає «пр» з паузою між літерами й очікує дві звички: «Прибирання» і «Прогулянка». Тут гонки немає, тож якщо перевірка не проходить, подивись спершу на першу помилку в консолі."
+          en: "This check types “wa” with a pause between the letters and expects two habits: “Drink water” and “Go for a walk”. There is no race here, so if this check fails, look at the first error in the console first."
+      - when: { test: "after fast typing only the latest query's habits stay" }
+        message:
+          uk: "Ця перевірка швидко набирає «пр» і через 0,7 с очікує лише «Прибирання» і «Прогулянка». Якщо в списку більше звичок, пізня відповідь для першої літери перекрила новішу — cleanup ефекту має скасувати старий запит."
+          en: "This check types “wa” quickly and 0.7 s later expects only “Drink water” and “Go for a walk”. If the list holds more habits, the late answer for the first letter overwrote the newer one — the effect's cleanup must abort the old request."
+      - when: { test: "the request for the older query is aborted" }
+        message:
+          uk: "Ця перевірка читає журнал фікстури й очікує, що запит для першої літери завершився як `aborted`. Прапорець ігнорування лише викидає відповідь, а запит доходить до кінця; потрібен `AbortController`, чий `signal` передано в `searchHabits`, і `abort()` у cleanup."
+          en: "This check reads the fixture's log and expects the request for the first letter to end as `aborted`. An ignore flag only throws the answer away while the request runs to the end; it needs an `AbortController` whose `signal` is passed to `searchHabits`, and `abort()` in the cleanup."
+      - when: { test: "an aborted request does not show the error message" }
+        message:
+          uk: "Ця перевірка швидко набирає «пр» і очікує, що `role=\"alert\"` не з’явиться. Скасований запит потрапляє в `.catch` з помилкою `AbortError` — для неї стан помилки ставити не треба."
+          en: "This check types “wa” quickly and expects no `role=\"alert\"` to appear. An aborted request reaches `.catch` with an `AbortError` — that one must not set the error state."
+      - when: { test: "a failed search shows the error message" }
+        message:
+          uk: "Ця перевірка змушує фікстуру провалитися й очікує `<p role=\"alert\">` з текстом «Пошук не вдався. Спробуй ще раз.» Перевірка на `AbortError` не має ховати інших помилок."
+          en: "This check makes the fixture fail and expects `<p role=\"alert\">` with the text “The search failed. Try again.” The `AbortError` check must not hide other errors."
+      - when: { error: AbortError }
+        message:
+          uk: "Скасований запит відхилив проміс, і ніхто цю помилку не перехопив. Додай до виклику `searchHabits` `.catch` (або `try`/`catch` навколо `await`), який для `AbortError` просто виходить."
+          en: "An aborted request rejected its promise, and nobody caught that error. Add a `.catch` to the `searchHabits` call (or `try`/`catch` around `await`) that simply returns for an `AbortError`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: latest-number
+        from: js-08-10-stale-responses-retry
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          let latest = 0;
+          const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          async function show(query, ms) {
+            latest += 1;
+            const mine = latest;
+            await wait(ms);
+            if (mine !== latest) return;
+            console.log(query);
+          }
+
+          show("l", 300);
+          show("la", 100);
+          show("lam", 200);
+        verify:
+          logs: ["lam"]
+        answer:
+          type: choice
+          options:
+            - id: lam
+              text: { uk: "Лише `lam`", en: "Only `lam`" }
+            - id: la
+              text: { uk: "Лише `la` — він прийшов першим", en: "Only `la` — it arrived first" }
+              why:
+                uk: "Номер `la` — 2, а на момент його відповіді `latest` уже 3. Важить не хто прийшов першим, а хто запитав останнім."
+                en: "The number of `la` is 2, and by the time it answers `latest` is already 3. What matters is not who arrived first but who asked last."
+            - id: l
+              text: { uk: "Лише `l` — він прийшов останнім", en: "Only `l` — it arrived last" }
+              why:
+                uk: "Без перевірки так і було б: останньою прийшла б відповідь `l`. Але її номер 1 не дорівнює `latest`, тож вона нічого не друкує."
+                en: "Without the check that is what would happen: the answer for `l` arrives last. But its number 1 is not equal to `latest`, so it prints nothing."
+            - id: all-three
+              text: { uk: "`la`, `lam`, `l`", en: "`la`, `lam`, `l`" }
+              why:
+                uk: "Рядок `if (mine !== latest) return;` пропускає кожну відповідь, після якої вже пішов новіший запит."
+                en: "The line `if (mine !== latest) return;` skips every answer after which a newer request was sent."
+          correct: [lam]
+        explanation:
+          uk: "Усі три виклики стартують одразу, тож `latest` стає 3. Друкує лише той, чий номер досі найновіший, — `lam`, хоч прийшов він другим. Прапорець `ignore` в ефекті робить те саме, тільки «номер» за тебе стежить React: cleanup позначає кожен старий запуск."
+          en: "All three calls start at once, so `latest` becomes 3. Only the one whose number is still the newest prints — `lam`, although it arrives second. The `ignore` flag in an effect does the same, except React keeps the “number” for you: the cleanup marks every old run."
+      - id: cleanup-before-next
+        from: re-03-03-dependencies-cleanup
+        prompt:
+          uk: "Ефект з `[filter]` створює `AbortController` і повертає `() => controller.abort()`. Людина перемикає фільтр з «Усі» на «Виконані», поки запит «Усі» ще в дорозі. У якому порядку з’являться рядки в журналі запитів?"
+          en: "An effect with `[filter]` creates an `AbortController` and returns `() => controller.abort()`. The person switches the filter from “All” to “Done” while the “All” request is still on its way. In which order do the lines appear in the request log?"
+        answer:
+          type: order
+          items:
+            - { id: send-all, code: "→ #1 GET /tasks?filter=all" }
+            - { id: abort-all, code: "× #1 aborted" }
+            - { id: send-done, code: "→ #2 GET /tasks?filter=done" }
+            - { id: answer-done, code: "← #2 200 [t-04, t-06]" }
+        explanation:
+          uk: "Коли `filter` змінюється, React спершу викликає cleanup попереднього запуску (скасування `#1`), а вже потім новий setup надсилає `#2`. Тому старий і новий запити ніколи не «змагаються». Перевірено в пісочниці на прикладі цього уроку."
+          en: "When `filter` changes, React first calls the previous run's cleanup (aborting `#1`), and only then does the new setup send `#2`. That is why the old and the new request never race. Checked in the sandbox with this lesson's example."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-06
+    body:
+      uk: "У кроці проєкту цього розділу список записів завантажуватиметься для вибраного фільтра статусу (наприклад, «хочу/отримано» у списку бажань чи «у роботі/виконано» в планувальнику). Ефект цього завантаження має повертати cleanup зі скасуванням — тоді швидке перемикання фільтра ніколи не покаже список для попереднього."
+      en: "In this unit's project step the record list will load for the selected status filter (for example wanted/acquired in the wishlist or pending/done in the planner). That loading effect must return a cleanup that aborts — then quick filter switching never shows the list for the previous filter."
