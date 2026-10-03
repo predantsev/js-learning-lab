@@ -37,7 +37,7 @@ This section applies only on the original maintainer workstation and is not requ
 
 ## Ports
 
-The platform server uses port 7300 by default (`JSLL_PORT` overrides it) and binds only to `127.0.0.1` and `::1`. Application host: `js-learning-lab.localhost`, fallback `localhost`; sandbox hosts: `jsll-run-N.localhost`, fallback `127.0.0.1`. Tests use ephemeral ports and never 7300. The optional shared registry on the maintainer workstation has not been updated with this allocation; its suggested 7xxxx block exceeds 65535 and its prose cites an older free block, so resolve that conflict there rather than copying an invalid default. Public installation must work on machines without the sibling registry.
+The platform server uses port 7300 by default (`JSLL_PORT` overrides it) and binds only to `127.0.0.1` and `::1`. Application host: `js-learning-lab.localhost`, fallback `localhost`; sandbox hosts: `jsll-run-N.localhost`, fallback `127.0.0.1`. Tests use ephemeral ports and never 7300. The learner-run mock service of lesson rn-06-01 (`mock-service.mjs`) uses port 7310, bound to 127.0.0.1 by default (`--port`/`--host` override it). The optional shared registry on the maintainer workstation has not been updated with this allocation; its suggested 7xxxx block exceeds 65535 and its prose cites an older free block, so resolve that conflict there rather than copying an invalid default. Public installation must work on machines without the sibling registry.
 
 ## Docs localization
 
