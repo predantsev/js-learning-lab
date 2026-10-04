@@ -1,0 +1,519 @@
+id: rn-07-06-debug-real-native-failure
+unit: RN-07
+title:
+  uk: "Налагодження: справжній локальний native-збій"
+  en: "Debug: a real local native failure"
+kind: local-task
+minutes: 25
+contentVersion: 1
+purpose:
+  uk: "Native-збої не відтворити в перегляді: їх видно лише в справжньому збиранні й на справжній цілі. Ти навмисно зламаєш лабораторний проєкт двома поширеними способами — native-модуль від іншої версії SDK і прибрана декларація дозволу на камеру, — знайдеш у журналах перший рядок, що веде до причини, полагодиш обидва збої задокументованим способом і підтвердиш ремонт на своїй заявленій цілі. Спершу те саме пройдеш в імітації — вона працює й без native-інструментів."
+  en: "Native failures cannot be reproduced in a preview: they show only in a real build and on a real target. You break a lab project on purpose in two common ways — a native module from another SDK version and a removed camera permission declaration — find in the logs the first line that leads to the cause, repair both failures the documented way and confirm the repair on your declared target. First you go through the same in a simulation — it works without native tools too."
+objectives:
+  - uk: "Відтворити навмисно внесений native-збій на заявленій цілі, знайти його причину в журналі збирання чи пристрою й полагодити."
+    en: "Reproduce a seeded native failure on the declared target, find its cause from the build or device log and repair it."
+  - uk: "Довести ремонт на цілі підтвердженим тобою спостереженням і назвати рядок журналу, що привів до причини."
+    en: "Prove the fix on the target with learner-confirmed evidence and name the log line that led to it."
+prerequisites: [rn-07-05-e2e-platform-deployment-concepts]
+subskills:
+  - { family: N-10, skill: "native logs/build errors", depth: assess }
+  - { family: N-10, skill: "crash diagnosis", depth: assess }
+glossary: []
+selfCheck: [seeded-lab]
+
+blocks:
+  - id: two-seeds
+    kind: explanation
+    title:
+      uk: "Два збої, які ми внесемо навмисно"
+      en: "Two failures we seed on purpose"
+    body:
+      uk: |
+        Лабораторний проєкт `rn07-lab` — список бажань з екраном зйомки на `expo-camera`. Ми зламаємо його двічі:
+
+        - **Модуль від іншого SDK.** `npm install expo-camera@next` ставить версію для наступного SDK (коли урок перевіряли — 58.0.8), а проєкт на SDK 57 очікує `~57.0.6`. Native-код такого модуля зібрано під інше ядро Expo, тож збирання мало б зупинитися — **цього ми не перевірили**: на машині, де писали урок, немає Android SDK і Xcode. Перевірили лише, що `npx expo install --check` таку пару називає.
+        - **Прибрана декларація дозволу.** У `app.json` записано `["expo-camera", { "cameraPermission": false }]` і `blockedPermissions` з `android.permission.CAMERA`. Ми перевірили, що `npx expo prebuild` тоді не пише `NSCameraUsageDescription` в `Info.plist`, а в `AndroidManifest.xml` ставить для `CAMERA` позначку `tools:node="remove"`. За кодом `expo-camera` 57 (`CameraPermissionsRequester.swift`) на iOS без цього ключа викликається `RCTFatal` з текстом `This app is missing NSCameraUsageDescription` — фатальна помилка. На Android, за документацією платформи, запит на незадекларований дозвіл відхиляється без діалогу.
+
+        Expo Go цього не покаже: це готовий застосунок зі своїм native-кодом і своїм `Info.plist`. Потрібна збірка з власного проєкту — `npx expo run:android` чи `npx expo run:ios`, а для неї — Android Studio або Xcode.
+      en: |
+        The lab project `rn07-lab` is a wishlist with a capture screen on `expo-camera`. We break it twice:
+
+        - **A module from another SDK.** `npm install expo-camera@next` installs the version for the next SDK (58.0.8 when this lesson was checked), while an SDK 57 project expects `~57.0.6`. Such a module's native code is built against another Expo core, so the build is expected to stop — **we did not verify this**: the machine this lesson was written on has no Android SDK and no Xcode. We only verified that `npx expo install --check` names this pair.
+        - **A removed permission declaration.** `app.json` holds `["expo-camera", { "cameraPermission": false }]` and `blockedPermissions` with `android.permission.CAMERA`. We verified that `npx expo prebuild` then writes no `NSCameraUsageDescription` into `Info.plist` and marks `CAMERA` in `AndroidManifest.xml` with `tools:node="remove"`. According to the code of `expo-camera` 57 (`CameraPermissionsRequester.swift`), on iOS without this key it calls `RCTFatal` with the text `This app is missing NSCameraUsageDescription` — a fatal error. On Android, according to the platform's documentation, a request for an undeclared permission is refused without a dialog.
+
+        Expo Go will not show this: it is a ready-made app with its own native code and its own `Info.plist`. You need a build of your own project — `npx expo run:android` or `npx expo run:ios`, which needs Android Studio or Xcode.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: missing-vs-denied
+        from: rn-09-05-deny-revoke-unavailable
+        prompt:
+          uk: "Чим відрізняється **відмова** в дозволі на камеру від **відсутньої декларації** цього дозволу в застосунку?"
+          en: "How does a **denied** camera permission differ from a **missing declaration** of that permission in the app?"
+        answer:
+          type: choice
+          options:
+            - id: right
+              text:
+                uk: "Відмову обирає людина під час виконання, і застосунок має показати запасний шлях; відсутня декларація — помилка збірки, яку лагодять у конфігурації й новому збиранні"
+                en: "A denial is chosen by the person at run time, and the app must show a fallback; a missing declaration is a build defect fixed in the configuration and a new build"
+            - id: same
+              text:
+                uk: "Нічим: в обох випадках камери немає, тож вистачить одного повідомлення"
+                en: "Nothing: in both cases there is no camera, so one message is enough"
+              why:
+                uk: "Відмову людина може змінити в налаштуваннях, а відсутню декларацію — ні: її виправляє лише розробник новою збіркою."
+                en: "A person can change a denial in Settings, but not a missing declaration: only the developer fixes it with a new build."
+            - id: ask-again
+              text:
+                uk: "Обидва лікуються повторним запитом у циклі"
+                en: "Both are cured by asking again in a loop"
+              why:
+                uk: "Запит у циклі не допомагає ні з відмовою, ні з декларацією, якої немає в збірці."
+                en: "Asking in a loop helps with neither a denial nor a declaration that is missing from the build."
+          correct: [right]
+        explanation:
+          uk: "Відмова — стан під час виконання, декларація — частина збірки. Тому декларацію перевіряють у згенерованих файлах (`Info.plist`, `AndroidManifest.xml`), а відмову — у коді екрана."
+          en: "A denial is a run-time state, a declaration is part of the build. That is why the declaration is checked in the generated files (`Info.plist`, `AndroidManifest.xml`) and the denial in the screen's code."
+
+  - id: seeded-lab
+    kind: exercise
+    mode: debug
+    runtime: concept-preview
+    dir: seeded-lab
+    entry: main.jsx
+    editable: [deps.js, appJson.js, notes.js]
+    strings:
+      buildLog: { uk: "журнал збирання", en: "build log" }
+      deviceLog: { uk: "журнал пристрою", en: "device log" }
+      cameraText: { uk: "Дозволь $(PRODUCT_NAME) фотографувати твої бажання.", en: "Allow $(PRODUCT_NAME) to photograph your wishes." }
+    title:
+      uk: "Зламаний лабораторний проєкт в імітації"
+      en: "The broken lab project in a simulation"
+    instructions:
+      uk: |
+        `nativeSim.js` — **імітація** native-інструментів для лабораторного проєкту: вона «збирає» його з `deps.js` (залежності з `package.json`) і `appJson.js` (вміст `app.json`), а потім відкриває екран зйомки на iOS і на Android. Що в ній перевірено на справжньому проєкті Expo SDK 57, написано на початку файлу.
+
+        Натисни **Запустити** й читай **Консоль** зверху вниз. Полагодь обидва збої, змінюючи лише `deps.js` і `appJson.js`:
+
+        - збирання має завершитися;
+        - на iOS екран зйомки має відкритися без падіння;
+        - на Android застосунок має могти спитати дозвіл на камеру.
+
+        А в `notes.js` дослівно скопіюй перший вирішальний рядок кожного збою: `buildFailure` — з журналу збирання, `captureCrash` — з журналу пристрою iOS.
+      en: |
+        `nativeSim.js` is a **simulation** of the native tools for the lab project: it “builds” it from `deps.js` (the dependencies of `package.json`) and `appJson.js` (the contents of `app.json`), then opens the capture screen on iOS and on Android. What in it was checked on a real Expo SDK 57 project is written at the top of the file.
+
+        Press **Run** and read the **Console** from the top down. Repair both failures, changing only `deps.js` and `appJson.js`:
+
+        - the build must finish;
+        - on iOS the capture screen must open without a crash;
+        - on Android the app must be able to ask for the camera permission.
+
+        And in `notes.js` copy, word for word, the first decisive line of each failure: `buildFailure` from the build log, `captureCrash` from the iOS device log.
+    testTitles:
+      "the simulated build finishes":
+        uk: "Імітоване збирання завершується"
+        en: "The simulated build finishes"
+      "the capture screen opens on iOS without a crash":
+        uk: "Екран зйомки на iOS відкривається без падіння"
+        en: "The capture screen opens on iOS without a crash"
+      "the capture screen can ask for the camera on Android":
+        uk: "Екран зйомки на Android може спитати дозвіл на камеру"
+        en: "The capture screen can ask for the camera on Android"
+      "the notes quote the first decisive line of each failure":
+        uk: "Нотатки дослівно наводять перший вирішальний рядок кожного збою"
+        en: "The notes quote the first decisive line of each failure"
+    hints:
+      nudge:
+        uk: "Журнал збирання називає пакет і версію, яку очікує SDK. А коли збирання пройде, журнал iOS назве ключ, якого бракує. Де в `appJson.js` цей ключ прибрано — і що ще там стосується камери на Android?"
+        en: "The build log names a package and the version the SDK expects. Once the build passes, the iOS log names the missing key. Where in `appJson.js` is that key removed — and what else there concerns the camera on Android?"
+      explanation:
+        uk: "Версію native-модуля підбирають під SDK: у справжньому проєкті це робить `npx expo install --fix`, тут — заміна діапазону в `deps.js` на той, що назвав журнал. `cameraPermission: false` у налаштуваннях плагіна **видаляє** `NSCameraUsageDescription`; рядок пояснення (або відсутність цього параметра) повертає ключ. А `blockedPermissions` прибирає дозвіл з маніфесту Android — дозволу, який застосунку потрібен, там бути не повинно. Схожий випадок з іншим модулем: `[\"expo-location\", { \"locationWhenInUsePermission\": false }]` прибирає ключ геолокації."
+        en: "A native module's version is matched to the SDK: in a real project `npx expo install --fix` does it, here you replace the range in `deps.js` with the one the log names. `cameraPermission: false` in the plugin options **deletes** `NSCameraUsageDescription`; an explanation text (or no such option) brings the key back. And `blockedPermissions` removes a permission from the Android manifest — a permission the app needs must not be there. A similar case with another module: `[\"expo-location\", { \"locationWhenInUsePermission\": false }]` removes the location key."
+    solutionNote:
+      uk: "Перший збій — версія: `expo-camera@58.0.8` проти очікуваного `~57.0.6`; після ремонту збирання проходить і з’являється другий збій. Його перший рядок у журналі iOS — `This app is missing NSCameraUsageDescription,`: ключ прибрав `cameraPermission: false`. Текст пояснення повертає ключ, а прибрана з `blockedPermissions` камера повертає дозвіл у маніфест Android. Плагін можна й не перелічувати — `prebuild` застосує `expo-camera` зі стандартним текстом (ми це перевірили), — але власний текст пояснює людині, навіщо камера."
+      en: "The first failure is the version: `expo-camera@58.0.8` against the expected `~57.0.6`; after the repair the build passes and the second failure appears. Its first line in the iOS log is `This app is missing NSCameraUsageDescription,`: `cameraPermission: false` removed the key. An explanation text brings the key back, and taking the camera out of `blockedPermissions` brings the permission back into the Android manifest. You may also leave the plugin out — `prebuild` applies `expo-camera` with its default text (we checked) — but your own text tells the person why the camera is needed."
+    feedback:
+      - when: { test: "the simulated build finishes" }
+        message:
+          uk: "Ця перевірка очікує, що збирання з `deps.js` завершиться. Журнал збирання називає пакет і очікувану версію: діапазон `expo-camera` має бути з тієї самої головної версії, що й SDK (57)."
+          en: "This check expects the build with `deps.js` to finish. The build log names the package and the expected version: the `expo-camera` range must be from the same major version as the SDK (57)."
+      - when: { test: "the capture screen opens on iOS without a crash" }
+        message:
+          uk: "Ця перевірка очікує, що на iOS екран зйомки не впаде. Для цього в згенерованому `Info.plist` має бути `NSCameraUsageDescription`: `cameraPermission: false` у налаштуваннях плагіна його видаляє."
+          en: "This check expects the iOS capture screen not to crash. For that the generated `Info.plist` must have `NSCameraUsageDescription`: `cameraPermission: false` in the plugin options deletes it."
+      - when: { test: "the capture screen can ask for the camera on Android" }
+        message:
+          uk: "Ця перевірка очікує, що на Android дозвіл `android.permission.CAMERA` залишиться в маніфесті. Подивись, що записано в `android.blockedPermissions`."
+          en: "This check expects `android.permission.CAMERA` to stay in the Android manifest. Look at what `android.blockedPermissions` holds."
+      - when: { test: "the notes quote the first decisive line of each failure" }
+        message:
+          uk: "Ця перевірка очікує, що `buildFailure` містить `expo-camera@58` (рядок журналу збирання, який називає пакет), а `captureCrash` — `missing NSCameraUsageDescription` (перший рядок журналу iOS про причину). Другий рядок журналу iOS видно лише тоді, коли збирання вже проходить."
+          en: "This check expects `buildFailure` to contain `expo-camera@58` (the build log line that names the package) and `captureCrash` to contain `missing NSCameraUsageDescription` (the first iOS log line about the cause). The iOS log appears only once the build passes."
+      - when: { error: SyntaxError }
+        message:
+          uk: "Один зі змінених файлів не запускається. Перевір коми між властивостями й те, що кожен текст узято в лапки однакового виду."
+          en: "One of the changed files does not start. Check the commas between properties and that every text is wrapped in quotes of the same kind."
+    limits:
+      uk: "Імітація в перегляді react-native-web: немає Gradle, Xcode, емулятора й телефона. Справжній журнал збирання для модуля з іншого SDK ми не бачили — тут на його місці рядок перевірки версій, який справді друкує `npx expo install --check`. Падіння на iOS змодельовано за кодом `expo-camera` 57, а відмову на Android — за документацією платформи. Справжній результат — у локальному завданні нижче."
+      en: "A simulation in the react-native-web preview: no Gradle, Xcode, emulator or phone. We have not seen the real build log for a module from another SDK — in its place is the version-check line that `npx expo install --check` really prints. The iOS crash is modelled from the code of `expo-camera` 57, and the Android refusal from the platform's documentation. The real result is in the local task below."
+
+  - id: on-target
+    kind: local-task
+    runtime: local-native
+    title:
+      uk: "Зламати, знайти, полагодити на заявленій цілі"
+      en: "Break, find and repair on the declared target"
+    intro:
+      uk: |
+        Це завдання потребує **native-інструментів**: Android Studio з Android SDK і емулятором (для Android) або Xcode із симулятором на Mac (для iOS). Expo Go не годиться — див. пояснення вище. Якщо інструментів немає, натисни **«У мене немає емулятора чи пристрою»**: завдання запишеться як не виконане, а імітацію вище ти вже пройшов.
+
+        **Що перевірено, а що ні.** Кроки на комп’ютері до першого збирання й кроки з `npx expo prebuild` виконано на macOS з Node.js v25.2.1, npm 11.6.2 і expo 57.0.27 — їхній вивід нижче справжній. Native-збирання (`npx expo run:android`, `npx expo run:ios`) і все, що відбувається на цілі, **не виконувалося**: точний текст збою запиши сам.
+
+        Записуй усе у файл `~/js-course/rn07-lab/DEBUG-NOTES.md`: команду, перший вирішальний рядок, що ти змінив.
+
+        **Крок 3 — `App.tsx`** (повністю заміни ним файл):
+
+        ```tsx
+        // RN-07 lab: a wishlist with a capture screen that asks for the camera.
+        import { useState } from 'react';
+        import { Pressable, StyleSheet, Text, View } from 'react-native';
+        import { CameraView, useCameraPermissions } from 'expo-camera';
+
+        function CaptureScreen({ onClose }: { onClose: () => void }) {
+          const [permission, requestPermission] = useCameraPermissions();
+          console.log('capture: permission', permission?.status ?? 'loading');
+          return (
+            <View style={styles.screen}>
+              <Text style={styles.heading}>Capture</Text>
+              {permission?.granted ? (
+                <CameraView style={styles.camera} facing="back" />
+              ) : (
+                <Pressable accessibilityRole="button" onPress={requestPermission} style={styles.button}>
+                  <Text style={styles.buttonText}>Allow the camera</Text>
+                </Pressable>
+              )}
+              <Pressable accessibilityRole="button" onPress={onClose} style={styles.button}>
+                <Text style={styles.buttonText}>Back to the list</Text>
+              </Pressable>
+            </View>
+          );
+        }
+
+        export default function App() {
+          const [capturing, setCapturing] = useState(false);
+          if (capturing) return <CaptureScreen onClose={() => setCapturing(false)} />;
+          return (
+            <View style={styles.screen}>
+              <Text style={styles.heading}>Wishlist</Text>
+              <Text>Desk lamp</Text>
+              <Pressable accessibilityRole="button" onPress={() => setCapturing(true)} style={styles.button}>
+                <Text style={styles.buttonText}>Open capture</Text>
+              </Pressable>
+            </View>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, paddingTop: 64, paddingHorizontal: 16, gap: 12, backgroundColor: '#ffffff' },
+          heading: { fontSize: 22, fontWeight: '600' },
+          camera: { flex: 1, borderRadius: 8 },
+          button: { alignSelf: 'flex-start', padding: 12, borderRadius: 6, backgroundColor: '#1d4ed8' },
+          buttonText: { color: '#ffffff', fontWeight: '600' },
+        });
+        ```
+
+        **Крок 4 — зламаний `app.json`** (повністю заміни ним файл):
+
+        ```json
+        {
+          "expo": {
+            "name": "rn07-lab",
+            "slug": "rn07-lab",
+            "version": "1.0.0",
+            "orientation": "portrait",
+            "icon": "./assets/icon.png",
+            "userInterfaceStyle": "light",
+            "ios": {
+              "supportsTablet": true,
+              "bundleIdentifier": "com.example.rn07lab"
+            },
+            "android": {
+              "adaptiveIcon": {
+                "backgroundColor": "#E6F4FE",
+                "foregroundImage": "./assets/android-icon-foreground.png",
+                "backgroundImage": "./assets/android-icon-background.png",
+                "monochromeImage": "./assets/android-icon-monochrome.png"
+              },
+              "predictiveBackGestureEnabled": false,
+              "package": "com.example.rn07lab",
+              "blockedPermissions": ["android.permission.CAMERA"]
+            },
+            "web": {
+              "favicon": "./assets/favicon.png"
+            },
+            "plugins": [
+              ["expo-camera", { "cameraPermission": false }]
+            ]
+          }
+        }
+        ```
+
+        **Крок 5 — що надрукував `npx expo install --check` у зламаному проєкті:**
+
+        ```text
+        The following packages should be updated for best compatibility with the installed expo version:
+          expo-camera@58.0.8 - expected version: ~57.0.6
+        Your project may not work correctly until you install the expected versions of the packages.
+        Found outdated dependencies
+        ```
+
+        **Крок 8 — що показали згенеровані файли зламаного проєкту** (після `npx expo prebuild --clean --no-install`):
+
+        ```text
+        $ grep -c NSCameraUsageDescription ios/rn07lab/Info.plist
+        0
+        $ grep CAMERA android/app/src/main/AndroidManifest.xml
+          <uses-permission android:name="android.permission.CAMERA" tools:node="remove"/>
+        ```
+      en: |
+        This task needs **native tools**: Android Studio with the Android SDK and an emulator (for Android) or Xcode with a simulator on a Mac (for iOS). Expo Go will not do — see the explanation above. If you have no such tools, press **“I have no emulator or device”**: the task is recorded as not performed, and you have already gone through the simulation above.
+
+        **What was checked and what was not.** The computer-side steps up to the first build and the `npx expo prebuild` steps were run on macOS with Node.js v25.2.1, npm 11.6.2 and expo 57.0.27 — their output below is real. The native builds (`npx expo run:android`, `npx expo run:ios`) and everything on the target **were not run**: write down the exact failure text yourself.
+
+        Write everything into the file `~/js-course/rn07-lab/DEBUG-NOTES.md`: the command, the first decisive line, what you changed.
+
+        **Step 3 — `App.tsx`** (replace the whole file with it):
+
+        ```tsx
+        // RN-07 lab: a wishlist with a capture screen that asks for the camera.
+        import { useState } from 'react';
+        import { Pressable, StyleSheet, Text, View } from 'react-native';
+        import { CameraView, useCameraPermissions } from 'expo-camera';
+
+        function CaptureScreen({ onClose }: { onClose: () => void }) {
+          const [permission, requestPermission] = useCameraPermissions();
+          console.log('capture: permission', permission?.status ?? 'loading');
+          return (
+            <View style={styles.screen}>
+              <Text style={styles.heading}>Capture</Text>
+              {permission?.granted ? (
+                <CameraView style={styles.camera} facing="back" />
+              ) : (
+                <Pressable accessibilityRole="button" onPress={requestPermission} style={styles.button}>
+                  <Text style={styles.buttonText}>Allow the camera</Text>
+                </Pressable>
+              )}
+              <Pressable accessibilityRole="button" onPress={onClose} style={styles.button}>
+                <Text style={styles.buttonText}>Back to the list</Text>
+              </Pressable>
+            </View>
+          );
+        }
+
+        export default function App() {
+          const [capturing, setCapturing] = useState(false);
+          if (capturing) return <CaptureScreen onClose={() => setCapturing(false)} />;
+          return (
+            <View style={styles.screen}>
+              <Text style={styles.heading}>Wishlist</Text>
+              <Text>Desk lamp</Text>
+              <Pressable accessibilityRole="button" onPress={() => setCapturing(true)} style={styles.button}>
+                <Text style={styles.buttonText}>Open capture</Text>
+              </Pressable>
+            </View>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, paddingTop: 64, paddingHorizontal: 16, gap: 12, backgroundColor: '#ffffff' },
+          heading: { fontSize: 22, fontWeight: '600' },
+          camera: { flex: 1, borderRadius: 8 },
+          button: { alignSelf: 'flex-start', padding: 12, borderRadius: 6, backgroundColor: '#1d4ed8' },
+          buttonText: { color: '#ffffff', fontWeight: '600' },
+        });
+        ```
+
+        **Step 4 — the broken `app.json`** (replace the whole file with it):
+
+        ```json
+        {
+          "expo": {
+            "name": "rn07-lab",
+            "slug": "rn07-lab",
+            "version": "1.0.0",
+            "orientation": "portrait",
+            "icon": "./assets/icon.png",
+            "userInterfaceStyle": "light",
+            "ios": {
+              "supportsTablet": true,
+              "bundleIdentifier": "com.example.rn07lab"
+            },
+            "android": {
+              "adaptiveIcon": {
+                "backgroundColor": "#E6F4FE",
+                "foregroundImage": "./assets/android-icon-foreground.png",
+                "backgroundImage": "./assets/android-icon-background.png",
+                "monochromeImage": "./assets/android-icon-monochrome.png"
+              },
+              "predictiveBackGestureEnabled": false,
+              "package": "com.example.rn07lab",
+              "blockedPermissions": ["android.permission.CAMERA"]
+            },
+            "web": {
+              "favicon": "./assets/favicon.png"
+            },
+            "plugins": [
+              ["expo-camera", { "cameraPermission": false }]
+            ]
+          }
+        }
+        ```
+
+        **Step 5 — what `npx expo install --check` printed in the broken project:**
+
+        ```text
+        The following packages should be updated for best compatibility with the installed expo version:
+          expo-camera@58.0.8 - expected version: ~57.0.6
+        Your project may not work correctly until you install the expected versions of the packages.
+        Found outdated dependencies
+        ```
+
+        **Step 8 — what the broken project's generated files showed** (after `npx expo prebuild --clean --no-install`):
+
+        ```text
+        $ grep -c NSCameraUsageDescription ios/rn07lab/Info.plist
+        0
+        $ grep CAMERA android/app/src/main/AndroidManifest.xml
+          <uses-permission android:name="android.permission.CAMERA" tools:node="remove"/>
+        ```
+    tools:
+      - { name: "Expo SDK", version: "57", note: { uk: "проєкт із шаблону blank-typescript@sdk-57", en: "a project from the blank-typescript@sdk-57 template" } }
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" } }
+      - { name: "Android Studio", note: { uk: "з Android SDK і емулятором — для цілі Android; під час підготовки уроку не використовувався", en: "with the Android SDK and an emulator — for an Android target; not used while preparing this lesson" } }
+      - { name: "Xcode", note: { uk: "із симулятором, лише на Mac — для цілі iOS; під час підготовки уроку не використовувався", en: "with a simulator, Mac only — for an iOS target; not used while preparing this lesson" } }
+    steps:
+      - text:
+          uk: "Створи лабораторний проєкт у теці курсу й перейди в нього."
+          en: "Create the lab project in the course folder and go into it."
+        command: "cd ~/js-course\nnpx create-expo-app@latest rn07-lab --template blank-typescript@sdk-57\ncd rn07-lab"
+        expect:
+          uk: "Наприкінці — `✅ Your project is ready!`. Шаблон сам створює Git-репозиторій з першим комітом."
+          en: "At the end, `✅ Your project is ready!`. The template creates a Git repository with a first commit itself."
+      - text:
+          uk: "Встановлення модуля камери під SDK проєкту."
+          en: "Install the camera module for the project's SDK."
+        command: "npx expo install expo-camera"
+        expect:
+          uk: "`› Installing 1 SDK 57.0.0 compatible native module using npm`; у `package.json` — `\"expo-camera\": \"~57.0.6\"`."
+          en: "`› Installing 1 SDK 57.0.0 compatible native module using npm`; `package.json` has `\"expo-camera\": \"~57.0.6\"`."
+      - text:
+          uk: "Заміни `App.tsx` кодом «Крок 3» зі вступу й закоміть робочий стан."
+          en: "Replace `App.tsx` with the “Step 3” code from the introduction and commit the working state."
+        command: "git add -A\ngit commit -m \"Add the capture screen\""
+      - text:
+          uk: "Внеси збої: постав модуль від наступного SDK і заміни `app.json` кодом «Крок 4» зі вступу. Закоміть зламаний стан."
+          en: "Seed the failures: install the module for the next SDK and replace `app.json` with the “Step 4” code from the introduction. Commit the broken state."
+        command: "npm install expo-camera@next\ngit add -A\ngit commit -m \"Seed two native failures\""
+        expect:
+          uk: "У `package.json` — `\"expo-camera\": \"^58.0.8\"` (або новіша 58-ма версія — `next` з часом змінюється)."
+          en: "`package.json` has `\"expo-camera\": \"^58.0.8\"` (or a newer 58 version — `next` changes over time)."
+      - text:
+          uk: "Збери й запусти застосунок на заявленій цілі (запусти емулятор чи симулятор заздалегідь). Перша збірка триває кілька хвилин. Запиши в нотатки перший рядок журналу, що називає файл, модуль чи версію, — не останній. Потім запусти перевірку версій."
+          en: "Build and run the app on the declared target (start the emulator or simulator first). The first build takes several minutes. Write into your notes the first log line that names a file, a module or a version — not the last one. Then run the version check."
+        command: "npx expo run:android\nnpx expo install --check"
+        expect:
+          uk: "Для iOS перша команда — `npx expo run:ios`. Очікується, що збирання зупиниться з помилкою, пов’язаною з `expo-camera` (не перевірено — запиши свій текст). Друга команда друкує те, що в кроці 5 вступу."
+          en: "For iOS the first command is `npx expo run:ios`. The build is expected to stop with an error involving `expo-camera` (not verified — write down your text). The second command prints what step 5 of the introduction shows."
+      - text:
+          uk: "Полагодь версію задокументованим способом і переконайся, що перевірка чиста. `run:android`/`run:ios` змінили в `package.json` скрипти — закоміть усе разом."
+          en: "Repair the version the documented way and make sure the check is clean. `run:android`/`run:ios` changed the scripts in `package.json` — commit everything together."
+        command: "npx expo install --fix\nnpx expo install --check\ngit add -A\ngit commit -m \"Align expo-camera with SDK 57\""
+        expect:
+          uk: "`--fix` друкує `› Installing 1 SDK 57.0.0 compatible native module using npm`, а `--check` — `Dependencies are up to date`."
+          en: "`--fix` prints `› Installing 1 SDK 57.0.0 compatible native module using npm`, and `--check` prints `Dependencies are up to date`."
+      - text:
+          uk: "Збери знову й на цілі натисни **Open capture**. Відкрий журнал пристрою: на iOS — консоль Xcode чи в симуляторі **Debug › Open System Log…**, на Android — Logcat в Android Studio. Запиши перший рядок про причину."
+          en: "Build again and press **Open capture** on the target. Open the device log: on iOS, the Xcode console or **Debug › Open System Log…** in the simulator; on Android, Logcat in Android Studio. Write down the first line about the cause."
+        command: "npx expo run:android"
+        expect:
+          uk: "За кодом `expo-camera` 57: на iOS — фатальна помилка з текстом `This app is missing NSCameraUsageDescription` (червоний екран чи закритий застосунок). На Android — **Allow the camera** не показує діалогу. Обидва не перевірено на цілі — запиши, що побачив."
+          en: "According to the code of `expo-camera` 57: on iOS, a fatal error with the text `This app is missing NSCameraUsageDescription` (a red screen or a closed app). On Android, **Allow the camera** shows no dialog. Neither was verified on a target — write down what you saw."
+      - text:
+          uk: "Подивись на причину в згенерованих файлах: перегенеруй native-теки без встановлення pods і знайди декларацію камери."
+          en: "Look at the cause in the generated files: regenerate the native folders without installing pods and find the camera declaration."
+        command: "npx expo prebuild --clean --no-install\ngrep -c NSCameraUsageDescription ios/rn07lab/Info.plist\ngrep CAMERA android/app/src/main/AndroidManifest.xml"
+        expect:
+          uk: "Як у кроці 8 вступу: `0` для `Info.plist` і `tools:node=\"remove\"` для `CAMERA`. Теки `ios` і `android` шаблон ігнорує в Git, тож коміт тут не потрібен."
+          en: "As in step 8 of the introduction: `0` for `Info.plist` and `tools:node=\"remove\"` for `CAMERA`. The template ignores the `ios` and `android` folders in Git, so no commit is needed here."
+      - text:
+          uk: "Полагодь `app.json` так само, як `appJson.js` в імітації вище, і закоміть."
+          en: "Repair `app.json` the same way as `appJson.js` in the simulation above, and commit."
+        command: "git add -A\ngit commit -m \"Restore the camera permission declarations\""
+      - text:
+          uk: "Перегенеруй native-теки й перевір декларації знову."
+          en: "Regenerate the native folders and check the declarations again."
+        command: "npx expo prebuild --clean --no-install\ngrep -A1 NSCameraUsageDescription ios/rn07lab/Info.plist\ngrep CAMERA android/app/src/main/AndroidManifest.xml"
+        expect:
+          uk: "`grep -A1` показує ключ `NSCameraUsageDescription`, а в наступному рядку — твій текст пояснення; `CAMERA` — без `tools:node=\"remove\"`. Так було й у нашій перевірці."
+          en: "`grep -A1` shows the `NSCameraUsageDescription` key with your explanation text on the next line; `CAMERA` has no `tools:node=\"remove\"`. That is what our check showed too."
+      - text:
+          uk: "Збери востаннє й перевір на цілі: **Open capture** → **Allow the camera** показує системний діалог; після дозволу видно перегляд камери. Запиши результат і закоміть нотатки."
+          en: "Build one last time and check on the target: **Open capture** → **Allow the camera** shows the system dialog; after allowing, the camera preview is visible. Write down the result and commit the notes."
+        command: "npx expo run:android\ngit add -A\ngit commit -m \"Record the native debugging notes\""
+        expect:
+          uk: "Для iOS — `npx expo run:ios`. Симулятор iOS не має камери, тож після дозволу перегляд може лишитися порожнім — це очікувано; діалог дозволу має з’явитися (на цілі не перевірено)."
+          en: "For iOS, `npx expo run:ios`. The iOS simulator has no camera, so after allowing the preview may stay empty — that is expected; the permission dialog must appear (not verified on a target)."
+    verify:
+      - id: first-lines
+        text:
+          uk: "У `DEBUG-NOTES.md` записано дослівно перший вирішальний рядок кожного збою: зі збирання (чи з `npx expo install --check`, якщо збирання не зупинилося) і з журналу пристрою."
+          en: "`DEBUG-NOTES.md` holds, word for word, the first decisive line of each failure: from the build (or from `npx expo install --check` if the build did not stop) and from the device log."
+      - id: check-clean
+        text:
+          uk: "Після ремонту `npx expo install --check` пише `Dependencies are up to date`, а згенерований `Info.plist` має `NSCameraUsageDescription`."
+          en: "After the repair `npx expo install --check` prints `Dependencies are up to date`, and the generated `Info.plist` has `NSCameraUsageDescription`."
+      - id: capture-works
+        text:
+          uk: "На моїй заявленій цілі екран зйомки відкривається без падіння, а кнопка дозволу показує системний діалог. Ціль записано в нотатках."
+          en: "On my declared target the capture screen opens without a crash, and the permission button shows the system dialog. The target is written in the notes."
+    troubleshooting:
+      - problem:
+          uk: "Збирання з `expo-camera@58` не зупинилося"
+          en: "The build with `expo-camera@58` did not stop"
+        fix:
+          uk: "Таке можливо: ми цього збирання не запускали. Пара все одно непідтримана — запиши в нотатки, що збирання пройшло, а як перший вирішальний рядок візьми рядок з `npx expo install --check`. Далі — ремонт як у кроці 6; збій може проявитися пізніше, під час виконання."
+          en: "That is possible: we did not run this build. The pair is still unsupported — note that the build passed, and take the line from `npx expo install --check` as the first decisive line. Then repair as in step 6; the failure may show up later, at run time."
+      - problem:
+          uk: "`npx expo prebuild --clean` питає, чи продовжувати з незакоміченими змінами"
+          en: "`npx expo prebuild --clean` asks whether to continue with uncommitted changes"
+        fix:
+          uk: "Скасуй, подивись `git status`, закоміть свої зміни й запусти знову: `--clean` видаляє й створює теки `ios` і `android` заново. (Ми запускали `prebuild` лише в неінтерактивному режимі, де такого питання немає, тож точний текст не перевірено.)"
+          en: "Cancel, look at `git status`, commit your changes and run it again: `--clean` deletes the `ios` and `android` folders and creates them anew. (We ran `prebuild` only in non-interactive mode, where this question is not asked, so its exact text was not checked.)"
+      - problem:
+          uk: "Після ремонту `app.json` iOS усе одно падає з тим самим текстом"
+          en: "After repairing `app.json`, iOS still crashes with the same text"
+        fix:
+          uk: "Native-теки не перегенеровано: зміни в `app.json` потрапляють у `Info.plist` лише через `prebuild`. Виконай кроки 10–11 і перевір `grep` перед збиранням."
+          en: "The native folders were not regenerated: changes in `app.json` reach `Info.plist` only through `prebuild`. Do steps 10–11 and check with `grep` before building."
+      - problem:
+          uk: "`npx expo run:android` не знаходить Android SDK чи пристрій"
+          en: "`npx expo run:android` finds no Android SDK or device"
+        fix:
+          uk: "Це налаштування середовища, а не збій уроку. Перевір інструменти кроками розділу RN-01 або познач завдання кнопкою «У мене немає емулятора чи пристрою»."
+          en: "That is an environment setting, not this lesson's failure. Check the tools with the steps of unit RN-01 or mark the task with the “I have no emulator or device” button."
+    recovery:
+      uk: "Кожен стан закомічено: `Add the capture screen` — робочий, `Seed two native failures` — зламаний. `git restore --source=HEAD~1 package.json package-lock.json app.json` разом із `npm install` повертає попередній стан, а `npx expo prebuild --clean --no-install` знову генерує теки `ios` і `android` з `app.json`."
+      en: "Every state is committed: `Add the capture screen` is the working one, `Seed two native failures` the broken one. `git restore --source=HEAD~1 package.json package-lock.json app.json` together with `npm install` returns the previous state, and `npx expo prebuild --clean --no-install` generates the `ios` and `android` folders from `app.json` again."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-07
+    body:
+      uk: "У кроці проєкту цього розділу ти налагодиш один справжній локальний збій свого native-підпроєкту так само: відтвориш, запишеш перший вирішальний рядок, полагодиш задокументованим способом і підтвердиш на заявленій цілі."
+      en: "In this unit's project step you debug one real local failure of your native subproject the same way: reproduce it, write down the first decisive line, repair it the documented way and confirm on the declared target."
