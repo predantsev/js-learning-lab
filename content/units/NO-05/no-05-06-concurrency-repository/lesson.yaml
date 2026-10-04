@@ -9,7 +9,7 @@ contentVersion: 1
 objectives:
   - uk: "Відтворити втрачене оновлення, коли два запити одночасно читають, змінюють і записують сховище, і передбачити підсумковий стан."
     en: "Reproduce a lost update when two requests read, modify and write the store concurrently, and predict the final state."
-  - uk: "Запобігти йому чергою з одним записувачем для файлового репозиторію або однією командою чи транзакцією без `await` усередині для SQLite і показати, що тепер усі одночасні запити доходять."
+  - uk: "Запобігти йому чергою з одного записувача для файлового репозиторію або однією командою чи транзакцією без `await` усередині для SQLite і показати, що тепер усі одночасні запити доходять."
     en: "Prevent it with a single-writer queue for the file repository, or with one statement or a transaction without an `await` inside for SQLite, and show that concurrent requests now all land."
 prerequisites: [no-05-05-corruption-recovery, no-02-02-async-io]
 subskills:
@@ -27,20 +27,20 @@ blocks:
       uk: |
         JavaScript у Node виконується в одному потоці, і два обробники справді не працюють **водночас**. Але обробник із `await` не працює і **від початку до кінця без перерви**: на кожному `await` він віддає хід, і поки диск читає файл, цикл подій запускає інший запит.
 
-        Файловий репозиторій змінює запис за схемою [[read-modify-write|read-modify-write]]: прочитати все сховище, змінити один запис, записати все сховище. Якщо два запити прочитали ту саму версію, кожен запише свою копію — і друга перезапише першу. Це **втрачене оновлення**. Атомарний запис із NO-02 тут не допомагає: він гарантує, що файл цілий, а не що його вміст побудовано з найсвіжішої версії.
+        Файловий репозиторій змінює запис за схемою [[read-modify-write|read-modify-write]]: прочитати все сховище, змінити один запис, записати все сховище. Якщо два запити прочитали ту саму версію, кожен запише свою копію — і друга перезапише першу. Це [[lost-update|втрачене оновлення]], знайоме з лабораторної з SQL. Атомарний запис із NO-02 тут не допомагає: він гарантує, що файл цілий, а не що його вміст побудовано з найсвіжішої версії.
 
         Два способи цього уникнути:
 
-        - **файл** — черга з одним записувачем: наступний read-modify-write починається лише після того, як попередній записав файл;
+        - **файл** — [[single-writer-queue|черга з одного записувача]]: наступний read-modify-write починається лише після того, як попередній записав файл;
         - **SQLite** — зміна однією командою (`UPDATE … WHERE id = ?`), або кілька команд у транзакції **без `await` між ними**. Одне з’єднання спільне для всіх запитів, тож `await` усередині `BEGIN … COMMIT` дасть іншому запиту виконати свій `BEGIN` у ту саму транзакцію — і він отримає `cannot start a transaction within a transaction`.
       en: |
         JavaScript in Node runs on one thread, and two handlers really do not run **at the same time**. But a handler with an `await` does not run **from start to end without a break** either: at every `await` it gives up its turn, and while the disk reads a file the event loop runs another request.
 
-        A file repository changes a record by [[read-modify-write]]: read the whole store, change one record, write the whole store. If two requests read the same version, each writes its own copy — and the second overwrites the first. This is a **lost update**. The atomic write from NO-02 does not help here: it guarantees that the file is whole, not that its content was built from the newest version.
+        A file repository changes a record by [[read-modify-write]]: read the whole store, change one record, write the whole store. If two requests read the same version, each writes its own copy — and the second overwrites the first. This is a [[lost-update]], familiar from the SQL lab. The atomic write from NO-02 does not help here: it guarantees that the file is whole, not that its content was built from the newest version.
 
         Two ways to avoid it:
 
-        - **a file** — a single-writer queue: the next read-modify-write starts only after the previous one has written the file;
+        - **a file** — a [[single-writer-queue]]: the next read-modify-write starts only after the previous one has written the file;
         - **SQLite** — a change as one statement (`UPDATE … WHERE id = ?`), or several statements in a transaction **with no `await` between them**. One connection is shared by every request, so an `await` inside `BEGIN … COMMIT` lets another request run its own `BEGIN` on the same connection — and it gets `cannot start a transaction within a transaction`.
 
   - id: predict-lost
@@ -159,21 +159,21 @@ blocks:
         Натисни **Запустити**. `index.js` піднімає сервер справ тричі — з трьома репозиторіями з `repositories.js` — і щоразу надсилає 50 запитів `PATCH /tasks/<id>` одночасно. Кожен запит позначає виконаною **іншу** справу, тож конфлікту між записами немає. Сервер відповідає `204` на кожен — зміну «підтверджено».
 
         - `file` — read-modify-write усього JSON-файла;
-        - `file + queue` — той самий файл, але кожна зміна чекає на попередню в черзі;
+        - `file + queue` — той самий файл, але кожна зміна чекає на попередню в черзі (навмисно найпростішій: чим вона ненадійна, показує другий крок нижче на сторінці);
         - `sqlite UPDATE` — одна команда `UPDATE` на справу.
 
-        Скільки змін втрачає перший варіант, залежить від комп’ютера й диска: запусти кілька разів — число змінюватиметься.
+        Скільки змін втрачає перший варіант, залежить від комп’ютера й диска: запусти кілька разів — число змінюватиметься (у нас на Node 25.2.1 — від 43 до 46 із 50).
       en: |
         Press **Run**. `index.js` starts the planner server three times — with three repositories from `repositories.js` — and each time sends 50 `PATCH /tasks/<id>` requests at once. Each request marks a **different** task done, so the records do not conflict. The server answers `204` to each — the change is “confirmed”.
 
         - `file` — read-modify-write of the whole JSON file;
-        - `file + queue` — the same file, but every change waits for the previous one in a queue;
+        - `file + queue` — the same file, but every change waits for the previous one in a queue (a deliberately minimal one: the second step further down the page shows where it is unreliable);
         - `sqlite UPDATE` — one `UPDATE` statement per task.
 
-        How many changes the first variant loses depends on the computer and the disk: run it several times — the number will change.
+        How many changes the first variant loses depends on the computer and the disk: run it several times — the number will change (for us, on Node 25.2.1, from 43 to 46 of 50).
     tryIt:
       uk: |
-        У `repositories.js` зроби з `markDone` для SQLite read-modify-write у транзакції з `await` усередині — так, як не можна:
+        **Крок 1.** У `repositories.js` зроби з `markDone` для SQLite read-modify-write у транзакції з `await` усередині — так, як не можна:
 
         ```js
         async markDone(id) {
@@ -186,8 +186,10 @@ blocks:
         ```
 
         Запусти: рядок `sqlite UPDATE` тепер показує набагато менше підтверджених змін — решта запитів отримали `500`, бо їхній `BEGIN` прийшов, коли транзакція іншого запиту на тому самому з’єднанні ще була відкрита (`cannot start a transaction within a transaction`). Поверни одну команду `UPDATE`.
+
+        **Крок 2.** Тепер про чергу. У `fileRepository` першим рядком `markDone` додай `if (id === 't-25') throw new Error('disk full');` — нехай зламається запис лише однієї справи — і запусти. Рядок `file` показує 49 підтверджених (з тими самими втратами), а рядок `file + queue` — набагато менше: у нас 24. Невдалий запис лишив `tail` відхиленим, і кожен запит, що став у чергу після `t-25`, отримав `500` з тим самим `disk full`, хоча його власний запис був би успішним. Черга у вправі має пережити таку помилку. Прибери доданий рядок.
       en: |
-        In `repositories.js`, turn the SQLite `markDone` into a read-modify-write in a transaction with an `await` inside — the way you must not:
+        **Step 1.** In `repositories.js`, turn the SQLite `markDone` into a read-modify-write in a transaction with an `await` inside — the way you must not:
 
         ```js
         async markDone(id) {
@@ -200,6 +202,8 @@ blocks:
         ```
 
         Run: the `sqlite UPDATE` line now shows far fewer confirmed changes — the other requests got `500`, because their `BEGIN` arrived while another request’s transaction on the same connection was still open (`cannot start a transaction within a transaction`). Put the single `UPDATE` statement back.
+
+        **Step 2.** Now the queue. In `fileRepository`, add `if (id === 't-25') throw new Error('disk full');` as the first line of `markDone` — let the write of just one task fail — and run. The `file` line shows 49 confirmed (with the same losses), and the `file + queue` line far fewer: 24 for us. The failed write left `tail` rejected, and every request queued after `t-25` got `500` with the same `disk full`, although its own write would have succeeded. The queue in the exercise must survive such an error. Remove the added line.
 
   - id: recall
     kind: review
@@ -321,12 +325,16 @@ blocks:
           en: "This check queues a function that throws `disk full`, followed by one that returns `next ran`. The first call must reject with `disk full`, and the second must fulfil with `next ran`. The end of the queue must not be a rejected promise."
       - when: { test: "20 concurrent updates of different notes all land" }
         message:
-          uk: "Ця перевірка закріплює 20 різних нотаток одночасно й очікує всі 20 закріплених. Якщо закріплених менше, частина оновлень прочитала старе сховище: під замком має бути і читання, і запис."
-          en: "This check pins 20 different notes at once and expects all 20 to be pinned. If fewer are, some updates read an old store: both the read and the write must be under the lock."
+          uk: "Ця перевірка закріплює 20 різних нотаток одночасно й очікує всі 20 закріплених. Якщо закріплених менше, частина оновлень прочитала старе сховище: під замком має бути і читання, і запис. Якщо ж ця перевірка впала з `disk full`, то це помилка з попередньої перевірки, яка досі сидить у кінці черги: кінець черги не може бути відхиленим промісом."
+          en: "This check pins 20 different notes at once and expects all 20 to be pinned. If fewer are, some updates read an old store: both the read and the write must be under the lock. If this check failed with `disk full` instead, that is the error from an earlier check still sitting at the end of the queue: the end of the queue must not be a rejected promise."
       - when: { test: "two concurrent updates of different fields of one note both land" }
         message:
-          uk: "Ця перевірка одночасно змінює `title` і `pinned` нотатки `n-2` й очікує обидві зміни."
-          en: "This check changes `title` and `pinned` of the note `n-2` at once and expects both changes."
+          uk: "Ця перевірка одночасно змінює `title` і `pinned` нотатки `n-2` й очікує обидві зміни. Якщо вона впала з `disk full`, кінець твоєї черги досі тримає помилку з попередньої перевірки."
+          en: "This check changes `title` and `pinned` of the note `n-2` at once and expects both changes. If it failed with `disk full`, the end of your queue still holds the error from an earlier check."
+      - when: { test: "updateNote resolves with the updated note" }
+        message:
+          uk: "Ця перевірка закріплює нотатку `n-1` й очікує, що `updateNote` виконається з оновленою нотаткою: поверни з функції під замком знайдену нотатку, а з `updateNote` — проміс `withWriteLock`. Якщо перевірка впала з `disk full`, кінець твоєї черги досі тримає помилку з попередньої перевірки."
+          en: "This check pins the note `n-1` and expects `updateNote` to resolve with the updated note: return the found note from the locked function, and the `withWriteLock` promise from `updateNote`. If the check failed with `disk full`, the end of your queue still holds the error from an earlier check."
       - when: { test: "withWriteLock resolves with what fn returns" }
         message:
           uk: "Ця перевірка очікує, що `await withWriteLock(async () => 42)` дасть `42`: поверни викликові проміс із результатом `fn`, а не проміс черги."
@@ -336,5 +344,5 @@ blocks:
     kind: transfer
     capstoneStep: NO-05
     body:
-      uk: "У кроці проєкту цього розділу сховище твого домену має витримувати одночасні запити до `/v1`. Для файла — усі зміни через одну чергу; для SQLite — одна команда на зміну або транзакція без `await` усередині. Перевір це так, як тут: багато одночасних PATCH і підрахунок збереженого."
-      en: "In this unit’s project step your domain’s store must survive simultaneous `/v1` requests. For a file — every change through one queue; for SQLite — one statement per change, or a transaction with no `await` inside. Check it as here: many simultaneous PATCH requests and a count of what was stored."
+      uk: "Крок проєкту цього розділу ще не написаний. За планом курсу в ньому сховище твого домену має витримувати одночасні запити до `/v1`: для файла — усі зміни через одну чергу; для SQLite — одна команда на зміну або транзакція без `await` усередині. Коли дійдеш до нього, перевір це так, як тут: багато одночасних PATCH і підрахунок збереженого."
+      en: "The project step of this unit is not written yet. According to the course plan, in it your domain’s store must survive simultaneous `/v1` requests: for a file — every change through one queue; for SQLite — one statement per change, or a transaction with no `await` inside. When you get there, check it as here: many simultaneous PATCH requests and a count of what was stored."
