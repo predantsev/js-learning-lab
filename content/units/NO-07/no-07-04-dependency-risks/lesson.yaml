@@ -1,0 +1,282 @@
+id: no-07-04-dependency-risks
+unit: NO-07
+title:
+  uk: "Ризики залежностей"
+  en: "Dependency risks"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Читати lockfile і попередження про вразливість (advisory) та вирішувати, чи лежить позначений пакет на шляху коду, яким справді користується запущений сервер."
+    en: "Read a lockfile and an audit advisory and decide whether the flagged package lies on a code path the running server actually uses."
+  - uk: "Називати три ризики ланцюга постачання (typosquatting, шкідливі скрипти встановлення, покинуті транзитивні пакети) і по одному захисту від кожного."
+    en: "Name three supply-chain risks (typosquatting, malicious install scripts, abandoned transitive packages) and one mitigation for each."
+prerequisites: [no-07-03-safe-errors-redaction, js-15-04-install-lockfile-semver]
+subskills:
+  - { family: B-07, skill: "dependency risks", depth: intro }
+glossary: [supply-chain-risk, typosquatting, install-script]
+selfCheck: [predict-reachable, advisory-triage]
+
+blocks:
+  - id: reading-advisory
+    kind: explanation
+    title:
+      uk: "Попередження — це питання, а не вирок"
+      en: "An advisory is a question, not a verdict"
+    body:
+      uk: |
+        `npm audit` порівнює версії з [[lockfile]] з базою відомих вразливостей. Кожне попередження (advisory) каже: пакет, **діапазон** уражених версій, версію з виправленням (якщо вона вже є) і що саме вразливе — зазвичай одна функція.
+
+        Попередження ще не означає, що твій сервер можна зламати. Щоб вирішити, постав чотири запитання:
+
+        1. **Яка версія встановлена?** Точну версію знає lockfile, а не діапазон `^…` з `package.json`.
+        2. **Хто тягне пакет?** Ланцюжок `сервер → report-kit → csv-tidy` показує `npm explain csv-tidy`. Пакет із позначкою `"dev": true` у lockfile потрібен лише інструментам розробки й до запущеного сервера не потрапляє.
+        3. **Чи викликає сервер уражену функцію?** Пакет може бути в продакшн-залежностях, але сервер користується лише `formatRow`, а вразлива `parseCsv`.
+        4. **Чи є виправлення?** Є — оновлюємо (`upgrade`). Немає — замінюємо пакет, часто вбудованим модулем `node:` (`replace`), або прибираємо.
+
+        Нуль попереджень теж не доводить безпеку: база знає лише про **вже знайдені** вразливості.
+      en: |
+        `npm audit` compares the versions in the [[lockfile]] with a database of known vulnerabilities. Every advisory says: the package, the **range** of affected versions, the version with a fix (if there is one already) and what exactly is vulnerable — usually one function.
+
+        An advisory does not yet mean that your server can be broken into. To decide, ask four questions:
+
+        1. **Which version is installed?** The lockfile knows the exact version, not the `^…` range in `package.json`.
+        2. **Who pulls the package in?** `npm explain csv-tidy` shows the chain `server → report-kit → csv-tidy`. A package marked `"dev": true` in the lockfile is needed only by development tools and never reaches the running server.
+        3. **Does the server call the affected function?** A package can be among the production dependencies while the server uses only `formatRow` and the vulnerable one is `parseCsv`.
+        4. **Is there a fix?** Yes — upgrade (`upgrade`). No — replace the package, often with a built-in `node:` module (`replace`), or remove it.
+
+        Zero advisories prove no safety either: the database knows only about vulnerabilities **already found**.
+
+  - id: supply-chain
+    kind: explanation
+    title:
+      uk: "Три ризики ланцюга постачання"
+      en: "Three supply-chain risks"
+    body:
+      uk: |
+        Кожен пакет — це код незнайомих людей, що виконується з правами твого користувача. Це [[supply-chain-risk|ризик ланцюга постачання]], і популярність пакета від нього не рятує:
+
+        | Ризик | Як виглядає | Захист |
+        |---|---|---|
+        | [[typosquatting]] | `npm install expresss` — пакет з одруківкою в назві, який опублікував хтось інший | копіюй назву зі сторінки пакета, перевір автора й кількість завантажень до встановлення |
+        | [[install-script\|скрипт встановлення]] | `postinstall` у пакеті виконується вже під час `npm install`, ще до того, як ти запустиш свій код | встановлюй з `--ignore-scripts`, коли скрипти не потрібні; читай, що в них |
+        | покинутий транзитивний пакет | залежність твоєї залежності, яку роками ніхто не оновлює | менше залежностей; вбудовані модулі `node:` замість дрібних пакетів; `npm ci` з lockfile, щоб нова версія не прийшла непомітно |
+
+        Популярний пакет теж можуть зламати: викрасти обліковий запис автора й опублікувати нову версію зі шкідливим кодом. Lockfile захищає від того, щоб така версія потрапила до тебе сама, без твого рішення.
+      en: |
+        Every package is code by strangers that runs with your user's rights. That is a [[supply-chain-risk]], and a package's popularity does not save you from it:
+
+        | Risk | What it looks like | Protection |
+        |---|---|---|
+        | [[typosquatting]] | `npm install expresss` — a package with a typo in its name, published by someone else | copy the name from the package's page, check the author and the download count before installing |
+        | [[install-script]] | a `postinstall` in a package runs during `npm install` already, before you start your own code | install with `--ignore-scripts` when the scripts are not needed; read what they do |
+        | an abandoned transitive package | a dependency of your dependency that nobody has updated for years | fewer dependencies; built-in `node:` modules instead of small packages; `npm ci` from the lockfile so a new version cannot arrive unnoticed |
+
+        A popular package can be compromised too: an author's account is stolen and a new version with malicious code is published. The lockfile protects you from such a version reaching you on its own, without your decision.
+
+  - id: predict-reachable
+    kind: prediction
+    prompt:
+      uk: "`npm audit` для сервера планувальника показує три попередження. Lockfile: `glob-lite` має `\"dev\": true` і потрібен лише лінтеру; `csv-tidy` — продакшн-залежність `report-kit`, але сервер викликає тільки `formatRow`, а вразлива `parseCsv`; `tiny-query` розбирає query кожного запиту `GET /tasks`, і вразлива саме його `parse`. Яких пакетів може досягти запит до запущеного сервера? Вибери всі."
+      en: "`npm audit` for the planner server shows three advisories. The lockfile: `glob-lite` has `\"dev\": true` and is needed only by the linter; `csv-tidy` is a production dependency of `report-kit`, but the server calls only `formatRow`, while the vulnerable one is `parseCsv`; `tiny-query` parses the query of every `GET /tasks` request, and its `parse` is exactly what is vulnerable. Which packages can a request to the running server reach? Pick all."
+    answer:
+      type: multi
+      options:
+        - id: tiny
+          text: { uk: "`tiny-query`", en: "`tiny-query`" }
+        - id: csv
+          text: { uk: "`csv-tidy`", en: "`csv-tidy`" }
+          why:
+            uk: "Пакет встановлено для продакшну, але запит доходить лише до `formatRow`. Вразлива `parseCsv` на шляху запиту не лежить — оновити варто, але без поспіху."
+            en: "The package is installed for production, but a request only reaches `formatRow`. The vulnerable `parseCsv` is not on the request's path — worth upgrading, but without a rush."
+        - id: glob
+          text: { uk: "`glob-lite`", en: "`glob-lite`" }
+          why:
+            uk: "`\"dev\": true` означає, що пакет потрібен лише інструментам розробки. Запущений сервер його не завантажує, тож запит до нього не дійде."
+            en: "`\"dev\": true` means the package is needed only by development tools. The running server does not load it, so a request cannot reach it."
+      correct: [tiny]
+    explanation:
+      uk: "Терміново лише те, що лежить на шляху запиту: продакшн-пакет, чию вразливу функцію сервер справді викликає. Решту виправляють планово, а `glob-lite` усе одно варто оновити — він працює на твоєму комп’ютері під час розробки."
+      en: "Only what lies on a request's path is urgent: a production package whose vulnerable function the server really calls. The rest is fixed on schedule, and `glob-lite` is still worth upgrading — it runs on your computer during development."
+
+  - id: predict-typo
+    kind: prediction
+    prompt:
+      uk: "Розробник поспіхом набирає `npm install expresss` (три «s»). Пакет із такою назвою існує, але опублікований не тими людьми, що `express`. Що станеться?"
+      en: "A developer types `npm install expresss` (three “s”) in a hurry. A package with that name exists, but it was published by other people than `express`. What happens?"
+    answer:
+      type: choice
+      options:
+        - id: runs-scripts
+          text:
+            uk: "npm встановить чужий пакет, і його скрипт встановлення, якщо він є, виконається одразу з правами розробника"
+            en: "npm installs the foreign package, and its install script, if it has one, runs at once with the developer's rights"
+        - id: npm-fixes
+          text:
+            uk: "npm помітить одруківку й встановить `express`"
+            en: "npm notices the typo and installs `express`"
+          why:
+            uk: "npm встановлює рівно ту назву, яку отримав. Схожість назв він не перевіряє."
+            en: "npm installs exactly the name it was given. It does not check how similar names are."
+        - id: safe-until-import
+          text:
+            uk: "Нічого страшного: поки код не імпортує пакет, той не виконується"
+            en: "Nothing serious: as long as the code does not import the package, it does not run"
+          why:
+            uk: "Скрипти `preinstall`, `install` і `postinstall` виконуються під час самого `npm install`, ще до будь-якого `import`."
+            en: "The `preinstall`, `install` and `postinstall` scripts run during `npm install` itself, before any `import`."
+      correct: [runs-scripts]
+    explanation:
+      uk: "Це typosquatting: зловмисник реєструє назву, схожу на популярну, і чекає одруківки. Захист — копіювати назву зі сторінки пакета, перевіряти автора й використовувати `--ignore-scripts`, коли скрипти не потрібні."
+      en: "This is typosquatting: an attacker registers a name close to a popular one and waits for a typo. The protection is to copy the name from the package's page, check the author and use `--ignore-scripts` when the scripts are not needed."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: ci-installs-lock
+        from: js-15-04-install-lockfile-semver
+        prompt:
+          uk: "У `package.json` — `\"tiny-query\": \"^1.4.0\"`, у lockfile — точна версія `1.4.1`. Щойно вийшла `1.4.2` з виправленням. Яку версію поставить `npm ci`?"
+          en: "`package.json` has `\"tiny-query\": \"^1.4.0\"`, the lockfile has the exact version `1.4.1`. Version `1.4.2` with a fix was just released. Which version does `npm ci` install?"
+        answer:
+          type: choice
+          options:
+            - id: lock
+              text:
+                uk: "`1.4.1`: `npm ci` ставить рівно те, що записано в lockfile"
+                en: "`1.4.1`: `npm ci` installs exactly what the lockfile records"
+            - id: newest
+              text:
+                uk: "`1.4.2`: діапазон `^1.4.0` її дозволяє"
+                en: "`1.4.2`: the range `^1.4.0` allows it"
+              why:
+                uk: "Діапазон дозволяє, але `npm ci` не шукає нових версій — він відтворює lockfile. Щоб отримати виправлення, lockfile оновлюють свідомо, наприклад `npm install tiny-query@1.4.2`."
+                en: "The range allows it, but `npm ci` does not look for new versions — it reproduces the lockfile. To get the fix, the lockfile is updated on purpose, for example with `npm install tiny-query@1.4.2`."
+            - id: error
+              text:
+                uk: "Помилку: lockfile і `package.json` не збігаються"
+                en: "An error: the lockfile and `package.json` disagree"
+              why:
+                uk: "Вони збігаються: `1.4.1` входить у діапазон `^1.4.0`. Помилку `npm ci` дав би, лише якби версія з lockfile не підходила під діапазон."
+                en: "They agree: `1.4.1` is within the range `^1.4.0`. `npm ci` would fail only if the lockfile's version did not fit the range."
+          correct: [lock]
+        explanation:
+          uk: "Діапазон — у `package.json`, точна версія — у lockfile, а `npm ci` видаляє `node_modules` і відтворює саме lockfile. Тому виправлення не з’явиться саме: його приносить свідоме оновлення lockfile."
+          en: "The range lives in `package.json`, the exact version in the lockfile, and `npm ci` deletes `node_modules` and reproduces exactly the lockfile. So a fix does not appear by itself: a deliberate update of the lockfile brings it."
+
+  - id: lock-paths
+    kind: example
+    runtime: isolated-node
+    dir: lock-paths
+    entry: index.js
+    strings:
+      production: { uk: "продакшн", en: "production" }
+      devOnly: { uk: "лише для розробки", en: "development only" }
+      check: { uk: "перевірка", en: "check" }
+    title:
+      uk: "Шлях до позначеного пакета"
+      en: "The path to a flagged package"
+    body:
+      uk: |
+        `package-lock.json` — синтетичний lockfile сервера планувальника. `why.js` проходить його від залежностей проєкту вниз і друкує ланцюжок до кожного з трьох позначених пакетів — так само, як це робить `npm explain`. npm-пакетів на платформі немає, тож `vendor/tiny-query.js` — їхній замінник: функція `parse`, через яку `query.js` читає query кожного запиту.
+
+        Натисни **Запустити**. Перша перевірка — звичайний query. Друга надсилає ключ `__proto__[isAdmin]` і дивиться, чи не з’явилось `isAdmin` у **кожного нового** порожнього об’єкта: `parse` записала значення в `Object.prototype`, спільного предка всіх об’єктів. Саме про це попередження.
+      en: |
+        `package-lock.json` is a synthetic lockfile of the planner server. `why.js` walks it down from the project's dependencies and prints the chain to each of the three flagged packages — just like `npm explain` does. There are no npm packages on the platform, so `vendor/tiny-query.js` stands in for one: the `parse` function through which `query.js` reads the query of every request.
+
+        Press **Run**. The first check is an ordinary query. The second sends the key `__proto__[isAdmin]` and looks whether **every new** empty object now has `isAdmin`: `parse` wrote the value into `Object.prototype`, the shared ancestor of all objects. That is what the advisory is about.
+    tryIt:
+      uk: |
+        1. Виправлення для `tiny-query` немає, тож заміни його вбудованим API. У `query.js` заміни `return parse(search);` на `return Object.fromEntries(new URLSearchParams(search));` (`URLSearchParams` вбудований у Node.js; його також можна імпортувати з `node:url`). Запусти: обидві перевірки — `ok`.
+        2. Тепер `import { parse } …` у `query.js` нікому не потрібен — прибери його. У справжньому проєкті наступним кроком був би `npm uninstall tiny-query`, і пакет зник би з lockfile.
+      en: |
+        1. There is no fix for `tiny-query`, so replace it with a built-in API. In `query.js` replace `return parse(search);` with `return Object.fromEntries(new URLSearchParams(search));` (`URLSearchParams` is built into Node.js; it can also be imported from `node:url`). Run: both checks say `ok`.
+        2. Now the `import { parse } …` in `query.js` is needed by nobody — remove it. In a real project the next step would be `npm uninstall tiny-query`, and the package would disappear from the lockfile.
+
+  - id: advisory-triage
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: advisory-triage
+    entry: index.js
+    editable: [triage.js]
+    title:
+      uk: "Рішення щодо попередження"
+      en: "A decision about an advisory"
+    instructions:
+      uk: |
+        Запиши рішення щодо попереджень як код. Функція `triage(advisory, { lock, usedExports })` у `triage.js` отримує попередження `{ package, vulnerableBelow, fixedIn, affects }` (уражені всі версії, нижчі за `vulnerableBelow`; `fixedIn` може бути `null`), lockfile і `usedExports` — які функції кожного пакета справді викликає сервер. Вона повертає `{ action, urgent }`:
+
+        - встановлена версія (з `lock.packages["node_modules/<назва>"].version`) не нижча за `vulnerableBelow` або пакета в lockfile немає → `{ action: "keep", urgent: false }`;
+        - інакше `action` — `"upgrade"`, якщо є `fixedIn`, і `"replace"`, якщо його немає;
+        - `urgent` — `true` лише тоді, коли пакет **не** має `"dev": true` **і** сервер викликає функцію `affects`.
+
+        Версії порівнюй через `compareVersions(a, b)` з `versions.js`: вона повертає від’ємне число, якщо `a` старіша.
+      en: |
+        Write the decision about advisories as code. The function `triage(advisory, { lock, usedExports })` in `triage.js` receives the advisory `{ package, vulnerableBelow, fixedIn, affects }` (every version below `vulnerableBelow` is affected; `fixedIn` can be `null`), the lockfile and `usedExports` — which functions of each package the server really calls. It returns `{ action, urgent }`:
+
+        - the installed version (from `lock.packages["node_modules/<name>"].version`) is not below `vulnerableBelow`, or the package is not in the lockfile → `{ action: "keep", urgent: false }`;
+        - otherwise `action` is `"upgrade"` when there is a `fixedIn`, and `"replace"` when there is none;
+        - `urgent` is `true` only when the package does **not** have `"dev": true` **and** the server calls the function `affects`.
+
+        Compare versions with `compareVersions(a, b)` from `versions.js`: it returns a negative number when `a` is older.
+    testTitles:
+      "a version outside the vulnerable range, or a package that is not installed, is kept":
+        uk: "Версія поза ураженим діапазоном або пакет, якого немає, — `keep`"
+        en: "A version outside the vulnerable range, or a package that is not installed, is kept"
+      "versions are compared as numbers, not as text":
+        uk: "Версії порівнюються як числа, а не як текст"
+        en: "Versions are compared as numbers, not as text"
+      "a production package whose affected function the server calls is an urgent upgrade":
+        uk: "Продакшн-пакет, уражену функцію якого викликає сервер, — термінове `upgrade`"
+        en: "A production package whose affected function the server calls is an urgent `upgrade`"
+      "with no fixed version the action is replace":
+        uk: "Без версії з виправленням дія — `replace`"
+        en: "With no fixed version the action is `replace`"
+      "a development-only package is not urgent":
+        uk: "Пакет лише для розробки — не терміново"
+        en: "A development-only package is not urgent"
+      "a package whose affected function the server never calls is not urgent":
+        uk: "Пакет, уражену функцію якого сервер не викликає, — не терміново"
+        en: "A package whose affected function the server never calls is not urgent"
+    hints:
+      nudge:
+        uk: "Почни з того, що може завершити рішення одразу: чи пакет взагалі встановлено і чи його версія уражена. Лише для ураженого пакета має сенс питати про виправлення й терміновість."
+        en: "Start with what can end the decision at once: whether the package is installed at all and whether its version is affected. Only for an affected package does it make sense to ask about a fix and urgency."
+      explanation:
+        uk: "Запис у lockfile шукається за ключем `node_modules/` + назва; якщо його немає, результат — `undefined`. Текстове порівняння версій оманливе: `\"1.10.0\" < \"1.9.0\"` дає `true`, бо порівнюються символи «1» і «9». Терміновість складається з двох умов через «і»: наприклад, для попередження про `sendMail` у пакеті `mailer` це було б `!entry.dev && (used.mailer ?? []).includes(\"sendMail\")`."
+        en: "The lockfile entry is found under the key `node_modules/` + the name; if there is none, the result is `undefined`. Comparing versions as text is misleading: `\"1.10.0\" < \"1.9.0\"` gives `true`, because the characters “1” and “9” are compared. Urgency is two conditions joined with “and”: for an advisory about `sendMail` in a package `mailer`, for example, it would be `!entry.dev && (used.mailer ?? []).includes(\"sendMail\")`."
+    solutionNote:
+      uk: "Рішення спирається на докази, а не на сам факт попередження: точну версію з lockfile, наявність виправлення, позначку `dev` і те, що сервер реально викликає. Нетермінове `upgrade` — теж рішення: його роблять планово, а не о третій ночі."
+      en: "The decision rests on evidence, not on the mere fact of an advisory: the exact version from the lockfile, whether a fix exists, the `dev` mark and what the server really calls. A non-urgent `upgrade` is a decision too: it is done on schedule, not at three in the morning."
+    feedback:
+      - when: { test: "a version outside the vulnerable range, or a package that is not installed, is kept" }
+        message:
+          uk: "Ця перевірка дає встановлені версії `2.4.0` і `3.0.1` при `vulnerableBelow: \"2.4.0\"`, а також lockfile без пакета, і чекає `{ action: \"keep\", urgent: false }`. Попередження стосується лише версій **нижче** межі."
+          en: "This check gives installed versions `2.4.0` and `3.0.1` with `vulnerableBelow: \"2.4.0\"`, plus a lockfile without the package, and expects `{ action: \"keep\", urgent: false }`. The advisory concerns only versions **below** the bound."
+      - when: { test: "versions are compared as numbers, not as text" }
+        message:
+          uk: "Ця перевірка дає встановлену `2.10.0` при `vulnerableBelow: \"2.9.0\"` і чекає `keep`. Як текст `\"2.10.0\"` менше за `\"2.9.0\"` — порівнюй через `compareVersions`."
+          en: "This check gives an installed `2.10.0` with `vulnerableBelow: \"2.9.0\"` and expects `keep`. As text `\"2.10.0\"` is smaller than `\"2.9.0\"` — compare with `compareVersions`."
+      - when: { test: "with no fixed version the action is replace" }
+        message:
+          uk: "Ця перевірка дає `fixedIn: null` і чекає `action: \"replace\"`: оновлюватися нема до чого."
+          en: "This check gives `fixedIn: null` and expects `action: \"replace\"`: there is nothing to upgrade to."
+      - when: { test: "a development-only package is not urgent" }
+        message:
+          uk: "Ця перевірка дає пакет із `\"dev\": true` і чекає `urgent: false`: запущений сервер його не завантажує."
+          en: "This check gives a package with `\"dev\": true` and expects `urgent: false`: the running server does not load it."
+      - when: { test: "a package whose affected function the server never calls is not urgent" }
+        message:
+          uk: "Ця перевірка дає `affects: \"parseCurrency\"`, якої немає в `usedExports`, а також порожній `usedExports`, і чекає `urgent: false`."
+          en: "This check gives `affects: \"parseCurrency\"`, which is not in `usedExports`, and also an empty `usedExports`, and expects `urgent: false`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-07
+    body:
+      uk: "У кроці проєкту запусти `npm audit` у своєму проєкті й для кожного попередження дай ту саму відповідь: версія, ланцюжок, чи викликається уражена функція, що робимо. Порожній звіт теж запиши — з датою, бо завтра він може змінитися."
+      en: "In the project step run `npm audit` in your project and give the same answer for every advisory: the version, the chain, whether the affected function is called, what we do. Write down an empty report too — with the date, because tomorrow it may change."
