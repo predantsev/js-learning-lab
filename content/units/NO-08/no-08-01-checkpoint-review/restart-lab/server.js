@@ -1,5 +1,5 @@
 // The planner lab's API: GET /tasks and POST /tasks over the repository. It answers 201 only
-// after the repository has saved the task, and logs one line per request it receives.
+// after the repository has saved the task, and logs one line for every request it answers.
 import { randomUUID } from 'node:crypto';
 import http from 'node:http';
 
