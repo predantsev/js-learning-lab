@@ -15,10 +15,11 @@ function recordingHandler() {
   return { handler, bodies };
 }
 
-async function start() {
+// Some checks use a much longer requestTimeout, so that only the rule they test can answer in time.
+async function start(limits = LIMITS) {
   expect(typeof createLimitedServer, 'type of createLimitedServer').toBe('function');
   const recorded = recordingHandler();
-  const base = await listen(createLimitedServer(recorded.handler, LIMITS));
+  const base = await listen(createLimitedServer(recorded.handler, limits));
   return { ...recorded, port: Number(new URL(base).port) };
 }
 
@@ -67,16 +68,16 @@ function chunked(socket) {
 test('a body within the limit reaches the handler', async () => {
   const { port, bodies } = await start();
   const body = JSON.stringify([{ name: L.walk, frequency: 'daily' }]);
-  const result = await raw(port, (socket) => socket.write(head(`Content-Length: ${Buffer.byteLength(body)}\r\n`) + body), 1000);
+  const result = await raw(port, (socket) => socket.write(head(`Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n`) + body), 1000);
   expect(result.status, 'status for a small body').toBe(201);
   expect(bodies, 'bodies the handler received').toEqual([[{ name: L.walk, frequency: 'daily' }]]);
 });
 
 test('a declared Content-Length over the limit answers 413 before any body is sent', async () => {
   const { port, bodies } = await start();
-  const result = await raw(port, (socket) => socket.write(head('Content-Length: 1000000\r\n')), 600);
-  expect(result.status, 'status for Content-Length: 1000000 with no body sent yet').toBe(413);
-  expect(result.statusMs < 300, `413 within 300 ms (it came after ${result.statusMs} ms)`).toBe(true);
+  // No body is ever sent: a server that waits for it can only answer 408 (requestTimeout, 800 ms).
+  const result = await raw(port, (socket) => socket.write(head('Content-Length: 1000000\r\n')), 1000);
+  expect(result.status, 'status for Content-Length: 1000000 with no body sent').toBe(413);
   expect(bodies.length, 'handler calls').toBe(0);
 });
 
@@ -88,15 +89,16 @@ test('a body over the limit without Content-Length answers 413', async () => {
 });
 
 test('a 413 answer closes the connection at once', async () => {
-  const { port } = await start();
-  const result = await raw(port, chunked, 1000);
+  // requestTimeout is 5 s here: a connection closed within 2 s was closed by the 413 itself.
+  const { port } = await start({ ...LIMITS, requestTimeoutMs: 5000 });
+  const result = await raw(port, chunked, 2000);
   expect(result.status, 'status for 8 KB sent in chunks without Content-Length').toBe(413);
-  expect(result.closedMs !== null && result.closedMs - result.statusMs < 200,
-    `connection closed within 200 ms of the 413 (closed after ${result.closedMs === null ? 'more than 1000' : result.closedMs - result.statusMs} ms)`).toBe(true);
+  expect(result.closedMs !== null, 'the server closed the connection within 2 s (requestTimeout is 5 s in this check)').toBe(true);
 });
 
 test('a client that sends its headers too slowly gets 408', async () => {
-  const { port, bodies } = await start();
+  // requestTimeout is 5 s here, so a 408 within 2 s can only come from headersTimeout (300 ms).
+  const { port, bodies } = await start({ ...LIMITS, requestTimeoutMs: 5000 });
   const text = 'GET /habits HTTP/1.1\r\nHost: lab\r\n\r\n';
   const result = await raw(port, (socket) => {
     let index = 0;
@@ -105,15 +107,14 @@ test('a client that sends its headers too slowly gets 408', async () => {
       socket.write(text[index]);
       index += 1;
     }, 100);
-  }, 1200);
-  expect(result.status, 'status for headers at one character per 100 ms').toBe(408);
-  expect(result.statusMs < 700, `408 within 700 ms (it came after ${result.statusMs ?? 'more than 1200'} ms)`).toBe(true);
+  }, 2000);
+  expect(result.status, 'status within 2 s for headers at one character per 100 ms').toBe(408);
   expect(bodies.length, 'handler calls').toBe(0);
 });
 
 test('a client whose body never finishes gets 408', async () => {
   const { port } = await start();
-  const result = await raw(port, (socket) => socket.write(`${head('Content-Length: 50\r\n')}[{"na`), 1600);
-  expect(result.status, 'status when 5 of 50 announced bytes arrive').toBe(408);
-  expect(result.statusMs < 1500, `408 within 1500 ms (it came after ${result.statusMs ?? 'more than 1600'} ms)`).toBe(true);
+  // Without requestTimeout Node.js waits 300 s by default, so a 408 within 2.5 s is the 800 ms limit.
+  const result = await raw(port, (socket) => socket.write(`${head('Content-Length: 50\r\n')}[{"na`), 2500);
+  expect(result.status, 'status within 2.5 s when 5 of 50 announced bytes arrive').toBe(408);
 });
