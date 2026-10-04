@@ -14,7 +14,7 @@ const repo = createRepo('data');
 try {
   console.log('1.', await repo.readNote('archive/../../config/.env'));
 } catch (error) {
-  console.log('1. refused:', error.message);
+  console.log('1. %%refused%%:', error.message);
 }
 
 // 2. A Ukrainian note.
@@ -26,11 +26,11 @@ await repo.saveRecords([task]);
 try {
   await withCrashingWrites(() => repo.saveRecords([{ ...task, done: true }]));
 } catch (error) {
-  console.log('3. save failed:', error.message);
+  console.log('3. %%saveFailed%%:', error.message);
 }
 try {
   const records = await repo.loadRecords();
-  console.log('3. after restart:', records.map((t) => `${t.id} done=${t.done}`).join(', '));
+  console.log('3. %%afterRestart%%:', records.map((t) => `${t.id} done=${t.done}`).join(', '));
 } catch (error) {
-  console.log(`3. after restart: ${error.name}: ${error.message}`);
+  console.log(`3. %%afterRestart%%: ${error.name}: ${error.message}`);
 }
