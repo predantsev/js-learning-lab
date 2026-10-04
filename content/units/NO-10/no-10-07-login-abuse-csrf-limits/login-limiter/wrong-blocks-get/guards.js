@@ -50,7 +50,7 @@ export function createLoginLimiter({ maxFailures = 5, windowMs = 60_000, maxEntr
 
 // For a state-changing request (any method except GET, HEAD and OPTIONS): when the
 // request has an Origin header that is not in allowedOrigins, throw new HttpError(403, 'CSRF_ORIGIN').
-// A request without an Origin header passes (it does not come from a page in a browser).
+// A request without an Origin header passes (a modern browser sends Origin with every POST from a page).
 export function requireSameOrigin(request, allowedOrigins) {
   const origin = request.headers.origin;
   if (origin !== undefined && !allowedOrigins.includes(origin)) throw new HttpError(403, 'CSRF_ORIGIN');

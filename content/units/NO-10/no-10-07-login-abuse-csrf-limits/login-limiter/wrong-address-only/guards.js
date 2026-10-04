@@ -8,7 +8,7 @@ import { HttpError } from './http-error.js';
 //   size() → how many counters are kept right now
 export function createLoginLimiter({ maxFailures = 5, windowMs = 60_000, maxEntries = 1000, now = Date.now } = {}) {
   const counters = new Map(); // "account:…" / "address:…" → { count, start }
-  const keysOf = (account, address) => [`account:${account}`, `address:${address}`];
+  const keysOf = (account, address) => [`address:${address}`]; // one counter per address is enough?
 
   // A counter whose window has passed is gone.
   function live(key) {
@@ -54,5 +54,5 @@ export function createLoginLimiter({ maxFailures = 5, windowMs = 60_000, maxEntr
 export function requireSameOrigin(request, allowedOrigins) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return;
   const origin = request.headers.origin;
-  if (!allowedOrigins.includes(origin)) throw new HttpError(403, 'CSRF_ORIGIN');
+  if (origin !== undefined && !allowedOrigins.includes(origin)) throw new HttpError(403, 'CSRF_ORIGIN');
 }

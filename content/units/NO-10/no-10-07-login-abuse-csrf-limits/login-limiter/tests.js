@@ -44,6 +44,9 @@ test('the limiter keeps at most maxEntries counters', () => {
   const limiter = createLoginLimiter({ now: fakeClock().now, maxEntries: 100 });
   for (let i = 0; i < 3000; i += 1) limiter.recordFailure(`random-name-${i}`, `10.1.${Math.floor(i / 250)}.${i % 250}`);
   expect(limiter.size() <= 100, `counters kept: ${limiter.size()}`).toBe(true);
+  // A full limiter makes room by dropping the OLDEST counters, so a new attack is still counted.
+  for (let i = 0; i < 5; i += 1) limiter.recordFailure('u-01', '10.9.9.9');
+  expect(limiter.blockedFor('u-01', '10.9.9.9') > 0, 'u-01 after 5 new failures in a full limiter is blocked').toBe(true);
 });
 
 const fakeRequest = (method, origin) => ({ method, headers: origin === undefined ? {} : { origin } });

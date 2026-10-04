@@ -31,6 +31,7 @@ export function createLoginLimiter({ maxFailures = 5, windowMs = 60_000, maxEntr
     },
     recordFailure(account, address) {
       for (const key of keysOf(account, address)) {
+        if (!counters.has(key) && counters.size >= maxEntries) continue; // full: new names are not counted
         const counter = live(key) ?? { count: 0, start: now() };
         counter.count += 1;
         counters.delete(key); // re-insert, so the Map's order is "least recently failed first"
@@ -54,5 +55,5 @@ export function createLoginLimiter({ maxFailures = 5, windowMs = 60_000, maxEntr
 export function requireSameOrigin(request, allowedOrigins) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(request.method)) return;
   const origin = request.headers.origin;
-  if (!allowedOrigins.includes(origin)) throw new HttpError(403, 'CSRF_ORIGIN');
+  if (origin !== undefined && !allowedOrigins.includes(origin)) throw new HttpError(403, 'CSRF_ORIGIN');
 }
