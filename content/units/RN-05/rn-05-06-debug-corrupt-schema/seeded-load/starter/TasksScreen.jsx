@@ -19,7 +19,7 @@ export function TasksScreen({ storage, labels }) {
       {notice === 'recovered' ? <Text testID="notice" style={styles.notice}>{labels.recovered}</Text> : null}
       {tasks.length === 0 ? <Text>{labels.empty}</Text> : null}
       {tasks.map((task) => (
-        <Pressable key={task.id} testID="task" role="checkbox" aria-checked={task.done} style={styles.row} onPress={() => toggle(task.id)}>
+        <Pressable key={task.id} testID="task" accessibilityRole="checkbox" accessibilityState={{ checked: task.done }} style={styles.row} onPress={() => toggle(task.id)}>
           <Text>{`${task.done ? '✓' : '○'} ${task.title}`}</Text>
         </Pressable>
       ))}

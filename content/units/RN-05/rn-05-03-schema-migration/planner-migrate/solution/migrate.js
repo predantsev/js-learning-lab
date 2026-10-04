@@ -13,7 +13,9 @@ const steps = {
 };
 
 export function migrate(snapshot) {
-  if (typeof snapshot?.schemaVersion !== 'number' || !Array.isArray(snapshot.records)) {
+  const version = snapshot?.schemaVersion;
+  // Only whole versions from 0 up have steps: -1 or 0.5 would reach a step that does not exist.
+  if (!Number.isInteger(version) || version < 0 || !Array.isArray(snapshot.records)) {
     return { ok: false, reason: 'invalid' };
   }
   if (snapshot.schemaVersion > CURRENT_VERSION) {

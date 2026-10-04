@@ -1,6 +1,5 @@
 // A synthetic inbox on a SIMULATED 3× screen, with buttons that simulate swipes, the OS
 // "reduce motion" setting and leaving the screen. Do not edit.
-import './previewSetup.js';
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
