@@ -139,7 +139,8 @@ test('a failing summary answers a safe 500 with the request id and logs it', asy
   const answer = await request(`${base}/summary/2026-06`, { headers: { 'x-request-id': 'req-gate-5' } });
   expect(answer.status, 'status').toBe(500);
   expect(answer.text.includes('req-gate-5'), 'the request id is on the page').toBe(true);
-  expect(/database|not open|Error|at /.test(answer.text), 'error details on the page').toBe(false);
+  // Error details: the message of the closed database, an error class name, or a stack frame.
+  expect(/database|not open|\b[A-Z]\w+Error\b|\bat \S+ \(|\bat (?:file|node):/.test(answer.text), 'error details on the page').toBe(false);
   expect(entries.some((e) => e.requestId === 'req-gate-5' && e.status === 500), 'a log entry with requestId req-gate-5 and status 500').toBe(true);
   const evil = await request(`${base}/summary/2026-06`, { headers: { 'x-request-id': '<img src=x onerror=alert(5)>' } });
   expect(evil.text.includes('<img'), 'markup from x-request-id on the page').toBe(false);
