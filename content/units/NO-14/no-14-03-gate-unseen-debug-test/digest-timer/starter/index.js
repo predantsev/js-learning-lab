@@ -15,14 +15,14 @@ const timers = fakeTimers();
 const digest = createDigest({
   loadConfig: () => ({ ...stored }),
   summary: () => members,
-  send: (message) => console.log(`${timers.now() / MINUTE} min · ${message.language} · ${message.names.join(', ')}`),
+  send: (message) => console.log(`${timers.now() / MINUTE} %%min%% · ${message.language} · ${message.names.join(', ')}`),
   timers,
 });
 
 timers.advance(90 * MINUTE);
 stored = { language: 'en', topCount: 2, everyMs: 30 * MINUTE };
 digest.reload();
-console.log(`90 min · %%reloaded%% ${JSON.stringify(digest.settings())}`);
+console.log(`90 %%min%% · %%reloaded%% ${JSON.stringify(digest.settings())}`);
 timers.advance(90 * MINUTE);
 digest.stop();
 console.log(`%%timersLeft%% ${timers.liveCount()}`);

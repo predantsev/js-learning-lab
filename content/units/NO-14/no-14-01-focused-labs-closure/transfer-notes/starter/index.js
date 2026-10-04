@@ -16,7 +16,9 @@ for (const lab of ['sql', 'auth', 'ssr']) {
   console.log(`  %%applied%%: ${applied.join(', ') || '—'}`);
   console.log(`  %%stayed%%: ${stayed.join(', ') || '—'}`);
   if (unsorted.length > 0) console.log(`  %%unsorted%%: ${unsorted.join(', ')}`);
-  console.log(`  %%check%%: ${show(observed[lab])} · %%yourPrediction%%: ${show(note.predicted)} · %%yourRecord%%: ${show(note.observed)}`);
+  // The real result appears only once a prediction is written: predict first, then run.
+  const real = note.predicted === undefined ? `%%predictFirst%%` : show(observed[lab]);
+  console.log(`  %%check%%: ${real} · %%yourPrediction%%: ${show(note.predicted)} · %%yourRecord%%: ${show(note.observed)}`);
   if (note.predicted !== undefined && JSON.stringify(note.predicted) !== JSON.stringify(observed[lab])) {
     console.log(`  %%revisit%% ${revisit[lab]}`);
   }
