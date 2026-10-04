@@ -24,7 +24,9 @@ test('entries added by other trusted proxies are skipped', () => {
 });
 
 test('spaces around entries are ignored, and a missing header gives the socket address', () => {
-  expect(ip('10.0.0.2', ' 203.0.113.7 ,  198.51.100.4 ', ['10.0.0.2']), 'entries with extra spaces').toBe('198.51.100.4');
+  // One entry only, so that reading from the left or from the right gives the same answer here.
+  expect(ip('10.0.0.2', '  198.51.100.4 ', ['10.0.0.2']), 'an entry with extra spaces').toBe('198.51.100.4');
+  expect(ip('10.0.0.2', ' 10.0.0.2 ', ['10.0.0.2']), 'only a trusted proxy, with spaces').toBe('10.0.0.2');
   expect(ip('10.0.0.2', undefined, ['10.0.0.2']), 'a trusted proxy without the header').toBe('10.0.0.2');
 });
 
