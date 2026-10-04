@@ -3,7 +3,7 @@ import { open, readFile, stat } from 'node:fs/promises';
 
 const MAX_BYTES = 64 * 1024 * 1024; // try 1 * 1024 * 1024
 const CHUNK = 64 * 1024; // try 1024 * 1024
-const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+const mb = (bytes) => `${(bytes / 1024 / 1024).toFixed(1)} %%mb%%`;
 const bufferMemory = () => process.memoryUsage().arrayBuffers; // memory held by Buffers right now
 
 // A synthetic 24 MB history of habit completions, written 1 MB at a time.
@@ -14,9 +14,9 @@ for (let i = 0; i < 24; i++) await writer.write(block);
 await writer.close();
 
 const { size } = await stat('habit-history.txt');
-console.log(`file: ${mb(size)}, limit: ${mb(MAX_BYTES)}`);
+console.log(`%%file%%: ${mb(size)}, %%limit%%: ${mb(MAX_BYTES)}`);
 if (size > MAX_BYTES) {
-  console.log('refused before reading a single byte');
+  console.log('%%refused%%');
 } else {
   // 1. Chunk loop: one reusable 64 KB buffer, read again and again.
   const before = bufferMemory();
@@ -33,10 +33,10 @@ if (size > MAX_BYTES) {
   } finally {
     await handle.close();
   }
-  console.log(`chunks of ${CHUNK / 1024} KB: ${newlines} lines, extra Buffer memory ${mb(peak)}`);
+  console.log(`%%chunksOf%% ${CHUNK / 1024} %%kb%%: ${newlines} %%lines%%, %%extra%% ${mb(peak)}`);
 
   // 2. readFile: the whole file at once.
   const start = bufferMemory();
   const whole = await readFile('habit-history.txt');
-  console.log(`readFile: ${whole.length} bytes, extra Buffer memory ${mb(bufferMemory() - start)}`);
+  console.log(`readFile: ${whole.length} %%bytes%%, %%extra%% ${mb(bufferMemory() - start)}`);
 }
