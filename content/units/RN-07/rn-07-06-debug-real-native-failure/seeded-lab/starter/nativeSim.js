@@ -2,6 +2,10 @@
 // on a real Expo SDK 57 project: the version check's text, what `npx expo prebuild` writes into
 // Info.plist and AndroidManifest.xml for a given app.json, and the message expo-camera 57 raises
 // when NSCameraUsageDescription is missing (from its source, CameraPermissionsRequester.swift).
+// What happens after that message comes from React Native 0.86's source (RCTAssert.m): a debug
+// build shows it on the red screen, a release build closes. The Android outcome is an expectation:
+// expo-modules-core hands the request to Android, and without CAMERA in the manifest we expect
+// a refusal with no dialog — not checked on a device.
 // The build and the device are NOT real: no Gradle, no Xcode, no phone.
 const SDK_57 = { 'expo-camera': '57.0.6' };
 const DEFAULT_CAMERA_TEXT = 'Allow $(PRODUCT_NAME) to access your camera';
@@ -43,14 +47,14 @@ export function openCapture(platform, native) {
           'capture: permission loading',
           'This app is missing NSCameraUsageDescription,',
           "so video services will fail. Add this entry to your bundle's Info.plist.",
-          '(simulated) the app closes',
+          '(simulated) debug build: the red screen shows this message; a release build closes the app',
         ],
       };
     }
     return { crashed: false, log: ['capture: permission undetermined', '(simulated) the camera dialog can be shown'] };
   }
   if (!native.androidCamera) {
-    return { crashed: false, denied: true, log: ['capture: permission denied', '(simulated) no dialog: CAMERA is not in the merged manifest'] };
+    return { crashed: false, denied: true, log: ['capture: permission denied', '(simulated, expected, not verified) no dialog: CAMERA is not in the merged manifest'] };
   }
   return { crashed: false, log: ['capture: permission undetermined', '(simulated) the camera dialog can be shown'] };
 }
