@@ -12,8 +12,10 @@ try {
     });
     const text = await response.text();
     console.log(`%%client%% GET ${route} → ${response.status} ${text}`);
-    // The platform's console shortens paths inside the exercise folder, so check the raw text here.
-    console.log(`  %%absolutePath%%: ${text.includes(process.cwd()) ? '%%yes%%' : '%%no%%'}`);
+    // The platform's console shortens paths inside the exercise folder, so check the raw text here
+    // (in JSON form, where a Windows backslash is escaped as \\).
+    const folder = JSON.stringify(process.cwd()).slice(1, -1);
+    console.log(`  %%absolutePath%%: ${text.includes(folder) ? '%%yes%%' : '%%no%%'}`);
   }
 } finally {
   server.closeAllConnections();
