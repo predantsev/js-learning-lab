@@ -1,0 +1,340 @@
+id: no-05-06-concurrency-repository
+unit: NO-05
+title:
+  uk: "Конкурентний доступ у репозиторії"
+  en: "Concurrency in the repository"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Відтворити втрачене оновлення, коли два запити одночасно читають, змінюють і записують сховище, і передбачити підсумковий стан."
+    en: "Reproduce a lost update when two requests read, modify and write the store concurrently, and predict the final state."
+  - uk: "Запобігти йому чергою з одним записувачем для файлового репозиторію або однією командою чи транзакцією без `await` усередині для SQLite і показати, що тепер усі одночасні запити доходять."
+    en: "Prevent it with a single-writer queue for the file repository, or with one statement or a transaction without an `await` inside for SQLite, and show that concurrent requests now all land."
+prerequisites: [no-05-05-corruption-recovery, no-02-02-async-io]
+subskills:
+  - { family: B-05, skill: "concurrency/transactions", depth: practice }
+glossary: [read-modify-write]
+selfCheck: [predict-lost, write-lock]
+
+blocks:
+  - id: await-is-a-gap
+    kind: explanation
+    title:
+      uk: "Кожен await — це проміжок"
+      en: "Every await is a gap"
+    body:
+      uk: |
+        JavaScript у Node виконується в одному потоці, і два обробники справді не працюють **водночас**. Але обробник із `await` не працює і **від початку до кінця без перерви**: на кожному `await` він віддає хід, і поки диск читає файл, цикл подій запускає інший запит.
+
+        Файловий репозиторій змінює запис за схемою [[read-modify-write|read-modify-write]]: прочитати все сховище, змінити один запис, записати все сховище. Якщо два запити прочитали ту саму версію, кожен запише свою копію — і друга перезапише першу. Це **втрачене оновлення**. Атомарний запис із NO-02 тут не допомагає: він гарантує, що файл цілий, а не що його вміст побудовано з найсвіжішої версії.
+
+        Два способи цього уникнути:
+
+        - **файл** — черга з одним записувачем: наступний read-modify-write починається лише після того, як попередній записав файл;
+        - **SQLite** — зміна однією командою (`UPDATE … WHERE id = ?`), або кілька команд у транзакції **без `await` між ними**. Одне з’єднання спільне для всіх запитів, тож `await` усередині `BEGIN … COMMIT` дасть іншому запиту виконати свій `BEGIN` у ту саму транзакцію — і він отримає `cannot start a transaction within a transaction`.
+      en: |
+        JavaScript in Node runs on one thread, and two handlers really do not run **at the same time**. But a handler with an `await` does not run **from start to end without a break** either: at every `await` it gives up its turn, and while the disk reads a file the event loop runs another request.
+
+        A file repository changes a record by [[read-modify-write]]: read the whole store, change one record, write the whole store. If two requests read the same version, each writes its own copy — and the second overwrites the first. This is a **lost update**. The atomic write from NO-02 does not help here: it guarantees that the file is whole, not that its content was built from the newest version.
+
+        Two ways to avoid it:
+
+        - **a file** — a single-writer queue: the next read-modify-write starts only after the previous one has written the file;
+        - **SQLite** — a change as one statement (`UPDATE … WHERE id = ?`), or several statements in a transaction **with no `await` between them**. One connection is shared by every request, so an `await` inside `BEGIN … COMMIT` lets another request run its own `BEGIN` on the same connection — and it gets `cannot start a transaction within a transaction`.
+
+  - id: predict-lost
+    kind: prediction
+    strings:
+      title: { uk: "Полити квіти", en: "Water the plants" }
+      renamed: { uk: "Полити всі квіти", en: "Water all the plants" }
+    prompt:
+      uk: "Два запити PATCH змінюють різні поля однієї справи, і обидва стартують одночасно. Сховище змодельовано текстом `disk`, а запис цілком атомарний. Що надрукує програма?"
+      en: "Two PATCH requests change different fields of one task, and both start at the same time. The store is modelled by the text `disk`, and the write is fully atomic. What does the program print?"
+    code: |
+      let disk = JSON.stringify({ id: "t-01", title: "%%title%%", done: false });
+      const read = async () => JSON.parse(disk);
+      const writeAtomic = async (task) => {
+        disk = JSON.stringify(task); // the whole text at once: never half-written
+      };
+
+      async function patch(changes) {
+        const task = await read();
+        Object.assign(task, changes);
+        await writeAtomic(task);
+      }
+
+      await Promise.all([patch({ title: "%%renamed%%" }), patch({ done: true })]);
+      console.log(disk);
+    verify:
+      logs: ['{"id":"t-01","title":"%%title%%","done":true}']
+    answer:
+      type: choice
+      options:
+        - id: second-wins
+          code: '{"id":"t-01","title":"%%title%%","done":true}'
+        - id: both
+          code: '{"id":"t-01","title":"%%renamed%%","done":true}'
+          why:
+            uk: "Один потік не означає «по черзі від початку до кінця». На `await read()` перший запит віддає хід, і другий теж читає стару версію. Кожен записує свою копію, тож друга перезаписує зміну назви."
+            en: "One thread does not mean “one after another from start to end”. At `await read()` the first request gives up its turn, and the second reads the old version too. Each writes its own copy, so the second overwrites the title change."
+        - id: first-wins
+          code: '{"id":"t-01","title":"%%renamed%%","done":false}'
+          why:
+            uk: "Обидва запити читають і записують у тому порядку, в якому стартували, тож останнім пише другий — і його копія без нової назви."
+            en: "Both requests read and write in the order they started, so the second one writes last — and its copy lacks the new title."
+        - id: torn
+          code: "SyntaxError"
+          why:
+            uk: "`writeAtomic` записує весь текст одразу, тож файл завжди цілий. Втрачається зміна, а не цілісність файла — саме тому атомарний запис не рятує від втраченого оновлення."
+            en: "`writeAtomic` writes the whole text at once, so the file is always whole. What is lost is a change, not the file’s integrity — that is exactly why an atomic write does not prevent a lost update."
+      correct: [second-wins]
+    explanation:
+      uk: "Обидва `patch` прочитали `done: false` і стару назву ще до того, як хтось записав. Перший записав нову назву, другий — `done: true` поверх старої назви. Файл цілий, JSON правильний, а зміна назви зникла без жодної помилки."
+      en: "Both `patch` calls read `done: false` and the old title before anyone wrote. The first wrote the new title, the second wrote `done: true` on top of the old title. The file is whole, the JSON is valid, and the title change vanished without any error."
+
+  - id: lost-update-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Два PATCH і одне сховище"
+      en: "Two PATCHes and one store"
+    textEquivalent:
+      uk: "Запит A читає сховище й отримує версію 1. На await він віддає хід, і запит B теж читає версію 1. A записує версію з новою назвою. B записує версію з done: true, побудовану зі старої версії 1, і перезаписує зміну A. Із чергою все інакше: B чекає, доки A запише; потім читає вже версію 2 з новою назвою й записує обидві зміни."
+      en: "Request A reads the store and gets version 1. At the await it gives up its turn, and request B reads version 1 too. A writes a version with the new title. B writes a version with done: true built from the old version 1 and overwrites A’s change. With a queue it is different: B waits until A has written; then it reads version 2, with the new title, and writes both changes."
+    spec:
+      actors:
+        - { id: a, label: "PATCH A" }
+        - { id: store, label: { uk: "Сховище", en: "Store" } }
+        - { id: b, label: "PATCH B" }
+      messages:
+        - from: a
+          to: store
+          label: { uk: "читає v1", en: "reads v1" }
+          caption:
+            uk: "Запит A (нова назва) читає сховище — версію 1 — і доходить до `await`."
+            en: "Request A (a new title) reads the store — version 1 — and reaches an `await`."
+        - from: b
+          to: store
+          label: { uk: "читає v1", en: "reads v1" }
+          caption:
+            uk: "Поки A чекає, запит B (`done: true`) теж читає версію 1. Обидва тепер тримають ту саму стару копію."
+            en: "While A waits, request B (`done: true`) reads version 1 too. Both now hold the same old copy."
+        - from: a
+          to: store
+          label: { uk: "пише: нова назва", en: "writes: new title" }
+          caption:
+            uk: "A записує свою копію з новою назвою."
+            en: "A writes its copy with the new title."
+        - from: b
+          to: store
+          label: { uk: "пише: done, стара назва", en: "writes: done, old title" }
+          caption:
+            uk: "B записує свою копію: `done: true`, але назва — зі старої версії. Зміна A зникла, і жоден запит не отримав помилки."
+            en: "B writes its copy: `done: true`, but the title comes from the old version. A’s change is gone, and neither request got an error."
+        - from: b
+          to: b
+          kind: note
+          label: { uk: "із чергою: чекати на A", en: "with a queue: wait for A" }
+          caption:
+            uk: "Із чергою B не читає, доки A не записав. Тоді B читає версію 2 — уже з новою назвою — і записує обидві зміни."
+            en: "With a queue B does not read until A has written. Then B reads version 2 — already with the new title — and writes both changes."
+
+  - id: fifty-patches
+    kind: example
+    runtime: isolated-node
+    dir: fifty-patches
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      task: { uk: "Справа", en: "Task" }
+      confirmed: { uk: "підтверджено", en: "confirmed" }
+      stored: { uk: "збережено", en: "stored" }
+      lost: { uk: "втрачено", en: "lost" }
+    title:
+      uk: "50 одночасних PATCH"
+      en: "50 concurrent PATCH requests"
+    body:
+      uk: |
+        Натисни **Запустити**. `index.js` піднімає сервер справ тричі — з трьома репозиторіями з `repositories.js` — і щоразу надсилає 50 запитів `PATCH /tasks/<id>` одночасно. Кожен запит позначає виконаною **іншу** справу, тож конфлікту між записами немає. Сервер відповідає `204` на кожен — зміну «підтверджено».
+
+        - `file` — read-modify-write усього JSON-файла;
+        - `file + queue` — той самий файл, але кожна зміна чекає на попередню в черзі;
+        - `sqlite UPDATE` — одна команда `UPDATE` на справу.
+
+        Скільки змін втрачає перший варіант, залежить від комп’ютера й диска: запусти кілька разів — число змінюватиметься.
+      en: |
+        Press **Run**. `index.js` starts the planner server three times — with three repositories from `repositories.js` — and each time sends 50 `PATCH /tasks/<id>` requests at once. Each request marks a **different** task done, so the records do not conflict. The server answers `204` to each — the change is “confirmed”.
+
+        - `file` — read-modify-write of the whole JSON file;
+        - `file + queue` — the same file, but every change waits for the previous one in a queue;
+        - `sqlite UPDATE` — one `UPDATE` statement per task.
+
+        How many changes the first variant loses depends on the computer and the disk: run it several times — the number will change.
+    tryIt:
+      uk: |
+        У `repositories.js` зроби з `markDone` для SQLite read-modify-write у транзакції з `await` усередині — так, як не можна:
+
+        ```js
+        async markDone(id) {
+          db.exec('BEGIN');
+          const task = db.prepare('SELECT done FROM tasks WHERE id = ?').get(id);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          db.prepare('UPDATE tasks SET done = ? WHERE id = ?').run(task.done === 0 ? 1 : task.done, id);
+          db.exec('COMMIT');
+        },
+        ```
+
+        Запусти: рядок `sqlite UPDATE` тепер показує набагато менше підтверджених змін — решта запитів отримали `500`, бо їхній `BEGIN` прийшов, коли транзакція іншого запиту на тому самому з’єднанні ще була відкрита (`cannot start a transaction within a transaction`). Поверни одну команду `UPDATE`.
+      en: |
+        In `repositories.js`, turn the SQLite `markDone` into a read-modify-write in a transaction with an `await` inside — the way you must not:
+
+        ```js
+        async markDone(id) {
+          db.exec('BEGIN');
+          const task = db.prepare('SELECT done FROM tasks WHERE id = ?').get(id);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          db.prepare('UPDATE tasks SET done = ? WHERE id = ?').run(task.done === 0 ? 1 : task.done, id);
+          db.exec('COMMIT');
+        },
+        ```
+
+        Run: the `sqlite UPDATE` line now shows far fewer confirmed changes — the other requests got `500`, because their `BEGIN` arrived while another request’s transaction on the same connection was still open (`cannot start a transaction within a transaction`). Put the single `UPDATE` statement back.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: що робить цикл подій під час await"
+      en: "Recall: what the event loop does during an await"
+    items:
+      - id: interleaved-reads
+        from: no-02-02-async-io
+        prompt:
+          uk: "Дві асинхронні функції читають файли через `readFile` з `node:fs/promises` і кожна друкує до й після свого `await`. Що надрукує програма?"
+          en: "Two async functions read files with `readFile` from `node:fs/promises`, and each prints before and after its `await`. What does the program print?"
+        code: |
+          import { readFile } from "node:fs/promises";
+
+          async function load(name) {
+            console.log(`${name}: start`);
+            await readFile(import.meta.filename);
+            console.log(`${name}: done`);
+          }
+          await Promise.all([load("a"), load("b")]);
+        runnable: false
+        answer:
+          type: choice
+          options:
+            - id: interleaved
+              text:
+                uk: "Обидва `start`, потім обидва `done` (порядок двох `done` залежить від того, яке читання закінчиться першим)"
+                en: "Both `start` lines, then both `done` lines (the order of the two `done` lines depends on which read finishes first)"
+            - id: sequential
+              code: "a: start\na: done\nb: start\nb: done"
+              why:
+                uk: "`Promise.all` запускає обидві функції одразу. На `await readFile` функція `a` віддає хід, і `b` починає ще до того, як `a` дочитала файл."
+                en: "`Promise.all` starts both functions at once. At `await readFile` the function `a` gives up its turn, and `b` starts before `a` has finished reading."
+          correct: [interleaved]
+        explanation:
+          uk: "Неблокувальне читання звільняє потік, і поки диск працює, інший код теж іде. Для репозиторію це означає: між читанням і записом сховища встигає статися інший запит."
+          en: "A non-blocking read frees the thread, and while the disk works, other code runs too. For a repository this means another request has time to happen between reading and writing the store."
+
+  - id: write-lock
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: write-lock
+    entry: index.js
+    editable: [lock.js, notes-repo.js]
+    strings:
+      note: { uk: "Нотатка", en: "Note" }
+      renamed: { uk: "Нова назва", en: "New title" }
+      pinned: { uk: "закріплено", en: "pinned" }
+    title:
+      uk: "withWriteLock для репозиторію нотаток"
+      en: "withWriteLock for the notes repository"
+    instructions:
+      uk: |
+        Запусти програму: з десяти одночасних закріплень зберігається менше десяти. Виправ це в двох файлах.
+
+        У `lock.js` — `withWriteLock(fn)`:
+
+        - запускає асинхронну функцію `fn` лише після того, як завершилися всі `fn`, передані раніше, — одна за одною, у порядку викликів;
+        - повертає проміс, що виконується з результатом `fn` або відхиляється з її помилкою;
+        - помилка однієї `fn` не зупиняє наступних.
+
+        У `notes-repo.js` — `updateNote(id, changes)` має виконувати **весь** read-modify-write (читання, зміну й запис) усередині `withWriteLock` і повертати оновлену нотатку.
+
+        Перевірки вимірюють, скільки `fn` працює одночасно, і запускають 20 одночасних оновлень на справжньому файлі.
+      en: |
+        Run the program: of ten simultaneous pins, fewer than ten are stored. Fix that in two files.
+
+        In `lock.js` — `withWriteLock(fn)`:
+
+        - runs the async function `fn` only after every `fn` passed earlier has finished — one after another, in the order of the calls;
+        - returns a promise that fulfils with `fn`’s result or rejects with its error;
+        - one `fn`’s error does not stop the ones after it.
+
+        In `notes-repo.js` — `updateNote(id, changes)` must perform the **whole** read-modify-write (the read, the change and the write) inside `withWriteLock` and return the updated note.
+
+        The checks measure how many `fn`s run at the same time and run 20 simultaneous updates on a real file.
+    testTitles:
+      "withWriteLock resolves with what fn returns":
+        uk: "`withWriteLock` виконується з тим, що повертає `fn`"
+        en: "`withWriteLock` resolves with what `fn` returns"
+      "only one fn runs at a time":
+        uk: "Одночасно працює лише одна `fn`"
+        en: "Only one `fn` runs at a time"
+      "fns run in the order they were queued":
+        uk: "`fn` виконуються в порядку постановки в чергу"
+        en: "`fn`s run in the order they were queued"
+      "a failing fn rejects its own caller only, and the next fn still runs":
+        uk: "`fn` із помилкою відхиляє лише свій виклик, а наступна `fn` усе одно виконується"
+        en: "A failing `fn` rejects its own caller only, and the next `fn` still runs"
+      "20 concurrent updates of different notes all land":
+        uk: "20 одночасних оновлень різних нотаток усі зберігаються"
+        en: "20 concurrent updates of different notes all land"
+      "two concurrent updates of different fields of one note both land":
+        uk: "Два одночасні оновлення різних полів однієї нотатки обидва зберігаються"
+        en: "Two concurrent updates of different fields of one note both land"
+      "updateNote resolves with the updated note":
+        uk: "`updateNote` виконується з оновленою нотаткою"
+        en: "`updateNote` resolves with the updated note"
+    hints:
+      nudge:
+        uk: "Збережи в змінній модуля проміс «усе, що поставлено в чергу досі, завершилося». Кожен новий виклик чіпляється до нього через `.then` — і сам стає новим кінцем черги."
+        en: "Keep in a module variable a promise meaning “everything queued so far has finished”. Each new call hooks onto it with `.then` — and becomes the new end of the queue itself."
+      explanation:
+        uk: "Ланцюжок промісів — це вже черга: `p.then(a).then(b)` запускає `b` лише після `a`. Якщо зберігати кінець ланцюжка в змінній, наприклад `last`, кожна нова робота стає `last.then(() => робота())`. Але кінцем черги не можна робити відхилений проміс — інакше всі наступні `.then` пропустять свої функції; для кінця черги проміс потрібно «заспокоїти» через `.catch(() => {})`, а викликові повернути незаспокоєний, щоб він побачив свою помилку. У репозиторії всередині заблокованої функції має бути й `readFile`, і запис."
+        en: "A promise chain is already a queue: `p.then(a).then(b)` starts `b` only after `a`. If you keep the end of the chain in a variable, say `last`, each new job becomes `last.then(() => job())`. But a rejected promise must not become the end of the queue — otherwise every later `.then` skips its function; for the end of the queue the promise has to be “calmed” with `.catch(() => {})`, while the caller gets the uncalmed one so it sees its own error. In the repository, both `readFile` and the write must be inside the locked function."
+    solutionNote:
+      uk: "`tail` — проміс кінця черги. Кожен виклик чіпляє `fn` до нього, віддає викликові проміс із результатом `fn`, а кінцем черги робить той самий проміс із проковтнутою помилкою — тож одна невдала зміна не ламає черги назавжди. У репозиторії під замком увесь read-modify-write: якщо замкнути лише запис, кожен запит усе одно прочитає стару версію. Варіант із явним масивом очікувальних робіт теж правильний. Черга працює в межах одного процесу Node; два процеси з одним файлом вона не захистить."
+      en: "`tail` is the promise at the end of the queue. Each call hooks `fn` onto it, gives the caller the promise with `fn`’s result, and makes that same promise, with its error swallowed, the new end of the queue — so one failed change does not break the queue for good. In the repository the whole read-modify-write is under the lock: lock only the write, and every request still reads an old version. A version with an explicit array of waiting jobs is correct too. The queue works within one Node process; it does not protect a file shared by two processes."
+    feedback:
+      - when: { test: "only one fn runs at a time" }
+        message:
+          uk: "Ця перевірка ставить у чергу п’ять функцій, кожна з яких чекає 10 мс, і очікує, що одночасно працює не більше однієї. Кожна наступна має стартувати лише після того, як завершилася попередня."
+          en: "This check queues five functions that each wait 10 ms and expects no more than one to run at the same moment. Each next one must start only after the previous one has finished."
+      - when: { test: "a failing fn rejects its own caller only, and the next fn still runs" }
+        message:
+          uk: "Ця перевірка ставить у чергу функцію, що кидає `disk full`, а за нею — функцію, що повертає `next ran`. Перший виклик має відхилитися з `disk full`, а другий — виконатися з `next ran`. Кінець черги не може бути відхиленим промісом."
+          en: "This check queues a function that throws `disk full`, followed by one that returns `next ran`. The first call must reject with `disk full`, and the second must fulfil with `next ran`. The end of the queue must not be a rejected promise."
+      - when: { test: "20 concurrent updates of different notes all land" }
+        message:
+          uk: "Ця перевірка закріплює 20 різних нотаток одночасно й очікує всі 20 закріплених. Якщо закріплених менше, частина оновлень прочитала старе сховище: під замком має бути і читання, і запис."
+          en: "This check pins 20 different notes at once and expects all 20 to be pinned. If fewer are, some updates read an old store: both the read and the write must be under the lock."
+      - when: { test: "two concurrent updates of different fields of one note both land" }
+        message:
+          uk: "Ця перевірка одночасно змінює `title` і `pinned` нотатки `n-2` й очікує обидві зміни."
+          en: "This check changes `title` and `pinned` of the note `n-2` at once and expects both changes."
+      - when: { test: "withWriteLock resolves with what fn returns" }
+        message:
+          uk: "Ця перевірка очікує, що `await withWriteLock(async () => 42)` дасть `42`: поверни викликові проміс із результатом `fn`, а не проміс черги."
+          en: "This check expects `await withWriteLock(async () => 42)` to give `42`: give the caller the promise with `fn`’s result, not the queue’s promise."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-05
+    body:
+      uk: "У кроці проєкту цього розділу сховище твого домену має витримувати одночасні запити до `/v1`. Для файла — усі зміни через одну чергу; для SQLite — одна команда на зміну або транзакція без `await` усередині. Перевір це так, як тут: багато одночасних PATCH і підрахунок збереженого."
+      en: "In this unit’s project step your domain’s store must survive simultaneous `/v1` requests. For a file — every change through one queue; for SQLite — one statement per change, or a transaction with no `await` inside. Check it as here: many simultaneous PATCH requests and a count of what was stored."
