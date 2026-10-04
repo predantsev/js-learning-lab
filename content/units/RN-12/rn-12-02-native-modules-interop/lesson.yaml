@@ -1,0 +1,394 @@
+id: rn-12-02-native-modules-interop
+unit: RN-12
+title:
+  uk: "Нативні модулі, codegen і ціна перетину межі"
+  en: "Native modules, codegen and boundary costs"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Прочитати типізовану специфікацію TurboModule і згенерований з неї codegen-код та простежити один виклик від JS через JSI до коду платформи."
+    en: "Read a typed TurboModule spec and the codegen output it produces, and trace one call from JS through JSI to platform code."
+  - uk: "Порівняти за наданою трасою ціну перетину межі для викликів по одному елементу й одного пакетного виклику та обрати дешевший дизайн."
+    en: "Compare the boundary cost of per-item calls with one batched call in a supplied interop trace, and choose the cheaper design."
+prerequisites: [rn-12-01-new-architecture-concepts, js-14-02-modeling-domain-types]
+subskills:
+  - { family: N-09, skill: "native module/codegen interop", depth: intro }
+  - { family: N-09, skill: "JS/native boundary costs", depth: intro }
+glossary: [native-module, codegen, module-spec]
+selfCheck: [trace-cost, battery-spec]
+
+blocks:
+  - id: spec-first
+    kind: explanation
+    title:
+      uk: "Спершу контракт, потім native-код"
+      en: "The contract first, then native code"
+    body:
+      uk: |
+        [[native-module|Native-модуль]] — код Android чи iOS, методи якого викликає твій JavaScript. За документацією React Native 0.86 ([Native Modules: Introduction](https://reactnative.dev/docs/0.86/turbo-native-modules-introduction)) його роблять у чотири кроки:
+
+        1. **Специфікація.** Файл TypeScript, назва якого починається з `Native`, — [[module-spec|специфікація модуля]]:
+
+           ```ts
+           export interface Spec extends TurboModule {
+             getStreak(habitId: string): number;
+           }
+           export default TurboModuleRegistry.getEnforcing<Spec>('NativeHabitStore');
+           ```
+
+        2. **[[codegen|Codegen]]** під час збирання читає специфікацію (її шукає поле `codegenConfig` у `package.json`) і генерує native-інтерфейси.
+        3. **Код застосунку** викликає `HabitStore.getStreak('h-01')`.
+        4. **Native-код**: розробник пише клас, що реалізує згенерований інтерфейс.
+
+        Специфікація — це [[adapter-contract|контракт]], як у платформних адаптерах із RN-03: JavaScript знає лише типи, а не те, як Android чи iOS їх виконують.
+      en: |
+        A [[native-module]] is Android or iOS code whose methods your JavaScript calls. According to the React Native 0.86 documentation ([Native Modules: Introduction](https://reactnative.dev/docs/0.86/turbo-native-modules-introduction)) it is made in four steps:
+
+        1. **A spec.** A TypeScript file whose name starts with `Native` — the [[module-spec]]:
+
+           ```ts
+           export interface Spec extends TurboModule {
+             getStreak(habitId: string): number;
+           }
+           export default TurboModuleRegistry.getEnforcing<Spec>('NativeHabitStore');
+           ```
+
+        2. **[[codegen|Codegen]]** reads the spec during the build (the `codegenConfig` field in `package.json` tells it where) and generates native interfaces.
+        3. **App code** calls `HabitStore.getStreak('h-01')`.
+        4. **Native code**: a developer writes a class that implements the generated interface.
+
+        The spec is a [[adapter-contract|contract]], as in the platform adapters of RN-03: JavaScript knows only the types, not how Android or iOS carries them out.
+
+  - id: what-codegen-writes
+    kind: explanation
+    title:
+      uk: "Що генерує codegen — і чого не генерує"
+      en: "What codegen generates — and what it does not"
+    body:
+      uk: |
+        Ми запустили codegen React Native 0.86.3 для специфікації вище на комп’ютері без Android SDK і без Xcode (`node node_modules/react-native/scripts/generate-codegen-artifacts.js`). Для Android він створив абстрактний клас `NativeHabitStoreSpec`, а в ньому:
+
+        ```java
+        @ReactMethod(isBlockingSynchronousMethod = true)
+        public abstract double getStreak(String habitId);
+        ```
+
+        Для iOS — протокол `NativeHabitStoreSpec` з `- (NSNumber *)getStreak:(NSString *)habitId;` і C++-код, що з’єднує виклик JSI з цим методом. `string` став `String`/`NSString *`, `number` — `double`. Метод, що повертає значення, вийшов **синхронним**; `void` і `Promise<…>` — асинхронними.
+
+        Слово `abstract` і є відповіддю на питання «що пише codegen»: **оголошення**, не тіло. Як саме читати серію з диска, codegen не знає — клас із реалізацією й реєстрацію модуля пише розробник.
+      en: |
+        We ran React Native 0.86.3 codegen for the spec above on a computer without the Android SDK and without Xcode (`node node_modules/react-native/scripts/generate-codegen-artifacts.js`). For Android it created the abstract class `NativeHabitStoreSpec`, and in it:
+
+        ```java
+        @ReactMethod(isBlockingSynchronousMethod = true)
+        public abstract double getStreak(String habitId);
+        ```
+
+        For iOS, the protocol `NativeHabitStoreSpec` with `- (NSNumber *)getStreak:(NSString *)habitId;`, plus C++ code that connects the JSI call to this method. `string` became `String`/`NSString *`, `number` became `double`. A method that returns a value came out **synchronous**; `void` and `Promise<…>` came out asynchronous.
+
+        The word `abstract` is the answer to “what does codegen write”: **declarations**, not bodies. Codegen does not know how to read a streak from disk — the class with the implementation and the module's registration are written by a developer.
+
+  - id: codegen-preview
+    kind: example
+    runtime: concept-preview
+    dir: codegen-preview
+    entry: main.jsx
+    strings:
+      errorLabel: { uk: "Помилка", en: "Error" }
+      sync: { uk: "синхронний", en: "synchronous" }
+      async: { uk: "асинхронний", en: "asynchronous" }
+      callSitesHeading: { uk: "Місця викликів", en: "Call sites" }
+      noMethod: { uk: "у специфікації немає такого методу", en: "the spec has no such method" }
+      wrongCount: { uk: "інша кількість аргументів", en: "a different number of arguments" }
+      expected: { uk: "очікується", en: "expected" }
+      got: { uk: "передано", en: "got" }
+      fits: { uk: "типи збігаються", en: "the types match" }
+    title:
+      uk: "Специфікація → згенеровані сигнатури → місця викликів"
+      en: "Spec → generated signatures → call sites"
+    body:
+      uk: |
+        Тут специфікація native-сховища витрат (`specs/NativeExpenseStore.ts`), **симуляція** codegen (`miniCodegen.js`) і три місця в застосунку, що викликають модуль (`callSites.js`).
+
+        `miniCodegen.js` друкує ті самі сигнатури Java й Objective-C, які справжній codegen 0.86.3 згенерував для таких типів у нашому запуску; у його коментарі сказано, чим він відрізняється від справжнього. Натисни **Запустити**.
+      en: |
+        Here are the spec of a native expense store (`specs/NativeExpenseStore.ts`), a **simulation** of codegen (`miniCodegen.js`) and three places in the app that call the module (`callSites.js`).
+
+        `miniCodegen.js` prints the same Java and Objective-C signatures that the real 0.86.3 codegen generated for these types in our run; its header comment says how it differs from the real one. Press **Run**.
+    tryIt:
+      uk: |
+        1. Подивись на `addAmount`: `amount: number` став `double amount` у Java й `(double)amount` в Objective-C; метод `void` — асинхронний.
+        2. У специфікації заміни `amount: number` на `amount: string` і запусти знову. Згенеровані сигнатури тепер мають `String amount` і `NSString *`, а місце виклику `AddExpense.tsx` стало червоним: воно передає число `210.5`.
+        3. Подумай, що ще зламалося, хоча перегляд цього не показує: Kotlin-клас, написаний під `double amount`, більше не відповідає згенерованому класу — codegen його не переписує. Поверни `number`.
+      en: |
+        1. Look at `addAmount`: `amount: number` became `double amount` in Java and `(double)amount` in Objective-C; the `void` method is asynchronous.
+        2. In the spec replace `amount: number` with `amount: string` and run again. The generated signatures now have `String amount` and `NSString *`, and the call site `AddExpense.tsx` turned red: it passes the number `210.5`.
+        3. Think about what else broke, although the preview does not show it: the Kotlin class written for `double amount` no longer matches the generated class — codegen does not rewrite it. Put `number` back.
+    limits:
+      uk: "Перегляд react-native-web у браузері. `miniCodegen.js` — симуляція: він розуміє лише кілька типів і друкує лише сигнатури, справжній codegen не запускається, нічого не компілюється, а native-модуля немає. Червоне місце виклику тут показує перевірка `callSites.js`; у справжньому проєкті таку помилку покаже `tsc` (у нашому запуску: `error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.`), а невідповідність native-класу — збирання."
+      en: "A react-native-web preview in the browser. `miniCodegen.js` is a simulation: it understands only a few types and prints only signatures; the real codegen does not run, nothing is compiled, and there is no native module. The red call site here comes from the check in `callSites.js`; in a real project `tsc` shows such an error (in our run: `error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.`), and the build shows the mismatch of the native class."
+
+  - id: boundary-trace
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Наданий трейс: 1000 викликів чи один"
+      en: "A supplied trace: 1,000 calls or one"
+    textEquivalent:
+      uk: "Застосунок звичок імпортує 1000 позначок із резервної копії в native-сховище. Перший варіант викликає markDone для кожної позначки: кожен виклик перетинає межу через JSI, native-метод виконується, і керування повертається в JavaScript; так 1000 разів. У синтетичному трейсі уроку це дає 41 мс на межі й 6 мс роботи native-коду. Другий варіант збирає 1000 id у масив і робить один виклик markManyDone: межу перетинають один раз, масив перетворюється для native-коду один раз; у трейсі це 2,4 мс на межі й 5,8 мс роботи native-коду. Робота native-коду майже та сама, різниця — у кількості перетинів. Числа складено для уроку, на пристрої вони інші."
+      en: "The habit app imports 1,000 check-ins from a backup into the native store. The first variant calls markDone for each check-in: every call crosses the boundary through JSI, the native method runs, and control returns to JavaScript; 1,000 times. In the lesson's synthetic trace that is 41 ms at the boundary and 6 ms of native work. The second variant collects the 1,000 ids into an array and makes one markManyDone call: the boundary is crossed once, and the array is converted for native code once; in the trace that is 2.4 ms at the boundary and 5.8 ms of native work. The native work is almost the same; the difference is the number of crossings. The numbers were made up for the lesson; on a device they are different."
+    spec:
+      actors:
+        - { id: js, label: "JavaScript" }
+        - { id: jsi, label: "JSI" }
+        - { id: native, label: { uk: "native-сховище", en: "native store" } }
+      intro:
+        uk: "Імпорт 1000 позначок звичок у native-сховище, двома способами. Трейс синтетичний, складений для уроку."
+        en: "Importing 1,000 habit check-ins into the native store, in two ways. The trace is synthetic, made for the lesson."
+      messages:
+        - from: js
+          to: jsi
+          label: "markDone('h-01', day)"
+          caption:
+            uk: "Варіант 1: перший із 1000 викликів. Кожен перетинає межу: аргументи перетворюються з значень JavaScript."
+            en: "Variant 1: the first of 1,000 calls. Each one crosses the boundary: the arguments are converted from JavaScript values."
+        - from: jsi
+          to: native
+          label: "markDone(String, String)"
+          caption:
+            uk: "Native-метод записує одну позначку — роботи небагато."
+            en: "The native method writes one check-in — not much work."
+        - from: native
+          to: js
+          kind: return
+          label: "void"
+          caption:
+            uk: "Керування повертається в JavaScript, і цикл бере наступну позначку."
+            en: "Control returns to JavaScript, and the loop takes the next check-in."
+        - from: js
+          to: js
+          kind: note
+          label: { uk: "× 1000", en: "× 1,000" }
+          caption:
+            uk: "Так 1000 разів. У трейсі: 41 мс на межі, 6 мс роботи native-коду."
+            en: "1,000 times. In the trace: 41 ms at the boundary, 6 ms of native work."
+        - from: js
+          to: jsi
+          label: "markManyDone(ids, day)"
+          caption:
+            uk: "Варіант 2: один виклик із масивом 1000 id. Масив перетворюється один раз."
+            en: "Variant 2: one call with an array of 1,000 ids. The array is converted once."
+        - from: jsi
+          to: native
+          label: "markManyDone(ReadableArray, String)"
+          caption:
+            uk: "Native-метод записує всі позначки в одному циклі вже на native-боці. У трейсі: 2,4 мс на межі, 5,8 мс роботи native-коду."
+            en: "The native method writes every check-in in one loop on the native side. In the trace: 2.4 ms at the boundary, 5.8 ms of native work."
+
+  - id: trace-cost
+    kind: prediction
+    prompt:
+      uk: |
+        Наданий трейс імпорту 1000 позначок (синтетичний, складений для уроку):
+
+        | Варіант | Викликів | Час на межі | Робота native-коду |
+        |---|---|---|---|
+        | `markDone` для кожної | 1000 | 41,0 мс | 6,0 мс |
+        | один `markManyDone` | 1 | 2,4 мс | 5,8 мс |
+
+        Який варіант витрачає більше часу на межі й приблизно у скільки разів?
+      en: |
+        A supplied trace of importing 1,000 check-ins (synthetic, made for the lesson):
+
+        | Variant | Calls | Time at the boundary | Native work |
+        |---|---|---|---|
+        | `markDone` for each | 1,000 | 41.0 ms | 6.0 ms |
+        | one `markManyDone` | 1 | 2.4 ms | 5.8 ms |
+
+        Which variant spends more time at the boundary, and roughly how many times more?
+    answer:
+      type: choice
+      options:
+        - id: per-item-17
+          text: { uk: "По одному — приблизно в 17 разів більше", en: "Per item — roughly 17 times more" }
+        - id: bulk
+          text: { uk: "Пакетний — масив із 1000 id важчий за будь-який окремий виклик", en: "The bulk one — an array of 1,000 ids is heavier than any single call" }
+          why:
+            uk: "Масив важчий за один виклик, але перетворюється один раз. Порівнюють суму: 1000 перетинів по одному дають 41 мс проти 2,4 мс."
+            en: "The array is heavier than one call, but it is converted once. You compare the totals: 1,000 single crossings give 41 ms against 2.4 ms."
+        - id: same
+          text: { uk: "Однаково — у JSI немає черги, тож перетин нічого не коштує", en: "The same — JSI has no queue, so a crossing costs nothing" }
+          why:
+            uk: "JSI прибрав JSON і чергу, але не саму межу: аргументи все одно перетворюються, а керування переходить між сторонами. Трейс це й показує: 41 мс проти 2,4."
+            en: "JSI removed the JSON and the queue, but not the boundary itself: the arguments are still converted, and control passes between the sides. The trace shows exactly that: 41 ms against 2.4."
+        - id: native-column
+          text: { uk: "По одному — лише трохи більше: 6,0 мс проти 5,8", en: "Per item — only slightly more: 6.0 ms against 5.8" }
+          why:
+            uk: "6,0 і 5,8 — це робота native-коду, вона майже однакова. Питання про час на межі — інший стовпець."
+            en: "6.0 and 5.8 are the native work, and it is almost the same. The question is about the time at the boundary — another column."
+      correct: [per-item-17]
+    explanation:
+      uk: "41 / 2,4 ≈ 17. Native-код в обох варіантах робить ту саму роботу; різниця — 999 зайвих перетинів межі. Тому дешевший дизайн — один пакетний метод у специфікації."
+      en: "41 / 2.4 ≈ 17. The native code does the same work in both variants; the difference is 999 extra boundary crossings. So the cheaper design is one batched method in the spec."
+
+  - id: native-not-faster
+    kind: explanation
+    title:
+      uk: "Native — не завжди швидше"
+      en: "Native is not always faster"
+    body:
+      uk: |
+        Зі трейсу виходять три правила дизайну модуля:
+
+        - **Пакетуй.** Якщо JavaScript викликає метод у циклі чи на кожен кадр, додай у специфікацію метод, що бере масив.
+        - **Не переноси в native те, що JavaScript робить і так.** `summarizeHabit` чи `summarizeExpenses` рахують у JavaScript за мікросекунди. Native-версія додала б перетини межі, дві реалізації (Kotlin і Objective-C) і два набори тестів, а швидкості — ні.
+        - **Native — для того, чого в JavaScript немає:** датчик, сховище платформи, системний API. Вимірюй на release-збірці (RN-10), а не вгадуй.
+      en: |
+        The trace gives three rules for designing a module:
+
+        - **Batch.** If JavaScript calls a method in a loop or on every frame, add a method to the spec that takes an array.
+        - **Do not move into native what JavaScript already does.** `summarizeHabit` or `summarizeExpenses` compute in JavaScript in microseconds. A native version would add boundary crossings, two implementations (Kotlin and Objective-C) and two test suites, and no speed.
+        - **Native is for what JavaScript does not have:** a sensor, platform storage, a system API. Measure on a release build (RN-10) rather than guess.
+
+  - id: battery-spec
+    kind: exercise
+    mode: guided
+    runtime: concept-preview
+    dir: battery-spec
+    entry: main.jsx
+    editable: [specs/NativeBatteryLevel.ts, ownership.js]
+    strings:
+      errorLabel: { uk: "Помилка", en: "Error" }
+      sync: { uk: "синхронний", en: "synchronous" }
+      async: { uk: "асинхронний", en: "asynchronous" }
+      noMethods: { uk: "У специфікації ще немає методів.", en: "The spec has no methods yet." }
+      ownershipHeading: { uk: "Хто що пише", en: "Who writes what" }
+    title:
+      uk: "Специфікація модуля заряду батареї"
+      en: "A spec for a battery-level module"
+    instructions:
+      uk: |
+        Трекер звичок хоче відкладати важку синхронізацію, коли батарея майже розряджена. Опиши для цього native-модуль.
+
+        1. У `specs/NativeBatteryLevel.ts` допиши специфікацію з **лише двома** методами:
+           - `getLevel` — рівень заряду від 0 до 1, **асинхронно** (через `Promise`);
+           - `isCharging` — чи заряджається телефон, `true`/`false`, **синхронно**.
+
+           Модуль має знаходитися за назвою `NativeBatteryLevel`.
+        2. У `ownership.js` для кожної частини модуля напиши, хто її пише: `'codegen'` чи `'developer'`.
+
+        Праворуч — що згенерував би з твоєї специфікації симульований codegen (`miniCodegen.js`). Він читає один метод на рядок і розуміє лише прості типи — подробиці в його коментарі.
+      en: |
+        The habit tracker wants to postpone a heavy sync when the battery is almost empty. Describe a native module for it.
+
+        1. In `specs/NativeBatteryLevel.ts` finish the spec with **only two** methods:
+           - `getLevel` — the charge level from 0 to 1, **asynchronously** (through a `Promise`);
+           - `isCharging` — whether the phone is charging, `true`/`false`, **synchronously**.
+
+           The module must be found by the name `NativeBatteryLevel`.
+        2. In `ownership.js`, for every part of the module write who writes it: `'codegen'` or `'developer'`.
+
+        On the right is what the simulated codegen (`miniCodegen.js`) would generate from your spec. It reads one method per line and understands only simple types — the details are in its comment.
+    testTitles:
+      "codegen reads the spec without errors":
+        uk: "Симульований codegen читає специфікацію без помилок"
+        en: "The simulated codegen reads the spec without errors"
+      "the module is found by the name NativeBatteryLevel":
+        uk: "Модуль знаходиться за назвою `NativeBatteryLevel`"
+        en: "The module is found by the name `NativeBatteryLevel`"
+      "getLevel answers through a Promise":
+        uk: "`getLevel` відповідає через `Promise`"
+        en: "`getLevel` answers through a `Promise`"
+      "isCharging answers synchronously with a boolean":
+        uk: "`isCharging` відповідає синхронно значенням `boolean`"
+        en: "`isCharging` answers synchronously with a `boolean`"
+      "the spec has only getLevel and isCharging":
+        uk: "У специфікації лише `getLevel` і `isCharging`"
+        en: "The spec has only `getLevel` and `isCharging`"
+      "the generated parts are marked codegen":
+        uk: "Згенеровані частини позначено `'codegen'`"
+        en: "The generated parts are marked `'codegen'`"
+      "the spec, both implementations and the registration are marked developer":
+        uk: "Специфікацію, обидві реалізації й реєстрацію позначено `'developer'`"
+        en: "The spec, both implementations and the registration are marked `'developer'`"
+    hints:
+      nudge:
+        uk: "Подивись, як у прикладі уроку записано метод, що повертає число, і метод `void`. Що змінюється у згенерованій сигнатурі, коли тип відповіді — `Promise<…>`?"
+        en: "Look at how the lesson's example writes a method that returns a number and a `void` method. What changes in the generated signature when the return type is `Promise<…>`?"
+      explanation:
+        uk: "Метод, що повертає просте значення, codegen робить синхронним; метод з `Promise<T>` — асинхронним, і в Java з’являється параметр `Promise promise`. Наприклад, `loadNotes(): Promise<string>;` дає `public abstract void loadNotes(Promise promise);`. Назву модуля бере `TurboModuleRegistry.getEnforcing<Spec>(…)` у default export. А `abstract` у згенерованому коді підказує, що codegen пише лише оголошення."
+        en: "A method that returns a plain value comes out synchronous; a method with `Promise<T>` comes out asynchronous, and Java gets a `Promise promise` parameter. For example, `loadNotes(): Promise<string>;` gives `public abstract void loadNotes(Promise promise);`. The module's name comes from `TurboModuleRegistry.getEnforcing<Spec>(…)` in the default export. And `abstract` in the generated code hints that codegen writes only declarations."
+    solutionNote:
+      uk: "`getLevel(): Promise<number>` дає асинхронний метод із `Promise promise` у Java — читання батареї не мусить блокувати JavaScript. `isCharging(): boolean` — синхронний: це швидкий прапорець. Codegen генерує абстрактний клас Java, протокол Objective-C і C++-зв’язку з JSI; специфікацію, обидві реалізації й реєстрацію модуля пише розробник."
+      en: "`getLevel(): Promise<number>` gives an asynchronous method with `Promise promise` in Java — reading the battery need not block JavaScript. `isCharging(): boolean` is synchronous: it is a quick flag. Codegen generates the Java abstract class, the Objective-C protocol and the C++ connection to JSI; the spec, both implementations and the module's registration are written by a developer."
+    feedback:
+      - when: { test: "codegen reads the spec without errors" }
+        message:
+          uk: "Ця перевірка чекає, що симульований codegen прочитає `specs/NativeBatteryLevel.ts` без помилок. Текст помилки — праворуч; найчастіше це метод, розбитий на кілька рядків, або тип, якого симуляція не розуміє."
+          en: "This check expects the simulated codegen to read `specs/NativeBatteryLevel.ts` without errors. The error text is on the right; most often it is a method split over several lines or a type the simulation does not understand."
+      - when: { test: "the module is found by the name NativeBatteryLevel" }
+        message:
+          uk: "Ця перевірка чекає в default export виклик `TurboModuleRegistry.getEnforcing<Spec>(…)` з назвою `'NativeBatteryLevel'` — саме так, з префіксом `Native`."
+          en: "This check expects a call of `TurboModuleRegistry.getEnforcing<Spec>(…)` in the default export with the name `'NativeBatteryLevel'` — exactly so, with the `Native` prefix."
+      - when: { test: "getLevel answers through a Promise" }
+        message:
+          uk: "Ця перевірка чекає, що для `getLevel` згенеровано `public abstract void getLevel(Promise promise);` — тобто метод без параметрів, що повертає `Promise` з числом."
+          en: "This check expects `public abstract void getLevel(Promise promise);` to be generated for `getLevel` — that is, a method without parameters that returns a `Promise` of a number."
+      - when: { test: "isCharging answers synchronously with a boolean" }
+        message:
+          uk: "Ця перевірка чекає, що для `isCharging` згенеровано `public abstract boolean isCharging();` — метод без параметрів, що повертає `boolean` одразу, без `Promise`."
+          en: "This check expects `public abstract boolean isCharging();` to be generated for `isCharging` — a method without parameters that returns a `boolean` at once, without a `Promise`."
+      - when: { test: "the spec has only getLevel and isCharging" }
+        message:
+          uk: "Ця перевірка чекає в специфікації рівно два методи: `getLevel` і `isCharging`. Кожен зайвий метод — ще одна реалізація на кожній платформі."
+          en: "This check expects exactly two methods in the spec: `getLevel` and `isCharging`. Every extra method is one more implementation on each platform."
+      - when: { test: "the generated parts are marked codegen" }
+        message:
+          uk: "Ця перевірка чекає `'codegen'` в `androidSpecClass`, `iosSpecProtocol` і `jsiBinding` — це те, що codegen створює зі специфікації."
+          en: "This check expects `'codegen'` in `androidSpecClass`, `iosSpecProtocol` and `jsiBinding` — that is what codegen creates from the spec."
+      - when: { test: "the spec, both implementations and the registration are marked developer" }
+        message:
+          uk: "Ця перевірка чекає `'developer'` у `specFile`, `androidModule`, `iosModule` і `registration`. Codegen пише оголошення (`abstract`), а не код, що читає батарею."
+          en: "This check expects `'developer'` in `specFile`, `androidModule`, `iosModule` and `registration`. Codegen writes declarations (`abstract`), not the code that reads the battery."
+    limits:
+      uk: "Перегляд react-native-web у браузері. `miniCodegen.js` — симуляція codegen: справжній codegen тут не запускається, native-класів і модуля батареї немає, а батарею ніхто не читає. Справжню специфікацію перевіряють `tsc` і codegen під час збирання native-проєкту."
+      en: "A react-native-web preview in the browser. `miniCodegen.js` is a simulation of codegen: the real codegen does not run here, there are no native classes and no battery module, and nobody reads a battery. A real spec is checked by `tsc` and by codegen during the native project's build."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: adapter-contract
+        from: rn-03-02-platform-adapters
+        prompt:
+          uk: "Доменна функція трекера отримує адаптер сховища ззовні, а не перевіряє `Platform.OS` усередині. Що від цього виграють тести?"
+          en: "A tracker's domain function receives a storage adapter from outside instead of checking `Platform.OS` inside. What do the tests gain from that?"
+        answer:
+          type: choice
+          options:
+            - id: double
+              text: { uk: "У тесті можна передати адаптер у пам’яті з тим самим контрактом", en: "A test can pass an in-memory adapter with the same contract" }
+            - id: native
+              text: { uk: "Тест запускає справжнє сховище Android чи iOS", en: "The test runs real Android or iOS storage" }
+              why:
+                uk: "Навпаки: тест на комп’ютері не має ні Android, ні iOS. Адаптер дає змогу підставити подвійника з тим самим контрактом."
+                en: "On the contrary: a test on the computer has neither Android nor iOS. The adapter makes it possible to put in a double with the same contract."
+            - id: nothing
+              text: { uk: "Нічого — це лише стиль коду", en: "Nothing — it is only a code style" }
+              why:
+                uk: "З `Platform.OS` усередині функція прив’язана до платформи, на якій виконується. Адаптер ззовні відв’язує її, і саме тому її можна перевірити без пристрою."
+                en: "With `Platform.OS` inside, the function is tied to the platform it runs on. An adapter from outside unties it, and that is exactly why it can be checked without a device."
+          correct: [double]
+        explanation:
+          uk: "Специфікація TurboModule — такий самий контракт, лише між JavaScript і native-кодом: код застосунку залежить від типів `Spec`, а в тестах модуль заміняють подвійником (RN-07)."
+          en: "A TurboModule spec is the same kind of contract, only between JavaScript and native code: app code depends on the `Spec` types, and in tests the module is replaced with a double (RN-07)."
+
+  - id: to-project
+    kind: transfer
+    checkpoint: CP-RN
+    body:
+      uk: "Твій проєкт не змінюється: власного native-модуля він не потребує, бо `summarizeItems`, `countDueTasks`, `summarizeHabit` чи `summarizeExpenses` працюють у JavaScript. Якщо колись захочеш додати модуль, почни зі специфікації й одразу подумай, які методи потрібні пакетними."
+      en: "Your project does not change: it does not need a native module of its own, because `summarizeItems`, `countDueTasks`, `summarizeHabit` or `summarizeExpenses` run in JavaScript. If you ever want to add a module, start with the spec and think right away which methods need to be batched."
