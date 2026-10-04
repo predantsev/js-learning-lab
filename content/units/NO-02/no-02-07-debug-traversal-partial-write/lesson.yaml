@@ -1,0 +1,245 @@
+id: no-02-07-debug-traversal-partial-write
+unit: NO-02
+title:
+  uk: "Налагодження: path traversal, кодування і частковий запис"
+  en: "Debug: path traversal, encoding and a partial write"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Відтворити й виправити path traversal у функції читання файлів, зіпсований текст через хибне кодування і зламаний файл через запис на місці."
+    en: "Reproduce and repair a path traversal in a file-reading helper, garbled text caused by a wrong encoding, and a corrupted file caused by an in-place write."
+  - uk: "Доводити кожне виправлення перевіркою, що падає до виправлення й проходить після нього, а не читанням коду."
+    en: "Prove each repair with a check that fails before the fix and passes after it, not by reading the code."
+prerequisites: [no-02-06-errors-handle-cleanup]
+subskills:
+  - { family: B-02, skill: "fs/path and safe paths", depth: assess }
+  - { family: B-02, skill: "Buffer/encoding", depth: assess }
+  - { family: B-02, skill: "atomic/recoverable updates", depth: assess }
+glossary: []
+selfCheck: [predict-symptoms, repair-repo]
+
+blocks:
+  - id: the-repository
+    kind: explanation
+    title:
+      uk: "Репозиторій, що працює… поки все гаразд"
+      en: "A repository that works… while all is well"
+    body:
+      uk: |
+        Ось файловий репозиторій планувальника: нотатки до справ лежать текстовими файлами в `data/`, а справи — у `data/planner.json`. На звичайних даних він працює, і код виглядає охайно:
+
+        ```js
+        async readNote(name) {
+          if (name.startsWith('..')) throw new Error(`"${name}" is outside the data folder`);
+          const bytes = await readFile(path.join(dataDir, name));
+          return bytes.toString('latin1');
+        },
+        async saveRecords(records) {
+          await writeFile(recordsFile, JSON.stringify({ schemaVersion: 1, records }));
+        },
+        ```
+
+        У ньому три дефекти із цього розділу. Кожен проявляється лише на «незручному» вводі: на назві, що виходить із теки, на українській нотатці, на збої посеред запису. Тому план такий: спершу передбачити симптоми, потім відтворити їх запуском, а виправлення довести перевірками, які до виправлення падають, а після — проходять.
+      en: |
+        Here is the planner’s file repository: notes for tasks are text files in `data/`, and the tasks are in `data/planner.json`. On ordinary data it works, and the code looks tidy:
+
+        ```js
+        async readNote(name) {
+          if (name.startsWith('..')) throw new Error(`"${name}" is outside the data folder`);
+          const bytes = await readFile(path.join(dataDir, name));
+          return bytes.toString('latin1');
+        },
+        async saveRecords(records) {
+          await writeFile(recordsFile, JSON.stringify({ schemaVersion: 1, records }));
+        },
+        ```
+
+        It has three defects from this unit. Each shows up only on “awkward” input: a name that leaves the folder, a Ukrainian note, a crash in the middle of a write. So the plan is: first predict the symptoms, then reproduce them by running, and prove the repairs with checks that fail before the repair and pass after it.
+
+  - id: predict-symptoms
+    kind: prediction
+    prompt:
+      uk: "Репозиторій вище отримує три вводи: назву `archive/../../config/.env`, нотатку українською (`Лійка стоїть на балконі.`, збережену в UTF-8) і збій посеред другого `saveRecords`, після якого програму перезапускають і викликають `loadRecords()`. Що станеться? Познач усе, що правда."
+      en: "The repository above gets three inputs: the name `archive/../../config/.env`, a note in Ukrainian (`Лійка стоїть на балконі.`, saved as UTF-8) and a crash in the middle of the second `saveRecords`, after which the program restarts and calls `loadRecords()`. What happens? Mark everything that is true."
+    answer:
+      type: multi
+      options:
+        - id: leaks-env
+          text:
+            uk: "`readNote` прочитає й поверне вміст `config/.env` поза `data/`"
+            en: "`readNote` reads and returns the content of `config/.env` outside `data/`"
+        - id: mojibake
+          text:
+            uk: "Нотатка повернеться набором знаків на кшталт `Ð` і `Ñ` замість українських літер"
+            en: "The note comes back as a jumble of signs like `Ð` and `Ñ` instead of Ukrainian letters"
+        - id: syntax-error
+          text:
+            uk: "Після перезапуску `loadRecords()` кине `SyntaxError`"
+            en: "After the restart `loadRecords()` throws a `SyntaxError`"
+        - id: check-works
+          text:
+            uk: "`readNote` відмовить для `archive/../../config/.env`, бо в ній перевірка на `..`"
+            en: "`readNote` refuses `archive/../../config/.env`, because it has a check for `..`"
+          why:
+            uk: "Перевірка дивиться лише на початок назви, а ця починається з `archive/`. Розв’язаний шлях виходить із `data/`, і файл відкривається без жодної помилки — це не доказ, що шлях безпечний."
+            en: "The check looks only at the start of the name, and this one starts with `archive/`. The resolved path leaves `data/`, and the file opens without any error — which proves nothing about the path being safe."
+        - id: old-records
+          text:
+            uk: "Після перезапуску `loadRecords()` поверне старі справи — збереження ж «не вдалося»"
+            en: "After the restart `loadRecords()` returns the old tasks — the save “failed”, after all"
+          why:
+            uk: "`writeFile` на місці спершу спорожнив `planner.json`, тож старих справ на диску вже немає: лишилася половина нового JSON."
+            en: "The in-place `writeFile` emptied `planner.json` first, so the old tasks are no longer on the disk: half of the new JSON is left."
+      correct: [leaks-env, mojibake, syntax-error]
+    explanation:
+      uk: "Усі три дефекти дають тихий або руйнівний результат: секрет іде назовні без жодної помилки, текст псується без помилки, а збій знищує й старі, й нові записи. (Цей репозиторій читає файли через `node:fs`, тому «Запустити й перевірити» його не виконує; запуск — у прикладі нижче.)"
+      en: "All three defects give a silent or destructive result: the secret goes out without any error, the text is damaged without any error, and the crash destroys both the old and the new records. (This repository reads files through `node:fs`, so “Run and check” does not run it; the run is in the example below.)"
+
+  - id: symptoms
+    kind: example
+    runtime: isolated-node
+    dir: symptoms
+    entry: index.js
+    strings:
+      task1: { uk: "Полити квіти", en: "Water the plants" }
+    title:
+      uk: "Відтвори три симптоми"
+      en: "Reproduce three symptoms"
+    body:
+      uk: |
+        Натисни **Запустити**: це той самий репозиторій (`repo.js`) з трьома вводами з передбачення. Збій під час збереження імітує `crash.js`: поки виконується функція, кожен `writeFile` записує половину даних і кидає помилку. Коментар у файлі пояснює, чим це відрізняється від справжнього збою.
+
+        Порівняй кожен рядок зі своїм передбаченням: `1.` — секрет із `config/.env`, `2.` — зіпсована нотатка, `3.` — `SyntaxError` після «перезапуску».
+      en: |
+        Press **Run**: this is the same repository (`repo.js`) with the three inputs from the prediction. `crash.js` simulates the crash during the save: while the function runs, every `writeFile` writes half of the data and throws an error. A comment in the file explains how this differs from a real crash.
+
+        Compare each line with your prediction: `1.` — the secret from `config/.env`, `2.` — the damaged note, `3.` — a `SyntaxError` after the “restart”.
+    tryIt:
+      uk: "Зміни назву в пункті 1 на `../config/.env`: тепер перевірка `startsWith('..')` спрацьовує. Значить, перевірка ловить лише одну форму атаки. Поверни `archive/../../config/.env` — далі ти виправиш це у вправі."
+      en: "Change the name in item 1 to `../config/.env`: now the `startsWith('..')` check fires. So the check catches only one form of the attack. Set it back to `archive/../../config/.env` — you repair this in the exercise next."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: символи й байти"
+      en: "Recall: characters and bytes"
+    items:
+      - id: length-vs-bytes
+        from: js-13-11-debug-leaks-cycles
+        prompt:
+          uk: "Поле зберігає не більше 10 байтів. Перевірка `label.length <= 10` пропускає підпис `Київ 🐈`. Що надрукує програма?"
+          en: "A field stores at most 10 bytes. The check `label.length <= 10` lets the label `Київ 🐈` through. What does the program print?"
+        code: |
+          const label = "Київ 🐈";
+          console.log(label.length, new TextEncoder().encode(label).length);
+        verify:
+          logs: ["7 13"]
+        answer:
+          type: choice
+          options:
+            - id: units-and-bytes
+              code: "7 13"
+            - id: chars
+              code: "6 6"
+              why:
+                uk: "Ні `length`, ні байти не дорівнюють кількості видимих символів: `🐈` — це 2 code units і 4 байти, а кожна кирилична літера — 2 байти."
+                en: "Neither `length` nor the bytes equal the number of visible characters: `🐈` is 2 code units and 4 bytes, and each Cyrillic letter is 2 bytes."
+            - id: same
+              code: "7 7"
+              why:
+                uk: "`TextEncoder` рахує байти UTF-8: 8 на «Київ», 1 на пробіл і 4 на емодзі — 13."
+                en: "`TextEncoder` counts UTF-8 bytes: 8 for “Київ”, 1 for the space and 4 for the emoji — 13."
+          correct: [units-and-bytes]
+        explanation:
+          uk: "`length` — 7 code units, а байтів — 13, тож підпис проходить перевірку, але не влазить у поле. Розбіжність байтів і тексту ламає дані тихо — так само, як `toString('latin1')` у цьому репозиторії."
+          en: "`length` is 7 code units, but there are 13 bytes, so the label passes the check yet does not fit into the field. A byte/text mismatch breaks data silently — just like `toString('latin1')` in this repository."
+
+  - id: repair-repo
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: repair-repo
+    entry: index.js
+    editable: [repo.js]
+    strings:
+      task1: { uk: "Полити квіти", en: "Water the plants" }
+      task2: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      note1: { uk: "Лійка стоїть на балконі.", en: "The watering can is on the balcony." }
+      note4: { uk: "Оплачено онлайн 2026-02-27.", en: "Paid online on 2026-02-27." }
+    title:
+      uk: "Полагодь репозиторій: шлях, кодування, збереження"
+      en: "Repair the repository: path, encoding, save"
+    instructions:
+      uk: |
+        Виправ три дефекти в `repo.js`, не змінюючи того, що вже працює:
+
+        - `readNote(name)` відмовляє (відхиляється) для кожної назви, що веде за межі `data/`, і **ніколи не читає** файлів поза `data/`; назви всередині, зокрема `archive/../t-05.txt`, читаються як і раніше;
+        - `readNote` декодує нотатки як UTF-8;
+        - збій посеред `saveRecords` лишає `planner.json` зі старими цілими записами, а сам `saveRecords` відхиляється;
+        - `saveRecords` і `loadRecords` разом і далі зберігають і повертають справи.
+
+        Перевірки записують кожен шлях, який читає репозиторій, і обривають запис посередині — так само, як `crash.js` у прикладі. Тому користуйся функціями з `node:fs/promises`.
+      en: |
+        Repair three defects in `repo.js` without changing what already works:
+
+        - `readNote(name)` refuses (rejects) every name that leads outside `data/` and **never reads** files outside `data/`; names inside, including `archive/../t-05.txt`, are read as before;
+        - `readNote` decodes the notes as UTF-8;
+        - a crash in the middle of `saveRecords` leaves `planner.json` with the old records whole, and `saveRecords` itself rejects;
+        - `saveRecords` and `loadRecords` together still store and return the tasks.
+
+        The checks record every path the repository reads and cut a write in the middle — just like `crash.js` in the example. So use the functions of `node:fs/promises`.
+    testTitles:
+      "readNote rejects names that lead outside data/ and never reads there":
+        uk: "`readNote` відмовляє для назв, що ведуть за межі `data/`, і нічого там не читає"
+        en: "`readNote` refuses names that lead outside `data/` and reads nothing there"
+      "readNote still reads notes inside data/":
+        uk: "`readNote` і далі читає нотатки всередині `data/`"
+        en: "`readNote` still reads notes inside `data/`"
+      "readNote decodes a Ukrainian note as UTF-8":
+        uk: "`readNote` декодує українську нотатку як UTF-8"
+        en: "`readNote` decodes a Ukrainian note as UTF-8"
+      "saveRecords then loadRecords gives the new records":
+        uk: "Після `saveRecords` метод `loadRecords` повертає нові справи"
+        en: "After `saveRecords`, `loadRecords` returns the new tasks"
+      "a crash in the middle of saveRecords leaves the old records whole":
+        uk: "Збій посеред `saveRecords` лишає старі справи цілими"
+        en: "A crash in the middle of `saveRecords` leaves the old tasks whole"
+    hints:
+      nudge:
+        uk: "Запусти приклад «Відтвори три симптоми» і для кожного симптому знайди в `repo.js` рядок, що його спричиняє. Кожен рядок робить те, від чого застерігав один із попередніх уроків цього розділу."
+        en: "Run the example “Reproduce three symptoms” and, for each symptom, find the line in `repo.js` that causes it. Each line does something one of this unit’s earlier lessons warned against."
+      explanation:
+        uk: "Шлях: перевіряй не назву, а розв’язаний шлях — `path.resolve` від теки даних, а потім `path.relative` чи `startsWith(тека + path.sep)`, як у `resolveInside`. Кодування: байти нотаток — UTF-8, тож і декодувати їх треба як `'utf8'` (або суворим `TextDecoder`). Збереження: новий вміст спершу в тимчасовий файл поруч із `planner.json`, потім `rename` — як у `writeAtomic`; тоді обірваний запис зіпсує лише тимчасовий файл."
+        en: "The path: check not the name but the resolved path — `path.resolve` from the data folder, then `path.relative` or `startsWith(folder + path.sep)`, as in `resolveInside`. The encoding: the notes’ bytes are UTF-8, so they must be decoded as `'utf8'` (or with a strict `TextDecoder`). The save: the new content goes into a temp file next to `planner.json` first, then `rename` — as in `writeAtomic`; then a cut write damages only the temp file."
+    solutionNote:
+      uk: "`readNote` пропускає назву через перевірку вкладеності розв’язаного шляху й лише тоді читає; байти декодуються як UTF-8; `saveRecords` пише в `planner.json.<uuid>.tmp` і робить `rename`. Кожне виправлення доводить своя перевірка, що до нього падала. Варіант зі `startsWith(base + path.sep)`, суворим `TextDecoder` і FileHandle із `sync()` перед `rename` теж правильний — і ще надійніший після збою живлення."
+      en: "`readNote` passes the name through a containment check of the resolved path and only then reads; the bytes are decoded as UTF-8; `saveRecords` writes into `planner.json.<uuid>.tmp` and does a `rename`. Each repair is proven by its own check that failed before it. A version with `startsWith(base + path.sep)`, a strict `TextDecoder` and a FileHandle with `sync()` before the `rename` is correct too — and even safer after a power cut."
+    feedback:
+      - when: { test: "readNote rejects names that lead outside data/ and never reads there" }
+        message:
+          uk: "Ця перевірка пробує `archive/../../secret.txt`, абсолютний шлях і `....//secret.txt` та очікує, що `readNote` відхилиться, не прочитавши жодного файла поза `data/`. Перевірка початку назви (`startsWith('..')`) чи вилучення `../` ці назви не зупиняють — перевіряй розв’язаний шлях до читання."
+          en: "This check tries `archive/../../secret.txt`, an absolute path and `....//secret.txt` and expects `readNote` to reject without reading any file outside `data/`. Checking the start of the name (`startsWith('..')`) or removing `../` does not stop these names — check the resolved path before reading."
+      - when: { test: "readNote still reads notes inside data/" }
+        message:
+          uk: "Ця перевірка очікує, що `archive/t-04.txt` і `archive/../t-05.txt` і далі читаються: обидва шляхи після розв’язання лишаються в `data/`. Не відмовляй лише через те, що в назві є `..`."
+          en: "This check expects `archive/t-04.txt` and `archive/../t-05.txt` to be read as before: both paths stay in `data/` once resolved. Do not refuse just because a name contains `..`."
+      - when: { test: "readNote decodes a Ukrainian note as UTF-8" }
+        message:
+          uk: "Ця перевірка очікує точний текст нотатки українською. Знаки на кшталт `Ð` і `Ñ` означають, що байти UTF-8 декодовано як `latin1`."
+          en: "This check expects the exact text of the Ukrainian note. Signs like `Ð` and `Ñ` mean the UTF-8 bytes were decoded as `latin1`."
+      - when: { test: "saveRecords then loadRecords gives the new records" }
+        message:
+          uk: "Ця перевірка очікує, що після двох `saveRecords` метод `loadRecords` поверне справи з другого виклику. Переконайся, що `rename` ставить тимчасовий файл саме на місце `planner.json`."
+          en: "This check expects `loadRecords` to return the tasks of the second call after two `saveRecords`. Make sure `rename` puts the temp file exactly in place of `planner.json`."
+      - when: { test: "a crash in the middle of saveRecords leaves the old records whole" }
+        message:
+          uk: "Ця перевірка обриває запис посередині й очікує, що `saveRecords` відхилиться, а `planner.json` міститиме старі справи. `try/catch` навколо `writeFile` не допоможе: файл спорожнено ще до збою. Пиши в тимчасовий файл і роби `rename`."
+          en: "This check cuts the write in the middle and expects `saveRecords` to reject while `planner.json` holds the old tasks. A `try/catch` around `writeFile` does not help: the file was emptied before the crash. Write into a temp file and `rename`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-02
+    body:
+      uk: "У кроці проєкту цього розділу ти доведеш те саме для свого репозиторію: збій між записом тимчасового файла й `rename`, перезапуск — і перевірка, що прочитано останню повну версію. Доказом буде вивід запуску, а не читання коду."
+      en: "In this unit’s project step you prove the same for your own repository: a crash between the temp-file write and the `rename`, a restart — and a check that the last complete version is read. The proof is the output of a run, not a reading of the code."

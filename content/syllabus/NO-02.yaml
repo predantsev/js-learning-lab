@@ -63,11 +63,11 @@ lessons:
       - "readFileSync is fine in a server because files are fast."
     prerequisites: [no-02-01-fs-paths-safe, no-01-04-event-loop-phases]
     glossary: [non-blocking-io, thread-pool]
-    visual: { kind: code-trace, concept: "A script that awaits two reads: the highlighted line hands the read to the thread pool, the call stack empties, a timer callback runs meanwhile and the await resumes when the read completes — compared with readFileSync, where the timer waits." }
+    visual: { kind: sequence, concept: "Main thread, thread pool and disk over time: readFile hands the read to the thread pool, await empties the stack, a timer callback that is already due runs meanwhile and the await resumes when the read completes — compared with readFileSync, where the main thread reads itself and the timer waits. (A sequence, not a code-trace: the tracer cannot run node:fs.)" }
     analogy: null
     practice:
       - { kind: predict, runtime: isolated-node, summary: "Predict the order of 'start', a setTimeout(0) log, a readFile result and 'end' for the fs/promises version and the readFileSync version." }
-      - { kind: run-change, runtime: isolated-node, summary: "Run both versions in the Node child against a synthetic 5 MB file, then switch two independent reads from sequential awaits to Promise.all and compare the elapsed time." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run both versions in the Node child against a synthetic 5 MB file, then compare two independent 8 MB reads done with sequential awaits and with Promise.all." }
       - { kind: write, runtime: isolated-node, summary: "Write loadAll(paths) that reads independent files concurrently, parses each as JSON and reports which file failed and why." }
     retrieval:
       - { concept: "await pauses the async function, not the program", from: js-08-05-async-await }
@@ -107,11 +107,11 @@ lessons:
       - "A size limit is unnecessary when the file was written by my own program."
     prerequisites: [no-02-03-buffers-encoding]
     glossary: [file-handle, bounded-read]
-    visual: { kind: diagram, concept: "Memory drawn as a gauge: readFile of a 50 MB synthetic file fills it in one jump, a 64 KB chunk loop keeps it flat, and a stat-based size gate rejects an oversized file before a single byte is read." }
+    visual: { kind: diagram, concept: "A stat-based size gate in front of a 24 MB synthetic file: readFile adds 24 MB of Buffer memory in one jump, a 64 KB chunk loop keeps it flat at about 0.1 MB, and a 1 MB limit rejects the file before a single byte is read (24 MB, not 50 MB: the isolated-node workspace allows 64 MB of written files)." }
     analogy: null
     practice:
-      - { kind: predict, runtime: isolated-node, summary: "Predict rough peak memory for readFile versus a 64 KB chunk loop over a generated 50 MB file, and what happens when MAX_BYTES is 1 MB." }
-      - { kind: run-change, runtime: isolated-node, summary: "Run both reads in the Node child printing process.memoryUsage().rss, then change the chunk size and the limit and compare." }
+      - { kind: predict, runtime: isolated-node, summary: "Predict rough peak Buffer memory for readFile versus a 64 KB chunk loop over a generated 24 MB file, and what happens when MAX_BYTES is 1 MB." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run both reads in the Node child printing process.memoryUsage().arrayBuffers, then change the chunk size and the limit and compare." }
       - { kind: write, runtime: isolated-node, summary: "Write readBounded(path, maxBytes) that stats first, rejects oversized files with a typed error and otherwise reads through a FileHandle that it closes in finally." }
     retrieval:
       - { concept: "measuring the cost of work instead of guessing it", from: js-17-02-big-o-measured }
@@ -152,11 +152,11 @@ lessons:
       - "The garbage collector closes file handles for me, so closing them is optional."
     prerequisites: [no-02-05-atomic-recoverable-updates, js-07-03-try-catch-finally]
     glossary: [error-code, file-descriptor]
-    visual: { kind: code-trace, concept: "Three runs of the same readJsonFile function — success, ENOENT and a parse error — with an open-handles counter beside the call stack; only the try/finally version returns the counter to zero on every path." }
+    visual: { kind: code-trace, concept: "Three runs of one readSettings function over a pure-JavaScript stand-in for fs (open only counts handles) — success, ENOENT and a parse error — with the openHandles counter in the variables; try/finally returns it to zero on every path (the leaking version is shown in the run-change example)." }
     analogy: null
     practice:
       - { kind: predict, runtime: isolated-node, summary: "Predict the open-handle count after 100 calls of a seeded readConfig that returns early on an empty file without closing its handle." }
-      - { kind: run-change, runtime: isolated-node, summary: "Run it in the Node child, watch the harness’s open-handle count climb, then move close() into finally and confirm the count returns to zero." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run it in the Node child, watch the count of FileHandles whose fd is not -1 and the descriptor numbers climb, then move close() into finally and confirm the count returns to zero. (The harness activeResources() does not list FileHandles; the checks track handles by wrapping open.)" }
       - { kind: write, runtime: isolated-node, summary: "Write readJsonFile(path) that maps ENOENT to a 'missing' result, rethrows other codes with cause and always closes its handle." }
     retrieval:
       - { concept: "an 'error' event with no listener ends the process", from: no-01-05-eventemitter-errors }
@@ -189,8 +189,8 @@ lessons:
     kind: assessment
     minutes: 30
     objectives:
-      - "Implement, without hints, a file repository (list, get, save, remove) for a synthetic dataset with concurrent independent reads, bounded reads, atomic writes, error-code mapping and guaranteed handle cleanup."
-      - "Show, by killing the process mid-save and restarting it, that no record is lost or half-written and no handle stays open."
+      - "Implement, without hints, a file repository (list, get, save, remove, summary, recover) for synthetic expenses with concurrent independent reads, bounded reads and writes, atomic writes, error-code mapping and guaranteed handle cleanup."
+      - "Show, by killing the process mid-save and restarting it, that no confirmed record is lost or half-written (handle cleanup is proven by the isolated-node checks: a killed process cannot report its open handles)."
     subskills:
       - { family: B-02, skill: "asynchronous I/O", depth: assess }
       - { family: B-02, skill: "bounded reads/writes", depth: assess }
@@ -201,7 +201,8 @@ lessons:
     visual: null
     analogy: null
     practice:
-      - { kind: independent, runtime: local-node, summary: "No-hint task in your own terminal: createFileRepository(dataDir, { maxBytes }) for a synthetic notes dataset; the supplied check script kills the process during save, restarts it, compares the records with the expected invariants and reports open handles, and you record its output." }
+      - { kind: independent, runtime: isolated-node, summary: "No-hint assessment exercise: createFileRepository(dataDir, { maxBytes }) for synthetic expenses, checked with injected mid-write crashes, slowed file operations (concurrency), handle tracking and bounded read/write limits." }
+      - { kind: independent, runtime: local-node, summary: "In your own terminal: the supplied crash-check.mjs kills a saving process with SIGKILL 20 times at random moments, restarts the repository and checks that every confirmed record is whole; then a deliberate in-place write shows the check failing, and you record both outputs." }
     retrieval:
       - { concept: "deterministic fixtures make a check repeatable", from: js-09-04-deterministic-fixtures }
   - id: no-02-09-capstone-file-persistence

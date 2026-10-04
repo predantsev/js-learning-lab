@@ -1,0 +1,387 @@
+id: no-02-02-async-io
+unit: NO-02
+title:
+  uk: "Асинхронний ввід-вивід"
+  en: "Asynchronous I/O"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Передбачити порядок виводу, коли змішано читання через `fs/promises`, таймер із нульовою затримкою й синхронні `console.log`, і пояснити, чому читання не блокує інші callbacks."
+    en: "Predict the output order when `fs/promises` reads, a zero-delay timer and synchronous logs are mixed, and explain why the read does not block other callbacks."
+  - uk: "Обрати між `readFileSync` і `fs/promises` для разового скрипта й для сервера та обґрунтувати вибір."
+    en: "Choose between `readFileSync` and `fs/promises` for a one-off script versus a server, and justify the choice."
+  - uk: "Запускати незалежні читання одночасно через `Promise.all`, а залежні — по черзі через `await`."
+    en: "Run independent reads concurrently with `Promise.all` and dependent ones in sequence with `await`."
+prerequisites: [no-02-01-fs-paths-safe, no-01-04-event-loop-phases]
+subskills:
+  - { family: B-02, skill: "asynchronous I/O", depth: intro }
+glossary: [non-blocking-io, thread-pool]
+selfCheck: [predict-order, predict-server]
+
+blocks:
+  - id: two-ways-to-read
+    kind: explanation
+    title:
+      uk: "Читати можна двома способами"
+      en: "There are two ways to read"
+    body:
+      uk: |
+        `node:fs` пропонує той самий файл прочитати по-різному:
+
+        ```js
+        import { readFileSync } from 'node:fs';
+        import { readFile } from 'node:fs/promises';
+
+        const a = readFileSync('wishlist.json', 'utf8');       // чекає тут, разом з усією програмою
+        const b = await readFile('wishlist.json', 'utf8');     // чекає лише ця функція
+        ```
+
+        `readFileSync` читає просто в головному потоці: доки диск не відповів, Node не робить **нічого іншого** — ні таймерів, ні запитів.
+
+        `readFile` з `node:fs/promises` віддає роботу [[thread-pool|пулу потоків]] — кільком допоміжним потокам усередині Node — і одразу повертає promise. `await` ставить на паузу лише свою async-функцію; головний потік вільний, і event loop тим часом виконує інші callbacks. Це і є [[non-blocking-io|неблокувальний ввід-вивід]].
+      en: |
+        `node:fs` offers to read the same file in different ways:
+
+        ```js
+        import { readFileSync } from 'node:fs';
+        import { readFile } from 'node:fs/promises';
+
+        const a = readFileSync('wishlist.json', 'utf8');       // waits here, together with the whole program
+        const b = await readFile('wishlist.json', 'utf8');     // only this function waits
+        ```
+
+        `readFileSync` reads right on the main thread: until the disk answers, Node does **nothing else** — no timers, no requests.
+
+        `readFile` from `node:fs/promises` hands the work to the [[thread-pool]] — a few helper threads inside Node — and returns a promise at once. `await` pauses only its own async function; the main thread is free, and the event loop runs other callbacks meanwhile. That is [[non-blocking-io]].
+
+  - id: predict-order
+    kind: prediction
+    prompt:
+      uk: "Програма ставить таймер на 0 мс, а потім записує й читає файл на 5 МБ через `fs/promises`. Запис займає кілька мілісекунд, тож коли читання починається, таймер уже настав. У якому порядку з’являться рядки?"
+      en: "The program sets a 0 ms timer, then writes and reads a 5 MB file with `fs/promises`. Writing takes a few milliseconds, so by the time the read starts, the timer is already due. In which order do the lines appear?"
+    code: |
+      import { writeFileSync } from 'node:fs';
+      import { readFile } from 'node:fs/promises';
+
+      console.log('start');
+      setTimeout(() => console.log('timer'), 0);
+      writeFileSync('planner-log.txt', '2026-03-02 t-01 done\n'.repeat(250_000));
+
+      const text = await readFile('planner-log.txt', 'utf8');
+      console.log('read');
+      console.log('end');
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: timer-while-reading
+          code: "start\ntimer\nread\nend"
+        - id: frozen
+          code: "start\nread\nend\ntimer"
+          why:
+            uk: "Так буде з `readFileSync`. Але `await readFile(...)` ставить на паузу лише модуль: головний потік вільний, і таймер, що вже настав, виконується, поки пул потоків читає файл."
+            en: "That is what `readFileSync` does. But `await readFile(...)` pauses only the module: the main thread is free, and the timer that is already due runs while the thread pool reads the file."
+        - id: timer-first
+          code: "timer\nstart\nread\nend"
+          why:
+            uk: "Callback таймера ніколи не перериває синхронний код: `start` друкується одразу, а таймер чекає, доки стек спорожніє."
+            en: "A timer callback never interrupts synchronous code: `start` prints at once, and the timer waits until the stack is empty."
+        - id: end-early
+          code: "start\nend\ntimer\nread"
+          why:
+            uk: "`await` зупиняє модуль саме на цьому рядку: `read` і `end` стоять нижче і виконуються лише після того, як читання завершилося."
+            en: "`await` stops the module right on that line: `read` and `end` are below it and run only after the read has finished."
+      correct: [timer-while-reading]
+    explanation:
+      uk: "`await` віддав читання пулу потоків і звільнив головний потік. Event loop побачив таймер, що вже настав, і виконав його. Коли файл прочитано, модуль продовжив роботу з `read` і `end`. (Платформа не запускає цей фрагмент кнопкою «Запустити й перевірити»: вона виконує код у браузері, а `node:fs` є лише в Node. Справжній запуск — у прикладі нижче.)"
+      en: "`await` handed the read to the thread pool and freed the main thread. The event loop saw a timer that was already due and ran it. Once the file was read, the module continued with `read` and `end`. (The platform does not run this snippet with “Run and check”: that executes code in the browser, and `node:fs` exists only in Node. The real run is in the example below.)"
+
+  - id: read-order
+    kind: example
+    runtime: isolated-node
+    dir: read-order
+    entry: index.js
+    title:
+      uk: "Таймер і читання файла"
+      en: "A timer and a file read"
+    body:
+      uk: "Натисни **Запустити**: це код із передбачення, справжній Node.js. У дужках — мілісекунди від початку, тож видно, що таймер спрацював, ще поки файл читався."
+      en: "Press **Run**: this is the code from the prediction, in real Node.js. The milliseconds since the start are in brackets, so you can see that the timer fired while the file was still being read."
+    tryIt:
+      uk: "Зміни `const mode = 'promises'` на `const mode = 'sync'` і запусти ще раз. Тепер `timer` друкується останнім — разом із часом, коли головний потік нарешті звільнився."
+      en: "Change `const mode = 'promises'` to `const mode = 'sync'` and run again. Now `timer` prints last — with the time when the main thread was finally free."
+
+  - id: read-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Хто що робить, поки файл читається"
+      en: "Who does what while the file is read"
+    textEquivalent:
+      uk: "Твій код викликає readFile — читання йде до пулу потоків, а код отримує promise, що ще чекає. Далі await ставить модуль на паузу, і стек спорожнів. Event loop бачить таймер, що вже настав, і виконує його callback — друкується timer. Тим часом потік із пулу читає з диска шматок за шматком і отримує байти. Коли все прочитано, пул повідомляє головному потоку, promise виконується, await продовжує модуль — друкуються read і end. Із readFileSync було б інакше: головний потік сам читав би з диска і весь цей час не виконував би нічого іншого, тож таймер чекав би до кінця читання."
+      en: "Your code calls readFile — the read goes to the thread pool, and the code gets a promise that is still pending. Then await pauses the module, and the stack is empty. The event loop sees a timer that is already due and runs its callback — timer is printed. Meanwhile a pool thread reads from the disk chunk by chunk and gets the bytes. When everything is read, the pool tells the main thread, the promise is fulfilled, await resumes the module — read and end are printed. With readFileSync it would be different: the main thread would read from the disk itself and do nothing else all that time, so the timer would wait until the read ended."
+    spec:
+      actors:
+        - { id: main, label: { uk: "Головний потік", en: "Main thread" } }
+        - { id: pool, label: { uk: "Пул потоків", en: "Thread pool" } }
+        - { id: disk, label: { uk: "Диск", en: "Disk" } }
+      messages:
+        - from: main
+          to: pool
+          label: "readFile('planner-log.txt')"
+          kind: async
+          caption:
+            uk: "`readFile` передає читання [[thread-pool|пулу потоків]] і одразу повертає promise, що ще чекає."
+            en: "`readFile` hands the read to the [[thread-pool]] and returns a pending promise at once."
+        - from: main
+          to: main
+          label: "await"
+          kind: note
+          caption:
+            uk: "`await` ставить модуль на паузу. Стек порожній — головний потік вільний."
+            en: "`await` pauses the module. The stack is empty — the main thread is free."
+        - from: main
+          to: main
+          label: "timer"
+          kind: note
+          caption:
+            uk: "Event loop бачить таймер, що вже настав, і виконує його callback: друкується `timer`."
+            en: "The event loop sees a timer that is already due and runs its callback: `timer` is printed."
+        - from: pool
+          to: disk
+          label: { uk: "читати шматок", en: "read a chunk" }
+          caption:
+            uk: "Тим часом потік із пулу читає файл із диска — шматок за шматком."
+            en: "Meanwhile a pool thread reads the file from the disk — chunk by chunk."
+        - from: disk
+          to: pool
+          label: { uk: "байти", en: "bytes" }
+          kind: return
+          caption:
+            uk: "Диск повертає байти. Для 5 МБ таких поїздок кілька."
+            en: "The disk returns the bytes. For 5 MB there are several such trips."
+        - from: pool
+          to: main
+          label: { uk: "готово", en: "done" }
+          kind: async
+          caption:
+            uk: "Пул повідомляє головний потік, promise виконується, `await` продовжує модуль: `read`, потім `end`."
+            en: "The pool tells the main thread, the promise is fulfilled, `await` resumes the module: `read`, then `end`."
+        - from: main
+          to: disk
+          label: "readFileSync(…)"
+          caption:
+            uk: "Для порівняння: `readFileSync` читає з диска **сам головний потік**. Поки він чекає, таймер теж чекає — і друкується останнім."
+            en: "For comparison: with `readFileSync` the **main thread itself** reads from the disk. While it waits, the timer waits too — and prints last."
+
+  - id: script-or-server
+    kind: explanation
+    title:
+      uk: "Скрипт чи сервер; разом чи по черзі"
+      en: "Script or server; together or in turn"
+    body:
+      uk: |
+        **Коли `readFileSync` доречний.** Разовий скрипт, що прочитає конфігурацію й завершиться, нікому не заважає: крім нього, нічого не відбувається. Синхронний код тут простіший.
+
+        **Коли ні.** Сервер обслуговує багатьох одночасно. Поки `readFileSync` тримає головний потік, **кожен** інший запит стоїть у черзі — навіть той, якому файл не потрібен. Що повільніший диск (мережевий, перевантажений), то довше чекають усі.
+
+        **Разом чи по черзі.** Два `await` поспіль читають по черзі: друге читання починається, лише коли закінчилося перше. Якщо читання не залежать одне від одного, почни обидва одразу, а потім дочекайся обох — як із запитами в JS-08:
+
+        ```js
+        const [config, fixtures] = await Promise.all([readFile(a, 'utf8'), readFile(b, 'utf8')]);
+        ```
+
+        По черзі — лише тоді, коли друге читання потребує результату першого (наприклад, назва файла береться з першого).
+      en: |
+        **When `readFileSync` fits.** A one-off script that reads its config and exits bothers nobody: nothing else is going on. Synchronous code is simpler there.
+
+        **When it does not.** A server serves many people at once. While `readFileSync` holds the main thread, **every** other request waits in line — even one that needs no file. The slower the disk (networked, overloaded), the longer everyone waits.
+
+        **Together or in turn.** Two `await`s in a row read in turn: the second read starts only when the first has finished. If the reads do not depend on each other, start both at once and then wait for both — as with requests in JS-08:
+
+        ```js
+        const [config, fixtures] = await Promise.all([readFile(a, 'utf8'), readFile(b, 'utf8')]);
+        ```
+
+        In turn only when the second read needs the result of the first (for example, the file name comes from the first one).
+
+  - id: predict-server
+    kind: prediction
+    prompt:
+      uk: "Обробник сервера читає `wishlist.json` через `readFileSync`; на повільному диску це займає 40 мс. Одночасно приходять два запити: спершу `GET /wishes`, потім `GET /health`, якому файл не потрібен. Коли приблизно відповідь отримає `/health`?"
+      en: "A server handler reads `wishlist.json` with `readFileSync`; on a slow disk that takes 40 ms. Two requests arrive at once: first `GET /wishes`, then `GET /health`, which needs no file. Roughly when does `/health` get its answer?"
+    answer:
+      type: choice
+      options:
+        - id: after-40
+          text:
+            uk: "Приблизно через 40 мс: спершу головний потік закінчить читання для `/wishes`"
+            en: "After about 40 ms: the main thread first finishes the read for `/wishes`"
+        - id: at-once
+          text:
+            uk: "Майже одразу: `/health` не читає файлів"
+            en: "Almost at once: `/health` reads no files"
+          why:
+            uk: "`/health` справді не читає файлів, але його обробник виконується в тому самому головному потоці, а потік зайнятий `readFileSync` для `/wishes`."
+            en: "`/health` indeed reads no files, but its handler runs on the same main thread, and that thread is busy with `readFileSync` for `/wishes`."
+        - id: after-80
+          text:
+            uk: "Приблизно через 80 мс: кожен запит читає файл по 40 мс"
+            en: "After about 80 ms: each request reads the file for 40 ms"
+          why:
+            uk: "`/health` файла не читає, тож своїх 40 мс не додає. Він лише чекає, доки звільниться потік."
+            en: "`/health` reads no file, so it adds no 40 ms of its own. It only waits until the thread is free."
+      correct: [after-40]
+    explanation:
+      uk: "`readFileSync` тримає головний потік усі 40 мс, і запит, що прийшов слідом, чекає, хоч йому й не потрібен файл. Із `await readFile(...)` головний потік вільний під час читання, і `/health` відповідає одразу. Тому в сервері — `fs/promises`, а `readFileSync` — для разових скриптів."
+      en: "`readFileSync` holds the main thread for all 40 ms, and the request that came next waits even though it needs no file. With `await readFile(...)` the main thread is free during the read, and `/health` answers at once. So in a server use `fs/promises`, and keep `readFileSync` for one-off scripts."
+
+  - id: two-reads
+    kind: example
+    runtime: isolated-node
+    dir: two-reads
+    entry: index.js
+    title:
+      uk: "Два незалежні читання: по черзі й разом"
+      en: "Two independent reads: in turn and together"
+    body:
+      uk: |
+        Програма створює два синтетичні експорти по 8 МБ — звичок і витрат — і читає їх двічі: двома `await` поспіль і через `Promise.all`. Натисни **Запустити** кілька разів.
+
+        На швидкому SSD, коли файл щойно записано, різниця невелика й від запуску до запуску гуляє: при перших запусках цього прикладу `Promise.all` здебільшого був швидшим, але не щоразу. Що повільніший диск чи мережа, то відчутніший виграш, бо чекання двох читань накладаються.
+      en: |
+        The program creates two synthetic 8 MB exports — habits and expenses — and reads them twice: with two `await`s in a row and with `Promise.all`. Press **Run** several times.
+
+        On a fast SSD, right after the files were written, the difference is small and varies from run to run: in the first runs of this example `Promise.all` was faster most of the time, but not every time. The slower the disk or the network, the bigger the gain, because the waiting of the two reads overlaps.
+    tryIt:
+      uk: "У `sequential` поміняй місцями два рядки з `await readFile(...)` — нічого не зміниться, бо читання не залежать одне від одного. Потім збільш `400_000` до `700_000` в обох `writeFileSync` (близько 30 МБ разом) і порівняй час ще раз."
+      en: "In `sequential`, swap the two `await readFile(...)` lines — nothing changes, because the reads do not depend on each other. Then raise `400_000` to `700_000` in both `writeFileSync` calls (about 30 MB together) and compare the times again."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: що зупиняє await"
+      en: "Recall: what await stops"
+    items:
+      - id: await-pauses-function
+        from: js-08-05-async-await
+        prompt:
+          uk: "Що надрукує ця програма?"
+          en: "What does this program print?"
+        code: |
+          async function load() {
+            console.log("load: start");
+            await null;
+            console.log("load: done");
+          }
+          load();
+          console.log("outside");
+        verify:
+          logs: ["load: start", "outside", "load: done"]
+        answer:
+          type: choice
+          options:
+            - id: paused-function
+              code: "load: start\noutside\nload: done"
+            - id: paused-program
+              code: "load: start\nload: done\noutside"
+              why:
+                uk: "`await` зупиняє лише `load`, а не всю програму: виклик `load()` повертає promise, і рядок `outside` виконується, поки `load` на паузі."
+                en: "`await` stops only `load`, not the whole program: the call `load()` returns a promise, and the `outside` line runs while `load` is paused."
+            - id: outside-first
+              code: "outside\nload: start\nload: done"
+              why:
+                uk: "Тіло async-функції до першого `await` виконується одразу під час виклику, тож `load: start` друкується першим."
+                en: "The body of an async function up to the first `await` runs right away during the call, so `load: start` prints first."
+          correct: [paused-function]
+        explanation:
+          uk: "Async-функція виконується синхронно до першого `await`, а тоді повертає керування тому, хто її викликав. Решта функції продовжиться пізніше, коли стек спорожніє. Так само поводиться `await readFile(...)` — лише чекає він довше."
+          en: "An async function runs synchronously up to its first `await`, then hands control back to its caller. The rest of the function continues later, when the stack is empty. `await readFile(...)` behaves the same way — it just waits longer."
+
+  - id: load-all
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: load-all
+    entry: index.js
+    editable: [app.js]
+    strings:
+      loaded: { uk: "Завантажено", en: "Loaded" }
+      failed: { uk: "Не вдалося", en: "Failed" }
+      wish1: { uk: "Навушники", en: "Headphones" }
+      wish2: { uk: "Настільна лампа", en: "Desk lamp" }
+      wish3: { uk: "Велосипед", en: "Bicycle" }
+      task1: { uk: "Полити квіти", en: "Water the plants" }
+      task2: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      habit1: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      habit3: { uk: "Пити воду", en: "Drink water" }
+      expense1: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      expense2: { uk: "Проїзний", en: "Transit pass" }
+    title:
+      uk: "loadAll: кілька файлів одночасно"
+      en: "loadAll: several files at once"
+    instructions:
+      uk: |
+        Зараз `loadAll(paths)` у `app.js` читає файли по черзі й повертає текст. Перероби її:
+
+        - читай кожен файл через `readFile` з `node:fs/promises` і **починай усі читання одразу**, а не по черзі;
+        - розбери кожен файл як JSON і поверни масив значень **у порядку `paths`**;
+        - якщо якийсь файл не вдалося прочитати чи розібрати, відхили (кинь) `Error`, у повідомленні якої є назва цього файла (наприклад, `broken.json`), а початкова помилка лежить у `cause`.
+
+        Перевірка, що читання йдуть одночасно, підміняє `readFile` повільною версією (30 мс на кожен файл) і рахує, скільки читань триває водночас.
+      en: |
+        Right now `loadAll(paths)` in `app.js` reads the files in turn and returns text. Rework it:
+
+        - read each file with `readFile` from `node:fs/promises` and **start all the reads at once**, not in turn;
+        - parse each file as JSON and return an array of the values **in the order of `paths`**;
+        - if a file could not be read or parsed, reject (throw) an `Error` whose message contains that file’s name (for example `broken.json`) and whose `cause` holds the original error.
+
+        The check that the reads run at once replaces `readFile` with a slow version (30 ms for each file) and counts how many reads are in progress at the same time.
+    testTitles:
+      "resolves with the parsed files in the order of paths":
+        uk: "Повертає розібрані файли в порядку `paths`"
+        en: "Resolves with the parsed files in the order of `paths`"
+      "starts every read before the first one finishes":
+        uk: "Починає всі читання ще до того, як закінчилося перше"
+        en: "Starts every read before the first one finishes"
+      "a broken file rejects with an error that names the file":
+        uk: "Зламаний файл дає помилку з назвою цього файла"
+        en: "A broken file rejects with an error that names the file"
+      "the rejection keeps the original error as cause":
+        uk: "Початкова помилка збережена в `cause`"
+        en: "The original error is kept as `cause`"
+    hints:
+      nudge:
+        uk: "`await` усередині циклу `for` змушує кожне читання чекати попереднє. Що треба зробити, щоб усі promises з’явилися ще до першого `await`?"
+        en: "`await` inside a `for` loop makes each read wait for the previous one. What must happen so that all the promises exist before the first `await`?"
+      explanation:
+        uk: "`array.map(async (x) => …)` одразу викликає функцію для кожного елемента й дає масив promises — усі вони вже працюють. `Promise.all(масив)` чекає на всі й повертає результати в порядку масиву, а не в порядку завершення. Якщо функція всередині `map` має свій `try/catch`, вона знає, який саме елемент обробляла, — як у `labels.map(async (label) => { try { … } catch (error) { throw new Error(label + ': …', { cause: error }); } })`."
+        en: "`array.map(async (x) => …)` calls the function for every element at once and gives an array of promises — all of them already running. `Promise.all(array)` waits for all of them and returns the results in the order of the array, not in the order they finished. If the function inside `map` has its own `try/catch`, it knows which element it was handling — as in `labels.map(async (label) => { try { … } catch (error) { throw new Error(label + ': …', { cause: error }); } })`."
+    solutionNote:
+      uk: "`paths.map(async …)` запускає всі читання одразу, а `Promise.all` чекає на них і зберігає порядок `paths`. Кожен файл має свій `try/catch`, тож помилка знає назву файла й несе початкову помилку в `cause`: `SyntaxError` від `JSON.parse` чи помилку з кодом `ENOENT` від `readFile`. `Promise.allSettled` з розбором після нього — рівноцінний варіант."
+      en: "`paths.map(async …)` starts every read at once, and `Promise.all` waits for them while keeping the order of `paths`. Each file has its own `try/catch`, so the error knows the file’s name and carries the original error in `cause`: a `SyntaxError` from `JSON.parse` or an error with the code `ENOENT` from `readFile`. `Promise.allSettled` followed by parsing is an equivalent version."
+    feedback:
+      - when: { test: "resolves with the parsed files in the order of paths" }
+        message:
+          uk: "Ця перевірка очікує масив розібраних значень (не текст JSON) у тому самому порядку, що й `paths` — не в порядку, у якому закінчилися читання. Розбирай кожен файл через `JSON.parse`."
+          en: "This check expects an array of parsed values (not JSON text) in the same order as `paths` — not in the order the reads finished. Parse each file with `JSON.parse`."
+      - when: { test: "starts every read before the first one finishes" }
+        message:
+          uk: "Ця перевірка очікує, що всі три `readFile` триватимуть водночас. Якщо `await` стоїть усередині циклу, кожне читання чекає на попереднє. І читай саме через `readFile` з `node:fs/promises` — лише його ця перевірка й рахує."
+          en: "This check expects all three `readFile` calls to be in progress at the same time. If `await` sits inside a loop, each read waits for the previous one. And read with `readFile` from `node:fs/promises` — that is the only call this check counts."
+      - when: { test: "a broken file rejects with an error that names the file" }
+        message:
+          uk: "Ця перевірка очікує, що `loadAll` відхилиться з помилкою, у `message` якої є `broken.json`. Повідомлення `JSON.parse` не каже, який файл зламаний, — додай назву сам."
+          en: "This check expects `loadAll` to reject with an error whose `message` contains `broken.json`. The message of `JSON.parse` does not say which file is broken — add the name yourself."
+      - when: { test: "the rejection keeps the original error as cause" }
+        message:
+          uk: "Ця перевірка очікує, що в `cause` лежатиме початкова помилка: `SyntaxError` для зламаного JSON і помилка з `code: 'ENOENT'` для файла, якого немає. Передай її другим аргументом: `new Error(повідомлення, { cause: error })`."
+          en: "This check expects `cause` to hold the original error: a `SyntaxError` for broken JSON and an error with `code: 'ENOENT'` for a missing file. Pass it as the second argument: `new Error(message, { cause: error })`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-02
+    body:
+      uk: "У кроці проєкту цього розділу файловий репозиторій твого домену читатиме дані через `fs/promises`, щоб сервер, до якого він потім під’єднається, не зупинявся на кожному читанні. Незалежні файли — разом через `Promise.all`."
+      en: "In this unit’s project step your domain’s file repository reads data through `fs/promises`, so that the server it is later connected to does not stop on every read. Independent files — together with `Promise.all`."
