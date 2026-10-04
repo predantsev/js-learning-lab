@@ -45,7 +45,13 @@ export function createApp(repo, log = () => {}) {
       if (route === '/metrics' && request.method === 'GET') return send(response, 200, metrics);
       if (route === '/expenses' && request.method === 'GET') return send(response, 200, await repo.list());
       if (route === '/expenses/:id' && request.method === 'GET') {
-        const expense = await repo.get(decodeURIComponent(url.pathname.slice('/expenses/'.length)));
+        let id;
+        try {
+          id = decodeURIComponent(url.pathname.slice('/expenses/'.length));
+        } catch {
+          return send(response, 400, { error: { code: 'BAD_ID' } });
+        }
+        const expense = await repo.get(id);
         return expense ? send(response, 200, expense) : send(response, 404, { error: { code: 'NOT_FOUND' } });
       }
       if (route === '/expenses' && request.method === 'POST') {
