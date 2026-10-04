@@ -1,0 +1,252 @@
+id: no-10-09-debug-cross-user-access
+unit: NO-10
+title:
+  uk: "Налагодження: доступ до чужих даних і прийнята прострочена сесія"
+  en: "Debug: cross-user access and an accepted expired session"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Відтворити й виправити читання чужих даних через запит без власника, сесію, прийняту після закінчення строку й після виходу, і маршрут, що довіряє CORS замість перевірки сесії."
+    en: "Reproduce and repair a cross-user read through an unscoped query, a session accepted after its expiry and after logout, and a route that trusts CORS instead of checking the session."
+  - uk: "Довести кожне виправлення тестом, що падає до нього й проходить після, на синтетичних користувачах і з фіксованим годинником."
+    en: "Prove each repair with a test that fails before the fix and passes after it, using synthetic users and a fixed clock."
+prerequisites: [no-10-08-threat-model-cors-not-auth]
+subskills:
+  - { family: B-06, skill: "sessions/cookies vs tokens", depth: assess }
+  - { family: B-06, skill: "expiry/revocation", depth: assess }
+  - { family: B-06, skill: "least privilege/ownership", depth: assess }
+  - { family: B-07, skill: "CORS not auth", depth: assess }
+glossary: []
+selfCheck: [predict-accepted, fix-notes-access]
+
+blocks:
+  - id: four-findings
+    kind: explanation
+    title:
+      uk: "Чотири знахідки одного аудиту"
+      en: "Four findings of one audit"
+    body:
+      uk: |
+        Сервіс нотаток випустили, і перевірка безпеки принесла чотири запити, які сервер **прийняв**:
+
+        - **A.** `u-02` читає нотатку `n-1`, що належить `u-01`.
+        - **B.** Cookie сесії, якій уже три години, при двогодинному строку.
+        - **C.** Cookie сесії, з якої щойно вийшли.
+        - **D.** `curl` без жодної cookie, але із заголовком `Origin: http://127.0.0.1:4310`, отримує **всі** нотатки.
+
+        «Наш вебклієнт таких запитів не надсилає» — не відповідь: запит надсилає той, хто хоче, і як хоче. Сервер мусить відхиляти кожен сам.
+
+        Порядок той самий, що з будь-яким дефектом: **відтворити** запит, **передбачити**, що мало статися, **знайти** рядок, де реальність розходиться з правилом, **виправити так, щоб власник і далі мав доступ**, і довести це тестом, що падав до виправлення.
+      en: |
+        The notes service was released, and a security review brought four requests the server **accepted**:
+
+        - **A.** `u-02` reads the note `n-1`, which belongs to `u-01`.
+        - **B.** A session cookie three hours old, with a two-hour limit.
+        - **C.** A session cookie from a session that has just logged out.
+        - **D.** `curl` with no cookie at all, but with the header `Origin: http://127.0.0.1:4310`, gets **all** notes.
+
+        “Our web client never sends such requests” is not an answer: a request is sent by whoever wants to, however they want to. The server has to reject each one by itself.
+
+        The order is the same as with any defect: **reproduce** the request, **predict** what should have happened, **find** the line where reality departs from the rule, **repair it so that the owner keeps access**, and prove it with a test that failed before the repair.
+
+  - id: predict-accepted
+    kind: prediction
+    prompt:
+      uk: "Ось чотири фрагменти коду випущеного сервісу. Скільки із чотирьох запитів A–D сервер прийме (відповість 200)?"
+      en: "Here are four fragments of the released service's code. How many of the four requests A–D does the server accept (answer 200)?"
+    code: |
+      // session check
+      if (session.expiresAt < clock.now) return null; // expired
+
+      // POST /logout
+      return send(response, 204, undefined, { "set-cookie": "sid=; Max-Age=0; Path=/" });
+
+      // GET /notes — "only our web client calls this route"
+      if (request.headers.origin !== WEB_CLIENT) return fail(response, 403, "FORBIDDEN");
+      return send(response, 200, notes);
+
+      // GET /notes/:id
+      const note = notes.find((candidate) => candidate.id === id);
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: four
+          text: { uk: "Усі чотири", en: "All four" }
+        - id: none
+          text: { uk: "Жодного: вебклієнт таких запитів не надсилає", en: "None: the web client never sends such requests" }
+          why:
+            uk: "Що надсилає вебклієнт, серверові байдуже: A–D надіслав аудитор, і сервер обробляє їх тим самим кодом. Код вирішує, а не наміри клієнта."
+            en: "What the web client sends does not matter to the server: A–D were sent by the reviewer, and the server handles them with the same code. The code decides, not the client's intentions."
+        - id: two
+          text: { uk: "Два — A і D; строк і вихід у коді є", en: "Two — A and D; expiry and logout are in the code" }
+          why:
+            uk: "Код для строку й виходу є, але не працює: `clock.now` без дужок — функція, і `число < функція` завжди `false`; а вихід лише просить браузер забути cookie, сесія на сервері жива."
+            en: "There is code for expiry and logout, but it does not work: `clock.now` without parentheses is a function, and `number < function` is always `false`; and logout only asks the browser to forget the cookie, while the session on the server lives on."
+      correct: [four]
+    explanation:
+      uk: "A — пошук лише за id; B — порівняння з функцією, а не з часом; C — вихід без видалення сесії на сервері; D — «захист» заголовком `Origin`, який будь-який небраузерний клієнт пише сам. Усі чотири — 200."
+      en: "A is a lookup by id alone; B compares with a function, not a time; C is a logout that does not delete the session on the server; D is “protection” by an `Origin` header that any non-browser client writes by itself. All four get 200."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: check-at-the-edge
+        from: no-04-07-debug-contract-corruption
+        prompt:
+          uk: "Під час налагодження API бажань неправильний `PATCH` зберігав `name: null`. Де мала стояти перевірка і чому саме там?"
+          en: "While debugging the wishlist API, an invalid `PATCH` stored `name: null`. Where should the check have been, and why exactly there?"
+        answer:
+          type: choice
+          options:
+            - id: server-edge
+              text:
+                uk: "На межі сервера, до збереження: запит може прийти не лише з нашого клієнта, а помилка після збереження вибухає пізніше й деінде"
+                en: "At the server's edge, before storing: a request can come not only from our client, and an error after storing blows up later and elsewhere"
+            - id: client-form
+              text:
+                uk: "У формі клієнта: якщо форма не дає ввести порожню назву, сервер може не перевіряти"
+                en: "In the client's form: if the form does not allow an empty name, the server need not check"
+              why:
+                uk: "Форма — лише один зі способів надіслати запит. `curl`, скрипт чи старий клієнт її обходять."
+                en: "A form is only one of the ways to send a request. `curl`, a script or an old client bypass it."
+            - id: on-read
+              text:
+                uk: "Під час читання: сортування саме відфільтрує зіпсовані записи"
+                en: "When reading: sorting will filter out the corrupted records by itself"
+              why:
+                uk: "Тоді зіпсовані дані вже в сховищі, і кожен читач мусить їх обходити. Дешевше не пустити їх зовсім."
+                en: "Then the corrupted data is already in the store, and every reader has to work around it. It is cheaper not to let it in at all."
+          correct: [server-edge]
+        explanation:
+          uk: "Те саме правило і для доступу: власність, строк сесії й сам факт входу перевіряє сервер на кожному запиті, бо клієнт — лише один із тих, хто може запит надіслати."
+          en: "The same rule holds for access: ownership, session expiry and the very fact of a login are checked by the server on every request, because the client is only one of those who can send a request."
+
+  - id: replay-defects
+    kind: example
+    runtime: isolated-node
+    dir: replay-defects
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      gifts: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      shopping: { uk: "Покупки", en: "Shopping" }
+      diary: { uk: "Особистий щоденник", en: "Personal diary" }
+      expired: { uk: "прострочена сесія", en: "expired session" }
+      afterLogout: { uk: "після виходу", en: "after logout" }
+      owner: { uk: "власник u-01", en: "owner u-01" }
+    title:
+      uk: "Відтвори чотири знахідки"
+      en: "Reproduce the four findings"
+    body:
+      uk: |
+        `app.js` — сервіс у тому вигляді, як його випущено; час іде з підставленого годинника. `index.js` надсилає запити A–D і, наостанок, запит власника. Для B він переводить годинник на три години вперед — нікому не треба чекати.
+
+        Натисни **Запустити** й зістав кожен рядок зі своїм передбаченням. Останній рядок — власник читає свою нотатку: після виправлень він має лишитися 200.
+      en: |
+        `app.js` is the service as it was released; time comes from an injected clock. `index.js` sends the requests A–D and, finally, the owner's request. For B it moves the clock three hours ahead — nobody has to wait.
+
+        Press **Run** and match each line with your prediction. The last line is the owner reading their note: after the repairs it must stay 200.
+    tryIt:
+      uk: |
+        1. Знайди в `app.js` рядок `if (session.expiresAt < clock.now) return null;` і додай після нього тимчасово `console.log(typeof clock.now, session.expiresAt < clock.now);`. Запусти: `function false` — порівнюється число з функцією. Прибери рядок.
+        2. У `index.js` у запиті D заміни `'http://127.0.0.1:4310'` на `'https://evil.example'` і запусти: тепер 403. «Захист» тримається лише на тому, що клієнт сам чесно назве своє походження.
+      en: |
+        1. Find the line `if (session.expiresAt < clock.now) return null;` in `app.js` and temporarily add `console.log(typeof clock.now, session.expiresAt < clock.now);` after it. Run: `function false` — a number is compared with a function. Remove the line.
+        2. In `index.js`, in request D, replace `'http://127.0.0.1:4310'` with `'https://evil.example'` and run: now 403. The “protection” rests only on the client honestly naming its own origin.
+
+  - id: fix-notes-access
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: fix-notes-access
+    entry: index.js
+    editable: [app.js]
+    capabilities: { network: loopback }
+    strings:
+      gifts: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      shopping: { uk: "Покупки", en: "Shopping" }
+      diary: { uk: "Особистий щоденник", en: "Personal diary" }
+      expired: { uk: "прострочена сесія", en: "expired session" }
+      afterLogout: { uk: "після виходу", en: "after logout" }
+      owner: { uk: "власник u-01", en: "owner u-01" }
+    title:
+      uk: "Закрий чотири діри, не зачепивши власника"
+      en: "Close four holes without locking out the owner"
+    instructions:
+      uk: |
+        Виправ `app.js` так, щоб:
+
+        - **A** — `GET /notes/:id` для чужої нотатки відповідав **404**, як для нотатки, якої немає;
+        - **B** — сесія старша за `ABSOLUTE_MS` (2 години; рівно 2 години — ще дійсна) отримувала **401**;
+        - **C** — після `POST /logout` стара cookie отримувала **401**;
+        - **D** — `GET /notes` без сесії отримував **401**, хоч би який `Origin` прийшов, а із сесією повертав **лише нотатки цього користувача**.
+
+        Доступ власника не має зламатися: `u-01` читає `n-1` і бачить у списку `n-1` та `n-3`. `lab-data.js` — лише для читання. **Запустити** повторює запити A–D і запит власника.
+      en: |
+        Repair `app.js` so that:
+
+        - **A** — `GET /notes/:id` for someone else's note answers **404**, just like a note that does not exist;
+        - **B** — a session older than `ABSOLUTE_MS` (2 hours; exactly 2 hours is still valid) gets **401**;
+        - **C** — after `POST /logout` the old cookie gets **401**;
+        - **D** — `GET /notes` without a session gets **401**, whatever `Origin` arrives, and with a session returns **only that user's notes**.
+
+        The owner's access must not break: `u-01` reads `n-1` and sees `n-1` and `n-3` in the list. `lab-data.js` is read-only. **Run** repeats the requests A–D and the owner's request.
+    testTitles:
+      "A: u-02 reading u-01's note answers 404":
+        uk: "A: `u-02` читає нотатку `u-01` — 404"
+        en: "A: `u-02` reading `u-01`'s note answers 404"
+      "B: a session past its 2-hour expiry answers 401":
+        uk: "B: сесія після свого 2-годинного строку — 401"
+        en: "B: a session past its 2-hour expiry answers 401"
+      "C: a session that logged out answers 401":
+        uk: "C: сесія, з якої вийшли, — 401"
+        en: "C: a session that logged out answers 401"
+      "D: GET /notes with the allowed Origin but no session answers 401":
+        uk: "D: `GET /notes` з дозволеним `Origin`, але без сесії — 401"
+        en: "D: `GET /notes` with the allowed `Origin` but no session answers 401"
+      "the owner still reads their note, and the list shows only their own notes":
+        uk: "Власник і далі читає свою нотатку, а список показує лише його нотатки"
+        en: "The owner still reads their note, and the list shows only their own notes"
+    hints:
+      nudge:
+        uk: "Запусти програму й для кожного з рядків A–D знайди в `app.js` місце, яке мало б цей запит зупинити. Що там перевіряється насправді?"
+        en: "Run the program and for each of the lines A–D find the place in `app.js` that should have stopped that request. What does it actually check?"
+      explanation:
+        uk: "Чотири різні межі: пошук запису має знати власника (як `findOwned(id, ownerId)` у сервісі витрат); у порівнянні з часом годинник треба **викликати**; вихід — це дія сервера над його сховищем сесій, а не лише заголовок для браузера; а `Origin` — заголовок, який небраузерний клієнт пише сам, тож доступ до списку вирішує та сама перевірка сесії, що й для однієї нотатки."
+        en: "Four different boundaries: the record lookup has to know the owner (like `findOwned(id, ownerId)` in the expenses service); in a comparison with time the clock has to be **called**; logout is the server's action on its session store, not just a header for the browser; and `Origin` is a header a non-browser client writes itself, so access to the list is decided by the same session check as for one note."
+    solutionNote:
+      uk: "Кожне виправлення — на межі сервера: пошук нотатки містить власника (чужа — 404, як відсутня); строк порівнюється з `clock.now()`; вихід видаляє сесію зі сховища; список вимагає сесію й показує лише власні нотатки, а заголовок CORS лишається тільки підказкою для браузера. Запит власника працює, як і раніше."
+      en: "Every repair is at the server's edge: the note lookup includes the owner (a foreign one is 404, like a missing one); the expiry is compared with `clock.now()`; logout deletes the session from the store; the list requires a session and shows only the user's own notes, while the CORS header stays just a hint for the browser. The owner's request works as before."
+    feedback:
+      - when: { test: "A: u-02 reading u-01's note answers 404" }
+        message:
+          uk: "Ця перевірка надсилає `GET /notes/n-1` із сесією `u-02` і чекає 404 без назви нотатки. 403 тут розкрив би, що `n-1` існує."
+          en: "This check sends `GET /notes/n-1` with `u-02`'s session and expects 404 with no note title. A 403 here would reveal that `n-1` exists."
+      - when: { test: "B: a session past its 2-hour expiry answers 401" }
+        message:
+          uk: "Ця перевірка входить на хвилині 0, переводить годинник на 2 години й 1 мс і чекає 401. Порівнюй `expiresAt` з **результатом** `clock.now()`."
+          en: "This check logs in at minute 0, moves the clock to 2 hours and 1 ms and expects 401. Compare `expiresAt` with the **result** of `clock.now()`."
+      - when: { test: "C: a session that logged out answers 401" }
+        message:
+          uk: "Ця перевірка виходить (`POST /logout` → 204) і повторює запит зі старою cookie. Вона чекає 401, тож сесію треба видалити на сервері."
+          en: "This check logs out (`POST /logout` → 204) and repeats the request with the old cookie. It expects 401, so the session must be deleted on the server."
+      - when: { test: "D: GET /notes with the allowed Origin but no session answers 401" }
+        message:
+          uk: "Ця перевірка надсилає `GET /notes` з `Origin: http://127.0.0.1:4310` і без cookie, як це робить `curl`, і чекає 401."
+          en: "This check sends `GET /notes` with `Origin: http://127.0.0.1:4310` and no cookie, the way `curl` does, and expects 401."
+      - when: { test: "the owner still reads their note, and the list shows only their own notes" }
+        message:
+          uk: "Ця перевірка входить як `u-01`, рівно через 2 години читає `n-1` і чекає її назву, а потім чекає в списку рівно `n-1` і `n-3`. Виправлення не мають зачепити власника."
+          en: "This check logs in as `u-01`, reads `n-1` exactly 2 hours later and expects its title, then expects exactly `n-1` and `n-3` in the list. The repairs must not affect the owner."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-10 немає. Але звичка відтворювати знахідку справжнім запитом і доводити виправлення тестом, що падав до нього, — саме та, з якою варто проходити контрольну точку CP-NO (розділ NO-08): кожну ваду свого `server/` спершу відтвори запитом, а виправлення закріпи тестом."
+      en: "Your project does not change in this unit: NO-10 has no project step. But the habit of reproducing a finding with a real request and proving the repair with a test that failed before it is exactly the one to take into the CP-NO checkpoint (unit NO-08): reproduce every defect of your `server/` with a request first, and pin the repair down with a test."
