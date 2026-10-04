@@ -10,11 +10,23 @@ function look(id) {
   return { x: match ? Number(match[1]) : 0, opacity: !style || style.opacity === '' ? 1 : Number(style.opacity) };
 }
 const button = (name) => screen.byRole('button', { name });
+// react-native-web does not render accessibilityActions, so the row's own onAccessibilityAction prop is
+// read from the React component that drew the row (its fiber) and called as a screen reader would.
+function rowProp(id, name) {
+  const element = row(id);
+  const key = element && Object.keys(element).find((k) => k.startsWith('__reactFiber$'));
+  for (let fiber = key ? element[key] : null; fiber; fiber = fiber.return) {
+    if (typeof fiber.memoizedProps?.[name] === 'function') return fiber.memoizedProps[name];
+  }
+  return null;
+}
 
-test('a swipe past −120 dismisses the row exactly once', async () => {
+test('a swipe past −120 dismisses the row exactly once, within a second', async () => {
   await waitFor(() => row('m-01'));
+  const released = performance.now();
   expect(swipe('m-01', [-40, -90, -150]), 'a row registered a pan for m-01').toBe(true);
   await waitFor(() => dismissedCount('m-01') > 0, { timeout: 2000 });
+  expect(performance.now() - released, 'milliseconds from the release to onDismissed(m-01)').toBeLessThan(1000);
   await sleep(300);
   expect(dismissedCount('m-01'), 'onDismissed(m-01) calls').toBe(1);
   expect(row('m-01'), 'the row of m-01 after onDismissed').toBeFalsy();
@@ -94,4 +106,15 @@ test('avatars are 40 × 40 points and use the 144-pixel variant', async () => {
   expect(Math.round(box.height), 'height of the m-06 avatar').toBe(40);
   const src = avatar.querySelector('img')?.getAttribute('src') ?? '';
   expect(/width%3D%22(\d+)%22/.exec(src)?.[1], 'pixel width of the avatar variant shown').toBe('144');
+});
+
+test("the row's own dismiss action dismisses it like a swipe", async () => {
+  await waitFor(() => row('m-02'));
+  const action = rowProp('m-02', 'onAccessibilityAction');
+  expect(typeof action, 'type of onAccessibilityAction on the row of m-02').toBe('function');
+  action({ nativeEvent: { actionName: 'dismiss' } });
+  await waitFor(() => dismissedCount('m-02') > 0, { timeout: 2000 });
+  await sleep(300);
+  expect(dismissedCount('m-02'), 'onDismissed(m-02) calls after the row\'s dismiss action').toBe(1);
+  expect(row('m-02'), 'the row of m-02 after its dismiss action').toBeFalsy();
 });

@@ -27,6 +27,12 @@ test('the whole list builds at most two formatters, even after reordering', asyn
 });
 
 test('after reordering every row still shows its own amount', async () => {
+  await waitFor(() => row('e-001') || row('e-200'));
+  // The previous check reversed the list an odd number of times; reverse once more if it did not run.
+  if (!row('e-200')) {
+    await user.click(reverseButton());
+    await settle();
+  }
   await waitFor(() => row('e-200'));
   const last = expenses.at(-1);
   expect(rowText(last.id), `text of row ${last.id}`).toContain(plain(money(last)));
