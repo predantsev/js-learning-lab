@@ -1,9 +1,10 @@
-// Another valid solution: Number.isInteger for the port and a calendar round trip for the date
-// (stricter than required: it also rejects 2026-02-30).
+// Another valid solution: a round trip for the port (the number written back must give the same
+// text, so "1e3", " 80" and "30.5" fail) and a calendar round trip for the date (stricter than
+// required: it also rejects 2026-02-30).
 function checkPort(text) {
   if (text === undefined) return { value: 3000 };
   const port = Number(text);
-  if (text.trim() === '' || !Number.isInteger(port) || port < 1 || port > 65535) {
+  if (String(port) !== text || !Number.isInteger(port) || port < 1 || port > 65535) {
     return { error: `PORT: expected a whole number 1–65535, received "${text}"` };
   }
   return { value: port };

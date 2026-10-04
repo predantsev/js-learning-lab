@@ -25,7 +25,8 @@ test('turns PORT into a number', () => {
 });
 
 test('rejects a PORT that is not a whole number from 1 to 65535', () => {
-  for (const PORT of ['abc', '0', '70000', '30.5']) expectRejected({ PORT, TODAY }, 'PORT', PORT);
+  // '1e3' is a whole number for Number() (1000), but it is not made of digits only.
+  for (const PORT of ['abc', '0', '70000', '30.5', '1e3']) expectRejected({ PORT, TODAY }, 'PORT', PORT);
 });
 
 test('rejects a LOCALE other than uk or en', () => {
