@@ -8,7 +8,7 @@ export const spikeFirst = { shareSummary: null, stepCount: null, ringPulse: null
 
 // 3. The spike plan for the step library.
 export const spikePlan = {
-  library: '', //    name@version, exactly as the support table names it
+  library: '', //    name@version, exactly as the request names it
   reactNative: '', // the project's version, exactly as in package.json
   targets: [], //    the platforms the spike runs on
   testScreen: '', // what the one minimal test screen does

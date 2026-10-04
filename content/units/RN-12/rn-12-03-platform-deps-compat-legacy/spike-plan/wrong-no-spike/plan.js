@@ -8,7 +8,7 @@ export const spikeFirst = { shareSummary: false, stepCount: false, ringPulse: tr
 
 // 3. The spike plan for the step library.
 export const spikePlan = {
-  library: 'step-sensor-legacy@1.9.0', //    name@version, exactly as the support table names it
+  library: 'step-sensor-legacy@1.9.0', //    name@version, exactly as the request names it
   reactNative: '0.86.3', // the project's version, exactly as in package.json
   targets: ['android'], //    the platforms the spike runs on
   testScreen: `%%screenText%%`, // what the one minimal test screen does
