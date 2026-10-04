@@ -14,6 +14,25 @@ export function useDefect(name = null) {
   defect = name;
 }
 
+// Collects the body and counts its bytes as they arrive (lesson no-07-02): as soon as there are more
+// than `limit`, it stops reading and resolves null, whatever Content-Length said.
+function readBody(request, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    const onData = (chunk) => {
+      size += chunk.length;
+      if (size <= limit) return chunks.push(chunk);
+      request.off('data', onData);
+      request.pause(); // read nothing more
+      resolve(null);
+    };
+    request.on('data', onData);
+    request.on('end', () => resolve(Buffer.concat(chunks)));
+    request.on('error', reject);
+  });
+}
+
 function sendJson(response, status, value, headers = {}) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
   response.end(JSON.stringify(value));
@@ -26,14 +45,9 @@ export function createApp({ dataDir }) {
     try {
       const url = new URL(request.url, 'http://localhost');
       if (request.method === 'POST' && url.pathname === '/records') {
-        let size = 0;
-        const chunks = [];
-        for await (const chunk of request) {
-          size += chunk.length;
-          chunks.push(chunk);
-        }
-        if (size > limit) return sendJson(response, 413, { error: { code: 'PAYLOAD_TOO_LARGE' } });
-        const record = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const body = await readBody(request, limit);
+        if (body === null) return sendJson(response, 413, { error: { code: 'PAYLOAD_TOO_LARGE' } }, { connection: 'close' });
+        const record = JSON.parse(body.toString('utf8'));
         if (typeof record.id !== 'string' || !idPattern.test(record.id)) return sendJson(response, 400, { error: { code: 'VALIDATION_FAILED' } });
         if (defect !== 'noDiskWrite') await writeFile(path.join(dataDir, `${record.id}.json`), JSON.stringify(record));
         return sendJson(response, 201, record);

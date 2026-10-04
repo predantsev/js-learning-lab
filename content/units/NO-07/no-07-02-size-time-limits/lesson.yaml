@@ -61,7 +61,7 @@ blocks:
         Чесний клієнт заздалегідь повідомляє розмір тіла в `Content-Length`. Якщо там більше за ліміт, сервер відмовляє **одразу**, не прочитавши жодного байта. Це швидкий шлях, але не захист:
 
         - тіло, надіслане частинами (`Transfer-Encoding: chunked`), приходить **без** `Content-Length` — його розмір невідомий, доки не надійде останній шматок;
-        - якщо заголовок применшує розмір (`Content-Length: 100`, а надіслано 2 МБ), Node.js читає тілом рівно 100 байтів, а решту розбирає як наступний запит; розбір на цьому сміття ламається, і Node.js закриває з’єднання (виміряно на Node.js 25.2.1: помилка розбору `HPE_INVALID_METHOD`, клієнт отримав `EPIPE`).
+        - якщо заголовок применшує розмір (`Content-Length: 100`, а надіслано 2 МБ), Node.js читає тілом рівно 100 байтів, а решту розбирає як наступний запит; розбір на цьому смітті ламається, Node.js відповідає `400 Bad Request` і закриває з’єднання (виміряно на Node.js 25.2.1 і 22.13.1: помилка розбору `HPE_INVALID_METHOD`; клієнт, що ще надсилав дані, отримував `ECONNRESET` або `EPIPE`, залежно від запуску).
 
         Тож справжній захист — лічильник байтів кожного шматка, а відповідь `413` має заголовок `Connection: close`. Без нього Node.js тримає з’єднання відкритим, чекаючи непрочитаний залишок тіла, аж до `requestTimeout`.
 
@@ -70,7 +70,7 @@ blocks:
         An honest client announces the body size in advance in `Content-Length`. If it says more than the limit, the server refuses **at once**, without reading a single byte. That is a fast path, not a protection:
 
         - a body sent in parts (`Transfer-Encoding: chunked`) arrives **without** `Content-Length` — its size is unknown until the last piece arrives;
-        - if the header understates the size (`Content-Length: 100` while 2 MB are sent), Node.js reads exactly 100 bytes as the body, and parses the rest as the next request; parsing fails on that garbage, and Node.js closes the connection (measured on Node.js 25.2.1: the parse error `HPE_INVALID_METHOD`, and the client got `EPIPE`).
+        - if the header understates the size (`Content-Length: 100` while 2 MB are sent), Node.js reads exactly 100 bytes as the body, and parses the rest as the next request; parsing fails on that garbage, Node.js answers `400 Bad Request` and closes the connection (measured on Node.js 25.2.1 and 22.13.1: the parse error `HPE_INVALID_METHOD`; the client, still sending, got `ECONNRESET` or `EPIPE`, depending on the run).
 
         So the real protection is a byte counter over every chunk, and the `413` answer carries the header `Connection: close`. Without it Node.js keeps the connection open, waiting for the unread rest of the body, until `requestTimeout`.
 
@@ -134,7 +134,7 @@ blocks:
   - id: predict-chunked
     kind: prediction
     prompt:
-      uk: "Сервер має ліміт 64 КБ і перевіряє **лише** заголовок: `if (Number(req.headers[\"content-length\"]) > 65536) return reply413();`, а далі збирає все тіло в пам’ять. Три клієнти надсилають по 2 МБ: А — із чесним `Content-Length: 2097152`; Б — частинами, без `Content-Length`; В — із `Content-Length: 100`. Чиє тіло сервер збере в пам’ять повністю?"
+      uk: "Сервер має ліміт 64 КБ і перевіряє **лише** заголовок: `if (Number(req.headers[\"content-length\"]) > 65536) return reply413();`, а далі збирає все тіло в пам’ять. Три клієнти надсилають по 2 МБ: А — із чесним `Content-Length: 2097152`; Б — частинами, без `Content-Length`; В — з `Content-Length: 100`. Чиє тіло сервер збере в пам’ять повністю?"
       en: "A server has a 64 KB limit and checks **only** the header: `if (Number(req.headers[\"content-length\"]) > 65536) return reply413();`, and then collects the whole body in memory. Three clients send 2 MB each: A with an honest `Content-Length: 2097152`; B in parts, without `Content-Length`; C with `Content-Length: 100`. Whose body does the server collect in memory completely?"
     answer:
       type: choice
@@ -155,8 +155,8 @@ blocks:
             uk: "Б і В: заголовок В бреше, тож сервер прочитає всі 2 МБ"
             en: "B and C: C's header lies, so the server reads all 2 MB"
           why:
-            uk: "Node.js читає тілом рівно стільки, скільки заявлено: 100 байтів. Решту він розбирає як наступний запит, розбір ламається, і з’єднання закривається (виміряно на Node.js 25.2.1)."
-            en: "Node.js reads exactly as much as declared as the body: 100 bytes. It parses the rest as the next request, parsing fails, and the connection is closed (measured on Node.js 25.2.1)."
+            uk: "Node.js читає тілом рівно стільки, скільки заявлено: 100 байтів. Решту він розбирає як наступний запит, розбір ламається, і з’єднання закривається (виміряно на Node.js 25.2.1 і 22.13.1)."
+            en: "Node.js reads exactly as much as declared as the body: 100 bytes. It parses the rest as the next request, parsing fails, and the connection is closed (measured on Node.js 25.2.1 and 22.13.1)."
         - id: all
           text:
             uk: "Усіх трьох: перевірка лише сповільнює"
@@ -270,8 +270,8 @@ blocks:
       - id: too-many
         from: no-10-07-login-abuse-csrf-limits
         prompt:
-          uk: "Маршрут входу дозволяє 5 спроб на хвилину з однієї адреси. Шоста спроба за ту саму хвилину — яку відповідь вона має отримати?"
-          en: "A login route allows 5 attempts a minute from one address. The sixth attempt within the same minute — what answer should it get?"
+          uk: "Маршрут входу рахує невдалі спроби й дозволяє 5 невдач на хвилину з однієї адреси. Після п’яти хибних паролів за хвилину з цієї адреси приходить шоста спроба. Яку відповідь вона має отримати?"
+          en: "A login route counts failed attempts and allows 5 failures a minute from one address. After five wrong passwords within a minute from that address, a sixth attempt arrives. What answer should it get?"
         answer:
           type: choice
           options:
@@ -284,8 +284,8 @@ blocks:
                 uk: "`401 Unauthorized`, як і для неправильного пароля"
                 en: "`401 Unauthorized`, like a wrong password"
               why:
-                uk: "`401` каже «облікові дані не підійшли». Тут річ не в паролі, а в кількості спроб, і клієнтові корисно знати, скільки чекати."
-                en: "`401` says “the credentials did not fit”. Here it is not about the password but about the number of attempts, and the client benefits from knowing how long to wait."
+                uk: "`401` каже «облікові дані не підійшли». Тут річ не в цьому паролі, а в кількості невдач, і клієнтові корисно знати, скільки чекати."
+                en: "`401` says “the credentials did not fit”. Here it is not about this password but about the number of failures, and the client benefits from knowing how long to wait."
             - id: "500"
               text:
                 uk: "`500`: сервер перевантажений"
@@ -325,12 +325,12 @@ blocks:
         Press **Run**. The `[server] …` lines are the server's log: `413` after the first few dozen kilobytes (the exact number depends on how TCP merged the pieces), and `429` for the fourth and fifth request in the window. `408` comes after about 2 s — that is `headersTimeout`; there is no log line for it because the handler was never called.
     tryIt:
       uk: |
-        1. Зменш `headersTimeoutMs` до `500` і запусти: повільний клієнт отримує `408` уже приблизно за пів секунди.
-        2. Зменш `maxBodyBytes` до `100` і запусти: тепер `413` отримує і звичайний клієнт — його тіло довше за 100 байтів. Поверни `64 * 1024`.
+        1. Зменш `headersTimeoutMs` до `500` і запусти: повільний клієнт отримує `408` менш ніж за секунду (у вимірі — 0,7 с: таймаут плюс до 100 мс до найближчої перевірки `connectionsCheckingInterval`).
+        2. Зменш `maxBodyBytes` до `20` і запусти: тепер `413` отримує і звичайний клієнт — його тіло має близько 40 байтів. Поверни `64 * 1024`.
         3. Збільш `maxRequests` до `5` і запусти: усі п’ять запитів підряд отримують `200`.
       en: |
-        1. Lower `headersTimeoutMs` to `500` and run: the slow client gets `408` after about half a second.
-        2. Lower `maxBodyBytes` to `100` and run: now the normal client gets `413` too — its body is longer than 100 bytes. Put `64 * 1024` back.
+        1. Lower `headersTimeoutMs` to `500` and run: the slow client gets `408` in under a second (0.7 s when measured: the timeout plus up to 100 ms until the next `connectionsCheckingInterval` tick).
+        2. Lower `maxBodyBytes` to `20` and run: now the normal client gets `413` too — its body is about 40 bytes long. Put `64 * 1024` back.
         3. Raise `maxRequests` to `5` and run: all five requests in a row get `200`.
 
   - id: edge-limits
@@ -340,7 +340,7 @@ blocks:
     dir: edge-limits
     entry: index.js
     editable: [limits.js]
-    capabilities: { network: loopback }
+    capabilities: { network: loopback, timeoutMs: 15000 }
     strings:
       exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
       tidy: { uk: "Прибирання", en: "Tidy up" }
@@ -358,7 +358,7 @@ blocks:
         - `PayloadTooLargeError` від `readJsonBody` (тіло без `Content-Length`, що виросло понад ліміт) теж дає `413`;
         - кожна відповідь `413` має тіло `{ "error": { "code": "PAYLOAD_TOO_LARGE" } }` і заголовок `Connection: close`.
 
-        Перевірки працюють зі справжніми сокетами й вимірюють час: `413` має прийти за 300 мс, `408` на повільні заголовки — за 700 мс.
+        Перевірки працюють зі справжніми сокетами й чекають відповіді з великим запасом (до 1–2,5 с). Щоб відповідь могло дати лише потрібне правило, у двох перевірках `requestTimeoutMs` — 5000 замість 800.
       en: |
         `createLimitedServer(handler, limits)` in `limits.js` is the edge of the habits API: it reads the JSON body with `readJsonBody` from `body.js` and passes it to the handler. Add the limits from the object `limits = { maxBodyBytes, headersTimeoutMs, requestTimeoutMs }`:
 
@@ -367,7 +367,7 @@ blocks:
         - a `PayloadTooLargeError` from `readJsonBody` (a body without `Content-Length` that grew past the limit) gives `413` too;
         - every `413` answer has the body `{ "error": { "code": "PAYLOAD_TOO_LARGE" } }` and the header `Connection: close`.
 
-        The checks work with real sockets and measure time: `413` must come within 300 ms, and `408` for slow headers within 700 ms.
+        The checks work with real sockets and wait for an answer with a wide margin (up to 1–2.5 s). So that only the rule under test can answer in time, two checks use a `requestTimeoutMs` of 5000 instead of 800.
     testTitles:
       "a body within the limit reaches the handler":
         uk: "Тіло в межах ліміту доходить до обробника"
@@ -400,28 +400,28 @@ blocks:
     feedback:
       - when: { test: "a declared Content-Length over the limit answers 413 before any body is sent" }
         message:
-          uk: "Ця перевірка надсилає лише заголовки з `Content-Length: 1000000`, без тіла, і чекає `413` за 300 мс. Якщо відповіді немає чи приходить `408`, сервер чекає на тіло: порівняй заявлений розмір із `maxBodyBytes` до `readJsonBody`."
-          en: "This check sends only headers with `Content-Length: 1000000`, no body, and expects `413` within 300 ms. If there is no answer or a `408` comes, the server is waiting for the body: compare the declared size with `maxBodyBytes` before `readJsonBody`."
+          uk: "Ця перевірка надсилає лише заголовки з `Content-Length: 1000000`, тіла не надсилає зовсім, і чекає `413`. Якщо приходить `408` (через 800 мс, `requestTimeoutMs`), сервер чекав на тіло: порівняй заявлений розмір із `maxBodyBytes` до `readJsonBody`."
+          en: "This check sends only headers with `Content-Length: 1000000` and never sends a body, and expects `413`. If a `408` comes (after 800 ms, `requestTimeoutMs`), the server was waiting for the body: compare the declared size with `maxBodyBytes` before `readJsonBody`."
       - when: { test: "a body over the limit without Content-Length answers 413" }
         message:
           uk: "Ця перевірка надсилає 8 КБ частинами без `Content-Length` і чекає `413`. Тут спрацьовує лише лічильник у `readJsonBody`: якщо приходить `500`, `catch` не розпізнає `PayloadTooLargeError`."
           en: "This check sends 8 KB in parts without `Content-Length` and expects `413`. Only the counter in `readJsonBody` fires here: if a `500` comes, the `catch` does not recognize `PayloadTooLargeError`."
       - when: { test: "a 413 answer closes the connection at once" }
         message:
-          uk: "Ця перевірка спершу чекає `413` (як попередня), а потім — що сервер закриє з’єднання за 200 мс. Без заголовка `Connection: close` Node.js тримає з’єднання, доки не мине `requestTimeout`."
-          en: "This check first expects `413` (like the previous one) and then that the server closes the connection within 200 ms. Without the `Connection: close` header Node.js keeps the connection until `requestTimeout` passes."
+          uk: "Ця перевірка спершу чекає `413` (як попередня), а потім — що сервер закриє з’єднання протягом 2 с; `requestTimeoutMs` тут 5000. Без заголовка `Connection: close` Node.js тримає з’єднання, доки не мине `requestTimeout`."
+          en: "This check first expects `413` (like the previous one) and then that the server closes the connection within 2 s; `requestTimeoutMs` is 5000 here. Without the `Connection: close` header Node.js keeps the connection until `requestTimeout` passes."
       - when: { test: "a client that sends its headers too slowly gets 408" }
         message:
-          uk: "Ця перевірка надсилає заголовки по символу кожні 100 мс і чекає `408` за 700 мс (`headersTimeoutMs` — 300). Передай `headersTimeout` і `connectionsCheckingInterval: 100` у параметри `http.createServer`."
-          en: "This check sends headers one character every 100 ms and expects `408` within 700 ms (`headersTimeoutMs` is 300). Pass `headersTimeout` and `connectionsCheckingInterval: 100` in the options of `http.createServer`."
+          uk: "Ця перевірка надсилає заголовки по символу кожні 100 мс і чекає `408` протягом 2 с (`headersTimeoutMs` — 300, а `requestTimeoutMs` тут 5000, тож встигнути може лише таймаут заголовків). Передай `headersTimeout` і `connectionsCheckingInterval: 100` у параметри `http.createServer`."
+          en: "This check sends headers one character every 100 ms and expects `408` within 2 s (`headersTimeoutMs` is 300, and `requestTimeoutMs` is 5000 here, so only the headers timeout can fire in time). Pass `headersTimeout` and `connectionsCheckingInterval: 100` in the options of `http.createServer`."
       - when: { test: "a client whose body never finishes gets 408" }
         message:
-          uk: "Ця перевірка надсилає повні заголовки, 5 із 50 заявлених байтів тіла й замовкає. Вона чекає `408` за 1500 мс (`requestTimeoutMs` — 800): передай `requestTimeout` у параметри сервера."
-          en: "This check sends complete headers, 5 of the 50 announced body bytes, and goes silent. It expects `408` within 1500 ms (`requestTimeoutMs` is 800): pass `requestTimeout` in the server's options."
+          uk: "Ця перевірка надсилає повні заголовки, 5 із 50 заявлених байтів тіла й замовкає. Вона чекає `408` протягом 2,5 с (`requestTimeoutMs` — 800; без нього Node.js чекав би типові 300 с): передай `requestTimeout` у параметри сервера."
+          en: "This check sends complete headers, 5 of the 50 announced body bytes, and goes silent. It expects `408` within 2.5 s (`requestTimeoutMs` is 800; without it Node.js would wait the default 300 s): pass `requestTimeout` in the server's options."
 
   - id: to-project
     kind: transfer
     capstoneStep: NO-07
     body:
-      uk: "У кроці проєкту сервер твого застосунку отримає ліміт тіла для JSON-маршрутів, таймаути в параметрах `http.createServer` і `413` із `Connection: close`. Перевіриш їх такими самими «сирими» клієнтами."
-      en: "In the project step your app's server gets a body limit for its JSON routes, timeouts in the options of `http.createServer` and a `413` with `Connection: close`. You check them with the same kind of “raw” clients."
+      uk: "За планом теми (крок проєкту ще пишеться), у кроці проєкту сервер твого застосунку отримає ліміт тіла для JSON-маршрутів, таймаути в параметрах `http.createServer` і `413` із `Connection: close`. Перевіриш їх такими самими «сирими» клієнтами."
+      en: "According to the topic plan (the project step is still being written), in the project step your app's server gets a body limit for its JSON routes, timeouts in the options of `http.createServer` and a `413` with `Connection: close`. You check them with the same kind of “raw” clients."

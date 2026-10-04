@@ -3,7 +3,7 @@ const PARAMS = ['limit', 'offset', 'sort'];
 const SORTS = ['name', 'price', 'category'];
 
 export function parseListQuery(searchParams) {
-  const errors = {};
+  const errors = Object.create(null);
   for (const key of new Set(searchParams.keys())) {
     if (!PARAMS.includes(key)) errors[key] = 'unknownParam';
     else if (searchParams.getAll(key).length > 1) errors[key] = 'repeated';

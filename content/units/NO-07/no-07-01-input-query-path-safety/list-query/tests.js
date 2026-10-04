@@ -50,6 +50,11 @@ test('an unknown parameter is rejected', () => {
   expect(errorsOf('limit=5&isAdmin=true'), 'errors for limit=5&isAdmin=true').toEqual({ isAdmin: 'unknownParam' });
 });
 
+test('a parameter named __proto__ is rejected like any unknown one', () => {
+  expect(parse('__proto__=1')?.ok, 'ok for __proto__=1').toBe(false);
+  expect(errorsOf('limit=5&__proto__=x'), 'errors for limit=5&__proto__=x').toEqual({ ['__proto__']: 'unknownParam' });
+});
+
 test('every problem is reported at once', () => {
   expect(errorsOf('limit=0&sort=size&offset=x'), 'errors for limit=0&sort=size&offset=x')
     .toEqual({ limit: 'outOfRange', sort: 'notAllowed', offset: 'notWholeNumber' });
