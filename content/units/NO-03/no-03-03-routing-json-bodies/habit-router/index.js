@@ -70,6 +70,8 @@ const server = http.createServer(async (req, res) => {
     await route.handler(req, res, url, params);
   } catch (error) {
     if (res.headersSent) return res.end();
+    // decodeURIComponent throws a URIError on a broken encoding such as /records/%E0: the client's mistake.
+    if (error instanceof URIError) return sendJson(res, 400, { error: 'malformed path' });
     if (error.status === 413) res.setHeader('connection', 'close');
     sendJson(res, error.status ?? 500, { error: error.status ? error.message : 'internal error' });
   }
