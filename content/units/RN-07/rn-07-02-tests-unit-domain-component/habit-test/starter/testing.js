@@ -1,8 +1,18 @@
 // SIMULATION for the preview: a small stand-in for Jest + React Native Testing Library 14.
 // It keeps their names (test, expect, render, screen, userEvent, toBeOnTheScreen), so a test
 // written here moves to a real project by changing only the import line. It is NOT the real
-// tool: it renders through react-native-web in this browser, while the real one renders
-// React Native host components in Node.js. You do not change this file.
+// tool. Where it differs from Jest 29 + RNTL 14.0.1:
+// - it renders through react-native-web in this browser; the real one renders React Native
+//   host components in Node.js (neither runs iOS or Android code);
+// - in Jest, test and expect are globals; render, screen and userEvent are imported from
+//   '@testing-library/react-native';
+// - only a few queries (getBy…/queryBy…/findBy… by text, label and role) and matchers exist
+//   here; a role's name is matched exactly, from the accessibility label or else the text;
+// - user.press calls the element's onPress through React (no pressIn/pressOut, no press delay);
+// - findBy… and waitFor wait up to 2000 ms here, 1000 ms by default in RNTL;
+// - run, replaceComponent, restoreComponents and setDefaultTimeout exist only for this course:
+//   Jest runs the tests itself, and a real project replaces a module with jest.mock.
+// You do not change this file.
 import { createElement } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
