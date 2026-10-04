@@ -1,0 +1,517 @@
+id: no-06-03-cors-credentials-practice
+unit: NO-06
+title:
+  uk: "CORS і credentials на практиці"
+  en: "CORS and credentials in practice"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Налаштувати відповіді сервера для origin сервера розробки React, зокрема preflight для `PATCH` із JSON-тілом."
+    en: "Configure the server's CORS responses for the React dev origin, including the preflight for a `PATCH` with a JSON body."
+  - uk: "Вирішити, чи потрібні запиту credentials, і пояснити, чому `Access-Control-Allow-Origin: *` із ними не поєднується."
+    en: "Decide whether a request needs credentials and explain why `Access-Control-Allow-Origin: *` cannot be combined with them."
+  - uk: "Пояснити, чому запит, що вдається з Node.js, нічого не каже про те, чи дозволить його браузер."
+    en: "Explain why a request that succeeds from Node says nothing about whether the browser will allow it."
+prerequisites: [no-06-02-replace-fixtures-with-api, js-16-04-same-origin-cors]
+subskills:
+  - { family: B-12, skill: "CORS/credentials", depth: intro }
+glossary: [credentials-mode, origin-allowlist]
+selfCheck: [predict-preflight-headers, cors-wrapper]
+
+blocks:
+  - id: two-origins-again
+    kind: explanation
+    title:
+      uk: "Тепер CORS налаштовуєш ти"
+      en: "Now you configure CORS"
+    body:
+      uk: |
+        У розділі JS-16 ти бачив [[cors|CORS]] з боку сторінки. Тепер ти по інший бік: сторінка React-проєкту працює на одному [[origin|origin]] (у цьому уроці — `http://127.0.0.1:5173`), а твій API — на іншому (`http://127.0.0.1:7330`). Інший порт — інший origin, тож браузер питає дозволу в **твого** сервера.
+
+        Кнопка «Призупинити звичку» надсилає `PATCH` із `Content-Type: application/json`. Це не простий запит, тому спершу йде [[preflight-request|preflight]] — `OPTIONS` із заголовками `Access-Control-Request-Method: PATCH` і `Access-Control-Request-Headers: content-type`. Сервер відповідає на нього сам, не викликаючи обробника записів:
+
+        ```text
+        HTTP/1.1 204 No Content
+        Access-Control-Allow-Origin: http://127.0.0.1:5173
+        Access-Control-Allow-Methods: GET, POST, PATCH
+        Access-Control-Allow-Headers: content-type
+        ```
+
+        Лише якщо в цій відповіді є і origin сторінки, і `PATCH`, і `content-type`, браузер надсилає сам `PATCH`. А відповідь на `PATCH` знову має містити `Access-Control-Allow-Origin` — інакше сторінка не прочитає тіло.
+      en: |
+        In unit JS-16 you saw [[cors|CORS]] from the page's side. Now you are on the other side: the React project's page runs on one [[origin]] (in this lesson `http://127.0.0.1:5173`), and your API on another (`http://127.0.0.1:7330`). Another port is another origin, so the browser asks **your** server for permission.
+
+        The “Pause habit” button sends a `PATCH` with `Content-Type: application/json`. That is not a simple request, so a [[preflight-request|preflight]] goes first — an `OPTIONS` with the headers `Access-Control-Request-Method: PATCH` and `Access-Control-Request-Headers: content-type`. The server answers it itself, without calling the records handler:
+
+        ```text
+        HTTP/1.1 204 No Content
+        Access-Control-Allow-Origin: http://127.0.0.1:5173
+        Access-Control-Allow-Methods: GET, POST, PATCH
+        Access-Control-Allow-Headers: content-type
+        ```
+
+        Only if this answer names the page's origin, `PATCH` and `content-type` does the browser send the `PATCH` itself. And the answer to the `PATCH` must again carry `Access-Control-Allow-Origin` — otherwise the page cannot read the body.
+
+  - id: preflight-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "PATCH із JSON: спершу питання, потім запит"
+      en: "A PATCH with JSON: the question first, then the request"
+    textEquivalent:
+      uk: "Код сторінки з origin http://127.0.0.1:5173 викликає fetch із методом PATCH і JSON-тілом. Браузер спершу надсилає API запит OPTIONS із заголовками Access-Control-Request-Method: PATCH і Access-Control-Request-Headers: content-type. API відповідає 204 з дозволеним origin, методами GET, POST, PATCH і заголовком content-type. Лише тоді браузер надсилає справжній PATCH; API відповідає 200 з Access-Control-Allow-Origin, і браузер віддає тіло коду сторінки. В іншому запуску API дозволяє лише GET, POST: браузер отримує відповідь на OPTIONS, бачить, що PATCH не дозволено, і зупиняється — сам PATCH не виходить з браузера, а код отримує TypeError: Failed to fetch. Запит із Node.js цих заголовків не перевіряє взагалі."
+      en: "The page code on origin http://127.0.0.1:5173 calls fetch with the PATCH method and a JSON body. The browser first sends the API an OPTIONS request with the headers Access-Control-Request-Method: PATCH and Access-Control-Request-Headers: content-type. The API answers 204 with the allowed origin, the methods GET, POST, PATCH and the header content-type. Only then does the browser send the real PATCH; the API answers 200 with Access-Control-Allow-Origin, and the browser hands the body to the page code. In another run the API allows only GET, POST: the browser gets the answer to OPTIONS, sees that PATCH is not allowed and stops — the PATCH itself never leaves the browser, and the code gets TypeError: Failed to fetch. A request from Node.js does not check these headers at all."
+    spec:
+      actors:
+        - { id: page, label: { uk: "Код сторінки :5173", en: "Page code :5173" } }
+        - { id: browser, label: { uk: "Браузер", en: "Browser" } }
+        - { id: api, label: "API :7330" }
+      messages:
+        - from: page
+          to: browser
+          label: "fetch(…/h-03, { method: \"PATCH\" })"
+          caption: { uk: "Код сторінки просить браузер надіслати `PATCH` із JSON-тілом на інший origin.", en: "The page code asks the browser to send a `PATCH` with a JSON body to another origin." }
+        - from: browser
+          to: api
+          label: "OPTIONS /v1/records/h-03"
+          caption: { uk: "`PATCH` і JSON роблять запит не простим: браузер спершу надсилає preflight.", en: "`PATCH` and JSON make the request non-simple: the browser first sends a preflight." }
+          note: { uk: "Request-Method: PATCH; Request-Headers: content-type", en: "Request-Method: PATCH; Request-Headers: content-type" }
+        - from: api
+          to: browser
+          kind: return
+          label: "204"
+          caption: { uk: "API дозволяє origin сторінки, метод `PATCH` і заголовок `content-type`. Обробник записів не викликався.", en: "The API allows the page's origin, the `PATCH` method and the `content-type` header. The records handler was not called." }
+          note: { uk: "Allow-Origin: :5173; Allow-Methods: GET, POST, PATCH", en: "Allow-Origin: :5173; Allow-Methods: GET, POST, PATCH" }
+        - from: browser
+          to: api
+          label: "PATCH /v1/records/h-03"
+          caption: { uk: "Тепер браузер надсилає справжній запит.", en: "Now the browser sends the real request." }
+        - from: api
+          to: browser
+          kind: return
+          label: "200 + Allow-Origin"
+          caption: { uk: "Відповідь знову має `Access-Control-Allow-Origin`.", en: "The answer again carries `Access-Control-Allow-Origin`." }
+        - from: browser
+          to: page
+          kind: return
+          label: { uk: "тіло відповіді", en: "the response body" }
+          caption: { uk: "Браузер віддає тіло коду сторінки.", en: "The browser hands the body to the page code." }
+        - from: api
+          to: api
+          kind: note
+          label: { uk: "інший запуск: Allow-Methods: GET, POST", en: "another run: Allow-Methods: GET, POST" }
+          caption: { uk: "Інший запуск: API дозволяє лише `GET, POST`.", en: "Another run: the API allows only `GET, POST`." }
+        - from: browser
+          to: browser
+          kind: note
+          label: { uk: "PATCH не дозволено — запит не надіслано", en: "PATCH not allowed — request not sent" }
+          caption: { uk: "Отримавши таку відповідь на `OPTIONS`, браузер зупиняється: `PATCH` не виходить, у журналі API його немає.", en: "Given such an answer to `OPTIONS`, the browser stops: the `PATCH` never leaves, and the API log does not have it." }
+        - from: browser
+          to: page
+          kind: return
+          label: "TypeError: Failed to fetch"
+          caption: { uk: "Код сторінки отримує лише `TypeError`; пояснення браузер пише в консоль DevTools. Запит із Node.js цих заголовків не перевіряє взагалі.", en: "The page code gets only a `TypeError`; the browser writes the explanation into the DevTools console. A request from Node.js does not check these headers at all." }
+
+  - id: predict-preflight-headers
+    kind: prediction
+    prompt:
+      uk: "Сторінка `http://127.0.0.1:5173` надсилає `PATCH` із `Content-Type: application/json` на API `http://127.0.0.1:7330` без cookies. Що має бути у відповіді API на preflight, щоб браузер надіслав `PATCH`? Обери все потрібне."
+      en: "The page `http://127.0.0.1:5173` sends a `PATCH` with `Content-Type: application/json` to the API `http://127.0.0.1:7330`, without cookies. What must the API's answer to the preflight contain for the browser to send the `PATCH`? Pick everything required."
+    answer:
+      type: multi
+      options:
+        - id: origin
+          text: { uk: "`Access-Control-Allow-Origin: http://127.0.0.1:5173`", en: "`Access-Control-Allow-Origin: http://127.0.0.1:5173`" }
+        - id: methods
+          text: { uk: "`Access-Control-Allow-Methods` зі словом `PATCH`", en: "`Access-Control-Allow-Methods` including `PATCH`" }
+        - id: headers
+          text: { uk: "`Access-Control-Allow-Headers` зі словом `content-type`", en: "`Access-Control-Allow-Headers` including `content-type`" }
+        - id: credentials
+          text: { uk: "`Access-Control-Allow-Credentials: true`", en: "`Access-Control-Allow-Credentials: true`" }
+          why:
+            uk: "Цей заголовок потрібен лише запиту з credentials (наприклад, `credentials: \"include\"` із cookies). Тут cookies немає."
+            en: "This header is needed only by a request with credentials (for example `credentials: \"include\"` with cookies). There are no cookies here."
+        - id: record-body
+          text: { uk: "Тіло зі зміненим записом `h-03`", en: "A body with the changed record `h-03`" }
+          why:
+            uk: "Preflight лише питає дозволу: сервер нічого не змінює й тіла не потребує. Запис змінює наступний, справжній `PATCH`."
+            en: "A preflight only asks for permission: the server changes nothing, and no body is needed. The record is changed by the next, real `PATCH`."
+      correct: [origin, methods, headers]
+    explanation:
+      uk: "Браузер перевіряє три речі: чи дозволено origin сторінки, метод і нестандартний заголовок. Бракує будь-чого — справжній запит не надсилається."
+      en: "The browser checks three things: whether the page's origin, the method and the non-standard header are allowed. If any is missing, the real request is not sent."
+
+  - id: habits-cors
+    kind: example
+    runtime: isolated-node
+    dir: habits-cors
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      lang: { uk: "uk", en: "en" }
+      pageTitle: { uk: "Звички — перевірка CORS", en: "Habits — a CORS check" }
+      load: { uk: "Завантажити звички", en: "Load habits" }
+      pause: { uk: "Призупинити «Пити воду»", en: "Pause “Drink water”" }
+    title:
+      uk: "Preflight і PATCH, надіслані з Node.js"
+      en: "A preflight and a PATCH sent from Node.js"
+    body:
+      uk: |
+        `api.mjs` — API звичок, що дозволяє сторінці з `http://127.0.0.1:5173` читати відповіді й відповідає на `OPTIONS` сам. `index.js` робить із Node.js те, що браузер робить для `PATCH` із JSON: надсилає preflight, друкує заголовки `access-control-*` відповіді й надсилає сам `PATCH`. (`page-server.mjs` і `page/index.html` знадобляться в завданні на твоєму комп’ютері; тут вони не запускаються.)
+
+        Натисни **Запустити**: `OPTIONS → 204` з трьома заголовками, потім `PATCH → 200`.
+      en: |
+        `api.mjs` is a habits API that lets the page from `http://127.0.0.1:5173` read its answers and answers `OPTIONS` itself. `index.js` does from Node.js what a browser does for a `PATCH` with JSON: it sends the preflight, prints the `access-control-*` headers of the answer and sends the `PATCH` itself. (`page-server.mjs` and `page/index.html` are for the task on your computer; they do not run here.)
+
+        Press **Run**: `OPTIONS → 204` with three headers, then `PATCH → 200`.
+    tryIt:
+      uk: |
+        1. В `index.js` заміни `allowedMethods: 'GET, POST, PATCH'` на `allowedMethods: 'GET, POST'` і запусти. У відповіді на preflight більше немає `PATCH` — браузер на цьому зупинився б. А `PATCH` з Node.js усе одно отримує 200: Node.js цих заголовків не перевіряє.
+        2. Поверни `PATCH`. Заміни `origin: PAGE_ORIGIN` в обох запитах на `origin: 'http://127.0.0.1:9999'` і запусти: сервер усе одно відповідає, і `PATCH` змінює запис. CORS вирішує лише, чи **сторінка в браузері** прочитає відповідь, — від інших програм він сервер не захищає.
+      en: |
+        1. In `index.js` replace `allowedMethods: 'GET, POST, PATCH'` with `allowedMethods: 'GET, POST'` and run. The answer to the preflight no longer has `PATCH` — a browser would stop here. But the `PATCH` from Node.js still gets 200: Node.js does not check these headers.
+        2. Put `PATCH` back. Replace `origin: PAGE_ORIGIN` in both requests with `origin: 'http://127.0.0.1:9999'` and run: the server answers anyway, and the `PATCH` changes the record. CORS only decides whether **a page in a browser** may read the answer — it does not protect the server from other programs.
+
+  - id: node-is-not-a-browser
+    kind: explanation
+    title:
+      uk: "Node.js — не браузер, а CORS — не захист"
+      en: "Node.js is not a browser, and CORS is not protection"
+    body:
+      uk: |
+        Правила CORS виконує **браузер**: він не надсилає запит, якого не дозволив preflight, і не віддає сторінці відповідь без `Access-Control-Allow-Origin`. `fetch` у Node.js, `curl` і твої тести цих правил не виконують: заголовок `Origin` у прикладі ти поставив сам, а відповідь отримав незалежно від нього. Тож «у тесті працює» нічого не каже про браузер — перевіряй заголовки або відкрий сторінку.
+
+        І навпаки: CORS не захищає API. Будь-яка програма надішле `PATCH` напряму. Хто що може змінювати, вирішують автентифікація й перевірка прав на сервері.
+
+        Тому в конфігурації CORS — [[origin-allowlist|список дозволених origin]], а не `*`, і сервер повторює у відповіді **точно той** origin, що прийшов, якщо він у списку. Відповідь тоді залежить від `Origin`, тож сервер додає `Vary: Origin` — так кеш не віддасть відповідь для одного origin іншому.
+      en: |
+        The **browser** carries out the CORS rules: it does not send a request the preflight did not allow, and it does not hand the page an answer without `Access-Control-Allow-Origin`. `fetch` in Node.js, `curl` and your tests do not follow these rules: you set the `Origin` header in the example yourself, and got the answer regardless of it. So “it works in the test” says nothing about the browser — check the headers, or open the page.
+
+        And the other way round: CORS does not protect the API. Any program sends a `PATCH` directly. Who may change what is decided by authentication and permission checks on the server.
+
+        So the CORS configuration holds an [[origin-allowlist]], not `*`, and the server repeats in the answer **exactly the** origin that came, if it is on the list. The answer then depends on `Origin`, so the server adds `Vary: Origin` — that way a cache does not hand one origin's answer to another.
+
+  - id: credentials-decision
+    kind: explanation
+    title:
+      uk: "Чи потрібні запиту credentials?"
+      en: "Does the request need credentials?"
+    body:
+      uk: |
+        [[credentials-mode|Режим credentials]] у `fetch` вирішує, чи йдуть із запитом cookies браузера:
+
+        | `credentials` | Cookies до іншого origin | Що треба від сервера |
+        |---|---|---|
+        | `"same-origin"` (типово) | не йдуть | `Access-Control-Allow-Origin`: origin сторінки або `*` |
+        | `"include"` | йдуть | точний origin (не `*`) **і** `Access-Control-Allow-Credentials: true` |
+
+        Твій локальний API без входу cookies не потребує — лиши типовий режим. `"include"` потрібен, лише коли сервер упізнає людину за cookie сесії (як у розділі про автентифікацію). Тоді `*` заборонено: інакше будь-яка сторінка в інтернеті читала б відповіді від імені людини. Так каже документація MDN про CORS ([developer.mozilla.org/docs/Web/HTTP/Guides/CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS)). У Chrome 152 запит з `credentials: "include"` до API, що не надіслав `Access-Control-Allow-Credentials`, блокується з повідомленням у консолі: `The value of the 'Access-Control-Allow-Credentials' header in the response is '' which must be 'true' when the request's credentials mode is 'include'.`
+      en: |
+        The [[credentials-mode]] of `fetch` decides whether the browser's cookies go with the request:
+
+        | `credentials` | Cookies to another origin | What the server must send |
+        |---|---|---|
+        | `"same-origin"` (default) | not sent | `Access-Control-Allow-Origin`: the page's origin or `*` |
+        | `"include"` | sent | the exact origin (not `*`) **and** `Access-Control-Allow-Credentials: true` |
+
+        Your local API has no login and needs no cookies — keep the default mode. `"include"` is needed only when the server recognizes a person by a session cookie (as in the unit on authentication). Then `*` is forbidden: otherwise any page on the internet could read answers in that person's name. That is what MDN's documentation on CORS says ([developer.mozilla.org/docs/Web/HTTP/Guides/CORS](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CORS)). In Chrome 152 a request with `credentials: "include"` to an API that did not send `Access-Control-Allow-Credentials` is blocked with a console message: `The value of the 'Access-Control-Allow-Credentials' header in the response is '' which must be 'true' when the request's credentials mode is 'include'.`
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: simple-request-sent
+        from: js-16-04-same-origin-cors
+        prompt:
+          uk: "Сторінка надсилає простий `GET` на інший origin, а сервер відповідає 200 без `Access-Control-Allow-Origin`. Що із цього правда?"
+          en: "A page sends a simple `GET` to another origin, and the server answers 200 without `Access-Control-Allow-Origin`. Which is true?"
+        answer:
+          type: choice
+          options:
+            - id: reached
+              text: { uk: "Запит дійшов до сервера й той відповів, але код сторінки отримує лише `TypeError: Failed to fetch`", en: "The request reached the server and it answered, but the page code gets only `TypeError: Failed to fetch`" }
+            - id: not-sent
+              text: { uk: "Браузер не надіслав запит, тож сервер його не бачив", en: "The browser did not send the request, so the server never saw it" }
+              why:
+                uk: "Так буває з не простим запитом, коли preflight не дав дозволу. Простий запит надсилається одразу — блокується лише читання відповіді."
+                en: "That happens to a non-simple request when the preflight gave no permission. A simple request is sent at once — only reading the answer is blocked."
+            - id: status-zero
+              text: { uk: "Код сторінки отримує відповідь зі статусом 200 і порожнім тілом", en: "The page code gets a response with status 200 and an empty body" }
+              why:
+                uk: "Без дозволу код сторінки не отримує відповіді взагалі — ні статусу, ні тіла, лише відхилений проміс."
+                en: "Without permission the page code gets no response at all — neither a status nor a body, only a rejected promise."
+          correct: [reached]
+        explanation:
+          uk: "Для простого запиту сервер уже відповів, тож дивись у його журнал: запит там є. Для `PATCH` із JSON, якому preflight не дав дозволу, у журналі буде лише `OPTIONS`."
+          en: "For a simple request the server has already answered, so look at its log: the request is there. For a `PATCH` with JSON that the preflight did not allow, the log has only `OPTIONS`."
+      - id: cors-not-auth
+        from: no-10-08-threat-model-cors-not-auth
+        prompt:
+          uk: "API дозволяє в `Access-Control-Allow-Origin` лише `http://127.0.0.1:5173`. Хто ще може надіслати йому `PATCH` і отримати відповідь?"
+          en: "An API allows only `http://127.0.0.1:5173` in `Access-Control-Allow-Origin`. Who else can send it a `PATCH` and get the answer?"
+        answer:
+          type: choice
+          options:
+            - id: any-program
+              text: { uk: "`curl`, скрипт на Node.js чи інший сервер — будь-яка програма, що не є сторінкою в браузері", en: "`curl`, a Node.js script or another server — any program that is not a page in a browser" }
+            - id: nobody
+              text: { uk: "Ніхто: сервер відхиляє запити з інших origin", en: "Nobody: the server refuses requests from other origins" }
+              why:
+                uk: "Сервер нічого не відхиляє через CORS — він лише додає заголовки. Перевіряє їх браузер, і лише для сторінок."
+                en: "The server refuses nothing because of CORS — it only adds headers. The browser checks them, and only for pages."
+            - id: only-browsers
+              text: { uk: "Лише сторінки з інших origin, якщо людина вимкне захист у браузері", en: "Only pages from other origins, if the person turns off protection in the browser" }
+              why:
+                uk: "Програмам поза браузером нічого вимикати не треба: правил CORS вони не виконують узагалі."
+                en: "Programs outside a browser have nothing to turn off: they do not follow the CORS rules at all."
+          correct: [any-program]
+        explanation:
+          uk: "CORS вирішує лише, які сторінки в браузері можуть читати відповіді. Захист даних — це автентифікація й перевірка прав на самому сервері."
+          en: "CORS only decides which pages in a browser may read the answers. Protecting data is authentication and permission checks on the server itself."
+
+  - id: cors-wrapper
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: cors-wrapper
+    entry: index.js
+    editable: [cors.js]
+    capabilities: { network: loopback }
+    strings:
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      preflightDev: { uk: "OPTIONS із :5173", en: "OPTIONS from :5173" }
+      getDev: { uk: "GET із :5173", en: "GET from :5173" }
+      getOther: { uk: "GET із :8080", en: "GET from :8080" }
+    title:
+      uk: "Обгортка CORS зі списком дозволених origin"
+      en: "A CORS wrapper with an origin allowlist"
+    instructions:
+      uk: |
+        `app.js` — обробник API справ, що нічого не знає про CORS (лише для читання). Допиши в `cors.js` функцію `cors({ allowedOrigins, allowCredentials })`. Вона повертає функцію, яка обгортає будь-який обробник `(request, response)` і повертає новий обробник:
+
+        - на кожну відповідь — заголовок `Vary: Origin`;
+        - `Origin` запиту є в `allowedOrigins` — у відповіді `Access-Control-Allow-Origin` дорівнює саме цьому origin (не `*`);
+        - `Origin` немає в списку або його немає взагалі — `Access-Control-Allow-Origin` у відповіді немає, а звичайний запит обробник усе одно обробляє;
+        - preflight — це `OPTIONS` із заголовком `Access-Control-Request-Method`. На preflight із дозволеного origin обгортка сама відповідає 204 з `Access-Control-Allow-Methods: ALLOWED_METHODS` і `Access-Control-Allow-Headers: ALLOWED_HEADERS` і **не** викликає обробника;
+        - preflight з origin не зі списку не отримує ні `Access-Control-Allow-Origin`, ні `Access-Control-Allow-Methods`;
+        - якщо `allowCredentials` — `true`, відповіді для дозволеного origin мають `Access-Control-Allow-Credentials: true`; інакше цього заголовка немає.
+
+        **Запустити** друкує заголовки трьох запитів. **Перевірити** надсилає справжні HTTP-запити з різними `Origin`.
+      en: |
+        `app.js` is the tasks API's handler, which knows nothing about CORS (read-only). In `cors.js` finish `cors({ allowedOrigins, allowCredentials })`. It returns a function that wraps any handler `(request, response)` and returns a new handler:
+
+        - every answer gets the header `Vary: Origin`;
+        - the request's `Origin` is in `allowedOrigins` — the answer's `Access-Control-Allow-Origin` equals exactly this origin (not `*`);
+        - the `Origin` is not on the list, or there is none — the answer has no `Access-Control-Allow-Origin`, and the handler still handles an ordinary request;
+        - a preflight is an `OPTIONS` with the header `Access-Control-Request-Method`. To a preflight from an allowed origin the wrapper itself answers 204 with `Access-Control-Allow-Methods: ALLOWED_METHODS` and `Access-Control-Allow-Headers: ALLOWED_HEADERS` and does **not** call the handler;
+        - a preflight from an origin not on the list gets neither `Access-Control-Allow-Origin` nor `Access-Control-Allow-Methods`;
+        - when `allowCredentials` is `true`, answers for an allowed origin carry `Access-Control-Allow-Credentials: true`; otherwise this header is absent.
+
+        **Run** prints the headers of three requests. **Check** sends real HTTP requests with different `Origin` values.
+    testTitles:
+      "an allowlisted origin is echoed, never *":
+        uk: "Дозволений origin повторюється у відповіді, ніколи не `*`"
+        en: "An allowlisted origin is echoed, never `*`"
+      "every answer carries Vary: Origin":
+        uk: "Кожна відповідь має `Vary: Origin`"
+        en: "Every answer carries `Vary: Origin`"
+      "an origin outside the list gets no Access-Control-Allow-Origin, and the handler still answers":
+        uk: "Origin не зі списку не отримує `Access-Control-Allow-Origin`, а обробник усе одно відповідає"
+        en: "An origin outside the list gets no `Access-Control-Allow-Origin`, and the handler still answers"
+      "a preflight from the dev origin answers 204 itself, with methods and headers":
+        uk: "Preflight із origin розробки отримує 204 від обгортки, з методами й заголовками"
+        en: "A preflight from the dev origin gets 204 from the wrapper itself, with methods and headers"
+      "a preflight from another origin gets no permission":
+        uk: "Preflight з іншого origin не отримує дозволу"
+        en: "A preflight from another origin gets no permission"
+      "Access-Control-Allow-Credentials: true appears only with allowCredentials":
+        uk: "`Access-Control-Allow-Credentials: true` з’являється лише з `allowCredentials`"
+        en: "`Access-Control-Allow-Credentials: true` appears only with `allowCredentials`"
+    hints:
+      nudge:
+        uk: "Почни з одного питання для кожного запиту: чи є `request.headers.origin` у списку? Від відповіді залежать майже всі заголовки."
+        en: "Start with one question for every request: is `request.headers.origin` on the list? Almost every header depends on the answer."
+      explanation:
+        uk: "Заголовки, що потрібні й звичайній відповіді, і preflight, став через `response.setHeader(…)` ще до виклику обробника — обробник потім допише свої. Preflight упізнаєш за методом `OPTIONS` разом із `request.headers['access-control-request-method']`; на нього відповідай сам (`writeHead(204)`, `end()`) і виходь, не викликаючи обробника. Для API кошика це виглядало б так: `if (shopOrigins.has(origin)) response.setHeader('access-control-allow-origin', origin);`."
+        en: "Put the headers both an ordinary answer and a preflight need through `response.setHeader(…)` before calling the handler — the handler then adds its own. You recognize a preflight by the `OPTIONS` method together with `request.headers['access-control-request-method']`; answer it yourself (`writeHead(204)`, `end()`) and return without calling the handler. For a shopping-cart API it would look like `if (shopOrigins.has(origin)) response.setHeader('access-control-allow-origin', origin);`."
+    solutionNote:
+      uk: "Обгортка тримає CORS в одному місці: обробник записів про нього не знає. Точний origin замість `*` і `Vary: Origin` — це те, що потрібно для credentials і для кешів. Preflight закінчується в обгортці, тож обробник не мусить знати метод `OPTIONS`. Пам’ятай: усе це правила для браузерів, а не захист сервера."
+      en: "The wrapper keeps CORS in one place: the records handler does not know about it. The exact origin instead of `*` and `Vary: Origin` are what credentials and caches need. A preflight ends in the wrapper, so the handler does not have to know the `OPTIONS` method. Remember: all of these are rules for browsers, not protection for the server."
+    feedback:
+      - when: { test: "an allowlisted origin is echoed, never *" }
+        message:
+          uk: "Ця перевірка надсилає `GET` з `Origin: http://127.0.0.1:5173` і чекає статус 200 і `Access-Control-Allow-Origin` рівно `http://127.0.0.1:5173`."
+          en: "This check sends a `GET` with `Origin: http://127.0.0.1:5173` and expects status 200 and `Access-Control-Allow-Origin` exactly `http://127.0.0.1:5173`."
+      - when: { test: "every answer carries Vary: Origin" }
+        message:
+          uk: "Ця перевірка чекає `Vary` зі словом `Origin` у відповідях і для дозволеного origin, і для іншого."
+          en: "This check expects `Vary` containing `Origin` in the answers for both the allowed origin and another one."
+      - when: { test: "an origin outside the list gets no Access-Control-Allow-Origin, and the handler still answers" }
+        message:
+          uk: "Ця перевірка надсилає `GET` з `Origin: http://127.0.0.1:8080` і без `Origin` і чекає статус 200 від обробника й жодного `Access-Control-Allow-Origin`. Повторюй origin, лише якщо він є в `allowedOrigins`."
+          en: "This check sends a `GET` with `Origin: http://127.0.0.1:8080` and one without `Origin` and expects status 200 from the handler and no `Access-Control-Allow-Origin`. Echo an origin only when it is in `allowedOrigins`."
+      - when: { test: "a preflight from the dev origin answers 204 itself, with methods and headers" }
+        message:
+          uk: "Ця перевірка надсилає preflight для `PATCH` із `content-type` і чекає статус 204, нуль викликів обробника, `Access-Control-Allow-Origin`, `PATCH` в `Access-Control-Allow-Methods` і `content-type` в `Access-Control-Allow-Headers`."
+          en: "This check sends a preflight for `PATCH` with `content-type` and expects status 204, zero handler calls, `Access-Control-Allow-Origin`, `PATCH` in `Access-Control-Allow-Methods` and `content-type` in `Access-Control-Allow-Headers`."
+      - when: { test: "a preflight from another origin gets no permission" }
+        message:
+          uk: "Ця перевірка надсилає preflight з `Origin: http://127.0.0.1:8080` і чекає відповідь без `Access-Control-Allow-Origin` і без `Access-Control-Allow-Methods`."
+          en: "This check sends a preflight with `Origin: http://127.0.0.1:8080` and expects an answer without `Access-Control-Allow-Origin` and without `Access-Control-Allow-Methods`."
+      - when: { test: "Access-Control-Allow-Credentials: true appears only with allowCredentials" }
+        message:
+          uk: "Ця перевірка чекає `Access-Control-Allow-Credentials: true` на `GET` і preflight з дозволеного origin, коли `allowCredentials` — `true`, і жодного такого заголовка для іншого origin чи коли `allowCredentials` — `false`."
+          en: "This check expects `Access-Control-Allow-Credentials: true` on the `GET` and the preflight from the allowed origin when `allowCredentials` is `true`, and no such header for another origin or when `allowCredentials` is `false`."
+
+  - id: blocked-preflight-locally
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Заблокований preflight у справжньому браузері"
+      en: "A blocked preflight in a real browser"
+    intro:
+      uk: |
+        Два сервери на твоєму комп’ютері: сторінка на `127.0.0.1:5173` (замість сервера розробки React — для браузера важливий лише origin) і API звичок на `127.0.0.1:7330`. Ти зламаєш дозволені методи, побачиш заблокований preflight у браузері й у журналі API, а потім відновиш дозвіл. Потрібні Node.js, Google Chrome і два вікна термінала; npm-пакетів не треба.
+
+        Під час підготовки уроку команди терміналів виконано на macOS з Node.js v25.2.1; кроки в браузері — у Chromium 152 вбудованого браузера, через ті самі кнопки сторінки, консоль і журнал мережі (не у вікні DevTools звичайного Chrome — назви панелей нижче не перевірено). Node.js 22, Linux і Windows не перевірено; у Windows PowerShell змінну задають так: `$env:ALLOWED_METHODS="GET, POST"; node api.mjs`.
+
+        **Крок 4 — журнал API у другому вікні, коли дозволено лише `GET, POST` (після обох кнопок):**
+
+        ```text
+        Habits API on http://127.0.0.1:7330, allowed methods: GET, POST
+        Stop it with Ctrl+C.
+        [api] GET /v1/records — Origin: http://127.0.0.1:5173
+        [api] OPTIONS /v1/records/h-03 — Origin: http://127.0.0.1:5173
+        ```
+
+        `PATCH` у журналі немає: браузер його не надіслав.
+
+        **Крок 5 — повідомлення в консолі браузера:**
+
+        ```text
+        Access to fetch at 'http://127.0.0.1:7330/v1/records/h-03' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: Method PATCH is not allowed by Access-Control-Allow-Methods in preflight response.
+        ```
+
+        А сторінка показує `PATCH /v1/records/h-03 → TypeError: Failed to fetch`.
+      en: |
+        Two servers on your computer: the page on `127.0.0.1:5173` (instead of the React dev server — the browser only cares about the origin) and the habits API on `127.0.0.1:7330`. You break the allowed methods, see the blocked preflight in the browser and in the API log, and then restore the permission. You need Node.js, Google Chrome and two terminal windows; no npm packages.
+
+        While preparing the lesson the terminal commands were run on macOS with Node.js v25.2.1; the browser steps in the built-in browser's Chromium 152, through the same page buttons, the console and the network log (not in the DevTools window of a regular Chrome — the panel names below were not checked). Node.js 22, Linux and Windows were not checked; in Windows PowerShell the variable is set like this: `$env:ALLOWED_METHODS="GET, POST"; node api.mjs`.
+
+        **Step 4 — the API log in the second window when only `GET, POST` are allowed (after both buttons):**
+
+        ```text
+        Habits API on http://127.0.0.1:7330, allowed methods: GET, POST
+        Stop it with Ctrl+C.
+        [api] GET /v1/records — Origin: http://127.0.0.1:5173
+        [api] OPTIONS /v1/records/h-03 — Origin: http://127.0.0.1:5173
+        ```
+
+        There is no `PATCH` in the log: the browser did not send it.
+
+        **Step 5 — the message in the browser console:**
+
+        ```text
+        Access to fetch at 'http://127.0.0.1:7330/v1/records/h-03' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: Method PATCH is not allowed by Access-Control-Allow-Methods in preflight response.
+        ```
+
+        And the page shows `PATCH /v1/records/h-03 → TypeError: Failed to fetch`.
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший (перевірено на 25.2.1)", en: "22.13 or newer (checked on 25.2.1)" } }
+      - { name: "Google Chrome", version: { uk: "актуальний (перевірено в Chromium 152)", en: "current (checked in Chromium 152)" } }
+    steps:
+      - text:
+          uk: "Створи теку для перевірки разом із підтекою `page` і перейди в неї."
+          en: "Create a folder for the check together with a `page` subfolder, and go into it."
+        command: |
+          mkdir -p ~/js-course/no06-cors/page
+          cd ~/js-course/no06-cors
+      - text:
+          uk: "У VS Code створи в цій теці файл `package.json` з одним рядком `{ \"type\": \"module\" }`, а також файли `api.mjs`, `page-server.mjs` і `page/index.html` — у кожен встав вміст однойменної вкладки з прикладу «Preflight і PATCH, надіслані з Node.js». Збережи всі файли."
+          en: "In VS Code create in this folder the file `package.json` with the single line `{ \"type\": \"module\" }`, and the files `api.mjs`, `page-server.mjs` and `page/index.html` — paste into each the content of the tab with the same name from the example “A preflight and a PATCH sent from Node.js”. Save all the files."
+      - text:
+          uk: "У першому вікні термінала запусти сервер сторінки й залиш вікно відкритим."
+          en: "In the first terminal window start the page server and leave the window open."
+        command: "node page-server.mjs"
+        expect:
+          uk: "`Page on http://127.0.0.1:5173` і `Stop it with Ctrl+C.`"
+          en: "`Page on http://127.0.0.1:5173` and `Stop it with Ctrl+C.`"
+      - text:
+          uk: "У другому вікні перейди в ту саму теку й запусти API, що дозволяє лише `GET, POST`. Відкрий `http://127.0.0.1:5173/` у Chrome, потім DevTools (вкладки Console і Network) і натисни по черзі обидві кнопки сторінки."
+          en: "In the second window go into the same folder and start the API allowing only `GET, POST`. Open `http://127.0.0.1:5173/` in Chrome, then DevTools (the Console and Network tabs), and press both page buttons one after the other."
+        command: |
+          cd ~/js-course/no06-cors
+          ALLOWED_METHODS="GET, POST" node api.mjs
+        expect:
+          uk: "Список звичок завантажився (`GET … → 200`), а «Призупинити» дає `TypeError: Failed to fetch`. Журнал API — як у кроці 4 вступу: `OPTIONS` є, `PATCH` немає."
+          en: "The habits list loaded (`GET … → 200`), while “Pause” gives `TypeError: Failed to fetch`. The API log is as in step 4 of the introduction: `OPTIONS` is there, `PATCH` is not."
+      - text:
+          uk: "Прочитай повідомлення в Console (крок 5 вступу) і знайди в Network два записи для `h-03`: preflight `OPTIONS` зі статусом 204 і невдалий `PATCH`."
+          en: "Read the message in the Console (step 5 of the introduction) and find two entries for `h-03` in Network: the `OPTIONS` preflight with status 204 and the failed `PATCH`."
+        expect:
+          uk: "Причина названа прямо: `Method PATCH is not allowed by Access-Control-Allow-Methods in preflight response.`"
+          en: "The reason is named directly: `Method PATCH is not allowed by Access-Control-Allow-Methods in preflight response.`"
+      - text:
+          uk: "Доведи собі, що це правило браузера, а не сервера: відкрий третє вікно термінала й надішли той самий `PATCH` через `curl`, поки API досі дозволяє лише `GET, POST`."
+          en: "Prove to yourself that this is a browser rule, not a server rule: open a third terminal window and send the same `PATCH` with `curl` while the API still allows only `GET, POST`."
+        command: "curl -sS -X PATCH -H \"Content-Type: application/json\" -d '{\"active\":false}' http://127.0.0.1:7330/v1/records/h-03"
+        expect:
+          uk: "JSON звички `h-03` з `\"active\":false`: `curl` не питає дозволу CORS. У Windows PowerShell пиши `curl.exe` і візьми тіло в подвійні лапки з екрануванням (не перевірено)."
+          en: "The JSON of habit `h-03` with `\"active\":false`: `curl` does not ask for CORS permission. In Windows PowerShell type `curl.exe` and quote the body in escaped double quotes (not checked)."
+      - text:
+          uk: "Віднови дозвіл: у другому вікні зупини API (Ctrl+C) і запусти його без змінної. Зачекай кілька секунд — браузер може коротко пам’ятати попередню відповідь preflight (типово 5 секунд, за MDN) — і знову натисни «Призупинити» на сторінці."
+          en: "Restore the permission: in the second window stop the API (Ctrl+C) and start it without the variable. Wait a few seconds — the browser may briefly remember the previous preflight answer (5 seconds by default, according to MDN) — and press “Pause” on the page again."
+        command: "node api.mjs"
+        expect:
+          uk: "Сторінка показує `PATCH /v1/records/h-03 → 200` і звичку з `\"active\":false`; у журналі API тепер і `OPTIONS`, і `PATCH`."
+          en: "The page shows `PATCH /v1/records/h-03 → 200` and the habit with `\"active\":false`; the API log now has both `OPTIONS` and `PATCH`."
+      - text:
+          uk: "Зупини обидва сервери: Ctrl+C у кожному вікні."
+          en: "Stop both servers: Ctrl+C in each window."
+    verify:
+      - id: preflight-blocked
+        text:
+          uk: "Я бачив, що з `Allow-Methods: GET, POST` браузер надіслав лише `OPTIONS`, а `PATCH` у журналі API не з’явився."
+          en: "I saw that with `Allow-Methods: GET, POST` the browser sent only `OPTIONS`, and no `PATCH` appeared in the API log."
+      - id: curl-not-checked
+        text:
+          uk: "Я бачив, що `curl` змінив звичку попри ту саму конфігурацію."
+          en: "I saw that `curl` changed the habit despite the same configuration."
+      - id: patch-restored
+        text:
+          uk: "Після відновлення дозволу `PATCH` зі сторінки отримав 200."
+          en: "After restoring the permission, the `PATCH` from the page got 200."
+    troubleshooting:
+      - problem:
+          uk: "Другий запуск `node api.mjs` падає з `Error: listen EADDRINUSE: address already in use 127.0.0.1:7330`."
+          en: "The second start of `node api.mjs` fails with `Error: listen EADDRINUSE: address already in use 127.0.0.1:7330`."
+        fix:
+          uk: "Попередній API ще працює в якомусь вікні. Зупини його Ctrl+C (як у розділі NO-03) і запусти знову."
+          en: "The previous API is still running in some window. Stop it with Ctrl+C (as in unit NO-03) and start again."
+      - problem:
+          uk: "Обидві кнопки дають `TypeError: Failed to fetch`, а в журналі API немає жодного рядка."
+          en: "Both buttons give `TypeError: Failed to fetch`, and the API log has no line at all."
+        fix:
+          uk: "API не запущено або він на іншому порту. Сторінка звертається саме до `http://127.0.0.1:7330`: запусти `node api.mjs` без `PORT`."
+          en: "The API is not running or is on another port. The page calls exactly `http://127.0.0.1:7330`: start `node api.mjs` without `PORT`."
+      - problem:
+          uk: "Після відновлення `PATCH` усе ще заблоковано."
+          en: "After restoring, the `PATCH` is still blocked."
+        fix:
+          uk: "Перевір перший рядок у другому вікні: там має бути `allowed methods: GET, POST, PATCH`. Якщо так — зачекай кілька секунд, поки браузер забуде старий preflight, і натисни ще раз."
+          en: "Check the first line in the second window: it must say `allowed methods: GET, POST, PATCH`. If it does, wait a few seconds until the browser forgets the old preflight, and press again."
+    recovery:
+      uk: "Тека `~/js-course/no06-cors` нічого не змінює в твоєму проєкті: закрий обидва сервери Ctrl+C і, якщо щось заплуталося, видали теку й створи її заново з кроку 1. Дані звичок живуть у пам’яті API й скидаються з кожним запуском."
+      en: "The folder `~/js-course/no06-cors` changes nothing in your project: stop both servers with Ctrl+C and, if something got tangled, delete the folder and create it again from step 1. The habits data lives in the API's memory and resets with every start."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-06
+    body:
+      uk: "Крок проєкту цього розділу ще не написаний. За планом курсу в ньому твій сервер дозволяє в CORS лише origin сервера розробки твого React-проєкту (у кроках розділу RE-12 це `http://127.0.0.1:4310`), відповідає на preflight для твоїх `PATCH` і `POST` і не вмикає credentials, поки в проєкті немає входу."
+      en: "The project step of this unit is not written yet. According to the course plan, in it your server allows in CORS only the origin of your React project's dev server (in the RE-12 steps it is `http://127.0.0.1:4310`), answers the preflight for your `PATCH` and `POST`, and does not turn on credentials while the project has no login."

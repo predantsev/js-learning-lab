@@ -1,0 +1,323 @@
+id: no-06-04-shared-typed-contracts
+unit: NO-06
+title:
+  uk: "Спільні версіоновані контракти"
+  en: "Shared versioned contracts"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Винести типи записів і схему під час виконання в один спільний модуль, який імпортують сервер, вебклієнт і нативний компаньйон."
+    en: "Move the record types and runtime schema into one shared module imported by the server, the web client and the native companion."
+  - uk: "Помітити несумісну зміну контракту тестом і випустити її як нову версію, а не правити v1 на місці."
+    en: "Detect a breaking contract change with a test and ship it as a new version instead of editing v1 in place."
+prerequisites: [no-06-03-cors-credentials-practice, no-04-06-versioned-contracts]
+subskills:
+  - { family: B-12, skill: "versioned TS contracts", depth: intro }
+glossary: [shared-contract-module, contract-drift]
+selfCheck: [predict-who-fails, habits-contract-test]
+
+blocks:
+  - id: one-file-three-sides
+    kind: explanation
+    title:
+      uk: "Один файл контракту на три сторони"
+      en: "One contract file for three sides"
+    body:
+      uk: |
+        У розділі NO-04 контракт жив на сервері, а клієнт мав свою копію типів. Дві копії однієї обіцянки рано чи пізно розходяться. Тому контракт виносять у [[shared-contract-module|спільний модуль контракту]] — один файл, який імпортують усі:
+
+        ```text
+        shared/contract.ts   ← types + runtime schema (parseHabitV1)
+        server/…             import { parseHabitV1, type HabitV1 } from '../shared/contract.ts'
+        src/… (web)          the same import
+        native companion     the same import
+        ```
+
+        Модуль тримає обіцянку двічі: **типи** для `tsc` і **схему** — функцію, що перевіряє дані під час виконання. Типи ловлять помилку в коді, який компілюється разом зі зміною: якщо сервер перейменує поле в `HabitV1`, `tsc` підкреслить кожен рядок вебклієнта, що читає старе поле.
+
+        Але типи зникають під час виконання. Застосунок на телефоні, зібраний місяць тому, свого `tsc` уже не запустить. Те, що відповідь сервера розійшлася з контрактом, з яким зібрано клієнта, — це [[contract-drift|дрейф контракту]], і впіймати його може лише схема під час виконання або контрактний тест на справжньому сервері.
+      en: |
+        In unit NO-04 the contract lived on the server, and the client had its own copy of the types. Two copies of one promise drift apart sooner or later. So the contract moves into a [[shared-contract-module]] — one file that everyone imports:
+
+        ```text
+        shared/contract.ts   ← types + runtime schema (parseHabitV1)
+        server/…             import { parseHabitV1, type HabitV1 } from '../shared/contract.ts'
+        src/… (web)          the same import
+        native companion     the same import
+        ```
+
+        The module keeps the promise twice: **types** for `tsc` and a **schema** — a function that checks data at runtime. Types catch a mistake in code that is compiled together with the change: if the server renames a field in `HabitV1`, `tsc` underlines every line of the web client that reads the old field.
+
+        But types disappear at runtime. An app on a phone built a month ago will not run its `tsc` again. When the server's answer no longer matches the contract a client was built with, that is [[contract-drift]], and only a runtime schema or a contract test against the real server can catch it.
+
+  - id: predict-who-fails
+    kind: prediction
+    prompt:
+      uk: "Сервер і клієнти імпортують спільний `contract.ts`. Команда перейменувала `price` на `priceUah` прямо в `WishV1` і на сервері, `tsc` на сервері мовчить. Нативний застосунок у людей зібрано з попередньої версії контракту. Хто й коли помітить проблему?"
+      en: "The server and the clients import a shared `contract.ts`. The team renamed `price` to `priceUah` right in `WishV1` and on the server, and `tsc` on the server is silent. The native app on people's phones was built from the previous version of the contract. Who notices the problem, and when?"
+    answer:
+      type: choice
+      options:
+        - id: client-runtime
+          text: { uk: "Нативний клієнт, під час виконання: його схема відхиляє відповідь", en: "The native client, at runtime: its schema rejects the answer" }
+        - id: server-compile
+          text: { uk: "Сервер, під час компіляції: `tsc` знайде перейменування", en: "The server, at compile time: `tsc` finds the rename" }
+          why:
+            uk: "Сервер компілюється вже з новим контрактом, тож для `tsc` усе узгоджено. Сервер не бачить коду, зібраного з попередньої версії."
+            en: "The server is compiled with the new contract already, so to `tsc` everything agrees. The server cannot see code built from the previous version."
+        - id: client-compile
+          text: { uk: "Нативний клієнт, під час компіляції", en: "The native client, at compile time" }
+          why:
+            uk: "Застосунок уже зібрано й встановлено. Його `tsc` працював до зміни і більше не запуститься на телефоні."
+            en: "The app is already built and installed. Its `tsc` ran before the change and will not run on the phone again."
+        - id: nobody
+          text: { uk: "Ніхто: спільні типи гарантують, що дані збігаються", en: "Nobody: shared types guarantee the data matches" }
+          why:
+            uk: "Типи перевіряють лише код під час компіляції. Дані, що приходять мережею, вони не бачать."
+            en: "Types check only code at compile time. They never see data that arrives over the network."
+      correct: [client-runtime]
+    explanation:
+      uk: "Ця зміна несумісна, а зроблено її в v1 «на місці». Старий клієнт помітить її лише під час виконання — і добре, якщо схемою, а не порожніми цінами на екрані. Правильно було лишити `WishV1` як є й додати `WishV2` за адресою `/v2`."
+      en: "This change is breaking, and it was made in v1 “in place”. The old client notices it only at runtime — at best through its schema rather than through empty prices on screen. The right move was to keep `WishV1` as it is and add `WishV2` at `/v2`."
+
+  - id: drift-diagram
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Спільний контракт і дрейф"
+      en: "A shared contract and drift"
+    textEquivalent:
+      uk: "У центрі — спільний модуль контракту з типами й схемою; від нього стрілки до сервера, вебклієнта й нативного компаньйона. Сервер, вебклієнт і нативний компаньйон імпортують його. Далі сервер перейменовує price на priceUah лише в себе. Вебклієнт, зібраний разом зі зміною, отримав би помилку від tsc. Нативний клієнт зібрано раніше, тож tsc його не перевіряє: його схема під час виконання відхиляє відповідь з помилкою price: expected number or null. Вихід — нова адреса /v2 з новим контрактом, а /v1 лишається як була."
+      en: "In the middle is the shared contract module with types and a schema; arrows lead from it to the server, the web client and the native companion. The server, the web client and the native companion import it. Then the server renames price to priceUah on its side only. A web client built together with the change would get an error from tsc. The native client was built earlier, so tsc does not check it: its runtime schema rejects the answer with the error price: expected number or null. The way out is a new address /v2 with a new contract, while /v1 stays as it was."
+    spec:
+      layout: grid
+      nodes:
+        - { id: contract, label: "shared/contract.ts", shape: note, w: 170, col: 0, row: 0 }
+        - { id: server, label: { uk: "сервер", en: "server" }, shape: cylinder, w: 150, col: 1, row: 0 }
+        - { id: web, label: { uk: "вебклієнт", en: "web client" }, w: 170, col: 0, row: 1 }
+        - { id: native, label: { uk: "нативний клієнт", en: "native client" }, w: 150, col: 1, row: 1 }
+        - { id: v2, label: "/v2/records", shape: pill, w: 150, col: 1, row: 2 }
+      edges:
+        - { id: c-server, from: contract, to: server, kind: dashed, label: "import" }
+        - { id: c-web, from: contract, to: web, kind: dashed, label: "import" }
+        - { id: c-native, from: contract, to: native, kind: dashed, label: "import" }
+        - { id: server-native, from: server, to: native, label: "JSON" }
+        - { id: server-v2, from: server, to: v2 }
+      hidden: [v2, server-v2]
+      steps:
+        - caption:
+            uk: "Сервер, вебклієнт і нативний клієнт імпортують один модуль контракту: типи для `tsc` і схему для перевірки даних."
+            en: "The server, the web client and the native client import one contract module: types for `tsc` and a schema for checking data."
+          highlight: [contract, c-server, c-web, c-native]
+        - caption:
+            uk: "Сервер перейменовує `price` на `priceUah` лише в себе. Його `tsc` мовчить: сервер і змінений контракт узгоджені."
+            en: "The server renames `price` to `priceUah` on its side only. Its `tsc` is silent: the server and the changed contract agree."
+          highlight: [server]
+          annotate:
+            - { id: server, text: "price → priceUah" }
+        - caption:
+            uk: "Вебклієнт, зібраний разом зі зміною, отримав би помилку `tsc` у кожному рядку, що читає `price`."
+            en: "A web client built together with the change would get a `tsc` error on every line that reads `price`."
+          highlight: [web, c-web]
+          annotate:
+            - { id: web, text: "tsc: price?" }
+        - caption:
+            uk: "Нативний клієнт зібрано раніше — `tsc` його вже не перевірить. Відповідь сервера відхиляє лише його схема під час виконання."
+            en: "The native client was built earlier — `tsc` will not check it again. Only its runtime schema rejects the server's answer."
+          highlight: [native, server-native]
+          dim: [c-web]
+          annotate:
+            - { id: native, text: "price: expected number or null" }
+        - caption:
+            uk: "Вихід: несумісна зміна йде в нову версію `/v2` з новим контрактом, а `/v1` лишається як була для старих клієнтів."
+            en: "The way out: the breaking change goes into a new version, `/v2`, with a new contract, while `/v1` stays as it was for old clients."
+          show: [v2, server-v2]
+          highlight: [server, server-v2, v2]
+
+  - id: wish-drift
+    kind: example
+    runtime: isolated-node
+    dir: wish-drift
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      accepted: { uk: "прийнято записів:", en: "records accepted:" }
+      rejected: { uk: "відхилено", en: "rejected" }
+    limits:
+      uk: "Файли `.ts` тут виконуються через вилучення типів у Node.js: типи просто відкидаються, і ніхто їх не перевіряє. Перевіряє їх `tsc` у твоєму проєкті. З Node.js 22.18 вилучення типів увімкнене типово; на 22.13–22.17 платформа сама вмикає його прапорцем `--experimental-strip-types`."
+      en: "`.ts` files run here through Node.js type stripping: types are simply removed, and nothing checks them. `tsc` in your project is what checks them. From Node.js 22.18 type stripping is on by default; on 22.13–22.17 the platform turns it on itself with the `--experimental-strip-types` flag."
+    title:
+      uk: "Перейменування, яке ловить лише схема"
+      en: "A rename only the schema catches"
+    body:
+      uk: |
+        `contract.ts` — спільний контракт: типи `WishV1`, `WishV2` і схеми `parseWishV1`, `parseWishV2`. `server.ts` імпортує з нього типи. `index.js` — клієнт, що пропускає кожне бажання через схему.
+
+        Натисни **Запустити**: `/v1/records` прийнято, 2 записи.
+      en: |
+        `contract.ts` is the shared contract: the types `WishV1`, `WishV2` and the schemas `parseWishV1`, `parseWishV2`. `server.ts` imports the types from it. `index.js` is a client that passes every wish through the schema.
+
+        Press **Run**: `/v1/records` accepted, 2 records.
+    tryIt:
+      uk: |
+        1. «Просто перейменуй»: у `server.ts`, у `toV1`, заміни `price: wish.price` на `priceUah: wish.price` і запусти. Сервер відповідає, а клієнт відхиляє обидва записи: `0.price: expected number or null; 1.price: …`. У твоєму проєкті `tsc` підкреслив би цей рядок, бо `toV1` обіцяє `WishV1`, — але клієнт, уже встановлений на телефоні, захищає лише схема.
+        2. Поверни `price: wish.price`. Розкоментуй у `server.ts` рядок `const toV2 = …` і рядок `v2: toV2,`, а в `index.js` — рядок із `'/v2/records'` і запусти: обидві версії прийнято, кожну своєю схемою.
+      en: |
+        1. “Just rename it”: in `server.ts`, in `toV1`, replace `price: wish.price` with `priceUah: wish.price` and run. The server answers, but the client rejects both records: `0.price: expected number or null; 1.price: …`. In your project `tsc` would underline this line, because `toV1` promises a `WishV1` — but a client already installed on a phone is protected only by the schema.
+        2. Put `price: wish.price` back. In `server.ts` uncomment the line `const toV2 = …` and the line `v2: toV2,`, and in `index.js` the line with `'/v2/records'`, and run: both versions are accepted, each by its own schema.
+
+  - id: contract-test-idea
+    kind: explanation
+    title:
+      uk: "Контрактний тест — схема, яку запускаєш ти"
+      en: "A contract test is the schema you run yourself"
+    body:
+      uk: |
+        Чекати, поки схема на телефоні когось зупинить, — пізно. **Контрактний тест** запускає ту саму схему з `contract.ts` на справжньому сервері ще до випуску: запит `GET /v1/records`, перевірка статусу, того, що тіло — список, і кожного запису.
+
+        Тест бере схему зі спільного модуля, а не пише власних перевірок: інакше в нього третя копія обіцянки. І він пропускає незнайомі поля — нове поле у відповіді сумісне, тест не має на нього падати.
+
+        Коли тест упав через перейменування, рішення не «оновити тест», а **нова версія**: `HabitV2`, `parseHabitV2`, маршрут `/v2/records` і тест для нього, а v1 і її тест лишаються як були.
+      en: |
+        Waiting until the schema on a phone stops someone is too late. A **contract test** runs the same schema from `contract.ts` against the real server before a release: a `GET /v1/records` request, a check of the status, of the body being a list, and of every record.
+
+        The test takes the schema from the shared module instead of writing its own checks: otherwise it holds a third copy of the promise. And it lets unknown fields pass — a new field in the answer is compatible, and the test must not fail on it.
+
+        When the test fails because of a rename, the answer is not “update the test” but **a new version**: `HabitV2`, `parseHabitV2`, the route `/v2/records` and a test for it, while v1 and its test stay as they were.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: schema-vs-tsc
+        from: re-09-03-api-models-runtime-schemas
+        prompt:
+          uk: "У React-клієнті вже є тип `ApiExpense`, і `tsc` не має претензій. Навіщо ще й схема під час виконання (`parseExpense`)?"
+          en: "The React client already has the type `ApiExpense`, and `tsc` has no complaints. Why also a runtime schema (`parseExpense`)?"
+        answer:
+          type: choice
+          options:
+            - id: data-not-code
+              text: { uk: "`tsc` перевіряє узгодженість коду, а схема — що прийшли дані потрібної форми", en: "`tsc` checks that the code is consistent; the schema checks that the data that arrived has the right shape" }
+            - id: duplicate
+              text: { uk: "Ні навіщо: це дублювання, досить написати `body as ApiExpense[]`", en: "No reason: it duplicates the type; `body as ApiExpense[]` is enough" }
+              why:
+                uk: "`as` — лише твердження для `tsc`. Під час виконання воно нічого не перевіряє, і сума текстом мовчки потрапить у підсумки."
+                en: "`as` is only a claim for `tsc`. At runtime it checks nothing, and an amount as text silently reaches the totals."
+            - id: speed
+              text: { uk: "Схема пришвидшує розбір JSON", en: "The schema makes parsing JSON faster" }
+              why:
+                uk: "Схема нічого не пришвидшує: вона додає перевірку кожного поля після `response.json()`."
+                en: "The schema speeds nothing up: it adds a check of every field after `response.json()`."
+          correct: [data-not-code]
+        explanation:
+          uk: "Відповідь `response.json()` `tsc` ніколи не бачив. Тому на межі дані розбирають схемою, а не приводять через `as`. Спільний модуль контракту дає цю саму схему і серверу, і всім клієнтам."
+          en: "`tsc` has never seen what `response.json()` returns. So at the boundary data is parsed with a schema, not cast with `as`. A shared contract module gives this very schema to the server and every client."
+
+  - id: habits-contract-test
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: habits-contract-test
+    entry: index.js
+    editable: [contract-test.ts]
+    capabilities: { network: loopback }
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+      kept: { uk: "Контракт v1 дотримано.", en: "Contract v1 kept." }
+      broken: { uk: "Контракт v1 порушено:", en: "Contract v1 broken:" }
+    limits:
+      uk: "Файли `.ts` тут виконуються через вилучення типів у Node.js: типи просто відкидаються, і ніхто їх не перевіряє. Перевіряє їх `tsc` у твоєму проєкті. З Node.js 22.18 вилучення типів увімкнене типово; на 22.13–22.17 платформа сама вмикає його прапорцем `--experimental-strip-types`."
+      en: "`.ts` files run here through Node.js type stripping: types are simply removed, and nothing checks them. `tsc` in your project is what checks them. From Node.js 22.18 type stripping is on by default; on 22.13–22.17 the platform turns it on itself with the `--experimental-strip-types` flag."
+    title:
+      uk: "Контрактний тест для API звичок"
+      en: "A contract test for the habits API"
+    instructions:
+      uk: |
+        `contract.ts` — спільний контракт v1 зі схемою `parseHabitV1(value)`, що повертає масив повідомлень (`[]` — запис правильний). `server.js` — API звичок. Обидва лише для читання. Допиши в `contract-test.ts` функцію `checkRecordsContract(base)`:
+
+        - запитай `GET ${base}/v1/records`;
+        - статус не 200 — поверни рівно `["status <статус>"]`, наприклад `["status 503"]`;
+        - тіло — не масив — поверни рівно `["body: expected a list"]`;
+        - інакше пропусти **кожен** запис через `parseHabitV1` і поверни всі його повідомлення з номером запису попереду: `"<номер>: <повідомлення>"`, наприклад `"2: active: expected boolean"`; поля, яких контракт не називає, — не проблема;
+        - немає проблем — `[]`.
+
+        **Перевірити** запускає твій тест на справжньому сервері й на серверах, що відійшли від контракту.
+      en: |
+        `contract.ts` is the shared contract v1 with the schema `parseHabitV1(value)`, which returns an array of messages (`[]` means the record is valid). `server.js` is the habits API. Both are read-only. In `contract-test.ts` finish `checkRecordsContract(base)`:
+
+        - request `GET ${base}/v1/records`;
+        - a status other than 200 — return exactly `["status <status>"]`, for example `["status 503"]`;
+        - a body that is not an array — return exactly `["body: expected a list"]`;
+        - otherwise pass **every** record through `parseHabitV1` and return all its messages with the record's index in front: `"<index>: <message>"`, for example `"2: active: expected boolean"`; fields the contract does not name are not a problem;
+        - no problems — `[]`.
+
+        **Check** runs your test against the real server and against servers that drifted from the contract.
+    testTitles:
+      "the real server keeps the contract":
+        uk: "Справжній сервер дотримується контракту"
+        en: "The real server keeps the contract"
+      "a field renamed on the server is reported for every record, with its index":
+        uk: "Перейменоване на сервері поле повідомляється для кожного запису, з його номером"
+        en: "A field renamed on the server is reported for every record, with its index"
+      "a wrong value is reported with the message of the shared schema":
+        uk: "Неправильне значення повідомляється текстом спільної схеми"
+        en: "A wrong value is reported with the message of the shared schema"
+      "extra fields are not problems":
+        uk: "Зайві поля — не проблема"
+        en: "Extra fields are not problems"
+      "a status other than 200 gives one problem: status N":
+        uk: "Статус не 200 дає одну проблему: `status N`"
+        en: "A status other than 200 gives one problem: `status N`"
+      "a body that is not a list gives one problem":
+        uk: "Тіло, що не є списком, дає одну проблему"
+        en: "A body that is not a list gives one problem"
+    hints:
+      nudge:
+        uk: "Спершу три ранні виходи по черзі: статус, чи масив, і лише потім — записи. Кожну перевірку запису вже вміє робити `parseHabitV1`."
+        en: "First three early exits in turn: the status, whether it is an array, and only then the records. `parseHabitV1` already knows how to check each record."
+      explanation:
+        uk: "`Array.isArray(body)` відповідає, чи тіло — масив. Для записів потрібні і номер, і повідомлення: `flatMap((item, index) => …)` дає обидва й одразу «розплющує» масиви повідомлень. Для API витрат це могло б виглядати як `` parseExpenseV1(item).map((error) => `${index}: ${error}`) ``."
+        en: "`Array.isArray(body)` tells whether the body is an array. For the records you need both the index and the messages: `flatMap((item, index) => …)` gives both and flattens the arrays of messages at once. For an expenses API it might look like `` parseExpenseV1(item).map((error) => `${index}: ${error}`) ``."
+    solutionNote:
+      uk: "Тест не має жодної власної перевірки поля — усі вони в спільному модулі. Тому, коли контракт v1 зміниться сумісно (нове необов’язкове поле), тест і далі проходить, а перейменування чи новий тип значення його валять, з номером запису. Падіння контрактного тесту — сигнал для `/v2`, а не для правки тесту."
+      en: "The test has no field checks of its own — all of them are in the shared module. So when contract v1 changes compatibly (a new optional field), the test still passes, while a rename or a new value type fails it, with the record's index. A failing contract test is a signal for `/v2`, not for editing the test."
+    feedback:
+      - when: { test: "the real server keeps the contract" }
+        message:
+          uk: "Ця перевірка запускає `server.js` і чекає `[]`. Якщо приходять повідомлення, звір їх із даними сервера: можливо, перевіряєш щось, чого немає в `parseHabitV1`."
+          en: "This check runs `server.js` and expects `[]`. If messages come back, compare them with the server's data: maybe you check something `parseHabitV1` does not."
+      - when: { test: "a field renamed on the server is reported for every record, with its index" }
+        message:
+          uk: "Ця перевірка відповідає трьома звичками, де `active` перейменовано на `isActive`, і чекає рівно `[\"0: active: expected boolean\", \"1: active: expected boolean\", \"2: active: expected boolean\"]`. Перевір кожен запис, а не лише перший."
+          en: "This check answers three habits where `active` became `isActive` and expects exactly `[\"0: active: expected boolean\", \"1: active: expected boolean\", \"2: active: expected boolean\"]`. Check every record, not only the first."
+      - when: { test: "a wrong value is reported with the message of the shared schema" }
+        message:
+          uk: "Ця перевірка відповідає звичкою з `frequency: \"monthly\"` і чекає рівно `[\"0: frequency: expected daily or weekly\"]` — текст, який повертає `parseHabitV1`."
+          en: "This check answers a habit with `frequency: \"monthly\"` and expects exactly `[\"0: frequency: expected daily or weekly\"]` — the text `parseHabitV1` returns."
+      - when: { test: "extra fields are not problems" }
+        message:
+          uk: "Ця перевірка додає звичці поле `color` і чекає `[]`. Нове поле у відповіді — сумісна зміна."
+          en: "This check adds a `color` field to a habit and expects `[]`. A new field in an answer is a compatible change."
+      - when: { test: "a status other than 200 gives one problem: status N" }
+        message:
+          uk: "Ця перевірка відповідає статусом 503 і порожнім списком і чекає рівно `[\"status 503\"]`. Перевір статус до тіла."
+          en: "This check answers with status 503 and an empty list and expects exactly `[\"status 503\"]`. Check the status before the body."
+      - when: { test: "a body that is not a list gives one problem" }
+        message:
+          uk: "Ця перевірка відповідає об’єктом `{ items: […] }` і чекає рівно `[\"body: expected a list\"]`, а не помилку під час перевірки. Спершу `Array.isArray`."
+          en: "This check answers the object `{ items: […] }` and expects exactly `[\"body: expected a list\"]`, not an error while checking. `Array.isArray` first."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-06
+    body:
+      uk: "Крок проєкту цього розділу ще не написаний. За планом курсу в ньому типи записів твого проєкту й схема з розділу React переїжджають в один спільний модуль контракту, який імпортують сервер, React-проєкт і, якщо є інструменти, нативний компаньйон; контрактний тест перевіряє `/v1/records` справжнього сервера, а несумісна зміна чекає на `/v2`."
+      en: "The project step of this unit is not written yet. According to the course plan, in it your project's record types and the schema from the React stage move into one shared contract module imported by the server, the React project and, when the tooling exists, the native companion; a contract test checks `/v1/records` of the real server, and a breaking change waits for `/v2`."
