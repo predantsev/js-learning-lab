@@ -4,6 +4,9 @@
 // failOffsetY range before the pan activated, and ACTIVATES when the finger leaves the activeOffsetX range.
 // The list starts scrolling once the finger has moved LIST_SLOP points vertically while nobody owns the
 // touch. LIST_SLOP is an example value: the real one is chosen by the platform.
+// Differs from the real library: only activeOffsetX and failOffsetY are modelled (no activeOffsetY,
+// failOffsetX, minDistance or velocity); one finger only; positions are replayed at once, not as touch
+// events over time; and the list is a plain rule here, not a native scroll view negotiating with the row.
 export const LIST_SLOP = 10;
 
 // path: finger positions in points relative to the touch-down point, in time order.
