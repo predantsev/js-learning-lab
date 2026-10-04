@@ -1,0 +1,345 @@
+id: no-10-06-secrets-secure-config
+unit: NO-10
+title:
+  uk: "Секрети та безпечна конфігурація"
+  en: "Secrets and secure config"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Брати секрети, як-от ключ підпису токенів, зі змінних середовища чи локального файла, який git ігнорує, а не з коду, і зупиняти запуск, коли секрету немає, він заглушка або закороткий."
+    en: "Load secrets such as the token signing key from env or a git-ignored local file, never from source, and fail fast when one is missing, a placeholder or too short."
+  - uk: "Не пускати секрети в журнали й відповіді з помилками та змінювати ключ підпису, приймаючи попередній ключ протягом обмеженого вікна."
+    en: "Keep secrets out of logs and error responses, and rotate a signing key by accepting the previous key during a bounded window."
+prerequisites: [no-10-05-ownership-least-privilege, no-01-02-scripts-process-env]
+subskills:
+  - { family: B-06, skill: "secrets and secure config", depth: intro }
+glossary: [secret-rotation]
+selfCheck: [predict-start, load-secrets]
+
+blocks:
+  - id: where-the-key-lives
+    kind: explanation
+    title:
+      uk: "Де живе ключ підпису"
+      en: "Where the signing key lives"
+    body:
+      uk: |
+        У третьому уроці ключ підпису токенів створювався під час запуску: `crypto.randomBytes(32)`. Для лабораторної досить, але після кожного перезапуску всі токени стають недійсними, а два процеси сервера не перевірять токени один одного. Тож ключ — це [[secret|секрет]], який сервер **отримує ззовні**.
+
+        Не з коду. Секрет у репозиторії лишається в історії git назавжди — наступний коміт, що його видаляє, нічого не стирає з попередніх. А «приватний» репозиторій бачать усі співавтори, CI, резервні копії й кожна копія на чиємусь ноутбуці. Секрет, що потрапив у git, уважають скомпрометованим і замінюють.
+
+        Звідки тоді:
+
+        - зі [[environment-variable|змінної середовища]]: `SESSION_SECRET=… node server.js` — сервер читає `process.env.SESSION_SECRET`;
+        - з локального файла, який git ігнорує (`.env` у `.gitignore`): Node.js 22 уміє завантажити його сам — прапорцем `node --env-file=.env server.js` чи функцією `process.loadEnvFile()`. У репозиторій кладуть лише зразок `sample.env` із заглушкою на кшталт `SESSION_SECRET=replace-me-with-32-random-bytes-in-base64url`.
+
+        Сам ключ створюють один раз: `node -e "console.log(crypto.randomBytes(32).toString('base64url'))"`.
+      en: |
+        In the third lesson the token signing key was created at start-up: `crypto.randomBytes(32)`. Fine for a lab, but after every restart all tokens become invalid, and two server processes cannot check each other's tokens. So the key is a [[secret]] that the server **gets from outside**.
+
+        Not from the code. A secret in a repository stays in the git history forever — the next commit that deletes it erases nothing from the earlier ones. And a “private” repository is seen by every collaborator, CI, backups and every copy on someone's laptop. A secret that reached git is treated as compromised and replaced.
+
+        So where from:
+
+        - from an [[environment-variable]]: `SESSION_SECRET=… node server.js` — the server reads `process.env.SESSION_SECRET`;
+        - from a local file that git ignores (`.env` in `.gitignore`): Node.js 22 can load it by itself — with the flag `node --env-file=.env server.js` or the function `process.loadEnvFile()`. Only a sample `sample.env` with a placeholder such as `SESSION_SECRET=replace-me-with-32-random-bytes-in-base64url` goes into the repository.
+
+        The key itself is created once: `node -e "console.log(crypto.randomBytes(32).toString('base64url'))"`.
+
+  - id: fail-fast-no-default
+    kind: explanation
+    title:
+      uk: "Без типового значення, зупинка на старті"
+      en: "No default value, stop at start-up"
+    body:
+      uk: |
+        Спокуслива зручність: `const key = process.env.SESSION_SECRET ?? 'dev-secret'`. Локально все працює одразу — і так само «працює» на сервері, де змінну забули задати. Токени підписано ключем, який лежить у публічному коді, і підробити їх може будь-хто. Помилки ніхто не побачить.
+
+        Тому секрети не мають типового значення, а перевіряються за правилом [[fail-fast]] — до того, як сервер прийме перший запит:
+
+        - немає значення — зупинка;
+        - значення — відома заглушка (`changeme`, той самий текст, що в `sample.env`) — зупинка;
+        - коротше за 32 символи — зупинка: такий «ключ» придумала людина, а не генератор.
+
+        Повідомлення про помилку називає **змінну й проблему**, але ніколи не значення: `SESSION_SECRET is too short`, а не `… too short: "my-own-key-2026"`. Те саме правило — для журналів і відповідей клієнтові: значення секрету не друкують ніде, навіть «для налагодження».
+      en: |
+        A tempting convenience: `const key = process.env.SESSION_SECRET ?? 'dev-secret'`. Locally everything works at once — and it “works” just the same on a server where the variable was forgotten. The tokens are signed with a key that sits in public code, and anyone can forge them. Nobody sees an error.
+
+        So secrets have no default value, and they are checked by the [[fail-fast]] rule — before the server accepts its first request:
+
+        - no value — stop;
+        - the value is a known placeholder (`changeme`, the same text as in `sample.env`) — stop;
+        - shorter than 32 characters — stop: such a “key” was made up by a person, not by a generator.
+
+        The error message names **the variable and the problem**, but never the value: `SESSION_SECRET is too short`, not `… too short: "my-own-key-2026"`. The same rule holds for logs and answers to clients: a secret's value is printed nowhere, not even “for debugging”.
+
+  - id: predict-start
+    kind: prediction
+    prompt:
+      uk: "Сервер перевіряє `SESSION_SECRET` під час запуску. Що надрукує код для трьох середовищ: змінну не задано; `changeme`; випадкові 43 символи?"
+      en: "The server checks `SESSION_SECRET` at start-up. What does the code print for three environments: the variable is not set; `changeme`; 43 random characters?"
+    code: |
+      function loadSecrets(env) {
+        const key = env.SESSION_SECRET;
+        if (key === undefined) throw new Error("SESSION_SECRET is not set");
+        if (key === "changeme" || key.length < 32) throw new Error("SESSION_SECRET is too weak");
+        return { key };
+      }
+
+      for (const env of [{}, { SESSION_SECRET: "changeme" }, { SESSION_SECRET: "q4Kz9vXyT0bN2mWcR7hLpE1sUaJ6dFgH8iOkY3wVtZx" }]) {
+        try {
+          loadSecrets(env);
+          console.log("started");
+        } catch (error) {
+          console.log(error.message);
+        }
+      }
+    verify:
+      logs: ["SESSION_SECRET is not set", "SESSION_SECRET is too weak", "started"]
+    answer:
+      type: choice
+      options:
+        - id: right
+          code: "SESSION_SECRET is not set\nSESSION_SECRET is too weak\nstarted"
+        - id: all-start
+          code: "started\nstarted\nstarted"
+          why:
+            uk: "Так було б із типовим значенням (`?? 'dev-secret'`) і без перевірок. Тут кожна умова кидає помилку ще до `return`, і сервер не стартує."
+            en: "That would happen with a default value (`?? 'dev-secret'`) and no checks. Here each condition throws before `return`, and the server does not start."
+        - id: leak
+          code: "SESSION_SECRET is not set\nSESSION_SECRET is too weak: changeme\nstarted"
+          why:
+            uk: "Повідомлення в коді не містить значення — і так і має бути: текст помилки потрапляє в журнали, а там секретові не місце."
+            en: "The message in the code does not contain the value — and that is how it must be: error text ends up in logs, and a secret has no place there."
+      correct: [right]
+    explanation:
+      uk: "Сервер зі слабким ключем не повинен запускатися взагалі: гучна зупинка на старті дешевша за тихо підроблені токени. І повідомлення називає лише змінну."
+      en: "A server with a weak key must not start at all: a loud stop at start-up is cheaper than quietly forged tokens. And the message names only the variable."
+
+  - id: predict-deleted-commit
+    kind: prediction
+    prompt:
+      uk: "Розробниця випадково закомітила справжній `SESSION_SECRET` у приватний репозиторій команди, помітила за годину й наступним комітом видалила рядок. Що тепер треба зробити з ключем?"
+      en: "A developer accidentally committed the real `SESSION_SECRET` to the team's private repository, noticed an hour later and deleted the line in the next commit. What has to be done with the key now?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: rotate
+          text:
+            uk: "Вважати ключ скомпрометованим: створити новий і змінити ключ на сервері"
+            en: "Treat the key as compromised: create a new one and change the key on the server"
+        - id: nothing
+          text:
+            uk: "Нічого: репозиторій приватний, а рядок уже видалено"
+            en: "Nothing: the repository is private, and the line has already been deleted"
+          why:
+            uk: "Попередній коміт і далі містить ключ: його бачить кожен, хто клонує репозиторій, і кожна копія, зроблена за цю годину. «Приватний» — це всі співавтори, CI й резервні копії."
+            en: "The earlier commit still contains the key: everyone who clones the repository sees it, and so does every copy made during that hour. “Private” means every collaborator, CI and the backups."
+        - id: rewrite
+          text:
+            uk: "Досить переписати історію git, щоб коміту з ключем не стало"
+            en: "Rewriting the git history so that the commit with the key is gone is enough"
+          why:
+            uk: "Переписана історія не повертає копій, які вже зробили інші. Прибрати ключ з історії варто, але сам ключ однаково міняють."
+            en: "Rewritten history does not bring back copies others have already made. Removing the key from the history is worth doing, but the key itself is replaced anyway."
+      correct: [rotate]
+    explanation:
+      uk: "Що потрапило в git, те потрапило до всіх, хто має доступ до репозиторію. Єдиний надійний крок — новий ключ; саме тому сервер має вміти змінити ключ без болю для користувачів."
+      en: "Whatever reached git reached everyone with access to the repository. The only reliable step is a new key — which is exactly why the server must be able to change keys painlessly for users."
+
+  - id: rotation
+    kind: explanation
+    title:
+      uk: "Зміна ключа без масового виходу"
+      en: "Changing the key without logging everyone out"
+    body:
+      uk: |
+        Якщо просто замінити ключ, кожен уже виданий токен перестане перевірятися — усіх викине із системи одночасно. [[secret-rotation|Ротація ключа]] робить це плавно:
+
+        1. Новий ключ стає **поточним** (`SESSION_SECRET`): ним підписують усі нові токени.
+        2. Старий стає **попереднім** (`SESSION_SECRET_PREVIOUS`): ним ще **перевіряють**, але вже не підписують.
+        3. Вікно обмежене (`SESSION_SECRET_PREVIOUS_UNTIL`): після цього моменту попередній ключ не приймається. Вікна досить, якщо воно не коротше за строк життя токена.
+
+        Вікно — не «поки не забудемо прибрати». Попередній ключ без кінцевої дати — це два дійсні ключі назавжди, і викрадений старий так само працює. Тому дата кінця обов’язкова, і без неї сервер не стартує.
+      en: |
+        Simply replacing the key makes every token already issued fail its check — everyone is thrown out at once. [[secret-rotation|Key rotation]] does it smoothly:
+
+        1. The new key becomes the **current** one (`SESSION_SECRET`): all new tokens are signed with it.
+        2. The old one becomes the **previous** one (`SESSION_SECRET_PREVIOUS`): it is still used to **verify**, but no longer to sign.
+        3. The window is bounded (`SESSION_SECRET_PREVIOUS_UNTIL`): after that moment the previous key is not accepted. The window is enough if it is no shorter than a token's lifetime.
+
+        The window is not “until we remember to remove it”. A previous key with no end date means two valid keys forever, and a stolen old one keeps working. So the end date is mandatory, and the server does not start without it.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: key-not-in-bundle
+        from: js-16-08-secrets-storage-privacy
+        prompt:
+          uk: "Вебсторінка показує курси валют із платного API, якому потрібен ключ. Де має лежати ключ?"
+          en: "A web page shows exchange rates from a paid API that needs a key. Where must the key live?"
+        answer:
+          type: choice
+          options:
+            - id: server-env
+              text:
+                uk: "У змінній середовища серверного процесу; сторінка звертається до свого сервера, а той — до API"
+                en: "In an environment variable of the server process; the page calls its own server, and that one calls the API"
+            - id: minified
+              text:
+                uk: "У клієнтському коді, але після мініфікації його ніхто не знайде"
+                en: "In the client code, but nobody finds it after minification"
+              why:
+                uk: "Мініфікація перейменовує змінні, але текст у лапках лишається як є. Усе, що читає клієнтський код, потрапляє в бандл, і будь-хто може його відкрити."
+                en: "Minification renames variables, but quoted text stays as it is. Everything client code reads ends up in the bundle, and anyone can open it."
+            - id: local-storage
+              text:
+                uk: "У `localStorage`, куди сторінка запише його під час першого запуску"
+                en: "In `localStorage`, where the page writes it on the first run"
+              why:
+                uk: "Щоб записати ключ у `localStorage`, сторінка мусить його мати — отже, він знову в клієнтському коді. До того ж `localStorage` читає будь-який скрипт того самого походження."
+                en: "To write the key into `localStorage` the page must have it — so it is in client code again. Besides, any script of the same origin reads `localStorage`."
+          correct: [server-env]
+        explanation:
+          uk: "У розділі про веббезпеку ключ ішов «на сервер»; тепер ти бачиш, як сервер його отримує: зі змінної середовища чи локального файла, з перевіркою на старті й без друку значення."
+          en: "In the web security unit the key went “to the server”; now you see how the server gets it: from an environment variable or a local file, with a check at start-up and without printing the value."
+
+  - id: secret-config
+    kind: example
+    runtime: isolated-node
+    dir: secret-config
+    entry: index.js
+    strings:
+      unset: { uk: "не задано", en: "not set" }
+      short: { uk: "короткий", en: "short" }
+      random: { uk: "32 випадкові байти", en: "32 random bytes" }
+      started: { uk: "сервер запущено", en: "server started" }
+      refused: { uk: "запуск зупинено", en: "start refused" }
+      oldToken: { uk: "токен, підписаний старим ключем, о", en: "a token signed with the old key, at" }
+    title:
+      uk: "Чотири середовища і зміна ключа"
+      en: "Four environments and a key change"
+    body:
+      uk: |
+        `config.js` перевіряє `SESSION_SECRET`. `index.js` пробує чотири середовища (замість справжнього `process.env` — звичайні об’єкти) і показує ротацію: токен, підписаний старим ключем, перевіряється до кінця вікна й після нього.
+
+        Натисни **Запустити**. Відмови друкуються в stderr (червоним) — так їх видно й у журналах сервера. Зверни увагу: у жодному рядку немає значення ключа.
+      en: |
+        `config.js` checks `SESSION_SECRET`. `index.js` tries four environments (plain objects instead of the real `process.env`) and shows rotation: a token signed with the old key is checked before the window closes and after it.
+
+        Press **Run**. Refusals are printed to stderr (in red) — that is how they show in a server's logs too. Notice that no line contains a key's value.
+    tryIt:
+      uk: |
+        1. У `config.js` додай значення до повідомлення про закороткий ключ: `` `SESSION_SECRET is too short: ${current}` `` — і запусти. Тепер ключ надруковано, а все, що друкується, потрапляє в журнали. Поверни як було.
+        2. У `index.js` заміни `'2026-03-02T12:00:00Z'` у `previousUntil` на `'2026-03-02T13:00:00Z'` і запусти: старий токен приймається ще годину — вікно задає саме ця дата.
+      en: |
+        1. In `config.js` add the value to the message about a short key: `` `SESSION_SECRET is too short: ${current}` `` — and run. Now the key is printed, and everything printed ends up in logs. Put it back.
+        2. In `index.js` replace `'2026-03-02T12:00:00Z'` in `previousUntil` with `'2026-03-02T13:00:00Z'` and run: the old token is accepted one more hour — exactly that date sets the window.
+
+  - id: load-secrets
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: load-secrets
+    entry: index.js
+    editable: [secrets.js]
+    strings:
+      unset: { uk: "не задано", en: "not set" }
+      short: { uk: "короткий", en: "short" }
+      noUntil: { uk: "попередній без дати кінця", en: "previous with no end date" }
+      rotation: { uk: "ротація", en: "rotation" }
+      started: { uk: "запущено", en: "started" }
+    title:
+      uk: "Завантаження ключів підпису"
+      en: "Loading the signing keys"
+    instructions:
+      uk: |
+        У `secrets.js` напиши:
+
+        - `loadSecrets(env)` → `{ current, previous, previousUntil }`. `current` — `env.SESSION_SECRET`. Кидай `new ConfigError(…)`, якщо його немає (чи це порожній текст), якщо він — одне зі значень `PLACEHOLDERS` у будь-якому регістрі або коротший за 32 символи. Типового значення немає.
+        - Якщо задано `SESSION_SECRET_PREVIOUS`, він має пройти ті самі перевірки, а `SESSION_SECRET_PREVIOUS_UNTIL` — бути датою, яку розуміє `Date.parse`; інакше `ConfigError`. `previousUntil` — мілісекунди від `Date.parse`. Без попереднього ключа `previous` і `previousUntil` — `null`.
+        - Повідомлення помилки називає змінну й проблему, але ніколи не містить значення; `loadSecrets` нічого не друкує зі значенням ключа.
+        - `keysFor(secrets, now)` → `[current]`, а поки `now < previousUntil` — `[current, previous]`.
+
+        **Запустити** пробує п’ять середовищ із лабораторними ключами.
+      en: |
+        In `secrets.js` write:
+
+        - `loadSecrets(env)` → `{ current, previous, previousUntil }`. `current` is `env.SESSION_SECRET`. Throw `new ConfigError(…)` if it is missing (or empty text), if it is one of the `PLACEHOLDERS` values in any letter case, or if it is shorter than 32 characters. There is no default value.
+        - If `SESSION_SECRET_PREVIOUS` is set, it must pass the same checks, and `SESSION_SECRET_PREVIOUS_UNTIL` must be a date `Date.parse` understands; otherwise `ConfigError`. `previousUntil` is the milliseconds from `Date.parse`. Without a previous key, `previous` and `previousUntil` are `null`.
+        - An error message names the variable and the problem but never contains the value; `loadSecrets` prints nothing with a key's value.
+        - `keysFor(secrets, now)` → `[current]`, and while `now < previousUntil`, `[current, previous]`.
+
+        **Run** tries five environments with lab keys.
+    testTitles:
+      "a strong SESSION_SECRET loads, with no previous key":
+        uk: "Сильний `SESSION_SECRET` завантажується, попереднього ключа немає"
+        en: "A strong `SESSION_SECRET` loads, with no previous key"
+      "a missing SESSION_SECRET throws a ConfigError that names the variable":
+        uk: "Без `SESSION_SECRET` — `ConfigError`, що називає змінну"
+        en: "A missing `SESSION_SECRET` throws a `ConfigError` that names the variable"
+      "a placeholder value is refused in any letter case":
+        uk: "Заглушку відхилено в будь-якому регістрі"
+        en: "A placeholder value is refused in any letter case"
+      "a key shorter than 32 characters is refused; exactly 32 is accepted":
+        uk: "Ключ коротший за 32 символи відхилено; рівно 32 — прийнято"
+        en: "A key shorter than 32 characters is refused; exactly 32 is accepted"
+      "the error message never contains the secret value":
+        uk: "Повідомлення помилки ніколи не містить значення секрету"
+        en: "The error message never contains the secret value"
+      "loading prints nothing that contains a key":
+        uk: "Під час завантаження не друкується нічого з ключем"
+        en: "Loading prints nothing that contains a key"
+      "a previous key needs a valid SESSION_SECRET_PREVIOUS_UNTIL and must be strong too":
+        uk: "Попередній ключ потребує правильного `SESSION_SECRET_PREVIOUS_UNTIL` і теж має бути сильним"
+        en: "A previous key needs a valid `SESSION_SECRET_PREVIOUS_UNTIL` and must be strong too"
+      "keysFor accepts the previous key only before previousUntil":
+        uk: "`keysFor` приймає попередній ключ лише до `previousUntil`"
+        en: "`keysFor` accepts the previous key only before `previousUntil`"
+    hints:
+      nudge:
+        uk: "Обидва ключі перевіряються однаково — напиши одну допоміжну функцію `(name, value)`, яка або повертає значення, або кидає `ConfigError` з назвою змінної."
+        en: "Both keys are checked the same way — write one helper `(name, value)` that either returns the value or throws a `ConfigError` with the variable's name."
+      explanation:
+        uk: "Для порту перевірка могла б бути `if (!/^\\d+$/.test(value)) throw new ConfigError(`${name} must be a whole number`)` — назва в повідомленні, значення ні. Регістр зрівнюють через `value.toLowerCase()` перед `PLACEHOLDERS.includes`. `Date.parse('soon')` дає `NaN` — перевір його через `Number.isNaN`."
+        en: "For a port the check could be `if (!/^\\d+$/.test(value)) throw new ConfigError(`${name} must be a whole number`)` — the name in the message, the value not. Letter case is evened out with `value.toLowerCase()` before `PLACEHOLDERS.includes`. `Date.parse('soon')` gives `NaN` — check it with `Number.isNaN`."
+    solutionNote:
+      uk: "Одна функція перевіряє обидва ключі, тож правила не розійдуться. Типового значення немає: забута змінна зупиняє запуск, а не тихо підставляє відомий ключ. Повідомлення кажуть, що не так, але не із чим. Попередній ключ живе лише до дати в конфігурації — вікно ротації обмежене самою конфігурацією."
+      en: "One function checks both keys, so the rules cannot drift apart. There is no default value: a forgotten variable stops the start instead of quietly substituting a known key. The messages say what is wrong but not with what. The previous key lives only until the date in the configuration — the rotation window is bounded by the configuration itself."
+    feedback:
+      - when: { test: "a missing SESSION_SECRET throws a ConfigError that names the variable" }
+        message:
+          uk: "Ця перевірка дає `{}` і `{ SESSION_SECRET: '' }` і чекає `ConfigError` з `SESSION_SECRET` у повідомленні. Типове значення замість відсутнього ключа цю перевірку не пройде."
+          en: "This check passes `{}` and `{ SESSION_SECRET: '' }` and expects a `ConfigError` with `SESSION_SECRET` in the message. A default value in place of a missing key does not pass it."
+      - when: { test: "a placeholder value is refused in any letter case" }
+        message:
+          uk: "Ця перевірка дає `changeme`, `CHANGEME` і заглушку із `sample.env` у двох регістрах і чекає `ConfigError` для кожного. Довга заглушка проходить перевірку довжини — її ловить лише список `PLACEHOLDERS`."
+          en: "This check passes `changeme`, `CHANGEME` and the `sample.env` placeholder in two letter cases and expects a `ConfigError` for each. The long placeholder passes the length check — only the `PLACEHOLDERS` list catches it."
+      - when: { test: "a key shorter than 32 characters is refused; exactly 32 is accepted" }
+        message:
+          uk: "Ця перевірка чекає `ConfigError` для 31 символу й жодної помилки для рівно 32."
+          en: "This check expects a `ConfigError` for 31 characters and no error for exactly 32."
+      - when: { test: "the error message never contains the secret value" }
+        message:
+          uk: "Ця перевірка дає закороткий ключ і заглушку й чекає `ConfigError`, у повідомленні якого немає самого значення."
+          en: "This check passes a too-short key and a placeholder and expects a `ConfigError` whose message does not contain the value itself."
+      - when: { test: "loading prints nothing that contains a key" }
+        message:
+          uk: "Ця перевірка читає все, що надруковано під час виклику `loadSecrets`, і чекає, що жоден рядок не містить ключа."
+          en: "This check reads everything printed while `loadSecrets` runs and expects no line to contain a key."
+      - when: { test: "keysFor accepts the previous key only before previousUntil" }
+        message:
+          uk: "Ця перевірка чекає `[current, previous]` за 1 мс до `previousUntil` і лише `[current]` рівно в цю мить."
+          en: "This check expects `[current, previous]` 1 ms before `previousUntil` and only `[current]` at that exact moment."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-10 немає, а однокористувацькому проєктові секрети не потрібні. Якщо твій `server/` читає налаштування на кшталт порту зі змінних середовища й перевіряє їх на старті, як в уроці про скрипти й `process.env`, — саме туди колись прийшов би й секрет: із `process.env`, без типового значення, ніколи в журналі."
+      en: "Your project does not change in this unit: NO-10 has no project step, and the single-user project needs no secrets. If your `server/` reads settings such as the port from environment variables and checks them at start-up, as in the lesson on scripts and `process.env`, that is exactly where a secret would arrive some day: from `process.env`, with no default value, never in a log."

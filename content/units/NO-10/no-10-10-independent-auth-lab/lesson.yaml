@@ -1,0 +1,480 @@
+id: no-10-10-independent-auth-lab
+unit: NO-10
+title:
+  uk: "Самостійно: лабораторна з автентифікації, сесій і власності"
+  en: "Independent: auth/session/ownership lab"
+kind: assessment
+minutes: 40
+contentVersion: 1
+objectives:
+  - uk: "Без підказок побудувати локальний сервіс для синтетичних користувачів із перевіреним хешуванням паролів, сесіями, перевіркою власності, секретами з конфігурації, обмеженням входу із захистом від CSRF і лімітами розміру й часу."
+    en: "Build, without hints, a local service for synthetic users with vetted password hashing, sessions, ownership checks, secrets from config, login throttling with CSRF protection and size and time limits."
+  - uk: "Скласти його модель загроз і тести, що відхиляють доступ до чужих даних, прострочені чи відкликані сесії та підроблені чи завеликі запити, і пояснити вибір сесії замість токена та чому жодна криптографія не саморобна."
+    en: "Write its threat model and tests that reject cross-user access, expired or revoked sessions and forged or oversized requests, and explain the session-versus-token choice and why no cryptography is home-made."
+purpose:
+  uk: "Перевірити, що ти сам складаєш усе з лабораторної — дві брами, хеш пароля, сесії зі строками й відкликанням, власність, секрети, ліміти входу й Origin — в одному сервісі, і доводиш кожен контроль справжніми запитами: спершу перевірками платформи, потім власним скриптом атаки у своєму терміналі."
+  en: "To check that you put everything from the lab together on your own — two gates, a password hash, sessions with expiry and revocation, ownership, secrets, login limits and Origin — in one service, and prove every control with real requests: first with the platform's checks, then with an attack script in your own terminal."
+prerequisites: [no-10-09-debug-cross-user-access]
+subskills:
+  - { family: B-06, skill: "authn vs authz", depth: assess }
+  - { family: B-06, skill: "local synthetic identity", depth: assess }
+  - { family: B-06, skill: "vetted password hashing", depth: assess }
+  - { family: B-06, skill: "secrets and secure config", depth: assess }
+  - { family: B-06, skill: "login abuse controls/CSRF context", depth: assess }
+  - { family: B-07, skill: "rate/size/time limits", depth: assess }
+  - { family: B-07, skill: "threat model", depth: assess }
+glossary: []
+selfCheck: [bookmarks-service]
+
+blocks:
+  - id: what-you-build
+    kind: explanation
+    title:
+      uk: "Що ти будуєш"
+      en: "What you build"
+    body:
+      uk: |
+        Сервіс закладок для трьох синтетичних користувачів, що поєднує всю лабораторну. Підказок немає: умова вправи — увесь контракт, а перевірки надсилають твоєму серверу справжні HTTP-запити й рухають його годинник.
+
+        Потім, у локальному завданні, ти запустиш сервіс у своєму терміналі на `127.0.0.1`, натравиш на нього наданий скрипт атаки, запишеш його звіт і модель загроз — і відповіси на два питання: чому сесія, а не токен, і чому жоден рядок криптографії не саморобний.
+
+        Ні облікових записів у хмарі, ні сервісів входу, ні npm-пакетів тут не треба: лише `node:crypto`, `node:http` і синтетичні користувачі.
+      en: |
+        A bookmarks service for three synthetic users that puts the whole lab together. There are no hints: the exercise's task is the whole contract, and the checks send your server real HTTP requests and move its clock.
+
+        Then, in the local task, you start the service in your own terminal on `127.0.0.1`, set the supplied attack script on it, record its report and a threat model — and answer two questions: why a session and not a token, and why not a single line of cryptography is home-made.
+
+        No cloud accounts, no sign-in services and no npm packages are needed here: only `node:crypto`, `node:http` and synthetic users.
+
+  - id: bookmarks-service
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: isolated-node
+    dir: bookmarks-service
+    entry: index.js
+    editable: [app.js, passwords.js, index.js]
+    capabilities: { network: loopback, timeoutMs: 30000, testTimeoutMs: 8000 }
+    strings:
+      docs: { uk: "Документація", en: "Documentation" }
+      recipes: { uk: "Рецепти", en: "Recipes" }
+      maps: { uk: "Мапи", en: "Maps" }
+      music: { uk: "Музика", en: "Music" }
+    title:
+      uk: "Сервіс закладок для синтетичних користувачів"
+      en: "A bookmarks service for synthetic users"
+    instructions:
+      uk: |
+        **Дані.** `users.js` (лише для читання) — користувачі `u-01`, `u-02`, `u-03` зі збереженими записами scrypt (`passwordHash`) і закладки `b-1`…`b-4`. Лабораторні паролі: `sunflower-42`, `river-stone-7`, `quiet-harbor-19`. `http-helpers.js` має `sendJson`, `sendError` і `readJsonBody(request, maxBytes)`, яка кидає помилку зі `status: 413` чи `400`.
+
+        **`passwords.js`:** `hashPassword(password)` → `{ algorithm: 'scrypt', N, r, p, salt, hash }` (нова випадкова сіль на 16 байтів, base64); `verifyPassword(password, stored)` обчислює scrypt зі збереженими сіллю й параметрами й порівнює через `crypto.timingSafeEqual`.
+
+        **`app.js`:** `createApp({ env, clock })` повертає `http.Server`; `clock.now()` — мілісекунди.
+
+        - `env.SESSION_SECRET` відсутній, заглушка (`changeme`) чи коротший за 32 символи — `createApp` кидає помилку, у повідомленні якої немає значення.
+        - `POST /login` `{ user, password }` → 204 і cookie `sid` (32 випадкові байти, `HttpOnly`, `SameSite=Lax`, `Path=/`). Невідомий користувач і хибний пароль — однакова відповідь 401. Тіло понад 1024 байти — 413.
+        - 5 невдалих входів за 60 с для облікового запису чи для адреси — далі 429 із `Retry-After` у секундах, поки вікно не мине.
+        - Сесія діє не більше 30 хвилин без запитів і не більше 2 годин від входу (обидві межі включно); інакше 401. `POST /logout` → 204, і стара cookie більше не працює.
+        - `GET /bookmarks` — лише закладки власника; `GET` і `DELETE /bookmarks/:id` для чужої чи відсутньої закладки — 404; `POST /bookmarks` `{ title, url }` → 201. Без сесії — 401.
+        - Будь-який запит, крім `GET`, `HEAD` і `OPTIONS`, із заголовком `Origin`, відмінним від `http://127.0.0.1:4310`, — 403. Без `Origin` — пропускай.
+        - Сервер обмежує час надходження запиту: `requestTimeout` і `headersTimeout` — не більше 5000 мс.
+        - Помилки — `{ error: { code, details } }`.
+      en: |
+        **Data.** `users.js` (read-only) holds the users `u-01`, `u-02`, `u-03` with stored scrypt records (`passwordHash`) and the bookmarks `b-1`…`b-4`. The lab passwords: `sunflower-42`, `river-stone-7`, `quiet-harbor-19`. `http-helpers.js` has `sendJson`, `sendError` and `readJsonBody(request, maxBytes)`, which throws an error with `status: 413` or `400`.
+
+        **`passwords.js`:** `hashPassword(password)` → `{ algorithm: 'scrypt', N, r, p, salt, hash }` (a new random 16-byte salt, base64); `verifyPassword(password, stored)` computes scrypt with the stored salt and parameters and compares with `crypto.timingSafeEqual`.
+
+        **`app.js`:** `createApp({ env, clock })` returns an `http.Server`; `clock.now()` is milliseconds.
+
+        - `env.SESSION_SECRET` missing, a placeholder (`changeme`) or shorter than 32 characters — `createApp` throws an error whose message does not contain the value.
+        - `POST /login` `{ user, password }` → 204 and a `sid` cookie (32 random bytes, `HttpOnly`, `SameSite=Lax`, `Path=/`). An unknown user and a wrong password get the same 401 answer. A body over 1024 bytes — 413.
+        - 5 failed logins within 60 s for an account or for an address — then 429 with `Retry-After` in seconds until the window has passed.
+        - A session lasts at most 30 minutes without requests and at most 2 hours after login (both limits inclusive); otherwise 401. `POST /logout` → 204, and the old cookie no longer works.
+        - `GET /bookmarks` — only the owner's bookmarks; `GET` and `DELETE /bookmarks/:id` for someone else's or a missing bookmark — 404; `POST /bookmarks` `{ title, url }` → 201. Without a session — 401.
+        - Any request except `GET`, `HEAD` and `OPTIONS` with an `Origin` header other than `http://127.0.0.1:4310` — 403. Without `Origin` — let it through.
+        - The server limits how long a request may take to arrive: `requestTimeout` and `headersTimeout` at most 5000 ms.
+        - Errors are `{ error: { code, details } }`.
+    testTitles:
+      "passwords: scrypt with a random 16-byte salt and stored parameters":
+        uk: "Паролі: scrypt із випадковою сіллю на 16 байтів і збереженими параметрами"
+        en: "Passwords: scrypt with a random 16-byte salt and stored parameters"
+      "createApp refuses a missing, placeholder or short SESSION_SECRET without printing it":
+        uk: "`createApp` відмовляє без `SESSION_SECRET`, із заглушкою чи коротким ключем і не показує значення"
+        en: "`createApp` refuses a missing, placeholder or short `SESSION_SECRET` without printing it"
+      "login sets an HttpOnly, SameSite=Lax session cookie; unknown user and wrong password get the same 401":
+        uk: "Вхід ставить cookie сесії з `HttpOnly` і `SameSite=Lax`; невідомий користувач і хибний пароль отримують однаковий 401"
+        en: "Login sets an `HttpOnly`, `SameSite=Lax` session cookie; unknown user and wrong password get the same 401"
+      "the sixth failed login in a minute answers 429 with Retry-After; a minute later login works":
+        uk: "Шостий невдалий вхід за хвилину — 429 з `Retry-After`; коли хвилина минула, вхід працює"
+        en: "The sixth failed login in a minute answers 429 with `Retry-After`; a minute later login works"
+      "a login body over 1 KB answers 413":
+        uk: "Тіло входу понад 1 КБ — 413"
+        en: "A login body over 1 KB answers 413"
+      "bookmarks are scoped to their owner: foreign ones answer 404 and stay":
+        uk: "Закладки обмежено власником: чужі — 404, і вони лишаються"
+        en: "Bookmarks are scoped to their owner: foreign ones answer 404 and stay"
+      "sessions expire after 30 idle minutes or 2 hours, and logout revokes them":
+        uk: "Сесії закінчуються після 30 хвилин бездіяльності чи 2 годин, а вихід їх відкликає"
+        en: "Sessions expire after 30 idle minutes or 2 hours, and logout revokes them"
+      "a state-changing request from a foreign origin, even another port, answers 403":
+        uk: "Запит, що змінює дані, із чужого походження — навіть з іншого порту — 403"
+        en: "A state-changing request from a foreign origin, even another port, answers 403"
+      "the server limits how long a request may take to arrive: at most 5 s":
+        uk: "Сервер обмежує час надходження запиту: не більше 5 с"
+        en: "The server limits how long a request may take to arrive: at most 5 s"
+    solutionNote:
+      uk: "Еталонне рішення перевіряє ключ до створення сервера; на кожен запит спершу дивиться на `Origin`, потім — вхід або сесія (строки з `clock.now()`, кожен запит оновлює `lastSeenAt`), а пошук закладки завжди містить власника. Лічильники невдач — окремо для облікового запису й адреси, з вікном і стелею кількості, і перевіряються до scrypt. Невідомий користувач перевіряється проти справжнього запису, щоб обидві невдачі коштували однаково. `requestTimeout` і `headersTimeout` задано в `http.createServer`."
+      en: "The reference solution checks the key before creating the server; on every request it looks at `Origin` first, then the login or the session (limits from `clock.now()`, every request updates `lastSeenAt`), and the bookmark lookup always includes the owner. The failure counters are separate per account and per address, with a window and a ceiling on their number, and are checked before scrypt. An unknown user is checked against a real record, so both failures cost the same. `requestTimeout` and `headersTimeout` are set in `http.createServer`."
+    feedback:
+      - when: { test: "the sixth failed login in a minute answers 429 with Retry-After; a minute later login works" }
+        message:
+          uk: "Ця перевірка надсилає шість хибних паролів для `u-02` і чекає `[401, 401, 401, 401, 401, 429]` з `Retry-After: 60`, а через 61 с за годинником — успішний вхід."
+          en: "This check sends six wrong passwords for `u-02` and expects `[401, 401, 401, 401, 401, 429]` with `Retry-After: 60`, then a successful login 61 s later by the clock."
+      - when: { test: "sessions expire after 30 idle minutes or 2 hours, and logout revokes them" }
+        message:
+          uk: "Ця перевірка чекає 401 через 30 хв + 1 мс без запитів; 200 для сесії, що робить запит кожні 20 хвилин, аж до рівно 2 годин після входу, і 401 на 1 мс пізніше; і 401 для cookie після `POST /logout`."
+          en: "This check expects 401 after 30 min + 1 ms without requests; 200 for a session that makes a request every 20 minutes up to exactly 2 hours after login, and 401 1 ms later; and 401 for the cookie after `POST /logout`."
+      - when: { test: "the server limits how long a request may take to arrive: at most 5 s" }
+        message:
+          uk: "Ця перевірка читає `server.requestTimeout` і `server.headersTimeout` сервера з `createApp` і чекає для обох значення від 1 до 5000 мс."
+          en: "This check reads `server.requestTimeout` and `server.headersTimeout` of the server from `createApp` and expects a value from 1 to 5000 ms for both."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: secret-only-on-server
+        from: re-11-04-secrets-server-only
+        prompt:
+          uk: "Вебклієнт сервісу закладок зібрано Vite. Розробник хоче, щоб клієнт сам підписував запити ключем `SESSION_SECRET`, і називає змінну `VITE_SESSION_SECRET`. Що станеться з ключем?"
+          en: "The bookmarks service's web client is built with Vite. A developer wants the client to sign requests itself with the `SESSION_SECRET` key and names the variable `VITE_SESSION_SECRET`. What happens to the key?"
+        answer:
+          type: choice
+          options:
+            - id: in-bundle
+              text:
+                uk: "Він потрапить у бандл відкритим текстом — будь-хто зможе підписувати запити"
+                en: "It ends up in the bundle as plain text — anyone can sign requests"
+            - id: hidden
+              text:
+                uk: "Vite сховає його, бо змінна з префіксом захищена"
+                en: "Vite hides it, because a prefixed variable is protected"
+              why:
+                uk: "Префікс `VITE_` — це оголошення «це публічне», а не захист: значення записується в бандл."
+                en: "The `VITE_` prefix is a declaration “this is public”, not a protection: the value is written into the bundle."
+            - id: server-only
+              text:
+                uk: "Нічого: змінні середовища бачить лише сервер"
+                en: "Nothing: only the server sees environment variables"
+              why:
+                uk: "Те, що клієнтський код читає зі змінних, збирач підставляє в бандл під час збирання."
+                en: "Whatever client code reads from variables, the bundler substitutes into the bundle at build time."
+          correct: [in-bundle]
+        explanation:
+          uk: "Ключ підпису живе лише в процесі сервера: зі змінної середовища чи локального `.env`, без префікса для клієнта. Клієнт його не має й мати не повинен — сесію за нього тримає сервер."
+          en: "The signing key lives only in the server process: from an environment variable or a local `.env`, with no client prefix. The client does not have it and must not — the server keeps the session for it."
+
+  - id: attack-your-service
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Скрипт атаки проти твого сервісу"
+      en: "An attack script against your service"
+    intro:
+      uk: |
+        Тепер запусти свій сервіс як справжній процес у своєму терміналі й перевір його не своїми тестами, а чужим скриптом атаки. Скрипт надсилає справжні HTTP-запити на `127.0.0.1:4320`: читання чужої закладки, запит без сесії, підроблений `Origin`, відкликану сесію, завелике тіло, розвідку імен і перебір паролів. Сесію, що закінчилася за часом, скрипт не перевіряє — чекати 30 хвилин він не може; цю межу вже довели перевірки платформи з фіксованим годинником.
+
+        Під час підготовки уроку все виконано на macOS із Node.js v25.2.1 і npm 11.6.2; вивід нижче справжній. Пакети не встановлюються. Прапорець `--env-file` є в Node.js 22 (сторінка «Command-line API» документації Node.js 22), але на Node.js 22, Windows і Linux цей урок не перевіряли.
+
+        **Крок 3 — `server.mjs`:**
+
+        ```js
+        // Starts the bookmarks service on 127.0.0.1:4320 with the key from the environment.
+        import { createApp } from './app.js';
+
+        const server = createApp({ env: process.env });
+        server.listen(4320, '127.0.0.1', () => console.log('bookmarks service on http://127.0.0.1:4320'));
+        ```
+
+        **Крок 3 — `attack.mjs`:**
+
+        ```js
+        // Attack script for the bookmarks lab: real HTTP requests against YOUR service on loopback.
+        // Synthetic users only. Usage: node attack.mjs [base URL, default http://127.0.0.1:4320]
+        const base = process.argv[2] ?? 'http://127.0.0.1:4320';
+        const call = (method, path, headers = {}, body) =>
+          fetch(base + path, { method, headers, body, signal: AbortSignal.timeout(3000) });
+        const login = (user, password) =>
+          call('POST', '/login', { 'content-type': 'application/json' }, JSON.stringify({ user, password }));
+        const cookieOf = (response) => response.headers.getSetCookie()[0]?.split(';')[0] ?? '';
+
+        const checks = [
+          ['cross-user read answers 404', async () => {
+            const cookie = cookieOf(await login('u-02', 'river-stone-7'));
+            return (await call('GET', '/bookmarks/b-1', { cookie })).status === 404;
+          }],
+          ['no session answers 401', async () => (await call('GET', '/bookmarks')).status === 401],
+          ['forged Origin answers 403', async () => {
+            const cookie = cookieOf(await login('u-01', 'sunflower-42'));
+            const body = JSON.stringify({ title: 'x', url: 'https://example.org/x' });
+            const headers = { cookie, origin: 'http://127.0.0.1:5173', 'content-type': 'application/json' };
+            return (await call('POST', '/bookmarks', headers, body)).status === 403;
+          }],
+          ['revoked session answers 401', async () => {
+            const cookie = cookieOf(await login('u-03', 'quiet-harbor-19'));
+            await call('POST', '/logout', { cookie });
+            return (await call('GET', '/bookmarks', { cookie })).status === 401;
+          }],
+          ['oversized login answers 413', async () => (await login('u-01', 'y'.repeat(3000))).status === 413],
+          ['unknown user and wrong password look the same', async () => {
+            const unknown = await login('u-77', 'guess');
+            const wrong = await login('u-01', 'guess');
+            return unknown.status === wrong.status && (await unknown.text()) === (await wrong.text());
+          }],
+          ['brute force meets 429 with Retry-After', async () => {
+            for (let attempt = 1; attempt <= 6; attempt += 1) {
+              const response = await login('u-03', `guess-${attempt}`);
+              if (response.status === 429) return Boolean(response.headers.get('retry-after'));
+            }
+            return false;
+          }],
+        ];
+
+        let held = 0;
+        for (const [name, run] of checks) {
+          let ok = false;
+          try {
+            ok = await run();
+          } catch (error) {
+            console.log(`  (${name}: ${error.name} ${error.message})`);
+          }
+          if (ok) held += 1;
+          console.log(`${ok ? 'HELD  ' : 'BROKEN'} ${name}`);
+        }
+        console.log(`${held}/${checks.length} controls held against ${base}`);
+        process.exitCode = held === checks.length ? 0 : 1;
+        ```
+
+        **Крок 6 — звіт для еталонного рішення:**
+
+        ```text
+        HELD   cross-user read answers 404
+        HELD   no session answers 401
+        HELD   forged Origin answers 403
+        HELD   revoked session answers 401
+        HELD   oversized login answers 413
+        HELD   unknown user and wrong password look the same
+        HELD   brute force meets 429 with Retry-After
+        7/7 controls held against http://127.0.0.1:4320
+        ```
+
+        **Крок 7 — коли перевірку `Origin` прибрано:**
+
+        ```text
+        HELD   cross-user read answers 404
+        HELD   no session answers 401
+        BROKEN forged Origin answers 403
+        …
+        6/7 controls held against http://127.0.0.1:4320
+        ```
+
+        **Крок 8 — шаблон `THREATS.md`:**
+
+        ```text
+        | Asset | Threat | Entry point | Control | Proof |
+        |---|---|---|---|---|
+        | … | … | … | … | attack.mjs: "…" or a platform check |
+
+        Why a session and not a token: …
+        Why no home-made cryptography: …
+        ```
+      en: |
+        Now start your service as a real process in your own terminal and check it not with your own tests but with someone else's attack script. The script sends real HTTP requests to `127.0.0.1:4320`: reading someone else's bookmark, a request with no session, a forged `Origin`, a revoked session, an oversized body, name probing and password guessing. The script does not check a session that has expired by time — it cannot wait 30 minutes; the platform's checks with a fixed clock have already proven that limit.
+
+        While preparing the lesson everything was run on macOS with Node.js v25.2.1 and npm 11.6.2; the output below is real. No packages are installed. The `--env-file` flag exists in Node.js 22 (the “Command-line API” page of the Node.js 22 documentation), but this lesson was not checked on Node.js 22, Windows or Linux.
+
+        **Step 3 — `server.mjs`:**
+
+        ```js
+        // Starts the bookmarks service on 127.0.0.1:4320 with the key from the environment.
+        import { createApp } from './app.js';
+
+        const server = createApp({ env: process.env });
+        server.listen(4320, '127.0.0.1', () => console.log('bookmarks service on http://127.0.0.1:4320'));
+        ```
+
+        **Step 3 — `attack.mjs`:**
+
+        ```js
+        // Attack script for the bookmarks lab: real HTTP requests against YOUR service on loopback.
+        // Synthetic users only. Usage: node attack.mjs [base URL, default http://127.0.0.1:4320]
+        const base = process.argv[2] ?? 'http://127.0.0.1:4320';
+        const call = (method, path, headers = {}, body) =>
+          fetch(base + path, { method, headers, body, signal: AbortSignal.timeout(3000) });
+        const login = (user, password) =>
+          call('POST', '/login', { 'content-type': 'application/json' }, JSON.stringify({ user, password }));
+        const cookieOf = (response) => response.headers.getSetCookie()[0]?.split(';')[0] ?? '';
+
+        const checks = [
+          ['cross-user read answers 404', async () => {
+            const cookie = cookieOf(await login('u-02', 'river-stone-7'));
+            return (await call('GET', '/bookmarks/b-1', { cookie })).status === 404;
+          }],
+          ['no session answers 401', async () => (await call('GET', '/bookmarks')).status === 401],
+          ['forged Origin answers 403', async () => {
+            const cookie = cookieOf(await login('u-01', 'sunflower-42'));
+            const body = JSON.stringify({ title: 'x', url: 'https://example.org/x' });
+            const headers = { cookie, origin: 'http://127.0.0.1:5173', 'content-type': 'application/json' };
+            return (await call('POST', '/bookmarks', headers, body)).status === 403;
+          }],
+          ['revoked session answers 401', async () => {
+            const cookie = cookieOf(await login('u-03', 'quiet-harbor-19'));
+            await call('POST', '/logout', { cookie });
+            return (await call('GET', '/bookmarks', { cookie })).status === 401;
+          }],
+          ['oversized login answers 413', async () => (await login('u-01', 'y'.repeat(3000))).status === 413],
+          ['unknown user and wrong password look the same', async () => {
+            const unknown = await login('u-77', 'guess');
+            const wrong = await login('u-01', 'guess');
+            return unknown.status === wrong.status && (await unknown.text()) === (await wrong.text());
+          }],
+          ['brute force meets 429 with Retry-After', async () => {
+            for (let attempt = 1; attempt <= 6; attempt += 1) {
+              const response = await login('u-03', `guess-${attempt}`);
+              if (response.status === 429) return Boolean(response.headers.get('retry-after'));
+            }
+            return false;
+          }],
+        ];
+
+        let held = 0;
+        for (const [name, run] of checks) {
+          let ok = false;
+          try {
+            ok = await run();
+          } catch (error) {
+            console.log(`  (${name}: ${error.name} ${error.message})`);
+          }
+          if (ok) held += 1;
+          console.log(`${ok ? 'HELD  ' : 'BROKEN'} ${name}`);
+        }
+        console.log(`${held}/${checks.length} controls held against ${base}`);
+        process.exitCode = held === checks.length ? 0 : 1;
+        ```
+
+        **Step 6 — the report for the reference solution:**
+
+        ```text
+        HELD   cross-user read answers 404
+        HELD   no session answers 401
+        HELD   forged Origin answers 403
+        HELD   revoked session answers 401
+        HELD   oversized login answers 413
+        HELD   unknown user and wrong password look the same
+        HELD   brute force meets 429 with Retry-After
+        7/7 controls held against http://127.0.0.1:4320
+        ```
+
+        **Step 7 — when the `Origin` check was removed:**
+
+        ```text
+        HELD   cross-user read answers 404
+        HELD   no session answers 401
+        BROKEN forged Origin answers 403
+        …
+        6/7 controls held against http://127.0.0.1:4320
+        ```
+
+        **Step 8 — a template for `THREATS.md`:**
+
+        ```text
+        | Asset | Threat | Entry point | Control | Proof |
+        |---|---|---|---|---|
+        | … | … | … | … | attack.mjs: "…" or a platform check |
+
+        Why a session and not a token: …
+        Why no home-made cryptography: …
+        ```
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1", en: "checked with v25.2.1" } }
+      - { name: "npm", version: "10+", note: { uk: "перевірено з 11.6.2; потрібен лише для `npm init` і `npm pkg set`", en: "checked with 11.6.2; needed only for `npm init` and `npm pkg set`" } }
+    steps:
+      - text:
+          uk: "Створи теку для лабораторної й перейди в неї."
+          en: "Create a folder for the lab and go into it."
+        command: "mkdir -p ~/js-course/no10-bookmarks\ncd ~/js-course/no10-bookmarks"
+      - text:
+          uk: "Створи `package.json` і познач теку як ES-модулі."
+          en: "Create `package.json` and mark the folder as ES modules."
+        command: "npm init -y\nnpm pkg set type=module"
+        expect:
+          uk: "`package.json` з рядком `\"type\": \"module\"`."
+          en: "A `package.json` with the line `\"type\": \"module\"`."
+      - text:
+          uk: "У VS Code створи в цій теці `app.js`, `passwords.js`, `users.js` і `http-helpers.js` із вмістом однойменних файлів вправи «Сервіс закладок» (`app.js` і `passwords.js` — твоє рішення, що пройшло перевірки). Створи `server.mjs` і `attack.mjs` з текстом із кроку 3 вступу."
+          en: "In VS Code create `app.js`, `passwords.js`, `users.js` and `http-helpers.js` in this folder with the contents of the files with the same names from the exercise “A bookmarks service” (`app.js` and `passwords.js` are your solution that passed the checks). Create `server.mjs` and `attack.mjs` with the text from step 3 of the introduction."
+      - text:
+          uk: "Створи локальний файл `.env` із новим випадковим ключем і переконайся, що git його не побачить, якщо колись зробиш тут репозиторій. Ключ на екран не виводиться: команда пише його одразу у файл."
+          en: "Create a local `.env` file with a new random key and make sure git will not see it if you ever make a repository here. The key is not shown on screen: the command writes it straight into the file."
+        command: "node -e \"console.log('SESSION_SECRET=' + crypto.randomBytes(32).toString('base64url'))\" > .env\necho .env > .gitignore"
+      - text:
+          uk: "Запусти сервіс із ключем із `.env`. Термінал лишиться зайнятим — це нормально."
+          en: "Start the service with the key from `.env`. The terminal stays busy — that is expected."
+        command: "node --env-file=.env server.mjs"
+        expect:
+          uk: "Рядок `bookmarks service on http://127.0.0.1:4320`."
+          en: "The line `bookmarks service on http://127.0.0.1:4320`."
+      - text:
+          uk: "У другому терміналі (у VS Code — кнопка «+» на панелі терміналу) перейди в ту саму теку й запусти скрипт атаки."
+          en: "In a second terminal (in VS Code, the “+” button on the terminal panel) go to the same folder and run the attack script."
+        command: "cd ~/js-course/no10-bookmarks\nnode attack.mjs"
+        expect:
+          uk: "Сім рядків `HELD` і `7/7 controls held`, як у кроці 6 вступу."
+          en: "Seven `HELD` lines and `7/7 controls held`, as in step 6 of the introduction."
+      - text:
+          uk: "Доведи, що скрипт справді ловить вади: зупини сервер (`Ctrl+C` у першому терміналі), тимчасово закоментуй у `app.js` свою перевірку `Origin`, знову запусти сервер і скрипт. Потім поверни перевірку, перезапусти сервер і запусти скрипт ще раз."
+          en: "Prove that the script really catches defects: stop the server (`Ctrl+C` in the first terminal), temporarily comment out your `Origin` check in `app.js`, start the server and the script again. Then restore the check, restart the server and run the script once more."
+        command: "node attack.mjs"
+        expect:
+          uk: "Спершу `BROKEN forged Origin answers 403` і `6/7`, як у кроці 7 вступу; після відновлення — знову `7/7`."
+          en: "First `BROKEN forged Origin answers 403` and `6/7`, as in step 7 of the introduction; after restoring — `7/7` again."
+      - text:
+          uk: "Створи `THREATS.md` за шаблоном із кроку 8 вступу: щонайменше шість рядків (цінність, загроза, точка входу, контроль, доказ — рядок звіту `attack.mjs` чи перевірка платформи) і дві відповіді: чому сесія в cookie, а не токен, для цього сервісу, і чому жоден рядок криптографії не саморобний. Додай під таблицю останній звіт скрипта."
+          en: "Create `THREATS.md` from the template in step 8 of the introduction: at least six rows (asset, threat, entry point, control, proof — a line of the `attack.mjs` report or a platform check) and two answers: why a session in a cookie and not a token for this service, and why not a single line of cryptography is home-made. Add the script's last report under the table."
+    verify:
+      - id: seven-held
+        text:
+          uk: "`node attack.mjs` проти мого сервісу надрукував `7/7 controls held`."
+          en: "`node attack.mjs` against my service printed `7/7 controls held`."
+      - id: caught-break
+        text:
+          uk: "Коли я прибрав перевірку `Origin`, скрипт показав `BROKEN`, а після відновлення — знову `7/7`."
+          en: "When I removed the `Origin` check, the script showed `BROKEN`, and `7/7` again after restoring it."
+      - id: threats-written
+        text:
+          uk: "`THREATS.md` має щонайменше шість рядків із доказом для кожного та обидві відповіді."
+          en: "`THREATS.md` has at least six rows with a proof for each and both answers."
+    troubleshooting:
+      - problem:
+          uk: "Другий запуск `node attack.mjs` поспіль показує `BROKEN cross-user read answers 404`"
+          en: "A second `node attack.mjs` run in a row shows `BROKEN cross-user read answers 404`"
+        fix:
+          uk: "Це твій ліміт входу працює: перший запуск зробив п’ять невдалих входів з адреси `127.0.0.1`, і ще хвилину всі входи з неї отримують 429 — скрипт не може навіть увійти. Перезапусти сервер (`Ctrl+C` і знову `node --env-file=.env server.mjs`) або почекай хвилину. Так відтворено під час підготовки уроку."
+          en: "That is your login limit working: the first run made five failed logins from the address `127.0.0.1`, and for another minute every login from it gets 429 — the script cannot even log in. Restart the server (`Ctrl+C` and `node --env-file=.env server.mjs` again) or wait a minute. Reproduced while preparing the lesson."
+      - problem:
+          uk: "Сервер не стартує: `Error: SESSION_SECRET is not set`"
+          en: "The server does not start: `Error: SESSION_SECRET is not set`"
+        fix:
+          uk: "Сервер запущено без `--env-file=.env` або файла `.env` немає в поточній теці. Перевір `ls -a` і команду запуску. Текст помилки — той, що пише твій `app.js`; у еталонному рішенні він саме такий."
+          en: "The server was started without `--env-file=.env`, or there is no `.env` file in the current folder. Check with `ls -a` and check the start command. The error text is what your `app.js` writes; in the reference solution it is exactly this."
+      - problem:
+          uk: "`attack.mjs` друкує `(… TypeError fetch failed)` у кожному рядку"
+          en: "`attack.mjs` prints `(… TypeError fetch failed)` on every line"
+        fix:
+          uk: "Сервер не слухає на `127.0.0.1:4320`: він не запущений або впав. Подивись на перший термінал. Точний текст цієї помилки на різних версіях Node.js під час підготовки уроку не перевіряли."
+          en: "The server is not listening on `127.0.0.1:4320`: it is not running or has crashed. Look at the first terminal. The exact text of this error on different Node.js versions was not checked while preparing the lesson."
+    recovery:
+      uk: "Тека `~/js-course/no10-bookmarks` нічого не змінює в інших твоїх проєктах. Якщо `app.js` зіпсувався, знову скопіюй своє рішення з вправи; `.env` можна перестворити тією самою командою — старі сесії просто стануть недійсними."
+      en: "The folder `~/js-course/no10-bookmarks` changes nothing in your other projects. If `app.js` got damaged, copy your solution from the exercise again; `.env` can be recreated with the same command — old sessions simply become invalid."
