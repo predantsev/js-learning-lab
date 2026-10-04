@@ -1,0 +1,304 @@
+id: no-07-06-api-tests-real-http
+unit: NO-07
+title:
+  uk: "Тести API через справжній HTTP"
+  en: "API tests over real HTTP"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Запускати сервер у тесті на вільному порту, надсилати справжні запити й закривати сервер і його тимчасову теку даних у teardown."
+    en: "Start the server on an ephemeral port inside a test, send real requests and close the server and its temp data directory in teardown."
+  - uk: "Обирати для перевірки між unit-тестом, тестом через справжній HTTP і тестом репозиторію на тимчасовій теці та називати, що сховає замоканий репозиторій."
+    en: "Choose for a given check between a unit test, a real-HTTP test and a repository test on a temp directory, and name what a mocked repository would hide."
+prerequisites: [no-07-05-tls-proxy-exposure, js-09-05-mocks-vs-real]
+subskills:
+  - { family: B-09, skill: "unit/integration/realHTTP/DB tests", depth: intro }
+  - { family: B-09, skill: "fixture/mocks limits", depth: intro }
+glossary: [ephemeral-port]
+selfCheck: [predict-which-test, records-tests]
+
+blocks:
+  - id: three-levels
+    kind: explanation
+    title:
+      uk: "Три рівні тестів сервера"
+      en: "Three levels of server tests"
+    body:
+      uk: |
+        Попередні уроки додали межі: `400`, `413`, `Connection: close`, таймаути. Як довести, що вони працюють і не зламаються завтра? Тест можна писати на трьох рівнях:
+
+        | Рівень | Що викликає | Що бачить | Чого не бачить |
+        |---|---|---|---|
+        | unit | функцію напряму: `parseListQuery(params)` | логіку правила | HTTP: статус, заголовки, ліміти сервера |
+        | репозиторій на тимчасовій теці | `repo.save(record)` зі справжнім диском | що записано у файл | маршрути й межу |
+        | справжній HTTP | `fetch` до сервера на вільному порту | усе, що побачить клієнт, і файл на диску | — (але повільніший) |
+
+        Замоканий репозиторій (об’єкт, що лише запам’ятовує виклики) прискорює тест, але **ховає** найцікавіше: чи дані справді дійшли до диска, чи вони серіалізуються, чи не впаде запис на дивному `id`. Тест із моком доводить лише те, що обробник **покликав** `save`.
+
+        Правило: логіку правила — unit-тестом, а кожен захист на межі (статус, заголовок, ліміт, файл на диску) — хоча б одним тестом через справжній HTTP.
+      en: |
+        The previous lessons added limits at the edge: `400`, `413`, `Connection: close`, timeouts. How do you prove they work and will not break tomorrow? A test can be written at three levels:
+
+        | Level | What it calls | What it sees | What it does not see |
+        |---|---|---|---|
+        | unit | the function directly: `parseListQuery(params)` | the rule's logic | HTTP: the status, the headers, the server's limits |
+        | repository on a temp folder | `repo.save(record)` with a real disk | what was written to the file | the routes and the edge |
+        | real HTTP | `fetch` to a server on a free port | everything a client sees, and the file on disk | — (but it is slower) |
+
+        A mocked repository (an object that only remembers the calls) makes a test faster but **hides** the most interesting part: whether the data really reached the disk, whether it serializes, whether writing fails on a strange `id`. A test with a mock proves only that the handler **called** `save`.
+
+        The rule: a rule's logic gets a unit test, and every protection at the edge (a status, a header, a limit, a file on disk) gets at least one test over real HTTP.
+
+  - id: port-zero
+    kind: explanation
+    title:
+      uk: "Порт 0 і прибирання після тесту"
+      en: "Port 0 and cleaning up after a test"
+    body:
+      uk: |
+        Тест через HTTP запускає **свій** сервер: `server.listen(0, '127.0.0.1')`. Порт `0` означає «дай будь-який вільний» — це [[ephemeral-port|ефемерний порт]], а справжній номер повертає `server.address().port`. Так тести не конфліктують ні між собою, ні із сервером, що вже працює на `4310`.
+
+        Кожен тест отримує ще й свою теку даних: `mkdtemp(path.join(process.cwd(), 'test-data-'))` створює теку з випадковим кінцем назви. Тоді тести не бачать файлів один одного.
+
+        А після тесту — **teardown**: `t.after(fn)` у `node:test` реєструє функцію, що виконається після тесту, навіть якщо той упав. Вона закриває сервер (`server.close()`) і видаляє теку (`rm(dataDir, { recursive: true, force: true })`). Сервер, якого ніхто не закрив, тримає процес живим: звіт `node:test` так і не надрукує підсумок, а команда не завершиться.
+      en: |
+        A test over HTTP starts **its own** server: `server.listen(0, '127.0.0.1')`. Port `0` means “give me any free one” — an [[ephemeral-port]], and `server.address().port` returns the real number. That way tests clash neither with each other nor with a server already running on `4310`.
+
+        Each test also gets its own data folder: `mkdtemp(path.join(process.cwd(), 'test-data-'))` creates a folder whose name ends in random characters. Then tests do not see each other's files.
+
+        And after the test comes **teardown**: `t.after(fn)` in `node:test` registers a function that runs after the test, even when it failed. It closes the server (`server.close()`) and removes the folder (`rm(dataDir, { recursive: true, force: true })`). A server nobody closed keeps the process alive: the `node:test` report never prints its summary, and the command never ends.
+
+  - id: test-flow
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Один тест через справжній HTTP"
+      en: "One test over real HTTP"
+    textEquivalent:
+      uk: "Тест запускає сервер на порту 0, і система дає вільний порт. Тест надсилає POST /records з новим записом. Сервер записує файл w-07.json у тимчасову теку тесту й відповідає 201. Тест читає w-07.json з теки й порівнює вміст із надісланим. У teardown тест закриває сервер і видаляє теку. З замоканим репозиторієм кроку запису на диск не було б зовсім, тож тест не помітив би, що файл не створюється."
+      en: "The test starts the server on port 0, and the system gives it a free port. The test sends POST /records with a new record. The server writes the file w-07.json into the test's temp folder and answers 201. The test reads w-07.json from the folder and compares its contents with what it sent. In teardown the test closes the server and removes the folder. With a mocked repository the step that writes to disk would not happen at all, so the test would not notice that the file is never created."
+    spec:
+      actors:
+        - { id: test, label: { uk: "Тест", en: "Test" } }
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+        - { id: disk, label: { uk: "Тимчасова тека", en: "Temp folder" } }
+      messages:
+        - from: test
+          to: server
+          label: "listen(0, '127.0.0.1')"
+          caption:
+            uk: "Тест запускає свій сервер на порту `0` — система вибирає вільний, а `server.address().port` каже який."
+            en: "The test starts its own server on port `0` — the system picks a free one, and `server.address().port` says which."
+        - from: test
+          to: server
+          label: "POST /records"
+          note: { uk: "{ id: \"w-07\", … }", en: "{ id: \"w-07\", … }" }
+          caption:
+            uk: "Справжній запит через `fetch`: проходить ліміт тіла, перевірку `id`, розбір JSON — усю межу."
+            en: "A real request through `fetch`: it goes through the body limit, the `id` check, JSON parsing — the whole edge."
+        - from: server
+          to: disk
+          label: { uk: "запис w-07.json", en: "write w-07.json" }
+          caption:
+            uk: "Сервер пише файл у теку цього тесту. Із замоканим репозиторієм цього кроку не було б зовсім."
+            en: "The server writes the file into this test's folder. With a mocked repository this step would not happen at all."
+        - from: server
+          to: test
+          kind: return
+          label: "201 Created"
+          caption:
+            uk: "Відповідь `201` — але сама по собі вона ще не доводить, що файл з’явився."
+            en: "The answer is `201` — but on its own it does not yet prove that the file appeared."
+        - from: test
+          to: disk
+          label: { uk: "читання w-07.json", en: "read w-07.json" }
+          caption:
+            uk: "Тест читає файл і порівнює вміст із надісланим. Ось тепер запис на диску доведено."
+            en: "The test reads the file and compares the contents with what it sent. Now the record on disk is proven."
+        - from: test
+          to: server
+          label: "close() + rm(dataDir)"
+          caption:
+            uk: "Teardown: сервер закрито, теку видалено. Наступний тест почне із чистого місця."
+            en: "Teardown: the server is closed, the folder removed. The next test starts from a clean place."
+
+  - id: predict-which-test
+    kind: prediction
+    prompt:
+      uk: "Сервер витрат має два дефекти: відповідь на `GET /expenses` іде без заголовка `Content-Type`, а ліміт тіла випадково піднято з 1 КБ до 1 ГБ. Є три тести: (1) unit-тест, що викликає функцію-обробник напряму з об’єктом-підробкою замість `response`; (2) тест маршруту із замоканим репозиторієм, що перевіряє, чи покликано `save`; (3) тест `node:test`, що запускає сервер на порту `0` і надсилає `fetch`, зокрема тіло на 2 КБ. Який тест помітить **обидва** дефекти?"
+      en: "An expenses server has two defects: the answer to `GET /expenses` goes out without a `Content-Type` header, and the body limit was accidentally raised from 1 KB to 1 GB. There are three tests: (1) a unit test that calls the handler function directly with a fake object instead of `response`; (2) a route test with a mocked repository that checks whether `save` was called; (3) a `node:test` test that starts the server on port `0` and sends `fetch`, including a 2 KB body. Which test notices **both** defects?"
+    answer:
+      type: choice
+      options:
+        - id: real-http
+          text:
+            uk: "Лише тест 3, через справжній HTTP"
+            en: "Only test 3, over real HTTP"
+        - id: unit
+          text:
+            uk: "Тест 1: він викликає саме той код, де дефекти"
+            en: "Test 1: it calls exactly the code where the defects are"
+          why:
+            uk: "Об’єкт-підробка приймає будь-які заголовки, а ліміт тіла живе на межі сервера, до якої unit-тест не доходить."
+            en: "A fake object accepts any headers, and the body limit lives at the server's edge, which a unit test never reaches."
+        - id: mock
+          text:
+            uk: "Тест 2: якщо `save` покликано, усе працює"
+            en: "Test 2: if `save` was called, everything works"
+          why:
+            uk: "Мок доводить лише виклик `save`. Тіло на 1 ГБ теж дійде до `save`, а заголовків відповіді цей тест не читає."
+            en: "The mock proves only that `save` was called. A 1 GB body would reach `save` too, and this test does not read the answer's headers."
+      correct: [real-http]
+    explanation:
+      uk: "Заголовки й ліміти — частина HTTP-межі, і побачити їх може лише клієнт, що говорить HTTP. Тому для кожного захисту на межі потрібен хоча б один тест через справжній запит."
+      en: "Headers and limits are part of the HTTP edge, and only a client that speaks HTTP can see them. So every protection at the edge needs at least one test with a real request."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: fake-hides
+        from: js-09-05-mocks-vs-real
+        prompt:
+          uk: "Тест замінює `fetch` підробкою, що на будь-яку адресу відповідає `ok: true` і заготовленим списком справ. У `loadTasks` хтось змінив адресу на неправильну. Чи помітить це тест?"
+          en: "A test replaces `fetch` with a fake that answers any address with `ok: true` and a prepared list of tasks. Someone changed the address in `loadTasks` to a wrong one. Does the test notice?"
+        answer:
+          type: choice
+          options:
+            - id: "no"
+              text:
+                uk: "Ні: підробка не дивиться на адресу й відповідає так само"
+                en: "No: the fake does not look at the address and answers the same"
+            - id: "yes"
+              text:
+                uk: "Так: тест проходить через увесь код `loadTasks`"
+                en: "Yes: the test runs through all of `loadTasks`"
+              why:
+                uk: "Код справді виконується, але підробка відповідає однаково на будь-яку адресу, тож те, що бачить тест, не змінюється."
+                en: "The code does run, but the fake answers the same for any address, so what the test sees does not change."
+          correct: ["no"]
+        explanation:
+          uk: "Тест із підробкою доводить лише одне: **якщо** відповідь саме така, код обробляє її правильно. Чи правильна адреса й що насправді надсилає сервер — цей тест не знає."
+          en: "A test with a fake proves just one thing: **if** the answer is exactly that, the code handles it correctly. Whether the address is right and what the server really sends — this test does not know."
+
+  - id: expenses-suite
+    kind: example
+    runtime: isolated-node
+    dir: expenses-suite
+    entry: index.js
+    capabilities: { network: loopback, timeoutMs: 5000 }
+    strings:
+      lunch: { uk: "Обід", en: "Lunch" }
+    title:
+      uk: "node:test проти справжнього сервера"
+      en: "node:test against a real server"
+    body:
+      uk: |
+        `app.js` — API витрат, що зберігає кожну витрату окремим JSON-файлом. `index.js` — три тести на вбудованому `node:test`: кожен через `startServer(t)` отримує свій сервер на порту `0`, свою теку `test-data-…` і teardown у `t.after`. Файл з `node:test` запускається звичайним `node index.js` — так і запускає його платформа.
+
+        Натисни **Запустити**: три рядки `✔` і підсумок `ℹ tests 3 … ℹ pass 3 ℹ fail 0` — так звіт виглядає на Node.js 25.2.1, де ми це запускали. За документацією Node.js 22, коли вивід іде не в термінал, як на платформі, типовий звіт має формат TAP: `ok 1 - …` і `# pass 3`; на Node.js 22 ми цього не запускали. Перший тест не вірить самому `201` — він читає файл `e-06.json` з теки.
+      en: |
+        `app.js` is an expenses API that stores every expense as its own JSON file. `index.js` holds three tests on the built-in `node:test`: through `startServer(t)` each gets its own server on port `0`, its own `test-data-…` folder and a teardown in `t.after`. A file with `node:test` runs with a plain `node index.js` — which is how the platform runs it.
+
+        Press **Run**: three `✔` lines and the summary `ℹ tests 3 … ℹ pass 3 ℹ fail 0` — that is how the report looks on Node.js 25.2.1, where we ran it. According to the Node.js 22 documentation, when the output does not go to a terminal, as on the platform, the default report uses the TAP format: `ok 1 - …` and `# pass 3`; we did not run it on Node.js 22. The first test does not trust the `201` alone — it reads the file `e-06.json` from the folder.
+    tryIt:
+      uk: |
+        1. У `app.js` закоментуй рядок коду `await writeFile(…)` і запусти. Перший тест падає на читанні файлу (`ENOENT`), хоча статус `201` той самий.
+        2. Поверни рядок. Тепер у `index.js` у `t.after` видали `server.close();` і запусти. Рядки трьох тестів з’являються, але підсумку немає: сервери тримають процес живим, і за 5 секунд платформа зупиняє програму як таку, що працює задовго.
+        3. Поверни `server.close();`.
+      en: |
+        1. In `app.js` comment out the line of code `await writeFile(…)` and run. The first test fails on reading the file (`ENOENT`), even though the status is still `201`.
+        2. Put the line back. Now in `index.js`, in `t.after`, delete `server.close();` and run. The lines of the three tests appear, but there is no summary: the servers keep the process alive, and after 5 seconds the platform stops the program as running too long.
+        3. Put `server.close();` back.
+
+  - id: records-tests
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: records-tests
+    entry: index.js
+    editable: [records.test.js]
+    capabilities: { network: loopback }
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+    title:
+      uk: "Тести POST /records через HTTP"
+      en: "Tests of POST /records over HTTP"
+    instructions:
+      uk: |
+        `app.js` — API записів списку бажань (його правила — у коментарі на початку файлу). У `records.test.js` вже є `startServer(t)` і один тест. Допиши тести так, щоб вони доводили три речі:
+
+        - правильний запис отримує `201` **і справді з’являється** — у файлі `<id>.json` у теці тесту або у відповіді `GET /records/<id>`;
+        - тіло понад 1024 байти отримує `413`;
+        - `id`, що виходить за теку (`../w-09`), отримує `400`.
+
+        Як і раніше, кожен тест запускає свій сервер і свою теку та прибирає за собою в `t.after`. Тести мають вигляд `node:test`, але імпортують `test` з `testing.js` — маленького двійника, якого вміють запускати перевірки платформи.
+
+        Перевірки запускають твої тести ще кілька разів: на правильному API (усі мають пройти) і на версіях з одним прихованим дефектом — без запису на диск, без ліміту, без перевірки `id` (хоч один тест має впасти).
+      en: |
+        `app.js` is the wishlist records API (its rules are in the comment at the top of the file). `records.test.js` already has `startServer(t)` and one test. Finish the tests so that they prove three things:
+
+        - a valid record gets `201` **and really appears** — in the file `<id>.json` in the test's folder or in the answer to `GET /records/<id>`;
+        - a body over 1024 bytes gets `413`;
+        - an `id` that leaves the folder (`../w-09`) gets `400`.
+
+        As before, each test starts its own server and its own folder and cleans up in `t.after`. The tests look like `node:test`, but they import `test` from `testing.js` — a small twin that the platform's checks can run.
+
+        The checks run your tests a few more times: on the correct API (all must pass) and on versions with one hidden defect — no write to disk, no limit, no `id` check (at least one test must fail).
+    testTitles:
+      "your tests pass on the correct API":
+        uk: "Твої тести проходять на правильному API"
+        en: "Your tests pass on the correct API"
+      "your tests fail when a record is answered with 201 but never written to disk":
+        uk: "Твої тести падають, коли запис отримує `201`, але не потрапляє на диск"
+        en: "Your tests fail when a record is answered with `201` but never written to disk"
+      "your tests fail when the 1024-byte limit is missing":
+        uk: "Твої тести падають без ліміту в 1024 байти"
+        en: "Your tests fail when the 1024-byte limit is missing"
+      "your tests fail when any id is accepted":
+        uk: "Твої тести падають, коли приймається будь-який `id`"
+        en: "Your tests fail when any `id` is accepted"
+      "every test closes its server and removes its data folder":
+        uk: "Кожен тест закриває свій сервер і видаляє свою теку даних"
+        en: "Every test closes its server and removes its data folder"
+    hints:
+      nudge:
+        uk: "`startServer(t)` уже повертає `dataDir` — теку, куди сервер пише файли. Що треба прочитати, щоб переконатися, що запис не лише «прийнято», а й збережено?"
+        en: "`startServer(t)` already returns `dataDir` — the folder the server writes its files into. What do you need to read to be sure a record was not only “accepted” but also stored?"
+      explanation:
+        uk: "Тест на межу — це запит, який межа має зупинити, і перевірка статусу. Для ліміту потрібне тіло, довше за 1024 байти: `'x'.repeat(n)` у полі запису легко його зробить. Для диска підійде `readFile(path.join(dataDir, …), 'utf8')` і `assert.deepEqual` з тим, що надіслав. Наприклад, тест «порожня назва дає 400» мав би вигляд `const response = await post(base, { id: 'w-11', name: '' }); assert.equal(response.status, 400);`."
+        en: "A test of the edge is a request the edge must stop, plus a status check. For the limit you need a body longer than 1024 bytes: `'x'.repeat(n)` in a field of the record makes one easily. For the disk, `readFile(path.join(dataDir, …), 'utf8')` and `assert.deepEqual` with what you sent will do. For example, a test “an empty name gives 400” would look like `const response = await post(base, { id: 'w-11', name: '' }); assert.equal(response.status, 400);`."
+    solutionNote:
+      uk: "Кожен тест відповідає одному захисту й надсилає справжній запит, тож дефект на будь-якому рівні — у ліміті, у перевірці `id`, у записі на диск — ламає саме його. Тест на `201` без читання файлу пройшов би й на сервері, що нічого не зберігає."
+      en: "Each test matches one protection and sends a real request, so a defect at any level — in the limit, in the `id` check, in writing to disk — breaks exactly that test. A test of `201` without reading the file would pass on a server that stores nothing as well."
+    feedback:
+      - when: { test: "your tests pass on the correct API" }
+        message:
+          uk: "Ця перевірка запускає твої тести на правильному API й чекає, що всі пройдуть. Подивись у консоль: `✖` показує, який тест упав і чому. Успішне створення відповідає `201`, а не `200`."
+          en: "This check runs your tests on the correct API and expects all of them to pass. Look at the console: `✖` shows which test failed and why. A successful creation answers `201`, not `200`."
+      - when: { test: "your tests fail when a record is answered with 201 but never written to disk" }
+        message:
+          uk: "Ця перевірка вмикає дефект: сервер відповідає `201`, але файл не пише. Хоч один тест має це помітити — прочитай файл з `dataDir` або зроби `GET /records/<id>`."
+          en: "This check switches on a defect: the server answers `201` but writes no file. At least one test must notice — read the file from `dataDir` or do `GET /records/<id>`."
+      - when: { test: "your tests fail when the 1024-byte limit is missing" }
+        message:
+          uk: "Ця перевірка прибирає ліміт тіла. Потрібен тест, що надсилає понад 1024 байти й чекає `413`."
+          en: "This check removes the body limit. You need a test that sends more than 1024 bytes and expects `413`."
+      - when: { test: "your tests fail when any id is accepted" }
+        message:
+          uk: "Ця перевірка вимикає перевірку `id`. Потрібен тест, що надсилає `id` на кшталт `../w-09` і чекає `400`."
+          en: "This check turns off the `id` check. You need a test that sends an `id` like `../w-09` and expects `400`."
+      - when: { test: "every test closes its server and removes its data folder" }
+        message:
+          uk: "Ця перевірка після запуску твоїх тестів чекає, що жоден сервер не слухає й не лишилось тек `test-data-…`. У `t.after` мають бути і `server.close()`, і `rm(dataDir, { recursive: true, force: true })`."
+          en: "After running your tests this check expects no server to be listening and no `test-data-…` folders left. `t.after` needs both `server.close()` and `rm(dataDir, { recursive: true, force: true })`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-07
+    body:
+      uk: "У кроці проєкту для кожного правила межі твого API — ліміту, перевірки query, імені файлу — буде хоча б один тест через справжній HTTP з власною тимчасовою текою, уже на справжньому `node:test`."
+      en: "In the project step every edge rule of your API — the limit, the query check, the file name — gets at least one test over real HTTP with its own temp folder, on the real `node:test` this time."
