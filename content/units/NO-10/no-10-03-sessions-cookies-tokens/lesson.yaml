@@ -1,0 +1,387 @@
+id: no-10-03-sessions-cookies-tokens
+unit: NO-10
+title:
+  uk: "Сесії та cookies проти токенів"
+  en: "Sessions and cookies vs tokens"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Після входу видати непрозорий випадковий ідентифікатор сесії, тримати стан сесії на сервері й надсилати ідентифікатор у cookie з HttpOnly, SameSite і Path (і Secure для HTTPS)."
+    en: "Issue an opaque random session id after login, keep the session state on the server and send the id in a cookie with HttpOnly, SameSite and Path (and Secure for HTTPS deployments)."
+  - uk: "Порівняти серверну сесію з підписаним bearer-токеном за відкликанням, розміром, місцем зберігання й вразливістю до XSS і вибрати одне для поданого клієнта."
+    en: "Compare a server-side session with a signed bearer token on revocation, size, storage location and exposure to XSS, and choose one for a stated client."
+prerequisites: [no-10-02-identity-hashing, js-16-07-xss-safe-sinks]
+subskills:
+  - { family: B-06, skill: "sessions/cookies vs tokens", depth: intro }
+glossary: [server-session, session-id, bearer-token, signed-token]
+selfCheck: [predict-after-logout, habit-sessions]
+
+blocks:
+  - id: after-login
+    kind: explanation
+    title:
+      uk: "Що сервер видає після входу"
+      en: "What the server hands out after login"
+    body:
+      uk: |
+        Пароль перевірено. Надсилати його з кожним запитом — погана ідея: він довше живе в пам’яті клієнта й частіше подорожує мережею. Тому після входу сервер видає щось тимчасове. Найпоширеніший спосіб — [[server-session|серверна сесія]]:
+
+        1. Сервер створює [[session-id|ідентифікатор сесії]] — 32 випадкові байти: `crypto.randomBytes(32).toString('base64url')`. Він **непрозорий**: нічого не каже про користувача, і вгадати його неможливо.
+        2. Стан сесії — хто це, коли увійшов — лишається **на сервері**: `sessions.set(id, { userId: 'u-01', createdAt })`.
+        3. Ідентифікатор іде браузерові в cookie:
+
+        ```text
+        Set-Cookie: sid=yW5zQa_m5W6X…; HttpOnly; SameSite=Lax; Path=/
+        ```
+
+        `HttpOnly` — скрипти сторінки (і XSS) не прочитають cookie через `document.cookie`. `SameSite=Lax` — cookie не піде з `fetch` чи `POST`-форми, які запускає сторінка іншого сайту. `Path=/` — cookie йде до всіх адрес сервера. Коли сервіс працює через HTTPS, додають ще `Secure`.
+
+        Далі браузер **сам** додає `Cookie: sid=…` до кожного запиту, а сервер шукає id у своїй таблиці.
+      en: |
+        The password has been checked. Sending it with every request is a bad idea: it lives longer in the client's memory and travels the network more often. So after login the server hands out something temporary. The most common way is a [[server-session]]:
+
+        1. The server creates a [[session-id]] — 32 random bytes: `crypto.randomBytes(32).toString('base64url')`. It is **opaque**: it says nothing about the user, and it cannot be guessed.
+        2. The session's state — who it is, when they logged in — stays **on the server**: `sessions.set(id, { userId: 'u-01', createdAt })`.
+        3. The id goes to the browser in a cookie:
+
+        ```text
+        Set-Cookie: sid=yW5zQa_m5W6X…; HttpOnly; SameSite=Lax; Path=/
+        ```
+
+        `HttpOnly`: the page's scripts (and XSS) cannot read the cookie through `document.cookie`. `SameSite=Lax`: the cookie does not go with a `fetch` or a `POST` form started by a page of another site. `Path=/`: the cookie goes to every address of the server. When the service runs over HTTPS, `Secure` is added too.
+
+        From then on the browser adds `Cookie: sid=…` to every request **by itself**, and the server looks the id up in its table.
+
+  - id: signed-tokens
+    kind: explanation
+    title:
+      uk: "Підписаний токен: інший компроміс"
+      en: "A signed token: a different trade-off"
+    body:
+      uk: |
+        Інший спосіб — [[signed-token|підписаний токен]]. Сервер складає дані (`{ "sub": "u-01", "exp": … }`), кодує їх у base64url і додає підпис — HMAC від секретного ключа сервера: `payload.signature`. Клієнт надсилає токен у заголовку `Authorization: Bearer …` — це [[bearer-token|bearer-токен]]: хто його має, той і користувач. Сервер перевіряє підпис і `exp` **без пошуку** в таблиці. Так влаштовано JWT; у справжньому проєкті формат токена не вигадують — беруть перевірену бібліотеку.
+
+        Підпис доводить, що токен видав сервер і його не змінили. Але він **не шифрує**: вміст читає будь-хто, у кого є токен.
+
+        | | Сесія в cookie | Підписаний токен |
+        |---|---|---|
+        | вихід, відкликання | видалити запис на сервері — і готово | токен дійсний до `exp`; щоб відкликати раніше, потрібен стан на сервері |
+        | розмір | id на 43 символи | росте з кожним полем |
+        | де лежить у браузері | cookie з `HttpOnly` — скриптам недоступна | зазвичай у JavaScript-сховищі — XSS його прочитає |
+        | хто відправляє | браузер сам | код клієнта додає заголовок |
+
+        Вебклієнт того самого сайту — сесія в cookie з `HttpOnly`. Небраузерний клієнт (інший сервер, програма в терміналі, мобільний застосунок із захищеним сховищем) — токен у заголовку.
+      en: |
+        Another way is a [[signed-token]]. The server puts data together (`{ "sub": "u-01", "exp": … }`), encodes it in base64url and adds a signature — an HMAC with the server's secret key: `payload.signature`. The client sends the token in the header `Authorization: Bearer …` — that makes it a [[bearer-token]]: whoever holds it is the user. The server checks the signature and `exp` **without a lookup** in a table. This is how JWT works; in a real project you do not invent a token format — you take a vetted library.
+
+        The signature proves that the server issued the token and nobody changed it. But it does **not encrypt**: anyone who has the token can read what is inside.
+
+        | | Session in a cookie | Signed token |
+        |---|---|---|
+        | logout, revocation | delete the record on the server — done | the token is valid until `exp`; revoking it earlier needs state on the server |
+        | size | a 43-character id | grows with every field |
+        | where it lives in a browser | a cookie with `HttpOnly` — out of reach of scripts | usually in a JavaScript storage — XSS reads it |
+        | who sends it | the browser by itself | the client's code adds the header |
+
+        A web client of the same site gets a session in an `HttpOnly` cookie. A non-browser client (another server, a terminal program, a mobile app with secure storage) gets a token in a header.
+
+  - id: cloakroom
+    kind: analogy
+    body:
+      uk: "Сесія — як номерок у гардеробі: це лише число, і означає воно щось тільки біля стійки, де висять пальта. Гардеробник може будь-коли сказати «цей номерок більше не дійсний». Підписаний токен — як перепустка з підписом: на ній самій написано, хто ти й до коли, і охоронець перевіряє підпис, нікуди не дзвонячи. Зате й відібрати її до кінця терміну він не може, якщо не веде списку відкликаних перепусток."
+      en: "A session is like a cloakroom ticket: it is only a number, and it means something only at the counter where the coats hang. The attendant can say “this ticket is no longer valid” at any moment. A signed token is like a signed pass: it says on itself who you are and until when, and the guard checks the signature without calling anyone. But he cannot take it back before it expires unless he keeps a list of revoked passes."
+    limits:
+      uk: "І номерок, і перепустку можна вкрасти й показати замість власника: сервер бачить лише облікові дані, а не людину. Тому обом потрібні строк дії, безпечне місце зберігання й HTTPS у справжньому розгортанні. І, на відміну від паперової перепустки, підпис токена не можна підробити без ключа — але прочитати токен може кожен."
+      en: "Both the ticket and the pass can be stolen and shown in place of the owner: the server sees only the credential, not the person. So both need an expiry, safe storage and HTTPS in a real deployment. And unlike a paper pass, a token's signature cannot be forged without the key — but anyone can read the token."
+
+  - id: session-flow
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Сесія в cookie: від входу до запиту"
+      en: "A session in a cookie: from login to a request"
+    textEquivalent:
+      uk: "Три учасники: браузер, сервер і сховище сесій. Браузер надсилає POST /login з паролем; сервер перевіряє пароль, створює випадковий непрозорий id і записує у сховище сесій, що цей id належить u-01. Сервер відповідає заголовком Set-Cookie з sid, HttpOnly, SameSite=Lax і Path=/. Далі браузер сам додає Cookie: sid=… до запиту GET /notes; сервер шукає id у сховищі, знаходить u-01 і відповідає 200. Для порівняння: підписаний токен браузер надсилав би в заголовку Authorization, а сервер перевіряв би підпис без звернення до сховища — тому відкликати такий токен до кінця строку можна лише окремим станом на сервері."
+      en: "Three participants: the browser, the server and the session store. The browser sends POST /login with the password; the server checks the password, creates a random opaque id and records in the session store that this id belongs to u-01. The server answers with a Set-Cookie header carrying sid, HttpOnly, SameSite=Lax and Path=/. From then on the browser adds Cookie: sid=… to the request GET /notes by itself; the server looks the id up in the store, finds u-01 and answers 200. For comparison: a signed token would be sent by the browser in the Authorization header, and the server would check the signature without asking the store — which is why revoking such a token before it expires needs separate state on the server."
+    spec:
+      actors:
+        - { id: browser, label: { uk: "Браузер", en: "Browser" } }
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+        - { id: store, label: { uk: "Сховище сесій", en: "Session store" } }
+      messages:
+        - from: browser
+          to: server
+          label: "POST /login"
+          caption:
+            uk: "Вхід: браузер надсилає пароль, сервер перевіряє його хеш."
+            en: "Login: the browser sends the password, the server checks its hash."
+        - from: server
+          to: store
+          label: "set(id, { userId: u-01 })"
+          caption:
+            uk: "Сервер створює випадковий непрозорий id і записує стан сесії **у себе**."
+            en: "The server creates a random opaque id and records the session's state **on its own side**."
+        - from: server
+          to: browser
+          kind: return
+          label: "Set-Cookie: sid=…"
+          note: { uk: "HttpOnly; SameSite=Lax; Path=/", en: "HttpOnly; SameSite=Lax; Path=/" }
+          caption:
+            uk: "Браузер отримує лише id у cookie. Скрипти сторінки його не бачать (`HttpOnly`)."
+            en: "The browser gets only the id in a cookie. The page's scripts cannot see it (`HttpOnly`)."
+        - from: browser
+          to: server
+          label: "GET /notes"
+          note: { uk: "Cookie: sid=…", en: "Cookie: sid=…" }
+          caption:
+            uk: "Кожен наступний запит несе cookie — браузер додає її сам."
+            en: "Every following request carries the cookie — the browser adds it by itself."
+        - from: server
+          to: store
+          label: "get(id)"
+          caption:
+            uk: "Сервер шукає id у сховищі. Немає запису — 401; так і працює вихід: запис видалили."
+            en: "The server looks the id up in the store. No record means 401; that is how logout works: the record was deleted."
+        - from: store
+          to: server
+          kind: return
+          label: "{ userId: u-01 }"
+          caption:
+            uk: "Знайдено `u-01`. Підписаний токен цей крок пропустив би — і тому без додаткового стану не відкликається."
+            en: "`u-01` is found. A signed token would skip this step — which is why it cannot be revoked without extra state."
+        - from: server
+          to: browser
+          kind: return
+          label: "200"
+          caption:
+            uk: "Відповідь для `u-01`."
+            en: "The answer for `u-01`."
+
+  - id: predict-after-logout
+    kind: prediction
+    prompt:
+      uk: "`u-01` входить, клієнт зберігає отримані облікові дані, потім `u-01` виходить. Хтось повторює запит `GET /notes` зі старими обліковими даними. Що відповість сервер у двох режимах: сесія в cookie (вихід видаляє запис сесії) і підписаний токен без списку відкликаних токенів, `exp` через годину?"
+      en: "`u-01` logs in, the client keeps the credential it got, then `u-01` logs out. Someone repeats `GET /notes` with the old credential. What does the server answer in two modes: a session in a cookie (logout deletes the session record) and a signed token with no revocation list and `exp` an hour away?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: session-401-token-200
+          text:
+            uk: "Сесія: 401. Токен: 200 — аж до `exp`"
+            en: "Session: 401. Token: 200 — right up to `exp`"
+        - id: both-401
+          text:
+            uk: "Обидва: 401 — вихід є вихід"
+            en: "Both: 401 — a logout is a logout"
+          why:
+            uk: "Сервер перевіряє токен лише за підписом і `exp`, нічого не шукаючи. Вихід нічого не змінив у тому, що він перевіряє, тож старий токен і далі дійсний."
+            en: "The server checks a token only by its signature and `exp`, looking nothing up. Logout changed nothing in what it checks, so the old token is still valid."
+        - id: token-safer
+          text:
+            uk: "Сесія: 200, бо cookie лишилася в клієнта. Токен: 401, бо він підписаний і тому безпечніший"
+            en: "Session: 200, because the client still has the cookie. Token: 401, because it is signed and therefore safer"
+          why:
+            uk: "Підпис доводить лише, що токен справжній, — не що він досі дійсний. А сесію вирішує сервер: id без запису в його таблиці нікого не відкриває, хоч би де лежала cookie."
+            en: "A signature only proves the token is genuine — not that it is still valid. And a session is decided by the server: an id with no record in its table opens nothing, wherever the cookie is."
+      correct: [session-401-token-200]
+    explanation:
+      uk: "Сесію відкликати легко: її стан на сервері. Токен без стану на сервері відкликати нічим — він живе до `exp`. Тому токени роблять короткими й ведуть на сервері список відкликаних (про це наступний урок)."
+      en: "A session is easy to revoke: its state is on the server. A token with no server-side state has nothing to revoke it with — it lives until `exp`. That is why tokens are made short-lived and a server-side revocation list is added (the next lesson)."
+
+  - id: predict-token-contents
+    kind: prediction
+    prompt:
+      uk: "Хтось скопіював підписаний токен (частина після крапки — підпис). Що надрукує цей код?"
+      en: "Someone copied a signed token (the part after the dot is the signature). What does this code print?"
+    code: |
+      const token = "eyJzdWIiOiJ1LTAxIiwicm9sZSI6Im1lbWJlciIsImV4cCI6MTc3MjYwMDAwMH0.k3Jx9f2Qw";
+      const [payload] = token.split(".");
+      console.log(atob(payload));
+    verify:
+      logs: ['{"sub":"u-01","role":"member","exp":1772600000}']
+    answer:
+      type: choice
+      options:
+        - id: readable
+          code: '{"sub":"u-01","role":"member","exp":1772600000}'
+        - id: gibberish
+          text:
+            uk: "Нечитабельні байти: токен підписаний, отже зашифрований"
+            en: "Unreadable bytes: the token is signed, so it is encrypted"
+          why:
+            uk: "Підпис і шифрування — різні речі. Перша частина токена — звичайний JSON у base64url, `atob` розкодовує його без жодного ключа."
+            en: "Signing and encrypting are different things. The first part of the token is plain JSON in base64url, and `atob` decodes it without any key."
+        - id: error
+          text:
+            uk: "Помилку: без ключа сервера токен не відкрити"
+            en: "An error: the token cannot be opened without the server's key"
+          why:
+            uk: "Ключ потрібен, щоб **створити** правильний підпис, а не щоб прочитати дані. Прочитати їх може будь-хто."
+            en: "The key is needed to **create** a valid signature, not to read the data. Anyone can read it."
+      correct: [readable]
+    explanation:
+      uk: "Вміст підписаного токена бачить кожен, у кого він опинився. Тому в токен не кладуть нічого секретного — ні пароля, ні особистих даних, — а підпис лише не дає його змінити."
+      en: "The content of a signed token is visible to anyone who ends up with it. So nothing secret goes into a token — no password, no personal data — and the signature only prevents changing it."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: httponly-still-sent
+        from: js-16-03-cookies-storage-origins
+        prompt:
+          uk: "Сервер ставить `Set-Cookie: sid=…; HttpOnly; SameSite=Lax; Path=/`. Що з цього правда?"
+          en: "The server sets `Set-Cookie: sid=…; HttpOnly; SameSite=Lax; Path=/`. Which of these is true?"
+        answer:
+          type: choice
+          options:
+            - id: hidden-but-sent
+              text:
+                uk: "`document.cookie` сторінки цієї cookie не покаже, але браузер і далі додаватиме її до запитів на цей сервер"
+                en: "The page's `document.cookie` does not show this cookie, but the browser keeps adding it to requests to this server"
+            - id: http-only-scheme
+              text:
+                uk: "Cookie піде лише через `http://`, а через `https://` — ні"
+                en: "The cookie travels only over `http://`, not over `https://`"
+              why:
+                uk: "`HttpOnly` не про схему: він ховає cookie від скриптів. За схему відповідає `Secure` — тоді лише `https`."
+                en: "`HttpOnly` is not about the scheme: it hides the cookie from scripts. The scheme is `Secure`'s job — then `https` only."
+            - id: not-with-fetch
+              text:
+                uk: "Через `HttpOnly` браузер не додаватиме її до запитів `fetch`"
+                en: "Because of `HttpOnly` the browser does not add it to `fetch` requests"
+              why:
+                uk: "Cookie з `HttpOnly` і далі йде з відповідними запитами, зокрема `fetch` зі своєї сторінки. Обмеження стосується лише читання зі скрипту."
+                en: "An `HttpOnly` cookie still goes with matching requests, including `fetch` from its own page. The limit only concerns reading it from a script."
+          correct: [hidden-but-sent]
+        explanation:
+          uk: "Саме це й потрібно від cookie сесії: вона подорожує із запитами, а XSS-скрипт на сторінці не може її прочитати й відправити деінде."
+          en: "That is exactly what a session cookie needs: it travels with requests, while an XSS script on the page cannot read it and send it elsewhere."
+
+  - id: session-vs-token
+    kind: example
+    runtime: isolated-node
+    dir: session-vs-token
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      gifts: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      shopping: { uk: "Покупки", en: "Shopping" }
+      chars: { uk: "символів", en: "characters" }
+      withCredential: { uk: "з обліковими даними", en: "with the credential" }
+      without: { uk: "без них", en: "without it" }
+      oldCredential: { uk: "зі старими обліковими даними", en: "with the old credential" }
+    title:
+      uk: "Сесія і токен після виходу"
+      en: "A session and a token after logout"
+    body:
+      uk: |
+        `app.js` — сервіс нотаток у двох режимах. У режимі `session` вхід ставить cookie з непрозорим id, а стан лежить у `Map` на сервері. У режимі `token` вхід повертає підписаний токен `payload.signature`, і сервер перевіряє його без пошуку.
+
+        `index.js` у кожному режимі входить як `u-01`, читає нотатки з обліковими даними й без них, виходить і пробує старі облікові дані. Ця програма — не браузер: сховища cookie в неї немає, тож заголовок `Cookie` вона надсилає сама. Натисни **Запустити** й порівняй останній рядок двох режимів зі своїм передбаченням.
+      en: |
+        `app.js` is the notes service in two modes. In `session` mode login sets a cookie with an opaque id, and the state lies in a `Map` on the server. In `token` mode login returns a signed token `payload.signature`, and the server checks it without a lookup.
+
+        In each mode `index.js` logs in as `u-01`, reads the notes with the credential and without it, logs out and tries the old credential. This program is not a browser: it has no cookie store, so it sends the `Cookie` header itself. Press **Run** and compare the last line of the two modes with your prediction.
+    tryIt:
+      uk: |
+        1. Прочитай токен без ключа: у `index.js` після рядка з `token.slice(0, 24)` додай `console.log(Buffer.from(token.split('.')[0], 'base64url').toString());` і запусти. Ти бачиш `sub` і `exp` — відкритим текстом.
+        2. У `app.js` у функції `issueToken` додай до об’єкта поле `role: 'member'` і запусти: токен подовшав. Id сесії лишається на 43 символи, хоч би скільки даних сервер тримав про сесію в себе.
+      en: |
+        1. Read the token without the key: in `index.js`, after the line with `token.slice(0, 24)`, add `console.log(Buffer.from(token.split('.')[0], 'base64url').toString());` and run. You see `sub` and `exp` — in plain text.
+        2. In `app.js`, in the function `issueToken`, add the field `role: 'member'` to the object and run: the token got longer. The session id stays at 43 characters however much data the server keeps about the session on its side.
+
+  - id: habit-sessions
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: habit-sessions
+    entry: index.js
+    editable: [sessions.js]
+    capabilities: { network: loopback, timeoutMs: 20000 }
+    strings:
+      water: { uk: "Пити воду", en: "Drink water" }
+      walk: { uk: "Прогулянка", en: "A walk" }
+      reading: { uk: "Читання", en: "Reading" }
+      none: { uk: "немає", en: "none" }
+      noCookie: { uk: "без cookie", en: "with no cookie" }
+      oldCookie: { uk: "зі старою cookie", en: "with the old cookie" }
+    title:
+      uk: "Сесії для трекера звичок"
+      en: "Sessions for the habit tracker"
+    instructions:
+      uk: |
+        Сервіс трекера звичок уже перевіряє пароль у `POST /login` і викликає функції з `sessions.js`. Напиши їх:
+
+        - `createSession(userId)` створює id із 32 випадкових байтів `crypto.randomBytes` (текстом у base64url чи hex), записує `{ userId, createdAt }` у `sessions` і повертає `{ id, cookie }`. `cookie` — значення заголовка `Set-Cookie`: cookie з назвою `sid` і атрибутами `HttpOnly`, `SameSite=Lax` і `Path=/`.
+        - `readSession(request)` знаходить `sid` у заголовку `Cookie` — там може бути кілька cookie через `; `, наприклад `theme=dark; sid=…`, а може не бути заголовка зовсім — і повертає `{ id, userId }` для сесії зі сховища або `null`.
+
+        `destroySession` уже написано. Одна перевірка входить 10 разів і порівнює отримані id. **Запустити** входить як `u-01`, читає звички, виходить і пробує стару cookie.
+      en: |
+        The habit tracker service already checks the password in `POST /login` and calls the functions from `sessions.js`. Write them:
+
+        - `createSession(userId)` creates an id from 32 random bytes of `crypto.randomBytes` (as base64url or hex text), records `{ userId, createdAt }` in `sessions` and returns `{ id, cookie }`. `cookie` is the value of the `Set-Cookie` header: a cookie named `sid` with the attributes `HttpOnly`, `SameSite=Lax` and `Path=/`.
+        - `readSession(request)` finds `sid` in the `Cookie` header — there may be several cookies separated by `; `, for example `theme=dark; sid=…`, or no header at all — and returns `{ id, userId }` for the session from the store, or `null`.
+
+        `destroySession` is already written. One check logs in 10 times and compares the ids it gets. **Run** logs in as `u-01`, reads the habits, logs out and tries the old cookie.
+    testTitles:
+      "login sets a sid cookie with HttpOnly, SameSite=Lax and Path=/":
+        uk: "Вхід ставить cookie `sid` з `HttpOnly`, `SameSite=Lax` і `Path=/`"
+        en: "Login sets a `sid` cookie with `HttpOnly`, `SameSite=Lax` and `Path=/`"
+      "the session id is long, random and says nothing about the user":
+        uk: "Id сесії довгий, випадковий і нічого не каже про користувача"
+        en: "The session id is long, random and says nothing about the user"
+      "a request with the sid cookie gets that user's habits":
+        uk: "Запит із cookie `sid` отримує звички саме цього користувача"
+        en: "A request with the `sid` cookie gets that user's habits"
+      "readSession finds sid among several cookies":
+        uk: "`readSession` знаходить `sid` серед кількох cookie"
+        en: "`readSession` finds `sid` among several cookies"
+      "a missing or unknown sid answers 401":
+        uk: "Без `sid` чи з невідомим `sid` — 401"
+        en: "A missing or unknown `sid` answers 401"
+      "after logout the old cookie answers 401":
+        uk: "Після виходу стара cookie отримує 401"
+        en: "After logout the old cookie answers 401"
+    hints:
+      nudge:
+        uk: "У `createSession` три кроки: створити id, записати сесію в `sessions`, скласти рядок cookie. У `readSession` спершу подумай, що буде, коли заголовка `Cookie` немає."
+        en: "`createSession` has three steps: create the id, record the session in `sessions`, build the cookie text. In `readSession` first think about what happens when there is no `Cookie` header."
+      explanation:
+        uk: "Для cookie теми це виглядало б як `` `theme=${value}; Max-Age=2592000; Path=/` `` — назва, `=`, значення, далі атрибути через `; `. Заголовок `Cookie` у запиті — пари `назва=значення` через `; `: розбий його `split(';')`, обріж пробіли й знайди пару, назва якої рівно `sid`. Відсутній заголовок — `undefined`, тож візьми `?? ''`. Знайдений id ще не означає сесію: перевір, що він є в `sessions`."
+        en: "For a theme cookie this would look like `` `theme=${value}; Max-Age=2592000; Path=/` `` — the name, `=`, the value, then the attributes separated by `; `. The `Cookie` header of a request is `name=value` pairs separated by `; `: split it with `split(';')`, trim the spaces and find the pair whose name is exactly `sid`. A missing header is `undefined`, so take `?? ''`. A found id does not yet mean a session: check that it is in `sessions`."
+    solutionNote:
+      uk: "Id із `crypto.randomBytes(32)` неможливо вгадати чи вивести з користувача, а стан лишається в `sessions` на сервері: cookie несе лише ключ до нього. Тому вихід — це просто `sessions.delete(id)`. `readSession` довіряє не cookie, а своєму сховищу: вигаданий id нічого не відкриває."
+      en: "An id from `crypto.randomBytes(32)` cannot be guessed or derived from the user, and the state stays in `sessions` on the server: the cookie carries only the key to it. That is why logout is just `sessions.delete(id)`. `readSession` trusts its own store, not the cookie: a made-up id opens nothing."
+    feedback:
+      - when: { test: "login sets a sid cookie with HttpOnly, SameSite=Lax and Path=/" }
+        message:
+          uk: "Ця перевірка читає `Set-Cookie` після входу й чекає назву `sid`, атрибут `HttpOnly`, `SameSite=Lax` і `Path=/` (регістр атрибутів не важливий)."
+          en: "This check reads `Set-Cookie` after login and expects the name `sid`, the attribute `HttpOnly`, `SameSite=Lax` and `Path=/` (the attributes' letter case does not matter)."
+      - when: { test: "the session id is long, random and says nothing about the user" }
+        message:
+          uk: "Ця перевірка входить 10 разів і чекає 10 різних id, кожен — щонайменше 43 символи base64url чи 64 символи hex і без `u-01` усередині. `Math.random()` чи лічильник цього не дадуть: їхні значення можна передбачити."
+          en: "This check logs in 10 times and expects 10 different ids, each at least 43 base64url or 64 hex characters long and without `u-01` inside. `Math.random()` or a counter will not do: their values can be predicted."
+      - when: { test: "readSession finds sid among several cookies" }
+        message:
+          uk: "Ця перевірка надсилає `Cookie: theme=dark; sid=…; lang=uk` і чекає 200. Шукай пару з назвою `sid` серед усіх, а не лише першу."
+          en: "This check sends `Cookie: theme=dark; sid=…; lang=uk` and expects 200. Look for the pair named `sid` among all of them, not only the first."
+      - when: { test: "a missing or unknown sid answers 401" }
+        message:
+          uk: "Ця перевірка надсилає запит без заголовка `Cookie`, лише з `theme=dark` і з вигаданим `sid` і чекає 401 для всіх трьох. Якщо тут 500, `readSession` падає на відсутньому заголовку."
+          en: "This check sends a request with no `Cookie` header, one with only `theme=dark` and one with a made-up `sid`, and expects 401 for all three. If you get 500 here, `readSession` fails on the missing header."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` у `readSession` часто означає виклик `.split` на `undefined`: запит без cookie не має заголовка `Cookie` зовсім."
+          en: "A `TypeError` in `readSession` often means calling `.split` on `undefined`: a request with no cookies has no `Cookie` header at all."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-10 немає, а однокористувацький проєкт не має ні входу, ні сесій. Коли в NO-06 вебклієнт підключиться до твого `server/`, він працюватиме без cookie й токенів — і це правильно. Якщо колись знадобиться вхід, вибір для вебклієнта того самого сайту вже зрозумілий: сесія в cookie з `HttpOnly` і `SameSite`."
+      en: "Your project does not change in this unit: NO-10 has no project step, and the single-user project has neither login nor sessions. When the web client connects to your `server/` in NO-06, it works without cookies or tokens — and that is right. If a login is ever needed, the choice for a web client of the same site is already clear: a session in a cookie with `HttpOnly` and `SameSite`."
