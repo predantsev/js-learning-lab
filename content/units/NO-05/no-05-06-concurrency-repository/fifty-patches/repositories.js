@@ -24,23 +24,13 @@ export function fileRepository(file) {
 }
 
 // 2. The same file, but every read-modify-write waits for the previous one: a single-writer queue.
+//    A deliberately minimal one: `tail` is the promise of the last job. It is enough for this demo,
+//    where no write fails. Where it differs from a queue you can rely on: when one job fails, `tail`
+//    stays rejected, and every later job is skipped with that same error (tryIt step 2 shows it).
 export function queuedFileRepository(file) {
   const inner = fileRepository(file);
-  const waiting = []; // jobs that wait for their turn
-  let busy = false;
-  function startNext() {
-    if (busy || waiting.length === 0) return;
-    busy = true;
-    const job = waiting.shift();
-    job.work().then(job.resolve, job.reject).finally(() => {
-      busy = false;
-      startNext();
-    });
-  }
-  const queued = (work) => new Promise((resolve, reject) => {
-    waiting.push({ work, resolve, reject });
-    startNext();
-  });
+  let tail = Promise.resolve();
+  const queued = (work) => (tail = tail.then(work));
   return { markDone: (id) => queued(() => inner.markDone(id)), doneCount: inner.doneCount };
 }
 
