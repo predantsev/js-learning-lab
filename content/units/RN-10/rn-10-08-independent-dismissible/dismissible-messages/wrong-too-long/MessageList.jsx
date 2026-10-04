@@ -1,6 +1,6 @@
 // MessageList.jsx: the dismissal takes 1.5 s, far longer than the task allows.
 import { useEffect, useRef, useState } from 'react';
-import { Animated, FlatList, Image, StyleSheet, Text, View } from 'react-native';
+import { Animated, Easing, FlatList, Image, StyleSheet, Text, View } from 'react-native';
 import { SimulatedAccessibilityInfo } from './motionSettings.js';
 import { useSimulatedPan } from './swipeSim.js';
 
@@ -38,10 +38,10 @@ function MessageRow({ message, pixelRatio, reduced, onDismissed }) {
 
   function dismiss() {
     const animation = reduced
-      ? Animated.timing(opacity, { toValue: 0, duration: 1500, useNativeDriver: false })
+      ? Animated.timing(opacity, { toValue: 0, duration: 1500, easing: Easing.linear, useNativeDriver: false })
       : Animated.parallel([
-          Animated.timing(translateX, { toValue: -400, duration: 1500, useNativeDriver: false }),
-          Animated.timing(opacity, { toValue: 0, duration: 1500, useNativeDriver: false }),
+          Animated.timing(translateX, { toValue: -400, duration: 1500, easing: Easing.linear, useNativeDriver: false }),
+          Animated.timing(opacity, { toValue: 0, duration: 1500, easing: Easing.linear, useNativeDriver: false }),
         ]);
     running.current = animation;
     animation.start(({ finished }) => {
