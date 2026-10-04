@@ -1,0 +1,369 @@
+id: no-10-05-ownership-least-privilege
+unit: NO-10
+title:
+  uk: "Власність і найменші привілеї"
+  en: "Ownership and least privilege"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Перевіряти власність у кожному читанні, зміні й видаленні, обмежуючи запити автентифікованим користувачем, і передбачати, які запити до чужих даних їх розкривають."
+    en: "Enforce ownership on every read, update and delete by scoping queries to the authenticated user, and predict which cross-user requests leak data."
+  - uk: "Давати кожній ролі й кожному компоненту лише потрібні дозволи й відповідати 404 замість 403 там, де саме існування запису — чутлива інформація."
+    en: "Give each role and component only the permissions it needs, and answer 404 rather than 403 where the existence of a record is itself sensitive."
+prerequisites: [no-10-04-expiry-revocation, no-10-01-authn-vs-authz]
+subskills:
+  - { family: B-06, skill: "least privilege/ownership", depth: intro }
+glossary: [least-privilege, ownership-check, insecure-direct-object-reference]
+selfCheck: [predict-unscoped, notes-policy]
+
+blocks:
+  - id: change-the-id
+    kind: explanation
+    title:
+      uk: "Досить змінити id в адресі"
+      en: "Changing the id in the address is enough"
+    body:
+      uk: |
+        Екран витрат показує `u-02` лише його витрати: список на сервері вже обмежено власником. Але маршрут однієї витрати шукає запис **лише за id**:
+
+        ```js
+        const expense = repo.findById(id); // SELECT * FROM expenses WHERE id = ?
+        ```
+
+        `u-02` автентифікований. Він відкриває `/expenses/e-3` (своя витрата), змінює в адресі `e-3` на `e-1` — і бачить чужу покупку в аптеці. Інтерфейс тут ні до чого: запит можна надіслати й без нього. Це [[insecure-direct-object-reference|IDOR]] — пряме посилання на об’єкт без перевірки, чий він.
+
+        Ліки — [[ownership-check|перевірка власності]] **в самому запиті до даних**:
+
+        ```js
+        const expense = repo.findOwned(id, user.id); // … WHERE id = ? AND ownerId = ?
+        ```
+
+        Чужий запис для такого запиту просто не існує. Так само обмежують і зміну, і видалення, і список — кожен шлях до даних.
+
+        Який статус відповісти? Якщо 403 на `e-1` і 404 на `e-9`, `u-02` дізнається, що `e-1` **існує**, — а id часто легко перебрати. Де саме існування запису чутливе (витрати, нотатки, медичні записи), чужому відповідають **404**, так само як на запис, якого немає.
+      en: |
+        The expenses screen shows `u-02` only their own expenses: the list on the server is already limited by owner. But the one-expense route looks a record up **by id alone**:
+
+        ```js
+        const expense = repo.findById(id); // SELECT * FROM expenses WHERE id = ?
+        ```
+
+        `u-02` is authenticated. They open `/expenses/e-3` (their own expense), change `e-3` to `e-1` in the address — and see someone else's pharmacy purchase. The interface has nothing to do with it: the request can be sent without it. This is an [[insecure-direct-object-reference|IDOR]] — a direct reference to an object with no check of whose it is.
+
+        The cure is an [[ownership-check]] **in the data query itself**:
+
+        ```js
+        const expense = repo.findOwned(id, user.id); // … WHERE id = ? AND ownerId = ?
+        ```
+
+        For such a query a foreign record simply does not exist. Updates, deletes and the list are limited in the same way — every path to the data.
+
+        Which status to answer? With 403 for `e-1` and 404 for `e-9`, `u-02` learns that `e-1` **exists** — and ids are often easy to enumerate. Where the very existence of a record is sensitive (expenses, notes, medical records), a stranger gets **404**, just as for a record that is not there.
+
+  - id: predict-unscoped
+    kind: prediction
+    prompt:
+      uk: "У сервісі витрат список `GET /expenses` обмежено власником, а маршрути однієї витрати шукають запис лише за id (`findById`). Автентифікований `u-02` знає id `e-1` витрати `u-01`. Які запити `u-02` спрацюють проти чужих даних? Обери всі."
+      en: "In the expenses service the list `GET /expenses` is limited by owner, while the one-expense routes look a record up by id alone (`findById`). The authenticated `u-02` knows the id `e-1` of `u-01`'s expense. Which of `u-02`'s requests work against someone else's data? Pick all."
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: list
+          code: "GET /expenses"
+          why:
+            uk: "Список обмежено власником, тож `u-02` бачить лише свої витрати — чужих там немає."
+            en: "The list is limited by owner, so `u-02` sees only their own expenses — no foreign ones are there."
+        - id: read
+          code: "GET /expenses/e-1"
+        - id: update
+          code: "PATCH /expenses/e-1"
+        - id: delete
+          code: "DELETE /expenses/e-1"
+      correct: [read, update, delete]
+    explanation:
+      uk: "Усі три маршрути однієї витрати віддають, змінюють і видаляють чужий запис: `findById` не питає, чий він. Те, що екран ніколи не показує `u-02` id `e-1`, нічого не захищає — id можна вгадати, знайти в журналі, отримати в посиланні. Захист — лише в запиті до даних."
+      en: "All three one-expense routes hand out, change and delete the foreign record: `findById` does not ask whose it is. The screen never showing `u-02` the id `e-1` protects nothing — an id can be guessed, found in a log, received in a link. The protection is only in the data query."
+
+  - id: least-privilege-roles
+    kind: explanation
+    title:
+      uk: "Кожному — лише потрібне"
+      en: "Everyone gets only what they need"
+    body:
+      uk: |
+        [[least-privilege|Найменші привілеї]]: кожна роль і кожна частина системи має лише ті дозволи, без яких не впорається. Для нотаток — одна таблиця на всі маршрути:
+
+        | Роль | Може |
+        |---|---|
+        | власник (`note.ownerId === user.id`) | читати, змінювати, видаляти, ділитися |
+        | читач (`note.readers` містить `user.id`) | читати |
+        | адміністратор (`user.role === 'admin'`) | читати, видаляти (модерація) |
+        | будь-хто інший, будь-яка інша дія | нічого |
+
+        «Адмін може все» — спокуса, але викрадений обліковий запис адміністратора тоді теж може все. Модераторові досить читати й видаляти; переписувати чужі нотатки йому не треба.
+
+        Таблиця відмовляє **за замовчуванням**: дія, якої в ній немає (`'export'`), заборонена всім, поки її свідомо не додадуть. Той самий принцип — для компонентів: нічний звіт отримує репозиторій лише для читання, а не той, що вміє видаляти.
+
+        Статуси: не можеш навіть читати — 404 (існування приховано); читати можеш, а цю дію ні — 403 (запис ти вже бачиш, приховувати нічого).
+      en: |
+        [[least-privilege|Least privilege]]: every role and every part of the system has only the permissions it cannot do without. For notes — one table for all routes:
+
+        | Role | May |
+        |---|---|
+        | owner (`note.ownerId === user.id`) | read, update, delete, share |
+        | reader (`note.readers` includes `user.id`) | read |
+        | admin (`user.role === 'admin'`) | read, delete (moderation) |
+        | anyone else, any other action | nothing |
+
+        “The admin may do anything” is tempting, but then a stolen administrator account may do anything too. A moderator needs to read and delete; rewriting other people's notes is not their job.
+
+        The table refuses **by default**: an action that is not in it (`'export'`) is forbidden to everyone until someone adds it on purpose. The same principle applies to components: a nightly report gets a read-only repository, not one that can delete.
+
+        Statuses: you may not even read — 404 (existence hidden); you may read but not do this action — 403 (you already see the record, there is nothing to hide).
+
+  - id: permission-grid
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Запит без власника і з власником"
+      en: "A query without the owner and with it"
+    textEquivalent:
+      uk: "Запит u-02 GET /expenses/e-1 іде двома шляхами. Ліворуч — запит лише за id, WHERE id = ?: він знаходить витрату e-1, що належить u-01, і віддає її з 200 — чужі дані розкрито. Праворуч — запит з власником, WHERE id = ? AND ownerId = ?: для u-02 запису e-1 не існує, тож відповідь 404 — така сама, як на e-9, якої немає взагалі. Останній крок показує, що власник u-01 тим самим обмеженим запитом і далі отримує свою витрату з 200."
+      en: "The request u-02 GET /expenses/e-1 goes two ways. On the left is a query by id alone, WHERE id = ?: it finds the expense e-1, which belongs to u-01, and hands it out with 200 — foreign data is exposed. On the right is a query with the owner, WHERE id = ? AND ownerId = ?: for u-02 the record e-1 does not exist, so the answer is 404 — the same as for e-9, which does not exist at all. The last step shows that the owner u-01 still gets their expense with 200 through the same scoped query."
+    spec:
+      layout: grid
+      nodes:
+        - { id: req, label: "u-02 → e-1", shape: pill, w: 140, col: 0, row: 0 }
+        - { id: unscoped, label: "WHERE id = ?", w: 140, col: 0, row: 1 }
+        - { id: scoped, label: "… AND ownerId = ?", w: 140, col: 1, row: 1 }
+        - { id: leak, label: { uk: "e-1 (u-01) → 200", en: "e-1 (u-01) → 200" }, shape: note, w: 140, col: 0, row: 2 }
+        - { id: hidden, label: { uk: "нічого → 404", en: "nothing → 404" }, shape: round, w: 140, col: 1, row: 2 }
+      edges:
+        - { from: req, to: unscoped }
+        - { from: req, to: scoped }
+        - { from: unscoped, to: leak }
+        - { from: scoped, to: hidden }
+      steps:
+        - caption:
+            uk: "Автентифікований `u-02` просить витрату `e-1`, що належить `u-01`. Два можливі запити до даних."
+            en: "The authenticated `u-02` asks for the expense `e-1`, which belongs to `u-01`. Two possible data queries."
+          highlight: [req]
+        - caption:
+            uk: "Запит лише за id знаходить `e-1` і віддає її — **чужі дані розкрито**, хоч автентифікація пройдена."
+            en: "A query by id alone finds `e-1` and hands it out — **foreign data is exposed**, although authentication passed."
+          highlight: [req, unscoped, leak, req->unscoped, unscoped->leak]
+          dim: [scoped, hidden]
+        - caption:
+            uk: "Запит із власником: для `u-02` запису `e-1` не існує. Відповідь **404** — така сама, як на `e-9`, якої немає зовсім."
+            en: "A query with the owner: for `u-02` the record `e-1` does not exist. The answer is **404** — the same as for `e-9`, which does not exist at all."
+          highlight: [req, scoped, hidden, req->scoped, scoped->hidden]
+          dim: [unscoped, leak]
+        - caption:
+            uk: "Для власника `u-01` той самий запит із власником знаходить `e-1` — **200**. Обмеження не заважає законному доступу."
+            en: "For the owner `u-01` the same scoped query finds `e-1` — **200**. The limit does not get in the way of legitimate access."
+          highlight: [scoped]
+          annotate:
+            - { id: scoped, text: { uk: "u-01 → 200", en: "u-01 → 200" } }
+          dim: [unscoped, leak, hidden]
+
+  - id: predict-admin
+    kind: prediction
+    prompt:
+      uk: "Сервіс нотаток побудовано за таблицею ролей: власник читає, змінює, видаляє й ділиться; читач читає; адміністратор читає й видаляє. Адміністратор надсилає `PATCH /notes/n-4` до чужої нотатки. Що він отримає?"
+      en: "The notes service follows the role table: the owner reads, updates, deletes and shares; a reader reads; the admin reads and deletes. The admin sends `PATCH /notes/n-4` to someone else's note. What do they get?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: forbidden
+          text: { uk: "403: читати можна, а змінювати — ні", en: "403: reading is allowed, changing is not" }
+        - id: ok
+          text: { uk: "200: адміністраторові можна все", en: "200: the admin may do anything" }
+          why:
+            uk: "Адмін без обмежень — найцінніший трофей для зловмисника. За таблицею модерація — це читати й видаляти, а не переписувати чужі нотатки."
+            en: "An admin without limits is the most valuable prize for an attacker. By the table, moderation means reading and deleting, not rewriting other people's notes."
+        - id: not-found
+          text: { uk: "404: нотатка не його", en: "404: the note is not theirs" }
+          why:
+            uk: "404 приховує існування від того, хто не може навіть читати. Адміністратор читати може — нотатку він бачить, тож відмова в зміні — 403."
+            en: "404 hides existence from someone who may not even read. The admin may read — they see the note, so refusing the change is 403."
+      correct: [forbidden]
+    explanation:
+      uk: "Найменші привілеї стосуються й найвищої ролі: дозволено лише те, що потрібно для роботи. Таблиця відповідає на «чи можна» однаково для всіх маршрутів."
+      en: "Least privilege applies to the highest role too: only what the job needs is allowed. The table answers “may they” the same way for every route."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: url-names-resource
+        from: no-04-01-rest-boundaries
+        prompt:
+          uk: "У запиті `DELETE /expenses/e-1` яка частина називає ресурс, і чи доводить вона, що запис належить тому, хто надсилає запит?"
+          en: "In the request `DELETE /expenses/e-1`, which part names the resource, and does it prove that the record belongs to whoever sends the request?"
+        answer:
+          type: choice
+          options:
+            - id: path-no
+              text:
+                uk: "Шлях `/expenses/e-1` називає один запис; хто його власник, адреса не каже — це перевіряє сервер"
+                en: "The path `/expenses/e-1` names one record; the address does not say who owns it — the server checks that"
+            - id: path-yes
+              text:
+                uk: "Шлях, і так: клієнт не надіслав би адресу чужого запису"
+                en: "The path, and yes: a client would not send the address of someone else's record"
+              why:
+                uk: "Адресу будь-хто пише як заманеться — у браузері, `curl`, власній програмі. Шлях лише називає ресурс."
+                en: "Anyone writes an address however they like — in a browser, `curl`, their own program. The path only names the resource."
+            - id: method
+              text:
+                uk: "Метод `DELETE` називає ресурс і підтверджує право на видалення"
+                en: "The `DELETE` method names the resource and confirms the right to delete"
+              why:
+                uk: "Метод каже, **що** зробити, а шлях — **з чим**. Права не доводить ні те, ні інше."
+                en: "The method says **what** to do, and the path **with what**. Neither proves any right."
+          correct: [path-no]
+        explanation:
+          uk: "REST розділяє «що» (шлях) і «яку дію» (метод). Третє питання — «чи можна цьому користувачеві» — додає сервер: обмеженим запитом до даних або таблицею дозволів."
+          en: "REST separates “what” (the path) and “which action” (the method). The third question — “may this user” — is added by the server: with a scoped data query or a permission table."
+
+  - id: expense-ownership
+    kind: example
+    runtime: isolated-node
+    dir: expense-ownership
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      groceries: { uk: "Продукти", en: "Groceries" }
+      pharmacy: { uk: "Аптека", en: "Pharmacy" }
+      bus: { uk: "Проїзний на автобус", en: "Bus pass" }
+      scoped: { uk: "з власником", en: "scoped" }
+      unscoped: { uk: "лише за id", en: "by id alone" }
+    title:
+      uk: "Чужа витрата за одним id"
+      en: "A foreign expense by one id"
+    body:
+      uk: |
+        `repo.js` має пошук `findById` (лише за id) і `findOwned` (за id і власником) — у коментарях їхній SQL. `app.js` з `scoped: false` шукає витрату за id, з `scoped: true` — разом із власником. `index.js` надсилає від імені `u-02` ті самі п’ять запитів до обох варіантів.
+
+        Натисни **Запустити**. У першому блоці `u-02` читає, змінює й видаляє витрату `u-01`. У другому `e-1` і `e-9` відповідають однаково — 404.
+      en: |
+        `repo.js` has the lookups `findById` (by id alone) and `findOwned` (by id and owner) — their SQL is in the comments. `app.js` with `scoped: false` looks an expense up by id, with `scoped: true` together with the owner. `index.js` sends the same five requests on behalf of `u-02` to both variants.
+
+        Press **Run**. In the first block `u-02` reads, changes and deletes `u-01`'s expense. In the second, `e-1` and `e-9` answer the same — 404.
+    tryIt:
+      uk: |
+        1. У `app.js` заміни `const FOREIGN_STATUS = 404;` на `403` і запусти: тепер `e-1` дає 403, а `e-9` — 404. За різницею `u-02` знає, що `e-1` існує, навіть не бачачи її.
+        2. Поверни 404. У `index.js` заміни `lab-token-u02` на `lab-token-u01` і запусти: у другому блоці власник і далі читає й змінює свою `e-1`.
+      en: |
+        1. In `app.js` replace `const FOREIGN_STATUS = 404;` with `403` and run: now `e-1` gives 403 and `e-9` 404. From the difference `u-02` knows that `e-1` exists without ever seeing it.
+        2. Put 404 back. In `index.js` replace `lab-token-u02` with `lab-token-u01` and run: in the second block the owner still reads and changes their `e-1`.
+
+  - id: notes-policy
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: notes-policy
+    entry: index.js
+    editable: [policy.js, routes.js]
+    capabilities: { network: loopback }
+    strings:
+      gifts: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      shopping: { uk: "Покупки", en: "Shopping" }
+      diary: { uk: "Особистий щоденник", en: "Personal diary" }
+      trip: { uk: "План подорожі", en: "Trip plan" }
+      renamed: { uk: "Нова назва", en: "New title" }
+    title:
+      uk: "Таблиця дозволів для нотаток"
+      en: "A permission table for notes"
+    instructions:
+      uk: |
+        **У `policy.js`** напиши `can(user, action, note)` за таблицею в коментарі: власник — `read`, `update`, `delete`, `share`; читач (`note.readers` містить `user.id`) — лише `read`; адміністратор (`user.role === 'admin'`) — `read` і `delete`; усім іншим і будь-яка інша дія (наприклад, `'export'`) — `false`.
+
+        **У `routes.js`** використай `can` у кожному маршруті:
+
+        - `GET /notes` повертає лише нотатки, які користувач може читати;
+        - нотатка, якої немає **або** яку він не може читати, — `throw new HttpError(404, 'NOT_FOUND')`;
+        - читати може, а цю дію (`update`, `delete`) — ні: `throw new HttpError(403, 'FORBIDDEN')`, і нотатка не змінюється.
+
+        `n-1` належить `u-01` і поширена для `u-02`; `n-2` — нотатка `u-02`; `n-3` — `u-01`; `n-4` — `u-03`. **Запустити** надсилає сім запитів від трьох користувачів.
+      en: |
+        **In `policy.js`** write `can(user, action, note)` by the table in the comment: the owner — `read`, `update`, `delete`, `share`; a reader (`note.readers` includes `user.id`) — only `read`; the admin (`user.role === 'admin'`) — `read` and `delete`; everyone else, and any other action (for example `'export'`) — `false`.
+
+        **In `routes.js`** use `can` in every route:
+
+        - `GET /notes` returns only the notes the user may read;
+        - a note that does not exist **or** that the user may not read — `throw new HttpError(404, 'NOT_FOUND')`;
+        - they may read it but not do this action (`update`, `delete`): `throw new HttpError(403, 'FORBIDDEN')`, and the note does not change.
+
+        `n-1` belongs to `u-01` and is shared with `u-02`; `n-2` is `u-02`'s; `n-3` is `u-01`'s; `n-4` is `u-03`'s. **Run** sends seven requests from three users.
+    testTitles:
+      "can: the owner may read, update, delete and share":
+        uk: "`can`: власник може читати, змінювати, видаляти й ділитися"
+        en: "`can`: the owner may read, update, delete and share"
+      "can: a reader may only read":
+        uk: "`can`: читач може лише читати"
+        en: "`can`: a reader may only read"
+      "can: an admin may read and delete, but not update or share":
+        uk: "`can`: адміністратор може читати й видаляти, але не змінювати й не ділитися"
+        en: "`can`: an admin may read and delete, but not update or share"
+      "can: a stranger may do nothing, and an unknown action is refused to everyone":
+        uk: "`can`: сторонньому не можна нічого, а невідому дію заборонено всім"
+        en: "`can`: a stranger may do nothing, and an unknown action is refused to everyone"
+      "GET /notes lists only the notes the caller may read":
+        uk: "`GET /notes` показує лише нотатки, які можна читати"
+        en: "`GET /notes` lists only the notes the caller may read"
+      "a note the caller may not read answers 404 to GET, PATCH and DELETE and stays unchanged":
+        uk: "Нотатка, яку не можна читати: 404 на `GET`, `PATCH` і `DELETE`, і вона не змінюється"
+        en: "A note the caller may not read answers 404 to `GET`, `PATCH` and `DELETE` and stays unchanged"
+      "a reader changing a shared note answers 403 and the note stays unchanged":
+        uk: "Читач змінює поширену нотатку — 403, і нотатка не змінюється"
+        en: "A reader changing a shared note answers 403 and the note stays unchanged"
+      "the admin deletes any note but gets 403 for editing one":
+        uk: "Адміністратор видаляє будь-яку нотатку, але на зміну отримує 403"
+        en: "The admin deletes any note but gets 403 for editing one"
+      "the owner still reads, updates and deletes their own notes":
+        uk: "Власник і далі читає, змінює й видаляє свої нотатки"
+        en: "The owner still reads, updates and deletes their own notes"
+    hints:
+      nudge:
+        uk: "Почни з `can`: спершу визнач, ким є користувач для **цієї** нотатки (власник? читач? адмін?), потім — що цій ролі дозволено. Усе, чого немає в таблиці, — `false`."
+        en: "Start with `can`: first work out who the user is for **this** note (owner? reader? admin?), then what that role is allowed. Anything not in the table is `false`."
+      explanation:
+        uk: "Для бібліотеки таблиця могла б бути `{ librarian: ['lend', 'return'], member: ['borrow'] }`, а перевірка — `table[role]?.includes(action) ?? false`. У маршрутах зручно мати одну допоміжну функцію, що знаходить нотатку й кидає 404, якщо її немає чи `can(user, 'read', note)` — `false`; після неї — перевірка конкретної дії з 403."
+        en: "For a library the table could be `{ librarian: ['lend', 'return'], member: ['borrow'] }`, and the check `table[role]?.includes(action) ?? false`. In the routes it helps to have one helper that finds the note and throws 404 when it is missing or `can(user, 'read', note)` is `false`; after it, the check of the particular action with 403."
+    solutionNote:
+      uk: "Одна таблиця дозволів і одна функція `can` на всі маршрути: правило не розійдеться між читанням і видаленням. Відмова за замовчуванням закриває дії, про які ніхто не подумав. 404 для нотатки, яку не можна читати, приховує її існування; 403 лишається для тих, хто нотатку бачить, але цю дію робити не може."
+      en: "One permission table and one `can` function for all routes: the rule cannot drift apart between reading and deleting. Refusing by default closes actions nobody thought about. 404 for a note that may not be read hides its existence; 403 is left for those who see the note but may not do this action."
+    feedback:
+      - when: { test: "can: an admin may read and delete, but not update or share" }
+        message:
+          uk: "Ця перевірка чекає для адміністратора рівно `['read', 'delete']` на чужій нотатці. Адміністратор не пропускає перевірки — у нього просто свій рядок у таблиці."
+          en: "This check expects exactly `['read', 'delete']` for the admin on someone else's note. The admin does not skip the checks — they just have their own row in the table."
+      - when: { test: "can: a stranger may do nothing, and an unknown action is refused to everyone" }
+        message:
+          uk: "Ця перевірка чекає `[]` для стороннього і `false` для дії `'export'` навіть у власника. Таблиця відмовляє за замовчуванням."
+          en: "This check expects `[]` for a stranger and `false` for the action `'export'` even for the owner. The table refuses by default."
+      - when: { test: "GET /notes lists only the notes the caller may read" }
+        message:
+          uk: "Ця перевірка чекає для `u-02` у списку рівно `n-1` (поширена) і `n-2` (власна)."
+          en: "This check expects exactly `n-1` (shared) and `n-2` (own) in the list for `u-02`."
+      - when: { test: "a note the caller may not read answers 404 to GET, PATCH and DELETE and stays unchanged" }
+        message:
+          uk: "Ця перевірка надсилає від `u-02` `GET`, `PATCH` і `DELETE` до `n-3` (нотатка `u-01`, не поширена) і чекає 404 для кожного — не 403 — та незмінну нотатку."
+          en: "This check sends `GET`, `PATCH` and `DELETE` to `n-3` (a `u-01` note, not shared) from `u-02` and expects 404 for each — not 403 — and an unchanged note."
+      - when: { test: "a reader changing a shared note answers 403 and the note stays unchanged" }
+        message:
+          uk: "Ця перевірка надсилає від `u-02` `PATCH /notes/n-1` (нотатку поширено для читання) і чекає 403 та незмінну назву."
+          en: "This check sends `PATCH /notes/n-1` from `u-02` (the note is shared for reading) and expects 403 and an unchanged title."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-10 немає, а в однокористувацькому проєкті всі записи належать одній людині. Найменші привілеї там усе одно доречні: якщо в `server/` є частина, яка лише читає (експорт, підсумки), давай їй лише функції читання репозиторію, а не ті, що змінюють і видаляють."
+      en: "Your project does not change in this unit: NO-10 has no project step, and in the single-user project every record belongs to one person. Least privilege still fits there: if a part of your `server/` only reads (an export, a summary), give it only the repository's read functions, not the ones that change and delete."
