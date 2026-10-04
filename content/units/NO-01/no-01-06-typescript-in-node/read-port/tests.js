@@ -15,7 +15,8 @@ test('returns PORT as a number', () => {
 
 test('throws a RangeError that names an invalid PORT', () => {
   expect(typeof readPort, 'type of readPort').toBe('function');
-  for (const text of ['abc', '0', '70000', '30.5', '8080abc', '']) {
+  // '1e3' is a whole number for Number() (1000), but it is not made of digits only.
+  for (const text of ['abc', '0', '70000', '30.5', '8080abc', '', '1e3']) {
     let thrown = null;
     try {
       readPort({ PORT: text });

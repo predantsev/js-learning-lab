@@ -1,11 +1,12 @@
-// Another valid solution: Number.isInteger and a separate guard for text that is not digits.
+// Another valid solution: Number.isInteger plus a round trip — the number written back must give
+// the same text, so "", " 80", "1e3" and "8080abc" are rejected.
 export type Env = Record<string, string | undefined>;
 
 export const DEFAULT_PORT: number = 3000;
 
 function isPortText(text: string): boolean {
   const port = Number(text);
-  return text.trim() === text && text !== "" && Number.isInteger(port) && port >= 1 && port <= 65535 && !text.includes(".");
+  return String(port) === text && Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
 export function readPort(env: Env): number {
