@@ -16,7 +16,7 @@ const joined = rows(`
   LEFT JOIN loans ON loans.memberId = members.id
   ORDER BY members.id, loans.id
 `);
-console.log(`-- LEFT JOIN: ${joined.length} rows`);
+console.log(`-- members joined with loans: ${joined.length} rows`);
 for (const row of joined) console.log(show({ name: row.name, loanId: row.loanId ?? 'NULL' }));
 
 // 3. Groups: one output row per member, with aggregates over that member's rows.
