@@ -1,0 +1,483 @@
+id: no-04-08-independent-crud-api-tests
+unit: NO-04
+title:
+  uk: "Самостійно: типізований CRUD API з тестами"
+  en: "Independent: typed CRUD API with tests"
+kind: assessment
+minutes: 35
+contentVersion: 1
+objectives:
+  - uk: "Без підказок реалізувати типізований CRUD API над синтетичними даними з маршрутами ресурсів, пагінацією, фільтрацією й сортуванням, дедлайнами запитів і версійованим контрактом."
+    en: "Implement, without hints, a typed CRUD API over a synthetic dataset with resource routes, pagination, filtering and sorting, request deadlines and a versioned contract."
+  - uk: "Написати тести, що запускають сервер на випадковому loopback-порту й надсилають справжні запити, зокрема зі зламаним JSON, завеликим тілом, межею сторінки, перерваним запитом і повтором."
+    en: "Write tests that start the server on a random loopback port and send real requests, including malformed JSON, oversized bodies, a page boundary, an aborted request and duplicate retries."
+purpose:
+  uk: "Перевірити, що ти сам складаєш усе із цієї теми — межі REST, валідацію, модель помилок, сторінки, ідемпотентність, версії — плюс дедлайни й скасування з попередньої теми, і доводиш поведінку справжніми HTTP-запитами, а не викликами функцій."
+  en: "To check that you put everything from this unit together on your own — REST boundaries, validation, the error model, pages, idempotency, versions — plus deadlines and cancellation from the previous unit, and prove the behavior with real HTTP requests rather than function calls."
+prerequisites: [no-04-07-debug-contract-corruption]
+subskills:
+  - { family: B-03, skill: "REST boundaries", depth: assess }
+  - { family: B-03, skill: "pagination/filter/sort", depth: assess }
+  - { family: B-03, skill: "cancellation", depth: assess }
+  - { family: B-03, skill: "versioned contracts", depth: assess }
+glossary: []
+selfCheck: [notes-api]
+
+blocks:
+  - id: what-you-build
+    kind: explanation
+    title:
+      uk: "Що ти будуєш"
+      en: "What you build"
+    body:
+      uk: |
+        API нотаток на TypeScript, який поєднує все із цієї теми. Підказок немає: умова нижче — увесь контракт, а перевірки надсилають твоєму серверу справжні HTTP-запити, зокрема ті, яких немає в `index.js`.
+
+        Потім, у локальному завданні, ти напишеш власні тести на `node:test` для того самого API й запустиш їх у терміналі.
+      en: |
+        A notes API in TypeScript that puts together everything from this unit. There are no hints: the task below is the whole contract, and the checks send your server real HTTP requests, including ones that are not in `index.js`.
+
+        Then, in the local task, you write your own `node:test` tests for the same API and run them in the terminal.
+
+  - id: notes-api
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: isolated-node
+    dir: notes-api
+    entry: index.js
+    editable: [app.ts, index.js]
+    capabilities: { network: loopback, testTimeoutMs: 4000, timeoutMs: 20000 }
+    strings:
+      n01: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      n02: { uk: "Покупки", en: "Shopping" }
+      n03: { uk: "Фільми", en: "Films" }
+      n04: { uk: "Паролі не зберігати тут", en: "Do not keep passwords here" }
+      n05: { uk: "Рецепт борщу", en: "Borscht recipe" }
+      n06: { uk: "Книжки на літо", en: "Books for the summer" }
+      n07: { uk: "План подорожі", en: "Trip plan" }
+      n08: { uk: "Нотатки з лекції", en: "Lecture notes" }
+      n09: { uk: "Ремонт велосипеда", en: "Bicycle repair" }
+      n10: { uk: "Дні народження", en: "Birthdays" }
+      n11: { uk: "Ідеї для вихідних", en: "Weekend ideas" }
+      n12: { uk: "Список справ на дачі", en: "Cottage to-do list" }
+      newTitle: { uk: "Серіали", en: "Series" }
+      renamed: { uk: "Серіали на зиму", en: "Series for the winter" }
+    limits:
+      uk: "Файли `.ts` тут виконуються через вилучення типів у Node.js: типи відкидаються, і ніхто їх не перевіряє. Перевірити типи можна командою `tsc` у своєму проєкті."
+      en: "`.ts` files run here through Node.js type stripping: types are removed, and nothing checks them. You can check the types with `tsc` in your own project."
+    title:
+      uk: "API нотаток: /v1 і одна зміна в /v2"
+      en: "The notes API: /v1 and one change in /v2"
+    instructions:
+      uk: |
+        У `app.ts` напиши `createApp({ repo, deadlineMs })`, що повертає `http.Server`. `repo` — репозиторій з `repo.ts` (типово з нотатками з `notes.ts`), `deadlineMs` — типово 1000. Кожен метод репозиторію приймає `AbortSignal`. `http-helpers.js` має `sendJson` і `readBodyText(request, maxBytes)`, яка відхиляє завелике тіло помилкою зі `status: 413`.
+
+        **Нотатка:** `{ id, title, text, pinned }`. Тіло для створення й заміни: `title` — обов’язковий текст, 1–60 символів після обрізання; `text` — текст до 500 символів, типово `""`; `pinned` — `true`/`false`, типово `false`; інших полів не може бути.
+
+        **Маршрути `/v1`:**
+
+        | Запит | Успіх |
+        |---|---|
+        | `GET /v1/notes` | 200, `{ items, nextCursor }` |
+        | `POST /v1/notes` | 201 і нова нотатка |
+        | `GET /v1/notes/:id` | 200 і нотатка |
+        | `PUT /v1/notes/:id` | 200, нотатка замінена цілком |
+        | `PATCH /v1/notes/:id` | 200, змінено лише надіслані поля; перевіряється нотатка після зміни |
+        | `DELETE /v1/notes/:id` | 204 без тіла |
+
+        **Список:** `?pinned=true|false` фільтрує; порядок — за `id`; `?limit` — ціле від 1 до 50, типово 10; `?cursor=<id>` — сторінка з нотаток, що йдуть після цього `id`; `nextCursor` — `id` останньої нотатки сторінки, якщо після неї ще є нотатки, інакше `null`.
+
+        **`/v2`:** лише `GET /v2/notes/:id` — та сама нотатка, але поле `title` називається `heading`. `/v1` своєї форми не змінює.
+
+        **Повтори:** `POST` із заголовком `Idempotency-Key`, що вже був, і тим самим тілом повертає першу відповідь і нічого не створює; з іншим тілом — 422.
+
+        **Дедлайн і скасування:** якщо робота з репозиторієм не завершилася за `deadlineMs`, сигнал, переданий репозиторію, скасовується, а відповідь — 503. Якщо клієнт закрив з’єднання до відповіді, сигнал теж скасовується.
+
+        **Помилки** — завжди `{ error: { code, details } }`:
+
+        | Випадок | Статус | `code` |
+        |---|---|---|
+        | тіло не пройшло схему, неправильні `limit` чи `pinned` | 400 | `VALIDATION_FAILED`, у `details` — по ключу на поле |
+        | зламаний JSON | 400 | `MALFORMED_JSON` |
+        | нотатки чи адреси немає | 404 | `NOT_FOUND` |
+        | інший метод на відомій адресі | 405 + заголовок `Allow` | `METHOD_NOT_ALLOWED` |
+        | тіло понад 1024 байти | 413 | `PAYLOAD_TOO_LARGE` |
+        | повторений ключ з іншим тілом | 422 | `IDEMPOTENCY_KEY_REUSED` |
+        | дедлайн минув | 503 | `DEADLINE_EXCEEDED` |
+        | будь-яка інша помилка | 500 | `INTERNAL`, без повідомлення й стека |
+      en: |
+        In `app.ts` write `createApp({ repo, deadlineMs })`, which returns an `http.Server`. `repo` is a repository from `repo.ts` (by default with the notes from `notes.ts`), `deadlineMs` defaults to 1000. Every repository method takes an `AbortSignal`. `http-helpers.js` has `sendJson` and `readBodyText(request, maxBytes)`, which rejects an oversized body with an error whose `status` is 413.
+
+        **A note:** `{ id, title, text, pinned }`. The body for create and replace: `title` — required text, 1–60 characters after trimming; `text` — text up to 500 characters, default `""`; `pinned` — `true`/`false`, default `false`; no other fields are allowed.
+
+        **`/v1` routes:**
+
+        | Request | Success |
+        |---|---|
+        | `GET /v1/notes` | 200, `{ items, nextCursor }` |
+        | `POST /v1/notes` | 201 and the new note |
+        | `GET /v1/notes/:id` | 200 and the note |
+        | `PUT /v1/notes/:id` | 200, the note replaced entirely |
+        | `PATCH /v1/notes/:id` | 200, only the fields sent changed; the note after the change is checked |
+        | `DELETE /v1/notes/:id` | 204 with no body |
+
+        **The list:** `?pinned=true|false` filters; the order is by `id`; `?limit` is a whole number from 1 to 50, default 10; `?cursor=<id>` gives a page of notes that come after that `id`; `nextCursor` is the `id` of the page's last note when more notes follow, otherwise `null`.
+
+        **`/v2`:** only `GET /v2/notes/:id` — the same note, but the field `title` is called `heading`. `/v1` keeps its shape.
+
+        **Retries:** a `POST` with an `Idempotency-Key` header seen before and the same body returns the first answer and creates nothing; with a different body — 422.
+
+        **Deadline and cancellation:** if the repository work has not finished within `deadlineMs`, the signal given to the repository is aborted and the answer is 503. If the client closed the connection before the answer, the signal is aborted too.
+
+        **Errors** are always `{ error: { code, details } }`:
+
+        | Case | Status | `code` |
+        |---|---|---|
+        | the body failed the schema, an invalid `limit` or `pinned` | 400 | `VALIDATION_FAILED`, with one key per field in `details` |
+        | broken JSON | 400 | `MALFORMED_JSON` |
+        | no such note or address | 404 | `NOT_FOUND` |
+        | another method on a known address | 405 + an `Allow` header | `METHOD_NOT_ALLOWED` |
+        | a body over 1024 bytes | 413 | `PAYLOAD_TOO_LARGE` |
+        | a reused key with a different body | 422 | `IDEMPOTENCY_KEY_REUSED` |
+        | the deadline passed | 503 | `DEADLINE_EXCEEDED` |
+        | any other error | 500 | `INTERNAL`, with no message and no stack |
+    testTitles:
+      "CRUD answers 201, 200, 200, 200, 204 and then 404":
+        uk: "CRUD відповідає 201, 200, 200, 200, 204, а потім 404"
+        en: "CRUD answers 201, 200, 200, 200, 204 and then 404"
+      "an invalid body answers 400 VALIDATION_FAILED with field details and stores nothing":
+        uk: "Неправильне тіло — 400 `VALIDATION_FAILED` з деталями полів, нічого не збережено"
+        en: "An invalid body answers 400 `VALIDATION_FAILED` with field details and stores nothing"
+      "malformed JSON answers 400 MALFORMED_JSON":
+        uk: "Зламаний JSON — 400 `MALFORMED_JSON`"
+        en: "Malformed JSON answers 400 `MALFORMED_JSON`"
+      "a body over 1024 bytes answers 413 PAYLOAD_TOO_LARGE":
+        uk: "Тіло понад 1024 байти — 413 `PAYLOAD_TOO_LARGE`"
+        en: "A body over 1024 bytes answers 413 `PAYLOAD_TOO_LARGE`"
+      "pages by cursor: 5 + 5 + 2 notes, then nextCursor null; limit is checked":
+        uk: "Сторінки за курсором: 5 + 5 + 2 нотатки, потім `nextCursor: null`; `limit` перевіряється"
+        en: "Pages by cursor: 5 + 5 + 2 notes, then `nextCursor: null`; `limit` is checked"
+      "page boundary: a page that ends exactly at the last note has nextCursor null":
+        uk: "Межа сторінки: сторінка, що закінчується рівно на останній нотатці, має `nextCursor: null`"
+        en: "Page boundary: a page that ends exactly at the last note has `nextCursor: null`"
+      "a retried POST with the same Idempotency-Key creates one note; another body answers 422":
+        uk: "Повторений `POST` з тим самим `Idempotency-Key` створює одну нотатку; інше тіло — 422"
+        en: "A retried `POST` with the same `Idempotency-Key` creates one note; another body answers 422"
+      "a slow repository answers 503 DEADLINE_EXCEEDED and its signal is aborted":
+        uk: "Повільний репозиторій — 503 `DEADLINE_EXCEEDED`, і його сигнал скасовано"
+        en: "A slow repository answers 503 `DEADLINE_EXCEEDED` and its signal is aborted"
+      "a client abort aborts the repository signal":
+        uk: "Перерваний клієнтом запит скасовує сигнал репозиторію"
+        en: "A client abort aborts the repository signal"
+      "v1 keeps title, v2 sends heading":
+        uk: "`/v1` зберігає `title`, `/v2` надсилає `heading`"
+        en: "`/v1` keeps `title`, `/v2` sends `heading`"
+      "an unexpected error answers 500 INTERNAL without the message or the stack":
+        uk: "Непередбачена помилка — 500 `INTERNAL` без повідомлення й стека"
+        en: "An unexpected error answers 500 `INTERNAL` without the message or the stack"
+      "an unknown address answers 404 and a wrong method 405 with Allow":
+        uk: "Невідома адреса — 404, неправильний метод — 405 з `Allow`"
+        en: "An unknown address answers 404 and a wrong method 405 with `Allow`"
+    solutionNote:
+      uk: "Еталонне рішення має один центральний обробник: для кожного запиту створює `AbortController`, скасовує його таймером дедлайну або подією `close` відповіді, передає сигнал у репозиторій і перетворює кожну помилку на модель. Список фільтрує, сортує за унікальним `id`, бере записи після курсора й лише тоді ріже сторінку; `nextCursor` залежить від того, чи лишилися записи після сторінки, а не від того, чи вона повна."
+      en: "The reference solution has one central handler: for each request it creates an `AbortController`, aborts it from a deadline timer or the response's `close` event, passes the signal to the repository and turns every error into the model. The list filters, sorts by the unique `id`, takes the records after the cursor and only then cuts the page; `nextCursor` depends on whether records remain after the page, not on whether the page is full."
+    feedback:
+      - when: { test: "a body over 1024 bytes answers 413 PAYLOAD_TOO_LARGE" }
+        message:
+          uk: "Ця перевірка надсилає тіло близько 3 КБ і чекає 413 з кодом `PAYLOAD_TOO_LARGE` — ще до перевірки схеми."
+          en: "This check sends a body of about 3 KB and expects 413 with the code `PAYLOAD_TOO_LARGE` — before any schema check."
+      - when: { test: "page boundary: a page that ends exactly at the last note has nextCursor null" }
+        message:
+          uk: "Ця перевірка просить 4 закріплені нотатки, коли їх рівно 4, і чекає `nextCursor: null`."
+          en: "This check asks for 4 pinned notes when there are exactly 4 and expects `nextCursor: null`."
+      - when: { test: "a slow repository answers 503 DEADLINE_EXCEEDED and its signal is aborted" }
+        message:
+          uk: "Ця перевірка дає репозиторій, кожен виклик якого триває 2 с, і `deadlineMs: 200`. Вона чекає 503 і скасований сигнал у кожному виклику репозиторію."
+          en: "This check passes a repository whose every call takes 2 s and `deadlineMs: 200`. It expects 503 and an aborted signal in every repository call."
+      - when: { test: "a client abort aborts the repository signal" }
+        message:
+          uk: "Ця перевірка обриває запит, поки репозиторій ще працює, і чекає, що сигнал, переданий у репозиторій, буде скасовано протягом секунди."
+          en: "This check aborts the request while the repository is still working and expects the signal given to the repository to be aborted within a second."
+      - when: { test: "a retried POST with the same Idempotency-Key creates one note; another body answers 422" }
+        message:
+          uk: "Ця перевірка надсилає заголовок як `Idempotency-Key` і чекає одну нову нотатку на два однакові запити та 422 для іншого тіла з тим самим ключем."
+          en: "This check sends the header as `Idempotency-Key` and expects one new note for two identical requests and 422 for another body with the same key."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: boundary-cases
+        from: js-09-03-boundary-cases
+        prompt:
+          uk: "Ти тестуєш сторінки по 5 записів. Яка кількість записів у колекції — найцінніший граничний випадок для `nextCursor`?"
+          en: "You test pages of 5 records. Which number of records in the collection is the most valuable boundary case for `nextCursor`?"
+        answer:
+          type: choice
+          options:
+            - id: exactly
+              text: { uk: "Рівно 5 (або рівно 10): сторінка закінчується на останньому записі", en: "Exactly 5 (or exactly 10): the page ends at the last record" }
+            - id: many
+              text: { uk: "1000: чим більше даних, тим надійніший тест", en: "1000: the more data, the more reliable the test" }
+              why:
+                uk: "Велика колекція перевіряє те саме, що й 12 записів. Помилки ховаються на межах: 0, 1, рівно `limit`."
+                en: "A big collection tests the same as 12 records. Bugs hide at the boundaries: 0, 1, exactly `limit`."
+            - id: seven
+              text: { uk: "7: між першою й другою сторінкою", en: "7: between the first and the second page" }
+              why:
+                uk: "7 — звичайний випадок, а не межа: друга сторінка неповна, і `nextCursor: null` очевидний."
+                en: "7 is an ordinary case, not a boundary: the second page is partial, and `nextCursor: null` is obvious."
+          correct: [exactly]
+        explanation:
+          uk: "Код, що вирішує «чи є ще» за тим, чи сторінка повна, на рівно 5 записах обіцяє наступну сторінку, а вона порожня. Порожньо, один, рівно межа — ті самі граничні випадки, що й у тестах на JavaScript."
+          en: "Code that decides “is there more” by whether the page is full promises a next page at exactly 5 records, and it is empty. Empty, one, exactly the limit — the same boundary cases as in the JavaScript tests."
+
+  - id: own-tests
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Власні тести на node:test через справжній HTTP"
+      en: "Your own node:test tests over real HTTP"
+    intro:
+      uk: |
+        Перевірки платформи вже прийняли твій API. Тепер доведи його поведінку **своїми** тестами: кожен тест запускає сервер на порту `0` (система дає вільний порт), надсилає справжні запити через `fetch` і закриває сервер. Тестовий фреймворк — вбудований у Node.js модуль `node:test`, тож npm-пакети не потрібні.
+
+        Під час підготовки уроку все виконано на macOS з Node.js v25.2.1 і npm 11.6.2; вивід нижче справжній. Node.js 22.18 і новіші виконують `.ts` без прапорців, за документацією Node.js 22 (сторінка «Modules: TypeScript»); на 22.13–22.17 додай до команд `--experimental-strip-types`. На Node.js 22, Windows і Linux цей урок не перевіряли.
+
+        **Крок 3 — початковий файл `api.test.js`:**
+
+        ```js
+        // Tests of the notes API over real HTTP: every test starts its own server on a free port.
+        import { test } from 'node:test';
+        import assert from 'node:assert/strict';
+        import { createApp } from './app.ts';
+
+        async function startServer(options) {
+          const server = createApp(options);
+          await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+          return { base: `http://127.0.0.1:${server.address().port}`, server };
+        }
+
+        test('POST creates a note and GET reads it back', async (t) => {
+          const { base, server } = await startServer();
+          t.after(() => server.close());
+          const created = await fetch(`${base}/v1/notes`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ title: 'Films' }),
+          });
+          assert.equal(created.status, 201);
+          const note = await created.json();
+          const read = await fetch(`${base}/v1/notes/${note.id}`);
+          assert.deepEqual(await read.json(), note);
+        });
+
+        test('malformed JSON answers 400 MALFORMED_JSON', async (t) => {
+          const { base, server } = await startServer();
+          t.after(() => server.close());
+          const response = await fetch(`${base}/v1/notes`, { method: 'POST', body: '{"title": "unfinished' });
+          assert.equal(response.status, 400);
+          assert.equal((await response.json()).error.code, 'MALFORMED_JSON');
+        });
+        ```
+
+        **Крок 4 — перший запуск:**
+
+        ```text
+        ✔ POST creates a note and GET reads it back (23.760417ms)
+        ✔ malformed JSON answers 400 MALFORMED_JSON (5.067625ms)
+        ℹ tests 2
+        ℹ suites 0
+        ℹ pass 2
+        ℹ fail 0
+        …
+        ```
+
+        **Крок 6 — звіт, коли тестів шість (з моїми чотирма тестами; назви твоїх можуть відрізнятися):**
+
+        ```text
+        …
+        ✔ a body over 1024 bytes answers 413 (18.129ms)
+        ✔ the last pinned page has nextCursor null (6.96075ms)
+        ✔ a retried POST with the same key creates one note (7.719333ms)
+        ✔ a client abort aborts the repository signal (304.022792ms)
+        ℹ tests 6
+        ℹ pass 6
+        ℹ fail 0
+        …
+        ```
+
+        **Крок 7 — коли межу тіла «забули» (`MAX_BODY_BYTES = 10_000_000`):**
+
+        ```text
+        …
+        ✖ a body over 1024 bytes answers 413 (19.721375ms)
+        ℹ tests 6
+        ℹ pass 5
+        ℹ fail 1
+        …
+          AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+          400 !== 413
+        ```
+
+        400 замість 413: без межі завелике тіло дійшло до схеми, і та відхилила `text` довший за 500 символів. Тест упіймав саме те правило, що зникло.
+      en: |
+        The platform's checks have accepted your API. Now prove its behavior with **your own** tests: each test starts the server on port `0` (the system picks a free port), sends real requests with `fetch` and closes the server. The test framework is Node.js's built-in `node:test` module, so no npm packages are needed.
+
+        While preparing the lesson everything was run on macOS with Node.js v25.2.1 and npm 11.6.2; the output below is real. Node.js 22.18 and newer run `.ts` without flags, according to the Node.js 22 documentation (the page “Modules: TypeScript”); on 22.13–22.17 add `--experimental-strip-types` to the commands. This lesson was not checked on Node.js 22, Windows or Linux.
+
+        **Step 3 — the starting file `api.test.js`:**
+
+        ```js
+        // Tests of the notes API over real HTTP: every test starts its own server on a free port.
+        import { test } from 'node:test';
+        import assert from 'node:assert/strict';
+        import { createApp } from './app.ts';
+
+        async function startServer(options) {
+          const server = createApp(options);
+          await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+          return { base: `http://127.0.0.1:${server.address().port}`, server };
+        }
+
+        test('POST creates a note and GET reads it back', async (t) => {
+          const { base, server } = await startServer();
+          t.after(() => server.close());
+          const created = await fetch(`${base}/v1/notes`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ title: 'Films' }),
+          });
+          assert.equal(created.status, 201);
+          const note = await created.json();
+          const read = await fetch(`${base}/v1/notes/${note.id}`);
+          assert.deepEqual(await read.json(), note);
+        });
+
+        test('malformed JSON answers 400 MALFORMED_JSON', async (t) => {
+          const { base, server } = await startServer();
+          t.after(() => server.close());
+          const response = await fetch(`${base}/v1/notes`, { method: 'POST', body: '{"title": "unfinished' });
+          assert.equal(response.status, 400);
+          assert.equal((await response.json()).error.code, 'MALFORMED_JSON');
+        });
+        ```
+
+        **Step 4 — the first run:**
+
+        ```text
+        ✔ POST creates a note and GET reads it back (23.760417ms)
+        ✔ malformed JSON answers 400 MALFORMED_JSON (5.067625ms)
+        ℹ tests 2
+        ℹ suites 0
+        ℹ pass 2
+        ℹ fail 0
+        …
+        ```
+
+        **Step 6 — the report with six tests (with my four tests; your names may differ):**
+
+        ```text
+        …
+        ✔ a body over 1024 bytes answers 413 (18.129ms)
+        ✔ the last pinned page has nextCursor null (6.96075ms)
+        ✔ a retried POST with the same key creates one note (7.719333ms)
+        ✔ a client abort aborts the repository signal (304.022792ms)
+        ℹ tests 6
+        ℹ pass 6
+        ℹ fail 0
+        …
+        ```
+
+        **Step 7 — when the body limit was “forgotten” (`MAX_BODY_BYTES = 10_000_000`):**
+
+        ```text
+        …
+        ✖ a body over 1024 bytes answers 413 (19.721375ms)
+        ℹ tests 6
+        ℹ pass 5
+        ℹ fail 1
+        …
+          AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+          400 !== 413
+        ```
+
+        400 instead of 413: without the limit the oversized body reached the schema, which refused a `text` longer than 500 characters. The test caught exactly the rule that went missing.
+    tools:
+      - { name: "Node.js", version: { uk: "22.18 або новіший", en: "22.18 or newer" }, note: { uk: "перевірено з v25.2.1; на 22.13–22.17 — з `--experimental-strip-types`", en: "checked with v25.2.1; on 22.13–22.17 with `--experimental-strip-types`" } }
+      - { name: "npm", version: "10+", note: { uk: "перевірено з 11.6.2; потрібен лише для `npm init`", en: "checked with 11.6.2; needed only for `npm init`" } }
+    steps:
+      - text:
+          uk: "Створи теку для тестів і перейди в неї."
+          en: "Create a folder for the tests and go into it."
+        command: "mkdir -p ~/js-course/no04-notes-api\ncd ~/js-course/no04-notes-api"
+      - text:
+          uk: "Створи `package.json` і познач теку як ES-модулі (`\"type\": \"module\"`)."
+          en: "Create `package.json` and mark the folder as ES modules (`\"type\": \"module\"`)."
+        command: "npm init -y\nnpm pkg set type=module"
+        expect:
+          uk: "`package.json` з рядком `\"type\": \"module\"`."
+          en: "A `package.json` with the line `\"type\": \"module\"`."
+      - text:
+          uk: "У VS Code створи в цій теці файли `app.ts`, `repo.ts`, `notes.ts` і `http-helpers.js` і скопіюй у них вміст однойменних файлів із вправи «API нотаток» (`app.ts` — твоє рішення, що пройшло перевірки). Створи `api.test.js` з текстом із кроку 3 вступу."
+          en: "In VS Code create the files `app.ts`, `repo.ts`, `notes.ts` and `http-helpers.js` in this folder and copy into them the contents of the files with the same names from the exercise “The notes API” (`app.ts` is your solution that passed the checks). Create `api.test.js` with the text from step 3 of the introduction."
+      - text:
+          uk: "Запусти тести. `node --test` сам знаходить файли `*.test.js`."
+          en: "Run the tests. `node --test` finds `*.test.js` files by itself."
+        command: "node --test"
+        expect:
+          uk: "Два тести з `✔`, як у кроці 4 вступу."
+          en: "Two tests with `✔`, as in step 4 of the introduction."
+      - text:
+          uk: "Без підказок допиши в `api.test.js` ще щонайменше чотири тести: тіло понад 1024 байти дає 413; сторінка, що закінчується рівно на останній нотатці (`?pinned=true&limit=4`), має `nextCursor: null`; повторений `POST` з тим самим `Idempotency-Key` лишає одну нову нотатку; запит, перерваний клієнтом, скасовує сигнал репозиторію (передай у `createApp` власний повільний репозиторій, що запам’ятовує свій сигнал)."
+          en: "Without hints, add at least four more tests to `api.test.js`: a body over 1024 bytes gives 413; a page that ends exactly at the last note (`?pinned=true&limit=4`) has `nextCursor: null`; a retried `POST` with the same `Idempotency-Key` leaves one new note; a request aborted by the client aborts the repository's signal (pass `createApp` your own slow repository that remembers its signal)."
+      - text:
+          uk: "Запусти тести знову й скопіюй звіт у свої нотатки."
+          en: "Run the tests again and copy the report into your notes."
+        command: "node --test"
+        expect:
+          uk: "Щонайменше шість тестів, `ℹ fail 0`, як у кроці 6 вступу."
+          en: "At least six tests and `ℹ fail 0`, as in step 6 of the introduction."
+      - text:
+          uk: "Доведи, що тести справді щось перевіряють: в `app.ts` тимчасово збільш межу тіла до `10_000_000`, запусти `node --test`, побач падіння тесту на 413, поверни 1024 і запусти ще раз."
+          en: "Prove that the tests really check something: in `app.ts` temporarily raise the body limit to `10_000_000`, run `node --test`, see the 413 test fail, put 1024 back and run once more."
+        command: "node --test"
+        expect:
+          uk: "Спершу `ℹ fail 1` з `400 !== 413`, як у кроці 7 вступу (якщо твоя межа зветься інакше, зміни свою), після відновлення — знову `ℹ fail 0`."
+          en: "First `ℹ fail 1` with `400 !== 413`, as in step 7 of the introduction (if your limit is named differently, change yours), and `ℹ fail 0` again after restoring it."
+    verify:
+      - id: six-green
+        text:
+          uk: "`node --test` пройшов щонайменше шість моїх тестів через справжній HTTP, серед них 413, межа сторінки, повтор із ключем і перерваний запит."
+          en: "`node --test` passed at least six of my tests over real HTTP, among them 413, the page boundary, the keyed retry and the aborted request."
+      - id: caught-break
+        text:
+          uk: "Коли я прибрав межу тіла, тест на 413 упав, а після відновлення знову пройшов."
+          en: "When I removed the body limit, the 413 test failed, and it passed again after restoring it."
+    troubleshooting:
+      - problem:
+          uk: "`node --test` пише `ℹ tests 0` і нічого не запускає"
+          en: "`node --test` prints `ℹ tests 0` and runs nothing"
+        fix:
+          uk: "Файл має називатися на `.test.js` (наприклад, `api.test.js`) і лежати в поточній теці або глибше. Перевір назву й теку командою `ls`."
+          en: "The file must end in `.test.js` (for example `api.test.js`) and be in the current folder or below it. Check the name and the folder with `ls`."
+      - problem:
+          uk: "Тести «висять» і завершуються лише через довгий час"
+          en: "The tests “hang” and finish only after a long time"
+        fix:
+          uk: "Якийсь тест не закрив свій сервер. Кожен тест, що запускає сервер, має `t.after(() => server.close())` одразу після запуску."
+          en: "Some test did not close its server. Every test that starts a server needs `t.after(() => server.close())` right after starting it."
+      - problem:
+          uk: "Помилка про невідоме розширення `.ts` під час імпорту `./app.ts`"
+          en: "An error about the unknown `.ts` extension when importing `./app.ts`"
+        fix:
+          uk: "Твоя версія Node.js не виконує TypeScript без прапорця. Перевір `node --version`: для 22.13–22.17 запускай `node --experimental-strip-types --test`, а версії до 22.13 курс не підтримує. Точного тексту помилки на цих версіях під час підготовки уроку не перевіряли."
+          en: "Your Node.js version does not run TypeScript without a flag. Check `node --version`: on 22.13–22.17 run `node --experimental-strip-types --test`; versions before 22.13 are not supported by the course. The exact error text on those versions was not checked while preparing the lesson."
+    recovery:
+      uk: "Тека `~/js-course/no04-notes-api` нічого не змінює в інших твоїх проєктах. Якщо `app.ts` зіпсувався, знову скопіюй своє рішення з вправи; тести в `api.test.js` від цього не постраждають."
+      en: "The folder `~/js-course/no04-notes-api` changes nothing in your other projects. If `app.ts` got damaged, copy your solution from the exercise again; the tests in `api.test.js` are not affected."

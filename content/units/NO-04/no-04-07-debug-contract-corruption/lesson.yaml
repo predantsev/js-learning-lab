@@ -1,0 +1,272 @@
+id: no-04-07-debug-contract-corruption
+unit: NO-04
+title:
+  uk: "Налагодження: некоректний ввід псує дані; дубль при повторі"
+  en: "Debug: invalid input corrupts data; duplicate retry"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Простежити, як неперевірений PATCH зберігає ціну-текст і порожню назву, які ламають пізніші читання, і перенести перевірку на межу."
+    en: "Trace how an unvalidated PATCH stores a string price and a null name that break later reads, and move validation to the edge."
+  - uk: "Виправити шлях помилок, що відповідає 500 зі стеком, і шлях повторів, що створює дублі, щоб обидва дотримувалися моделі помилок і правил ідемпотентності."
+    en: "Repair an error path that answers 500 with a stack and a retry path that creates duplicates, so both follow the error model and the idempotency rules."
+prerequisites: [no-04-06-versioned-contracts]
+subskills:
+  - { family: B-03, skill: "JSON/schema validation", depth: assess }
+  - { family: B-03, skill: "error model", depth: assess }
+  - { family: B-03, skill: "idempotency", depth: assess }
+glossary: []
+selfCheck: [predict-stored, fix-wishlist-api]
+
+blocks:
+  - id: three-reports
+    kind: explanation
+    title:
+      uk: "Три скарги на один API"
+      en: "Three complaints about one API"
+    body:
+      uk: |
+        API бажань вийшов у світ, і прийшли три скарги:
+
+        1. «Після зміни ціни список, відсортований за назвою, більше не відкривається».
+        2. «Замість помилки застосунок показав якийсь довгий текст із назвами файлів».
+        3. «Через поганий інтернет одне бажання з’явилося двічі».
+
+        Порядок той самий, що й з будь-яким багом: **відтворити** скаргу справжніми запитами, **передбачити**, що має статися, **знайти** рядок, де реальність розходиться з передбаченням, і **виправити так, щоб правильні відповіді не змінилися**.
+
+        Перші дві скарги пов’язані. Неперевірений ввід не падає одразу: його приймають, зберігають — і він вибухає пізніше, в іншому запиті, де на `null` викликають метод. Помилка на межі (400) була б дешевою; помилка через тиждень у читанні — дорога, і причину важко знайти.
+      en: |
+        The wishlist API went live, and three complaints came in:
+
+        1. “After changing a price, the list sorted by name no longer opens.”
+        2. “Instead of an error the app showed some long text with file names.”
+        3. “Because of a bad connection one wish appeared twice.”
+
+        The order is the same as with any bug: **reproduce** the complaint with real requests, **predict** what should happen, **find** the line where reality departs from the prediction, and **repair it so that correct answers do not change**.
+
+        The first two complaints are linked. Unvalidated input does not fail right away: it is accepted, stored — and blows up later, in another request, where a method is called on `null`. An error at the edge (400) would have been cheap; an error a week later during a read is expensive, and its cause is hard to find.
+
+  - id: predict-stored
+    kind: prediction
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      home: { uk: "Дім", en: "Home" }
+    prompt:
+      uk: "Обробник `PATCH /records/:id` робить `wishes[index] = { ...wishes[index], ...patch, id }` і нічого не перевіряє. Клієнт надсилає `PATCH /records/w-02` з тілом `{ \"price\": \"45\", \"name\": null }`. Що відповість сервер і що буде збережено?"
+      en: "The `PATCH /records/:id` handler does `wishes[index] = { ...wishes[index], ...patch, id }` and checks nothing. A client sends `PATCH /records/w-02` with the body `{ \"price\": \"45\", \"name\": null }`. What does the server answer, and what is stored?"
+    code: |
+      { "id": "w-02", "name": "%%lamp%%", "price": 45, "acquired": false, "category": "%%home%%" }
+    lang: json
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: corrupted
+          text:
+            uk: "200, а збережено `name: null` і `price: \"45\"` (текст)"
+            en: "200, and `name: null` and `price: \"45\"` (text) are stored"
+        - id: refused
+          text:
+            uk: "400: такий запис не може бути правильним"
+            en: "400: such a record cannot be valid"
+          why:
+            uk: "Відмовити може лише код, що перевіряє. Тут перевірки немає, тож об’єднання просто виконується."
+            en: "Only code that checks can refuse. There is no check here, so the merge simply happens."
+        - id: converted
+          text:
+            uk: "200, а збережено `price: 45` (число): JSON сам перетворює `\"45\"`"
+            en: "200, and `price: 45` (a number) is stored: JSON converts `\"45\"` by itself"
+          why:
+            uk: "`JSON.parse` дає те, що написано: `\"45\"` у лапках лишається текстом. Ні JSON, ні об’єднання об’єктів типів не змінюють."
+            en: "`JSON.parse` gives what is written: `\"45\"` in quotes stays text. Neither JSON nor object merging changes types."
+      correct: [corrupted]
+    explanation:
+      uk: "Сховище приймає будь-що, що йому дали: «збережено» не означає «правильне». Наслідок з’явиться пізніше — сортування за назвою викличе `localeCompare` на `null` і впаде з `TypeError`."
+      en: "The store accepts whatever it is given: “stored” does not mean “valid”. The consequence shows up later — sorting by name calls `localeCompare` on `null` and fails with a `TypeError`."
+
+  - id: predict-header-case
+    kind: prediction
+    prompt:
+      uk: "Сервер на `node:http` шукає ключ так: `const key = request.headers['Idempotency-Key'];`. Клієнт двічі надсилає однаковий `POST /records` із заголовком `Idempotency-Key: k-1`. Скільки бажань створено?"
+      en: "A `node:http` server looks for the key like this: `const key = request.headers['Idempotency-Key'];`. A client sends the same `POST /records` twice with the header `Idempotency-Key: k-1`. How many wishes are created?"
+    answer:
+      type: choice
+      options:
+        - id: two
+          text: { uk: "Два: `key` завжди `undefined`", en: "Two: `key` is always `undefined`" }
+        - id: one
+          text: { uk: "Одне: заголовок надіслано саме так", en: "One: the header was sent exactly like that" }
+          why:
+            uk: "Назви заголовків HTTP не залежать від регістру, і Node.js кладе їх у `request.headers` малими літерами. Ключа `'Idempotency-Key'` там немає ніколи."
+            en: "HTTP header names do not depend on letter case, and Node.js puts them into `request.headers` in lowercase. The key `'Idempotency-Key'` is never there."
+        - id: error
+          text: { uk: "Жодного: сервер відповість 400", en: "None: the server answers 400" }
+          why:
+            uk: "Відсутній ключ — не помилка: сервер просто вважає, що клієнт ключа не надсилав, і кожен `POST` створює запис."
+            en: "A missing key is not an error: the server just assumes the client sent no key, and every `POST` creates a record."
+      correct: [two]
+    explanation:
+      uk: "На сторінці `node:http` документації Node.js 22 сказано, що ключі об’єкта заголовків переведено в нижній регістр (оригінальне написання лишається в `request.rawHeaders`). Пиши `request.headers['idempotency-key']`. Такий баг не видно в коді: обробка ключа написана правильно, просто ніколи не спрацьовує."
+      en: "The `node:http` page of the Node.js 22 documentation says that the keys of the headers object are lowercased (the original spelling stays in `request.rawHeaders`). Write `request.headers['idempotency-key']`. Such a bug does not show in the code: the key handling is written correctly, it just never fires."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: types-and-json
+        from: js-14-08-compile-time-vs-runtime
+        prompt:
+          uk: "Обробник написано на TypeScript: `const patch = JSON.parse(text) as WishPatch`, де `price: number | null`. Що станеться, коли прийде `{ \"price\": \"45\" }`?"
+          en: "The handler is written in TypeScript: `const patch = JSON.parse(text) as WishPatch`, where `price: number | null`. What happens when `{ \"price\": \"45\" }` arrives?"
+        answer:
+          type: choice
+          options:
+            - id: passes
+              text:
+                uk: "Нічого не зупинить текст `\"45\"`: типи зникають до запуску, а `as` лише обіцяє"
+                en: "Nothing stops the text `\"45\"`: types disappear before running, and `as` only promises"
+            - id: runtime-error
+              text:
+                uk: "Під час виконання TypeScript кине помилку типу"
+                en: "At runtime TypeScript throws a type error"
+              why:
+                uk: "Під час виконання TypeScript уже немає: Node.js виконує JavaScript без типів."
+                en: "At runtime there is no TypeScript any more: Node.js runs JavaScript without the types."
+            - id: tsc-error
+              text:
+                uk: "`tsc` не скомпілює цей рядок"
+                en: "`tsc` refuses to compile this line"
+              why:
+                uk: "`tsc` вірить `as` і не бачить даних, що прийдуть колись по мережі."
+                en: "`tsc` believes the `as` and never sees the data that will arrive over the network some day."
+          correct: [passes]
+        explanation:
+          uk: "Від поганого JSON захищає лише перевірка під час виконання — на межі сервера, до сховища."
+          en: "Only a runtime check protects against bad JSON — at the server's edge, before the store."
+
+  - id: replay-defects
+    kind: example
+    runtime: isolated-node
+    dir: replay-defects
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      tech: { uk: "Техніка", en: "Tech" }
+      home: { uk: "Дім", en: "Home" }
+    title:
+      uk: "Відтвори скарги"
+      en: "Reproduce the complaints"
+    body:
+      uk: |
+        Це API бажань у тому вигляді, в якому його випущено. `wish-rules.js` (схема `checkWish`) і `error-response.js` (модель помилок) написано правильно, але `app.js` використовує їх не скрізь. `index.js` надсилає запити зі скарг.
+
+        Натисни **Запустити** й зістав кожен рядок зі своїм передбаченням: зіпсований `w-02`, 500 зі стеком на сортуванні й дві однакові термочашки.
+      en: |
+        This is the wishlist API as it was released. `wish-rules.js` (the `checkWish` schema) and `error-response.js` (the error model) are written correctly, but `app.js` does not use them everywhere. `index.js` sends the requests from the complaints.
+
+        Press **Run** and match every line with your prediction: the corrupted `w-02`, a 500 with a stack on sorting, and two identical travel mugs.
+    tryIt:
+      uk: |
+        1. У `index.js` прибери з масиву перший запит (`PATCH`) і запусти: сортування знову відповідає 200 — отже, ламає його саме збережений `null`.
+        2. Поверни `PATCH`, а в `index.js` заміни назву заголовка на `'idempotency-key'` і запусти: дубль усе одно створено, бо Node.js однаково переводить назву в нижній регістр, — помилка на боці сервера.
+      en: |
+        1. In `index.js` remove the first request (`PATCH`) from the array and run: sorting answers 200 again — so it is exactly the stored `null` that breaks it.
+        2. Put the `PATCH` back, and in `index.js` change the header name to `'idempotency-key'` and run: the duplicate is still created, because Node.js lowercases the name either way — the mistake is on the server's side.
+
+  - id: fix-wishlist-api
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: fix-wishlist-api
+    entry: index.js
+    editable: [app.js]
+    capabilities: { network: loopback }
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      tech: { uk: "Техніка", en: "Tech" }
+      home: { uk: "Дім", en: "Home" }
+    title:
+      uk: "Полагодь API бажань"
+      en: "Repair the wishlist API"
+    instructions:
+      uk: |
+        Виправ у `app.js` три дефекти зі скарг:
+
+        - `PATCH` має перевіряти бажання **таким, яким воно стане після зміни**, схемою `checkWish`; неправильне — 400 з моделлю помилок (`validationResponse`), і нічого не змінено;
+        - центральний `catch` має відповідати через `toErrorResponse`: невідома помилка — 500 `INTERNAL` без повідомлення й стека, `WishNotFound` — 404;
+        - повторений `POST` з тим самим `Idempotency-Key` не має створювати друге бажання.
+
+        Правильні відповіді не мають змінитися: правильний `PATCH` — 200 з усім бажанням, новий `POST` — 201, неправильний `POST` — 400. Маршрут `/records/:id/share` ще не дописано навмисно: він кидає `TypeError`, і це має стати чистим 500. `wish-rules.js` і `error-response.js` правильні й лише для читання.
+      en: |
+        Repair the three defects from the complaints in `app.js`:
+
+        - `PATCH` must check the wish **as it will be after the change** with the `checkWish` schema; an invalid one gets 400 with the error model (`validationResponse`), and nothing changes;
+        - the central `catch` must answer through `toErrorResponse`: an unknown error — 500 `INTERNAL` with no message and no stack, `WishNotFound` — 404;
+        - a retried `POST` with the same `Idempotency-Key` must not create a second wish.
+
+        Correct answers must not change: a valid `PATCH` — 200 with the whole wish, a new `POST` — 201, an invalid `POST` — 400. The route `/records/:id/share` is unfinished on purpose: it throws a `TypeError`, and that must become a clean 500. `wish-rules.js` and `error-response.js` are correct and read-only.
+    testTitles:
+      "an invalid PATCH answers 400 VALIDATION_FAILED and changes nothing":
+        uk: "Неправильний `PATCH` — 400 `VALIDATION_FAILED`, і нічого не змінено"
+        en: "An invalid `PATCH` answers 400 `VALIDATION_FAILED` and changes nothing"
+      "a valid PATCH still answers 200 with the whole updated wish":
+        uk: "Правильний `PATCH`, як і раніше, — 200 з усім оновленим бажанням"
+        en: "A valid `PATCH` still answers 200 with the whole updated wish"
+      "an unexpected error answers 500 INTERNAL with no message and no stack":
+        uk: "Непередбачена помилка — 500 `INTERNAL` без повідомлення й стека"
+        en: "An unexpected error answers 500 `INTERNAL` with no message and no stack"
+      "a missing wish answers 404 NOT_FOUND":
+        uk: "Бажання, якого немає, — 404 `NOT_FOUND`"
+        en: "A missing wish answers 404 `NOT_FOUND`"
+      "a retried POST with the same Idempotency-Key creates one wish":
+        uk: "Повторений `POST` з тим самим `Idempotency-Key` створює одне бажання"
+        en: "A retried `POST` with the same `Idempotency-Key` creates one wish"
+      "POST still answers 201 for a new wish and 400 for an invalid one":
+        uk: "`POST`, як і раніше, — 201 для нового бажання й 400 для неправильного"
+        en: "`POST` still answers 201 for a new wish and 400 for an invalid one"
+    hints:
+      nudge:
+        uk: "Запусти програму й прочитай відповіді по черзі. Для кожної скарги знайди в `app.js` місце, де дані чи помилка проходять без перевірки або без моделі."
+        en: "Run the program and read the answers one by one. For each complaint find the place in `app.js` where data or an error passes without a check or without the model."
+      explanation:
+        uk: "Для `PATCH` склей поточне бажання (без `id`) з латкою й передай результат у `checkWish`; латку окремо перевіряти не можна — у ній зазвичай немає `name`. Центральний `catch` уже має `requestId`: віддай помилку функції з `error-response.js`. А в `POST` подивись, яким регістром читається назва заголовка: Node.js зберігає назви заголовків у `request.headers` інакше, ніж їх написав клієнт."
+        en: "For `PATCH`, merge the current wish (without `id`) with the patch and pass the result to `checkWish`; checking the patch on its own will not do — it usually has no `name`. The central `catch` already has the `requestId`: hand the error to the function from `error-response.js`. And in `POST` look at the letter case used to read the header name: Node.js keeps header names in `request.headers` differently from how the client wrote them."
+    solutionNote:
+      uk: "Три виправлення на трьох межах: `PATCH` перевіряє бажання після злиття, тож зіпсовані дані більше не потрапляють у сховище; центральний `catch` віддає помилки моделі (`INTERNAL` без стека, `NOT_FOUND`), а стек пише в журнал; ключ читається як `request.headers['idempotency-key']`, бо Node.js переводить назви заголовків у нижній регістр. Правильні відповіді не змінилися."
+      en: "Three repairs at three boundaries: `PATCH` checks the wish after merging, so corrupted data no longer reaches the store; the central `catch` hands errors to the model (`INTERNAL` without a stack, `NOT_FOUND`) and writes the stack to the log; the key is read as `request.headers['idempotency-key']`, because Node.js lower-cases header names. The correct answers did not change."
+    feedback:
+      - when: { test: "an invalid PATCH answers 400 VALIDATION_FAILED and changes nothing" }
+        message:
+          uk: "Ця перевірка надсилає `PATCH { price: \"45\", name: null }` і чекає 400 `VALIDATION_FAILED`, незмінний `w-02` і робоче сортування за назвою. Перевір бажання після злиття до збереження."
+          en: "This check sends `PATCH { price: \"45\", name: null }` and expects 400 `VALIDATION_FAILED`, an unchanged `w-02` and a working sort by name. Check the merged wish before storing it."
+      - when: { test: "a valid PATCH still answers 200 with the whole updated wish" }
+        message:
+          uk: "Ця перевірка надсилає `PATCH { acquired: true }` і чекає 200 з усім бажанням. Якщо тут 400 з `name: \"required\"`, ти перевіряєш саму латку, а не бажання після злиття."
+          en: "This check sends `PATCH { acquired: true }` and expects 200 with the whole wish. If you get 400 with `name: \"required\"` here, you are checking the patch alone, not the merged wish."
+      - when: { test: "an unexpected error answers 500 INTERNAL with no message and no stack" }
+        message:
+          uk: "Ця перевірка викликає `/records/w-01/share` і чекає рівно `{ error: { code: \"INTERNAL\", messageKey: \"errors.internal\", details: {}, requestId } }` без жодних інших полів. Стек — лише в журнал сервера."
+          en: "This check calls `/records/w-01/share` and expects exactly `{ error: { code: \"INTERNAL\", messageKey: \"errors.internal\", details: {}, requestId } }` with no other fields. The stack goes only to the server's log."
+      - when: { test: "a missing wish answers 404 NOT_FOUND" }
+        message:
+          uk: "Ця перевірка чекає для `/records/w-09` статус 404 і код `NOT_FOUND`. `WishNotFound` кидається правильно — її має перетворити центральний `catch`."
+          en: "This check expects status 404 and the code `NOT_FOUND` for `/records/w-09`. `WishNotFound` is thrown correctly — the central `catch` has to turn it into the answer."
+      - when: { test: "a retried POST with the same Idempotency-Key creates one wish" }
+        message:
+          uk: "Ця перевірка двічі надсилає `POST` із заголовком `Idempotency-Key: k-1` і чекає одне нове бажання та однакові відповіді. Подивись, під якою назвою заголовок лежить у `request.headers`."
+          en: "This check sends a `POST` twice with the header `Idempotency-Key: k-1` and expects one new wish and identical answers. Look at the name under which the header sits in `request.headers`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-04
+    body:
+      uk: "Перш ніж вважати крок проєкту завершеним, прожени свій API тими самими трьома скаргами: неправильний `PATCH` (і після нього список), запит, що падає всередині обробника, і повтор `POST` з тим самим ключем."
+      en: "Before you call the project step done, run your API through the same three complaints: an invalid `PATCH` (and the list after it), a request that fails inside a handler, and a retried `POST` with the same key."
