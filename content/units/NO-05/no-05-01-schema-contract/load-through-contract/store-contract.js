@@ -27,33 +27,30 @@ function problemOf(rule, value) {
   return null;
 }
 
-// Parses the stored text and checks it against the contract. Collects every problem; returns a new
-// store with defaults filled in, or throws an Error whose `problems` lists what is wrong.
+// Parses the stored text and checks it against the contract. Stops at the FIRST problem and throws an
+// Error that names its place; returns a new store with defaults filled in when every rule holds.
 export function parseStore(text, contract) {
   const data = JSON.parse(text);
-  const problems = [];
   if (data.schemaVersion !== contract.version) {
-    problems.push(`schemaVersion: ${data.schemaVersion} is not ${contract.version}`);
+    throw new Error(`schemaVersion: ${data.schemaVersion} is not ${contract.version}`);
   }
-  const records = (Array.isArray(data.records) ? data.records : []).map((stored, index) => {
+  if (!Array.isArray(data.records)) throw new Error('records: expected an array'); // never "no records"
+  const records = data.records.map((stored, index) => {
     const record = {};
     for (const key of Object.keys(stored)) {
-      if (!(key in contract.fields)) problems.push(`records[${index}].${key}: unknown field`);
+      if (!(key in contract.fields)) throw new Error(`records[${index}].${key}: unknown field`);
     }
     for (const [name, rule] of Object.entries(contract.fields)) {
       if (stored[name] === undefined) {
-        if ('default' in rule) record[name] = rule.default;
-        else problems.push(`records[${index}].${name}: required`);
+        if (!('default' in rule)) throw new Error(`records[${index}].${name}: required`);
+        record[name] = rule.default;
         continue;
       }
       const problem = problemOf(rule, stored[name]);
-      if (problem) problems.push(`records[${index}].${name}: ${problem}`);
+      if (problem) throw new Error(`records[${index}].${name}: ${problem}`);
       record[name] = stored[name];
     }
     return record;
   });
-  if (problems.length > 0) {
-    throw Object.assign(new Error(`the store breaks the contract in ${problems.length} place(s)`), { problems });
-  }
   return { schemaVersion: data.schemaVersion, records };
 }
