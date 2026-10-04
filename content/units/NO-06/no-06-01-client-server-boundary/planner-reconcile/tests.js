@@ -48,3 +48,9 @@ test('the cached copy stays unchanged', () => {
   run(cache, [task('t-1', { done: true })]);
   expect(cache, 'the cache after reconcile').toEqual(before);
 });
+
+test('stale follows the order of the copy', () => {
+  const cache = [task('t-1'), task('t-2'), task('t-3'), task('t-4')];
+  const serverList = [task('t-4', { title: 'renamed' }), task('t-2', { done: true })];
+  expect(run(cache, serverList).stale, 'stale when the server lists t-4 before t-2').toEqual(['t-2', 't-4']);
+});
