@@ -16,10 +16,10 @@ export const lifecycleRecord = {
   },
 };
 
-// 2. The accessibility check on the iOS simulator, which this Windows computer cannot run.
+// 2. The offline check on the iOS simulator, which this Windows computer cannot run.
 export const iosSkip = {
   provenance: 'skipped',
-  check: 'a11y',
+  check: 'offline',
   target: { kind: 'ios-simulator', name: 'iPhone 17', os: 'iOS 26' },
   reason: '%%iosReason%%',
   revisit: '%%iosRevisit%%',

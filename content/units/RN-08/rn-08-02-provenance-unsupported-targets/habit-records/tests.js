@@ -16,7 +16,7 @@ test('the iOS record is accepted as a skip', () => {
   expect(verdict(iosSkip), 'judge(iosSkip)').toEqual({ status: 'skipped' });
 });
 
-test('the iOS record is about accessibility on the iOS simulator', () => {
-  expect(iosSkip?.check, 'iosSkip.check').toBe('a11y');
+test('the iOS record is about the offline check on the iOS simulator', () => {
+  expect(iosSkip?.check, 'iosSkip.check').toBe('offline');
   expect(iosSkip?.target, 'iosSkip.target').toEqual(iosSimulator);
 });

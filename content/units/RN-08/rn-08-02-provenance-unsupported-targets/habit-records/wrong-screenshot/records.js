@@ -11,9 +11,9 @@ export const lifecycleRecord = {
   provenance: 'learner-authored',
 };
 
-// 2. The accessibility check on the iOS simulator, which this Windows computer cannot run.
+// 2. The offline check on the iOS simulator, which this Windows computer cannot run.
 export const iosSkip = {
-  check: 'a11y',
+  check: 'offline',
   target: iosSimulator,
   provenance: 'skipped',
   reason: '%%iosReason%%',
