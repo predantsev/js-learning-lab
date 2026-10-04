@@ -16,11 +16,16 @@ test('returns node for a Node.js version without navigator', () => {
 test('returns browser for a page global', () => {
   const page = { window: {}, document: {}, navigator: { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } };
   expect(detectHost(page), 'detectHost of a page global').toBe('browser');
+  // A page whose bundle added its own `process` stand-in: it has `env`, but no `versions.node`.
+  const bundledPage = { window: {}, document: {}, process: { env: {}, versions: {}, browser: true } };
+  expect(detectHost(bundledPage), 'detectHost of a page with a bundled process stand-in').toBe('browser');
 });
 
 test('returns unknown when neither host is recognized', () => {
   // A web worker: navigator says "Mozilla", but there is no window and no document.
   const worker = { navigator: { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' } };
   expect(detectHost(worker), 'detectHost of a web worker global').toBe('unknown');
+  // A host that defines `window` but has no page (no `document`).
+  expect(detectHost({ window: {} }), 'detectHost of a global with window but no document').toBe('unknown');
   expect(detectHost({}), 'detectHost({})').toBe('unknown');
 });
