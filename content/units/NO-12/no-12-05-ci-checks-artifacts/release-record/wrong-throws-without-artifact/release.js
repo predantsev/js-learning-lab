@@ -9,14 +9,13 @@ export async function createReleaseRecord(artifactPath, { name, version, commit,
   for (const [field, value] of Object.entries({ name, version, commit, node })) {
     if (typeof value !== 'string' || value.trim() === '') throw new Error(`release record: ${field} is required`);
   }
-  const text = await readFile(artifactPath, 'utf8');
-  const bytes = { length: (await readFile(artifactPath)).length, text };
+  const bytes = await readFile(artifactPath); // a Buffer: the exact bytes, no text decoding
   const file = path.basename(artifactPath);
   const record = {
     name, version, commit, node,
     artifact: file,
     bytes: bytes.length,
-    sha256: sha256Of(bytes.text),
+    sha256: sha256Of(bytes),
     verify: [`shasum -a 256 ${file}`, `sha256sum ${file}`],
   };
   await writeFile(`${artifactPath}.release.json`, JSON.stringify(record, null, 2) + '\n');
@@ -31,15 +30,8 @@ export async function verifyRelease(artifactPath) {
   } catch {
     return { ok: false, problems: ['no readable release record next to the artifact'] };
   }
-  let bytes;
-  let text;
-  try {
-    bytes = await readFile(artifactPath);
-    text = await readFile(artifactPath, 'utf8');
-  } catch {
-    return { ok: false, problems: ['the artifact itself cannot be read'] };
-  }
+  const bytes = await readFile(artifactPath);
   if (bytes.length !== record.bytes) problems.push(`size ${bytes.length}, the record says ${record.bytes}`);
-  if (sha256Of(text) !== record.sha256) problems.push('sha256 differs from the record');
+  if (sha256Of(bytes) !== record.sha256) problems.push('sha256 differs from the record');
   return { ok: problems.length === 0, problems };
 }
