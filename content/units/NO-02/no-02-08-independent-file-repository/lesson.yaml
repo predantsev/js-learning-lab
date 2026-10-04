@@ -177,8 +177,8 @@ blocks:
           en: "This check expects `list()` to reject for broken JSON with an error whose `cause` is a `SyntaxError`. An empty list here would hide the data loss."
       - when: { test: "every FileHandle is closed after reads, saves, refusals and a corrupt file" }
         message:
-          uk: "Ця перевірка рахує незакриті FileHandle після `list()`, `save`, `summary()`, зламаного файла й відмови за лімітом — щоразу має бути 0. Повідомлення «A FileHandle object was closed during garbage collection» означає те саме: якийсь файл лишився відкритим."
-          en: "This check counts unclosed FileHandles after `list()`, `save`, `summary()`, a broken file and a refusal over the limit — it must be 0 every time. The message “A FileHandle object was closed during garbage collection” means the same: some file was left open."
+          uk: "Ця перевірка рахує незакриті FileHandle після `list()`, `save`, `summary()`, зламаного файла й відмови за лімітом — щоразу має бути 0. Рядок «Closing file descriptor … on garbage collection» (Node 22) чи помилка «A FileHandle object was closed during garbage collection» (Node 25 і новіші) означають те саме: якийсь файл лишився відкритим."
+          en: "This check counts unclosed FileHandles after `list()`, `save`, `summary()`, a broken file and a refusal over the limit — it must be 0 every time. A line “Closing file descriptor … on garbage collection” (Node 22) or the error “A FileHandle object was closed during garbage collection” (Node 25 and newer) means the same: some file was left open."
       - when: { test: "summary() reads expenses.json and categories.json at the same time" }
         message:
           uk: "Ця перевірка сповільнює кожну файлову операцію на 30 мс і очікує, що під час `summary()` принаймні дві йтимуть водночас. Два `await` поспіль читають файли по черзі."
@@ -234,6 +234,11 @@ blocks:
     runtime: isolated-node
     dir: crash-check
     entry: index.js
+    strings:
+      lunch: { uk: "Обід", en: "Lunch" }
+      oldFile: { uk: "старий файл, одне непідтверджене збереження втрачено", en: "old file, one unconfirmed save lost" }
+      confirmedMissing: { uk: "бракує підтвердженого збереження", en: "a confirmed save is missing" }
+      halfWritten: { uk: "запис наполовину", en: "a half-written record" }
     title:
       uk: "Наданий скрипт справжнього збою"
       en: "The supplied real-crash script"
@@ -277,25 +282,27 @@ blocks:
         **Крок 4 — правильний репозиторій (уривок):**
 
         ```text
-        round  1: killed after 244 ms, 37 records, 37 confirmed — ok
-        round  2: killed after 233 ms, 72 records, 72 confirmed — ok
+        round  1: killed after 248 ms, 36 records, 36 confirmed — ok
+        round  2: killed after 231 ms, 70 records, 70 confirmed — ok
         …
-        round 10: killed after 216 ms, 280 records, 279 confirmed — ok
+        round 10: killed after 134 ms, 214 records, 213 confirmed — ok
         …
-        round 20: killed after 125 ms, 440 records, 439 confirmed — ok
+        round 20: killed after 127 ms, 323 records, 320 confirmed — ok
         all 20 rounds ok
         ```
 
-        Записів може бути на один більше, ніж підтверджених: `save` завершився, але процес убито раніше, ніж він надрукував `saved`. Це не втрата.
+        Записів може бути більше, ніж підтверджених: `save` завершився, але процес убито раніше, ніж його `saved` дійшло до скрипта. Таке може статися в кожному раунді, тож за 20 раундів різниця виростає до кількох записів. Це не втрата.
 
         **Крок 6 — той самий скрипт із записом просто в `expenses.json` (уривок):**
 
         ```text
-        round  1: killed after 155 ms, 0 records, 21 confirmed — after the restart: cannot read expenses.json (cause: Unexpected end of JSON input)
+        round  1: killed after 182 ms, 118 records, 117 confirmed — ok
         …
-        round 20: killed after 155 ms, 0 records, 21 confirmed — after the restart: cannot read expenses.json (cause: Unexpected end of JSON input)
-        20 of 20 rounds lost or damaged data
+        round 20: killed after 213 ms, 0 records, 250 confirmed — after the restart: cannot read expenses.json (cause: Unexpected end of JSON input)
+        17 of 20 rounds lost or damaged data
         ```
+
+        Раунди після першої поломки теж зламані: новий процес збереження так само не може прочитати файл. Поломку видно лише тоді, коли вбивство влучає в коротку мить між спорожненням файла й кінцем запису. Під час підготовки уроку запис на місці зламався в 11 із 12 запусків скрипта (по 20 раундів, Node 25.2.1 і 20.18.0); тож якщо ти побачиш `all 20 rounds ok`, запусти ще раз-другий.
 
         Числа мілісекунд і записів у тебе будуть інші: момент убивства випадковий.
       en: |
@@ -308,29 +315,31 @@ blocks:
         **Step 4 — a correct repository (excerpt):**
 
         ```text
-        round  1: killed after 244 ms, 37 records, 37 confirmed — ok
-        round  2: killed after 233 ms, 72 records, 72 confirmed — ok
+        round  1: killed after 248 ms, 36 records, 36 confirmed — ok
+        round  2: killed after 231 ms, 70 records, 70 confirmed — ok
         …
-        round 10: killed after 216 ms, 280 records, 279 confirmed — ok
+        round 10: killed after 134 ms, 214 records, 213 confirmed — ok
         …
-        round 20: killed after 125 ms, 440 records, 439 confirmed — ok
+        round 20: killed after 127 ms, 323 records, 320 confirmed — ok
         all 20 rounds ok
         ```
 
-        There may be one more record than confirmed ones: the `save` finished, but the process was killed before it printed `saved`. That is not a loss.
+        There may be more records than confirmed ones: the `save` finished, but the process was killed before its `saved` reached the script. That can happen in every round, so over 20 rounds the gap grows to a few records. That is not a loss.
 
         **Step 6 — the same script with writes straight into `expenses.json` (excerpt):**
 
         ```text
-        round  1: killed after 155 ms, 0 records, 21 confirmed — after the restart: cannot read expenses.json (cause: Unexpected end of JSON input)
+        round  1: killed after 182 ms, 118 records, 117 confirmed — ok
         …
-        round 20: killed after 155 ms, 0 records, 21 confirmed — after the restart: cannot read expenses.json (cause: Unexpected end of JSON input)
-        20 of 20 rounds lost or damaged data
+        round 20: killed after 213 ms, 0 records, 250 confirmed — after the restart: cannot read expenses.json (cause: Unexpected end of JSON input)
+        17 of 20 rounds lost or damaged data
         ```
+
+        The rounds after the first break are broken too: the next saving process cannot read the file either. The break shows only when a kill lands in the short moment between emptying the file and finishing the write. While this lesson was prepared, the in-place write broke in 11 of 12 runs of the script (20 rounds each, Node 25.2.1 and 20.18.0); so if you see `all 20 rounds ok`, run it once or twice more.
 
         Your numbers of milliseconds and records will differ: the moment of the kill is random.
     tools:
-      - { name: "Node.js", version: { uk: "22 або новіший", en: "22 or newer" }, note: { uk: "перевірено з v25.2.1 і v20.18.0", en: "checked with v25.2.1 and v20.18.0" } }
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1 і v20.18.0", en: "checked with v25.2.1 and v20.18.0" } }
     steps:
       - text:
           uk: "Створи теку для перевірки й перейди в неї."
@@ -361,8 +370,8 @@ blocks:
           en: "Now change `save` in `repository.js` so that it writes straight into `expenses.json`, without a temp file and `rename`. Save the file and run the check again."
         command: "node crash-check.mjs"
         expect:
-          uk: "Раунди з `after the restart: … Unexpected end of JSON input` чи схожою помилкою і підсумок `… rounds lost or damaged data`, як у кроці 6 вступу. Скільки раундів зламається, залежить від того, куди влучило вбивство."
-          en: "Rounds with `after the restart: … Unexpected end of JSON input` or a similar error and the summary `… rounds lost or damaged data`, as in step 6 of the introduction. How many rounds break depends on where the kill lands."
+          uk: "Раунди з `after the restart: … Unexpected end of JSON input` чи схожою помилкою (`Unterminated string in JSON …`) і підсумок `… rounds lost or damaged data`, як у кроці 6 вступу. Скільки раундів зламається, залежить від того, куди влучило вбивство; якщо всі 20 — `ok`, запусти ту саму команду ще раз."
+          en: "Rounds with `after the restart: … Unexpected end of JSON input` or a similar error (`Unterminated string in JSON …`) and the summary `… rounds lost or damaged data`, as in step 6 of the introduction. How many rounds break depends on where the kill lands; if all 20 are `ok`, run the same command again."
       - text:
           uk: "Поверни правильний репозиторій і запусти ще раз."
           en: "Restore the correct repository and run once more."

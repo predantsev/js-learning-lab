@@ -31,7 +31,7 @@ for (let round = 1; round <= ROUNDS; round++) {
   await exited;
 
   // The restart: a fresh repository object, as after a real start of the server.
-  const repo = createFileRepository(dataDir, { maxBytes: 4 * 1024 * 1024 });
+  const repo = createFileRepository(dataDir, { maxBytes: 16 * 1024 * 1024 });
   let problems;
   let count = 0;
   try {
