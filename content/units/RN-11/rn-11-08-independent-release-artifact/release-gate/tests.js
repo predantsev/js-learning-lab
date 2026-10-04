@@ -23,6 +23,8 @@ test('debug leftovers in the artifact are problems', () => {
   expect(releaseCheck(installed, variant({ usesCleartextTraffic: true })).problems, 'usesCleartextTraffic: true').toEqual(['cleartext']);
   expect(releaseCheck(installed, variant({ bundleStrings: ['ok', '[dev] seed 50 loans'] })).problems, 'a [dev] string').toEqual(['dev-code-in-bundle']);
   expect(releaseCheck(installed, variant({ bundleStrings: ['API_SECRET=abc'] })).problems, 'a secret').toEqual(['secret-in-bundle']);
+  expect(releaseCheck(installed, variant({ bundleStrings: ['ok', 'db Password: l1brary'] })).problems, 'a password').toEqual(['secret-in-bundle']);
+  expect(releaseCheck(installed, variant({ bundleStrings: ['sk_live_00fake00'] })).problems, 'an sk_live_ key').toEqual(['secret-in-bundle']);
 });
 
 test('several problems are reported in the stated order', () => {
@@ -32,6 +34,7 @@ test('several problems are reported in the stated order', () => {
 test('Android versions below a raised minimum are listed as left behind', () => {
   expect(releaseCheck(installed, candidateB).leftBehindApis, 'minimum raised from 24 to 26').toEqual([24, 25]);
   expect(releaseCheck(installed, variant({ minAndroidApi: 29 })).leftBehindApis, 'minimum raised from 24 to 29').toEqual([24, 25, 26, 27, 28]);
+  expect(releaseCheck(installed, variant({ minAndroidApi: 23 })).leftBehindApis, 'minimum lowered from 24 to 23').toEqual([]);
 });
 
 test('only JavaScript and asset changes can go over the air', () => {
