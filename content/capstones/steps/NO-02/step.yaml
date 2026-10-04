@@ -1,0 +1,130 @@
+# Capstone step of unit NO-02 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of NO-02 from this file.
+# A local step: done in the learner's editor and terminal; no platform checks. The project page shows only
+# the intro of a local step, so the intro carries the whole procedure.
+# Every command was run on macOS (Node.js 25.2.1, npm 11.6.2, TypeScript 7.0.2) in a scratch home on all four
+# projects, continuing the NO-01 scratch projects, in a Ukrainian and an English workspace: the first start
+# that creates server/data/<capstone>.json, the change of the variant with CRASH_BEFORE_RENAME=1 (exit code 137,
+# a *.tmp left, the data file unchanged), the restart that removes the *.tmp and reads the last complete file,
+# the same change without the flag, npm run check (8 of 8), npm run typecheck, the commit. Deliberately wrong
+# variants were run against npm run check on all four and failed it: resolveInside with startsWith(base), a name
+# with "../" stripped, a write in place, the rename before the crash point, no recover(), a damaged file read
+# as an empty list, no read limit, no write limit, a latin1 decode. A missing sync() passed every check, as the
+# lessons say (only a power cut shows it). Not run: Node.js 22, Linux, Windows. Quoted output is from the
+# wishlist run in the Ukrainian workspace.
+# reference/ is the NO-01 reference plus the files of this step (without node_modules/, package-lock.json and
+# the runtime folders server/data/ and server/.check/).
+unit: NO-02
+mode: local
+entry: index.html
+title:
+  uk: "Записи у файлі: атомарний запис і репетиція збою"
+  en: "Records in a file: atomic writes and a crash rehearsal"
+intro:
+  uk: |
+    Тепер записи проєкту живуть у файлі на диску: `server/data/<проєкт>.json` у форматі `{ schemaVersion: 1, records }`. Файловий репозиторій (`src/fileRepository.ts`) читає його з обмеженням розміру, а кожну зміну записує атомарно: тимчасовий файл у тій самій теці, `sync()`, потім один `rename`. Ти навмисно «вбиваєш» процес між записом тимчасового файла й `rename` і доводиш, що після перезапуску читається останній повний файл.
+
+    | Проєкт | Файл даних | Зміна | Після збою й перезапуску |
+    |---|---|---|---|
+    | Список бажань | `server/data/wishlist.json` | `npm run acquire -- w-02` | w-02 ще бажане, «Ще хочу на суму» 365 |
+    | Планувальник | `server/data/planner.json` | `TODAY=2026-03-02 npm run complete -- t-01` | t-01 не виконана, `dueDate` і `priority` цілі |
+    | Трекер звичок | `server/data/habits.json` | `TODAY=2026-03-02 npm run complete -- h-03` | `completions` h-03 — старі, без половинок |
+    | Трекер витрат | `server/data/expenses.json` | `npm run add -- "Кава" 6500 food 2026-03-02` | суми категорій — як у старому файлі |
+
+    Перевірено на macOS (Node.js 25.2.1, TypeScript 7.0.2) на всіх чотирьох проєктах; нижче — «Список бажань» в українському проєкті. На Node.js 22, Linux і Windows не перевірялося. Атомарність `rename` уроки обіцяють лише для macOS і Linux; у Windows Node теж замінює наявний файл, але гарантії системи інші.
+
+    **1. Стан на початку.** `cd ~/js-course/wishlist`, `git status` — чисто, `git log --oneline -1` — commit `Add server/ with a typed summary script`.
+
+    **2. Конфігурація.** `loadConfig` отримує ще два поля: `dataDir` — за замовчуванням `server/data`, збудована від `import.meta.dirname` (змінна `DATA_DIR` потрібна лише перевіркам), і `crashBeforeRename` — `true` лише для `CRASH_BEFORE_RENAME=1`; будь-яке інше значення — помилка конфігурації, як `LOCALE=ua`.
+
+    **3. `src/files.ts`.** Чотири функції з уроків розділу: `resolveInside(baseDir, name)` (вирішує шлях, що вийшов, а не текст назви); `readTextBounded(file, maxBytes)` — `null`, коли файла ще немає (`ENOENT`), `RangeError` для завеликого файла ще до читання, суворе декодування UTF-8, `FileHandle` закривається у `finally`; `writeAtomic(target, text, beforeRename)` — тимчасовий файл `<файл>.<randomUUID()>.tmp`, `handle.sync()`, закриття, `beforeRename()`, `rename`; `removeStaleTemps(dir)` видаляє лише `*.tmp`.
+
+    **4. `src/fileRepository.ts`.** `createFileRepository(dataDir, { maxBytes, beforeRename })` — `list`, `get`, `save` (замінює запис на його місці або додає в кінець), `remove`, `recover` (прибрати `*.tmp`) і `seed` (записати стартові записи, лише коли файла ще немає). Шлях — `resolveInside(dataDir, "wishlist.json")`. Прочитане проходить `parseItemList`: пошкоджений файл — помилка з `cause`, а не «записів немає». Запис, що перевищив би `maxBytes` (у нас 1 000 000 байтів), — `RangeError`, і файл не змінюється.
+
+    **5. `src/open.ts`.** `openRepository(config)` — так стартує кожен скрипт (а в наступному розділі — сервер): `recover()`, потім `seed(await loadFixtures())`. З `crashBeforeRename` він передає `beforeRename: () => process.kill(process.pid, "SIGKILL")` — процес гине так, як від справжнього збою, без `catch` і `finally`. `summary.ts` тепер читає збережені записи, а скрипт зміни (`src/acquire.ts`) змінює один запис через `save`.
+
+    **6. Перший запуск.** `cd server`, `npm run summary`:
+
+    ```text
+    Створено файл даних зі стартовими бажаннями: ~/js-course/wishlist/server/data/wishlist.json
+    Бажань: 6
+    Ще хочу на суму: 365 ₴
+    Бажаних без ціни: 1
+    ```
+
+    Додай у `.gitignore` проєкту рядки `server/data/` і `server/.check/`: дані — це стан на твоєму комп’ютері, а не код.
+
+    **7. Збій між записом і `rename`.** `CRASH_BEFORE_RENAME=1 npm run acquire -- w-02; echo "exit $?"` — процес зупиняється сигналом SIGKILL: після двох рядків npm про запуск скрипту — жодного слова, лише `exit 137` (128 + 9, номер SIGKILL). `ls data` — `wishlist.json` і `wishlist.json.f1d2b236-….tmp`: новий вміст записано, але так і не перейменовано.
+
+    **8. Перезапуск.** `npm run summary` — `Видалено тимчасовий файл, що лишився після збою: wishlist.json.f1d2b236-….tmp`, а далі ті самі 6 бажань і 365 ₴: прочитано останній повний файл. `ls data` — лише `wishlist.json`.
+
+    **9. Та сама зміна без збою.** `npm run acquire -- w-02` — `Saved: w-02 is acquired`; `npm run summary` — «Ще хочу на суму: 320 ₴».
+
+    **10. Перевірка.** `npm run check` (`src/check-repository.ts`) працює в `server/.check/` і друкує рядок `✔` або `✖` на кожну перевірку: `resolveInside` відмовляє `../wishlist.json`, `/etc/hosts`, `../paths-backup/wishlist.json`; файла немає — `[]`, `seed` пише один раз; збереження читається новим об’єктом репозиторію, порядок записів той самий; справжній збій дочірнього процесу (`spawnSync` з `CRASH_BEFORE_RENAME=1`) лишає `*.tmp` і байт-у-байт старий файл, а `recover()` його прибирає; завеликий файл і завеликий запис — `RangeError`; пошкоджений файл — `cause` типу `SyntaxError`; українські назви не псуються. У нас — `8 of 8 checks passed`. Спробуй зламати: заміни перевірку в `resolveInside` на `target.startsWith(base)` — `✖ … "../paths-backup/wishlist.json" must be refused`; запиши в цільовий файл без тимчасового — `✖ … the crash must leave a *.tmp file`. Без `sync()` перевірка проходить: його брак видно лише після вимкнення живлення.
+
+    **11. Доказ і commit.** `npm run typecheck` — жодного рядка. У `docs/server.md` — розділ «NO-02» з виводом кроків 6–10. `cd ..`, `git add -A`, `git status --short` — без `server/data/`, `git commit -m "Store records in server/data with atomic writes and a crash rehearsal"`.
+
+    **Самоперевірка:** кожна зміна йде через `writeAtomic`; тимчасовий файл — у тій самій теці, з унікальною назвою; `FileHandle` закривається у `finally`; на старті `recover()` прибирає `*.tmp`; відсутній файл — «записів ще немає», пошкоджений — помилка; після збою з `CRASH_BEFORE_RENAME=1` перезапуск показує останній повний файл; `npm run check` — усі перевірки `✔`.
+
+    **Якщо щось не так:** після збою `ls data` не показує `*.tmp`, а перезапуск уже бачить зміну (у нас — 320 ₴) — запис іде просто в `wishlist.json`, без тимчасового файла, і збій посеред такого запису лишив би файл записаним наполовину. `*.tmp` лишаються після перезапуску — скрипт не викликає `recover()` (у нас він у `openRepository`). За уроком про атомарний запис, `rename` між різними файловими системами відмовляє з `EXDEV` (у нас не відтворювалося, бо тимчасовий файл лежить поруч із цільовим) — тому тимчасовий файл завжди в тій самій теці. `CRASH_BEFORE_RENAME must be 1 or unset, got "yes"` — так і задумано: прапорець приймає лише `1`.
+
+    Референс кроку — `Завантажити: NO-02 — Записи у файлі: атомарний запис і репетиція збою` після експорту; відкрий його після власної спроби.
+  en: |
+    Now the project's records live in a file on the disk: `server/data/<project>.json` in the form `{ schemaVersion: 1, records }`. The file repository (`src/fileRepository.ts`) reads it with a size limit and writes every change atomically: a temp file in the same folder, `sync()`, then one `rename`. You deliberately “kill” the process between the temp-file write and the `rename` and prove that after a restart the last complete file is read.
+
+    | Project | Data file | Change | After the crash and a restart |
+    |---|---|---|---|
+    | Wishlist | `server/data/wishlist.json` | `npm run acquire -- w-02` | w-02 still wanted, the wanted total 365 |
+    | Planner | `server/data/planner.json` | `TODAY=2026-03-02 npm run complete -- t-01` | t-01 not done, `dueDate` and `priority` intact |
+    | Habit tracker | `server/data/habits.json` | `TODAY=2026-03-02 npm run complete -- h-03` | the `completions` of h-03 — the old ones, never half-written |
+    | Expense tracker | `server/data/expenses.json` | `npm run add -- "Кава" 6500 food 2026-03-02` | the category totals — those of the old file |
+
+    Checked on macOS (Node.js 25.2.1, TypeScript 7.0.2) on all four projects; below is the Wishlist in a Ukrainian project. Not checked on Node.js 22, Linux or Windows. The lessons promise an atomic `rename` only on macOS and Linux; on Windows Node also replaces the existing file, but the system's guarantees differ.
+
+    **1. The starting state.** `cd ~/js-course/wishlist`, `git status` — clean, `git log --oneline -1` — the commit `Add server/ with a typed summary script`.
+
+    **2. The configuration.** `loadConfig` gets two more fields: `dataDir` — `server/data` by default, built from `import.meta.dirname` (the variable `DATA_DIR` is needed only by the checks), and `crashBeforeRename` — `true` only for `CRASH_BEFORE_RENAME=1`; any other value is a configuration error, like `LOCALE=ua`.
+
+    **3. `src/files.ts`.** Four functions from this unit's lessons: `resolveInside(baseDir, name)` (the resolved path decides, not the text of the name); `readTextBounded(file, maxBytes)` — `null` when the file does not exist yet (`ENOENT`), a `RangeError` for a file that is too big before it is read, a strict UTF-8 decode, the `FileHandle` closed in `finally`; `writeAtomic(target, text, beforeRename)` — a temp file `<file>.<randomUUID()>.tmp`, `handle.sync()`, close, `beforeRename()`, `rename`; `removeStaleTemps(dir)` deletes only `*.tmp`.
+
+    **4. `src/fileRepository.ts`.** `createFileRepository(dataDir, { maxBytes, beforeRename })` — `list`, `get`, `save` (replaces a record in its place or adds it at the end), `remove`, `recover` (remove the `*.tmp`) and `seed` (write the starting records only when there is no file yet). The path is `resolveInside(dataDir, "wishlist.json")`. What is read passes `parseItemList`: a damaged file is an error with a `cause`, not “no records”. A write that would pass `maxBytes` (1,000,000 bytes for us) is a `RangeError`, and the file does not change.
+
+    **5. `src/open.ts`.** `openRepository(config)` — this is how every script starts (and in the next unit the server): `recover()`, then `seed(await loadFixtures())`. With `crashBeforeRename` it passes `beforeRename: () => process.kill(process.pid, "SIGKILL")` — the process dies as in a real crash, with no `catch` and no `finally`. `summary.ts` now reads the stored records, and the change script (`src/acquire.ts`) changes one record through `save`.
+
+    **6. The first start.** `cd server`, `npm run summary`:
+
+    ```text
+    Створено файл даних зі стартовими бажаннями: ~/js-course/wishlist/server/data/wishlist.json
+    Бажань: 6
+    Ще хочу на суму: 365 ₴
+    Бажаних без ціни: 1
+    ```
+
+    Add the lines `server/data/` and `server/.check/` to the project's `.gitignore`: the data is the state on your computer, not code.
+
+    **7. A crash between the write and the `rename`.** `CRASH_BEFORE_RENAME=1 npm run acquire -- w-02; echo "exit $?"` — the process is stopped by the signal SIGKILL: after npm's two lines about starting the script — not a word, only `exit 137` (128 + 9, the number of SIGKILL). `ls data` — `wishlist.json` and `wishlist.json.f1d2b236-….tmp`: the new content was written but never renamed.
+
+    **8. The restart.** `npm run summary` — `Видалено тимчасовий файл, що лишився після збою: wishlist.json.f1d2b236-….tmp` (with `LOCALE=en`: `Removed a temp file left by a crash: …`), then the same 6 wishes and 365 ₴: the last complete file was read. `ls data` — only `wishlist.json`.
+
+    **9. The same change without a crash.** `npm run acquire -- w-02` — `Saved: w-02 is acquired`; `npm run summary` — “Ще хочу на суму: 320 ₴”.
+
+    **10. The check.** `npm run check` (`src/check-repository.ts`) works in `server/.check/` and prints a `✔` or `✖` line per check: `resolveInside` refuses `../wishlist.json`, `/etc/hosts`, `../paths-backup/wishlist.json`; no file — `[]`, `seed` writes once; a save is read back by a new repository object, in the same order; a real crash of a child process (`spawnSync` with `CRASH_BEFORE_RENAME=1`) leaves a `*.tmp` and the old file byte for byte, and `recover()` removes it; a file and a write that are too big — `RangeError`; a damaged file — a `cause` of type `SyntaxError`; Ukrainian names are not damaged. For us — `8 of 8 checks passed`. Try to break it: replace the check in `resolveInside` with `target.startsWith(base)` — `✖ … "../paths-backup/wishlist.json" must be refused`; write into the target file without a temp file — `✖ … the crash must leave a *.tmp file`. Without `sync()` the check passes: its absence shows only after a power cut.
+
+    **11. Evidence and the commit.** `npm run typecheck` — not a single line. In `docs/server.md` — a section “NO-02” with the output of steps 6–10. `cd ..`, `git add -A`, `git status --short` — without `server/data/`, `git commit -m "Store records in server/data with atomic writes and a crash rehearsal"`.
+
+    **Self-check:** every change goes through `writeAtomic`; the temp file is in the same folder, with a unique name; the `FileHandle` is closed in `finally`; on start `recover()` removes the `*.tmp`; a missing file is “no records yet”, a damaged one is an error; after a crash with `CRASH_BEFORE_RENAME=1` a restart shows the last complete file; `npm run check` — every check `✔`.
+
+    **If something goes wrong:** after the crash `ls data` shows no `*.tmp`, and the restart already sees the change (320 ₴ for us) — the write goes straight into `wishlist.json`, without a temp file, and a crash in the middle of such a write would leave the file half-written. `*.tmp` files stay after a restart — the script does not call `recover()` (ours is in `openRepository`). According to the lesson about atomic writes, `rename` between file systems fails with `EXDEV` (not reproduced here, because the temp file lies next to the target) — that is why the temp file is always in the same folder. `CRASH_BEFORE_RENAME must be 1 or unset, got "yes"` — that is intended: the flag accepts only `1`.
+
+    The step's reference is `Download: NO-02 — Records in a file: atomic writes and a crash rehearsal` after the export; open it after your own attempt.
+purpose:
+  uk: "Це крок твого проєкту: безпечні шляхи, обмежене читання, атомарний запис і закриття дескрипторів із цього розділу ти застосовуєш до власних записів — вони переходять у файл на диску й переживають навмисний збій. Платформа цей крок не перевіряє: доказ — вивід команд, `npm run check`, `docs/server.md` і commit."
+  en: "This is a step of your project: you apply this unit's safe paths, bounded reads, atomic writes and handle cleanup to your own records — they move into a file on the disk and survive a deliberate crash. The platform does not check this step: the evidence is the command output, `npm run check`, `docs/server.md` and the commit."
+objectives:
+  - uk: "Зберігати записи проєкту у `server/data/<проєкт>.json` через файловий репозиторій із `resolveInside`, обмеженим читанням і `writeAtomic` для кожної зміни."
+    en: "Store the project's records in `server/data/<project>.json` through a file repository with `resolveInside`, bounded reads and `writeAtomic` for every change."
+  - uk: "Спричинити збій між записом тимчасового файла й `rename`, перезапустити й показати, що читається останній повний файл, а залишений `*.tmp` прибрано."
+    en: "Cause a crash between the temp-file write and the `rename`, restart and show that the last complete file is read and the leftover `*.tmp` is removed."
+transfer:
+  uk: "Цей крок виконується в редакторі й терміналі на твоєму комп’ютері: що зробити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor and a terminal on your computer: what to do, the expected output and the self-check list are above and on the step's page in your project."
