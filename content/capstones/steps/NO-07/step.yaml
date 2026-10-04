@@ -1,0 +1,171 @@
+# Capstone step of unit NO-07 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of NO-07 from this file.
+# A local step: done in the learner's editor and terminal; no platform checks. The project page shows only
+# the intro of a local step, so the intro carries the whole procedure.
+# Every command was run on macOS in a scratch home on all four projects, continuing the NO-05 references, in a
+# Ukrainian and an English workspace, on Node.js 25.2.1 (npm 11.6.2, curl 8.7.1) and on Node.js 22.13.1
+# (npm 10.9.2, with NODE_OPTIONS=--experimental-strip-types): npm start, the curl requests of the intro, the
+# JSON log lines, npm test, npm run check, npm run check:server, npm run typecheck. Deliberately wrong
+# variants were run against npm test on all four; each failed at least one test (listed in the task files'
+# headers and in the hand-back). Quoted output is from the wishlist run in the Ukrainian workspace on Node.js
+# 25.2.1. Not run: Linux, Windows.
+# reference/ is the NO-05 reference plus the files of this step (without node_modules/, package-lock.json and
+# the runtime folders server/data/ and server/.check/); sample names in tests/ are fixture strings.
+unit: NO-07
+mode: local
+entry: index.html
+title:
+  uk: "Зміцнений API: межі, тайм-аути, безпечні ключі й логи з request id"
+  en: "A hardened API: limits, timeouts, safe keys and request-id logs"
+intro:
+  uk: |
+    Сервер проєкту вже приймає лише перевірені тіла. Тепер — усе інше, що приходить ззовні: розмір тіла без `Content-Length`, повільні заголовки, ключі `__proto__`, невідомі й повторені параметри запиту, `..` в адресі, чужий `X-Request-Id`. Він слухає лише loopback, якщо ти не вирішив інакше, і пише один рядок JSON на запит — без тіл, без запиту після `?`. Кожне правило доводить тест через справжній HTTP. Контракт `/v1` не змінюється: ті самі адреси, тіла й форма помилок; нові лише відмови.
+
+    | Проєкт | На межі відхиляється | Ніколи в логах |
+    |---|---|---|
+    | Список бажань | `name` порожня після `trim` чи понад 80 символів, `price` від’ємна чи дробова, `category` понад 30 | тіло бажання: назва, ціна |
+    | Планувальник | `title` порожній чи понад 80, `dueDate` — не справжня дата `YYYY-MM-DD`, `priority` поза `low` / `normal` / `high`; `?sort` лише `title`, `dueDate`, `priority` | тіло справи |
+    | Трекер звичок | невідома `frequency`; `completions` — не різні справжні дати чи більше за межу | назви звичок |
+    | Трекер витрат | `amountMinor` не додатне ціле, `category` не зі списку, `label` понад 80 | суми й назви витрат |
+
+    Перевірено на macOS на всіх чотирьох проєктах в українському й англійському проєктах — на Node.js 25.2.1 (curl 8.7.1) і на Node.js 22.13.1 (з `NODE_OPTIONS=--experimental-strip-types`: ті самі рядки плюс `ExperimentalWarning`, а `npm test`, виведений у файл, — у форматі TAP); нижче — «Список бажань» в українському проєкті на 25.2.1. На Linux і Windows не перевірялося; команди з `'…'` — для терміналів macOS і Linux.
+
+    **1. Стан на початку.** `cd ~/js-course/<проєкт>/server`, `git status` — чисто, останній commit — `Give the server a durable store: a contract, a tested migration, verified backups and recovery`.
+
+    **2. Тіло — `src/body.ts`.** `Content-Length` понад 4096 — `413` одразу, не прочитавши ні байта (швидкий шлях, не захист: тіло `Transfer-Encoding: chunked` довжини не оголошує). Захист — лічильник байтів кожної частини: на межі читання зупиняється (`req.off`, `req.pause()`), відповідь — `413` із `Connection: close`, щоб з’єднання не висіло до `requestTimeout`. Байти, що не UTF-8, і зламаний JSON — `400 MALFORMED_JSON`.
+
+    **3. Тайм-аути — `src/server.ts`.** `LIMITS` (`maxBodyBytes`, `headersTimeoutMs` 10 000, `requestTimeoutMs` 30 000, `checkIntervalMs` 1000) іде в опції `http.createServer({ headersTimeout, requestTimeout, connectionsCheckingInterval }, …)`: лише вони бачать клієнта, що шле заголовки чи тіло надто повільно, — `408`. `createRecordsServer(repository, log, limits)` приймає коротші межі для тестів.
+
+    **4. Ключі без прототипу — `src/validate.ts`, `src/list.ts`.** `JSON.parse` робить `"__proto__"` звичайним власним ключем; запис `errors["__proto__"] = …` у звичайний `{}` змінив би прототип і загубив помилку. Тому `errors` — `Object.create(null)`: `__proto__` і `constructor` повертаються як `unknown-field`, а в запис ідуть лише поля, скопійовані за назвами зі списку.
+
+    **5. Запит — `src/list.ts`.** Список дозволених параметрів (`PARAMS`): невідома назва — `unknown-param`, назва двічі — `repeated`; `limit` — лише цифри (`1e1`, `-1`, порожнє — `out-of-range`); значення `sort` — зі списку. Усі причини разом, `400` до репозиторію.
+
+    **6. Адреса — `src/api.ts`.** Після `decodeURIComponent` (`%E0` — `400`) `id` мусить мати форму твого проєкту (`ID_PATTERN`, `/^w-\d{2,}$/` у списку бажань): `..%2Fpackage.json`, `w-01%2F..`, `W-01` — `400` ще до читання сховища. Імена файлів (резервні копії) і далі проходять `resolveInside`.
+
+    **7. Loopback — `src/config.ts`.** `host` із `HOST`, за замовчуванням `127.0.0.1`; `hostWarning(host)` — `null` для `127.0.0.1`, `::1`, `localhost` і попередження для будь-якої іншої адреси, яке сервер пише рядком JSON рівня `warn` перед `listen(port, host)`. Проксі в проєкті немає, тож `X-Forwarded-For` сервер не читає.
+
+    **8. Логи — `src/log.ts`.** Один рядок JSON на завершений запит, рівно `time`, `level` (`info` до 399, `warn` 4xx, `error` 5xx), `requestId`, `method`, `route` (лише шлях, без `?…`), `status`, `durationMs`. Ні заголовків, ні тіл: так назви, ціни й суми не потрапляють у лог за побудовою. `requestIdOf(req)` бере вхідний `X-Request-Id`, лише якщо він має форму `^[A-Za-z0-9-]{8,64}$`, інакше — `randomUUID()`; сервер ставить заголовок `x-request-id` до обробки, тож його має кожна відповідь, і `handleV1(req, res, context)` кладе той самий id у тіло помилки. Збій усередині — окремий рядок `errorLine`: назва помилки й `code`, ніколи `message` чи стек (там можуть бути дані запиту).
+
+    **9. Тести — `tests/hardening.test.ts`.** `node:test`, власний сервер на `listen(0, "127.0.0.1")`, лог — у масив через параметр `log`. Те, чого `fetch` не надішле, — через сокет `node:net`: тіло `chunked` понад межу — `413`, `Connection: close` і закрите з’єднання; `Content-Length: 1000000` без тіла — `413` одразу; заголовки по літері раз на 50 мс за `headersTimeoutMs` 300 — `408`. Далі: зламаний JSON і не UTF-8; `__proto__` і `constructor` у тілі, прототип `{}` не змінився; параметри запиту; `id` з `..`; правила полів твого проєкту; рядок логу — рівно сім полів, без тіла й без `?`; вхідний `X-Request-Id`; `500` у лозі — лише назва помилки; `HOST`.
+
+    **10. Прогін.** `npm start`, у другому терміналі (вивід `curl -i` скорочено до статусу, `connection`, `x-request-id` і тіла; `…` — id):
+
+    ```text
+    $ node -e 'console.log(JSON.stringify({ name: "x".repeat(5000) }))' | curl -sS -i http://127.0.0.1:4311/v1/records -H "content-type: application/json" -H "transfer-encoding: chunked" --data-binary @-
+    HTTP/1.1 413 Payload Too Large
+    x-request-id: …
+    connection: close
+    {"error":{"code":"PAYLOAD_TOO_LARGE","messageKey":"errors.payloadTooLarge","details":{"maxBytes":4096},"requestId":"…"}}
+    $ curl -sS -i http://127.0.0.1:4311/v1/records/..%2Fpackage.json
+    HTTP/1.1 400 Bad Request
+    {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"id":"malformed"},"requestId":"…"}}
+    $ curl -sS "http://127.0.0.1:4311/v1/records?limit=1e1&page=2"
+    {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"page":"unknown-param","limit":"out-of-range"},"requestId":"…"}}
+    $ curl -sS http://127.0.0.1:4311/v1/records -H "content-type: application/json" -d '{"__proto__":{"isAdmin":true}}'
+    {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"name":"required","__proto__":"unknown-field"},"requestId":"…"}}
+    $ curl -sS -i -H "x-request-id: support-ticket-0042" http://127.0.0.1:4311/v1/records/w-03
+    HTTP/1.1 200 OK
+    x-request-id: support-ticket-0042
+    ```
+
+    Термінал сервера (час і тривалість скорочено до `…`):
+
+    ```text
+    {"time":"…","level":"warn","requestId":"…","method":"POST","route":"/v1/records","status":413,"durationMs":…}
+    {"time":"…","level":"warn","requestId":"…","method":"GET","route":"/v1/records/..%2Fpackage.json","status":400,"durationMs":…}
+    {"time":"…","level":"warn","requestId":"…","method":"GET","route":"/v1/records","status":400,"durationMs":…}
+    {"time":"…","level":"info","requestId":"support-ticket-0042","method":"GET","route":"/v1/records/w-03","status":200,"durationMs":…}
+    ```
+
+    Запит твого проєкту з порушенням кожного правила полів — у завданні.
+
+    **11. Спробуй зламати.** Прибери лічильник частин (залиш лише `Content-Length`) — `✖ a body over 4096 bytes without Content-Length (chunked) is 413 with Connection: close, and nothing is stored`; поверни `const errors = {}` у `validate.ts` — `✖ __proto__ and constructor in a body are unknown fields, and no prototype changes`; пиши в лог `req.url` замість шляху — `✖ one JSON log line per request: request id, method, route without the query, status, duration — never the body`; приймай будь-який вхідний `X-Request-Id` — `✖ a well-formed incoming X-Request-Id is kept; a malformed one is replaced by the server's own`. Поверни код.
+
+    **12. Доказ і commit.** `npm run typecheck` — жодного рядка; `npm run check` і `npm run check:server` — усі `✔`; `npm test` — `fail 0`. У `docs/server.md` — розділ «NO-07»: правила межі, вивід кроку 10 і рядки логу. `cd ..`, `git add -A`, `git commit -m "Harden the API edge: body and time limits, safe keys and paths, loopback, request-id logs"`.
+
+    **Самоперевірка:** тіло понад межу — `413` і закрите з’єднання, з `Content-Length` і без нього; повільні заголовки — `408`; `__proto__` у тілі чи запиті — помилка, а не змінений прототип; невідомий чи повторений параметр і `limit` не з цифр — `400`; `id` з `..` — `400` до сховища; сервер слухає `127.0.0.1`, доки `HOST` не скаже інше, і попереджає про будь-що інше; рядок логу — сім полів, без тіл і `?`, з тим самим `requestId`, що й у відповіді.
+
+    **Якщо щось не так:** `413` приходить, але `curl` чекає ще — у відповіді немає `Connection: close`. Тест `408` відповідає `null` — заголовки встигли прийти: інтервал між літерами має бути більшим за `headersTimeoutMs` поділене на довжину. `__proto__` не з’являється в `details` — `errors` має прототип. Чого ми не робили і чому: обмеження частоти (`429`) і CORS — сервер слухає лише цей комп’ютер, а вебзастосунок до нього ще не звертається; TLS — loopback не виходить у мережу.
+
+    Референс кроку — `Завантажити: NO-07 — Зміцнений API: межі, тайм-аути, безпечні ключі й логи з request id` після експорту; відкрий його після власної спроби.
+  en: |
+    The project's server already accepts only checked bodies. Now everything else that comes from outside: a body size without `Content-Length`, slow headers, `__proto__` keys, unknown and repeated query parameters, `..` in the address, someone else's `X-Request-Id`. It listens on loopback only unless you decide otherwise, and writes one JSON line per request — no bodies, no query after `?`. Every rule is proved by a test over real HTTP. The `/v1` contract does not change: the same addresses, bodies and error shape; only the refusals are new.
+
+    | Project | Refused at the edge | Never in the logs |
+    |---|---|---|
+    | Wishlist | `name` empty after `trim` or over 80 characters, `price` negative or fractional, `category` over 30 | the wish body: name, price |
+    | Planner | `title` empty or over 80, `dueDate` not a real `YYYY-MM-DD` date, `priority` outside `low` / `normal` / `high`; `?sort` only `title`, `dueDate`, `priority` | the task body |
+    | Habit tracker | an unknown `frequency`; `completions` that are not different real dates or above the limit | habit names |
+    | Expense tracker | `amountMinor` not a positive whole number, `category` not in the list, `label` over 80 | amounts and expense labels |
+
+    Checked on macOS on all four projects in a Ukrainian and an English project — on Node.js 25.2.1 (curl 8.7.1) and on Node.js 22.13.1 (with `NODE_OPTIONS=--experimental-strip-types`: the same lines plus an `ExperimentalWarning`, and `npm test` written to a file reports in TAP); below is the Wishlist in a Ukrainian project on 25.2.1. Not checked on Linux or Windows; the commands with `'…'` are for macOS and Linux terminals.
+
+    **1. The starting state.** `cd ~/js-course/<project>/server`, `git status` — clean, the last commit is `Give the server a durable store: a contract, a tested migration, verified backups and recovery`.
+
+    **2. The body — `src/body.ts`.** A `Content-Length` over 4096 is a `413` at once, before a single byte is read (a fast path, not a protection: a `Transfer-Encoding: chunked` body declares no length). The protection is a byte counter over every chunk: at the limit reading stops (`req.off`, `req.pause()`), and the answer is a `413` with `Connection: close`, so the connection does not hang until `requestTimeout`. Bytes that are not UTF-8 and broken JSON are a `400 MALFORMED_JSON`.
+
+    **3. Timeouts — `src/server.ts`.** `LIMITS` (`maxBodyBytes`, `headersTimeoutMs` 10,000, `requestTimeoutMs` 30,000, `checkIntervalMs` 1000) goes into the options of `http.createServer({ headersTimeout, requestTimeout, connectionsCheckingInterval }, …)`: only they see a client that sends its headers or body too slowly — a `408`. `createRecordsServer(repository, log, limits)` takes shorter limits for the tests.
+
+    **4. Keys without a prototype — `src/validate.ts`, `src/list.ts`.** `JSON.parse` makes `"__proto__"` an ordinary own key; writing `errors["__proto__"] = …` into a plain `{}` would change its prototype and lose the error. So `errors` is `Object.create(null)`: `__proto__` and `constructor` come back as `unknown-field`, and only the fields copied by name from the allowlist go into the record.
+
+    **5. The query — `src/list.ts`.** An allowlist of parameters (`PARAMS`): an unknown name is `unknown-param`, a name given twice is `repeated`; `limit` is digits only (`1e1`, `-1`, empty — `out-of-range`); the `sort` value comes from its list. All reasons together, a `400` before the repository.
+
+    **6. The address — `src/api.ts`.** After `decodeURIComponent` (`%E0` is a `400`) the `id` must have your project's shape (`ID_PATTERN`, `/^w-\d{2,}$/` in the wishlist): `..%2Fpackage.json`, `w-01%2F..`, `W-01` are a `400` before the store is read. File names (the backups) still go through `resolveInside`.
+
+    **7. Loopback — `src/config.ts`.** `host` from `HOST`, `127.0.0.1` by default; `hostWarning(host)` is `null` for `127.0.0.1`, `::1`, `localhost` and a warning for any other address, which the server writes as a JSON line of level `warn` before `listen(port, host)`. The project has no proxy, so the server does not read `X-Forwarded-For`.
+
+    **8. Logs — `src/log.ts`.** One JSON line per finished request, exactly `time`, `level` (`info` up to 399, `warn` 4xx, `error` 5xx), `requestId`, `method`, `route` (the path only, without `?…`), `status`, `durationMs`. No headers and no bodies: so names, prices and amounts never reach the log, by construction. `requestIdOf(req)` takes an incoming `X-Request-Id` only when it has the shape `^[A-Za-z0-9-]{8,64}$`, otherwise `randomUUID()`; the server sets the `x-request-id` header before handling, so every answer has it, and `handleV1(req, res, context)` puts the same id into the error body. A failure inside is a separate `errorLine`: the error's name and `code`, never its `message` or stack (they can hold request data).
+
+    **9. Tests — `tests/hardening.test.ts`.** `node:test`, an own server on `listen(0, "127.0.0.1")`, the log into an array through the `log` parameter. What `fetch` will not send goes through a `node:net` socket: a `chunked` body over the limit — `413`, `Connection: close` and a closed connection; `Content-Length: 1000000` without a body — `413` at once; headers one letter every 50 ms against `headersTimeoutMs` 300 — `408`. Then: broken JSON and not UTF-8; `__proto__` and `constructor` in a body, the prototype of `{}` unchanged; the query parameters; an `id` with `..`; your project's field rules; a log line — exactly seven fields, no body and no `?`; an incoming `X-Request-Id`; a `500` in the log — the error's name only; `HOST`.
+
+    **10. The run.** `npm start`, and in a second terminal (the `curl -i` output is cut to the status, `connection`, `x-request-id` and the body; `…` is an id):
+
+    ```text
+    $ node -e 'console.log(JSON.stringify({ name: "x".repeat(5000) }))' | curl -sS -i http://127.0.0.1:4311/v1/records -H "content-type: application/json" -H "transfer-encoding: chunked" --data-binary @-
+    HTTP/1.1 413 Payload Too Large
+    x-request-id: …
+    connection: close
+    {"error":{"code":"PAYLOAD_TOO_LARGE","messageKey":"errors.payloadTooLarge","details":{"maxBytes":4096},"requestId":"…"}}
+    $ curl -sS -i http://127.0.0.1:4311/v1/records/..%2Fpackage.json
+    HTTP/1.1 400 Bad Request
+    {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"id":"malformed"},"requestId":"…"}}
+    $ curl -sS "http://127.0.0.1:4311/v1/records?limit=1e1&page=2"
+    {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"page":"unknown-param","limit":"out-of-range"},"requestId":"…"}}
+    $ curl -sS http://127.0.0.1:4311/v1/records -H "content-type: application/json" -d '{"__proto__":{"isAdmin":true}}'
+    {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"name":"required","__proto__":"unknown-field"},"requestId":"…"}}
+    $ curl -sS -i -H "x-request-id: support-ticket-0042" http://127.0.0.1:4311/v1/records/w-03
+    HTTP/1.1 200 OK
+    x-request-id: support-ticket-0042
+    ```
+
+    The server terminal (the time and the duration cut to `…`):
+
+    ```text
+    {"time":"…","level":"warn","requestId":"…","method":"POST","route":"/v1/records","status":413,"durationMs":…}
+    {"time":"…","level":"warn","requestId":"…","method":"GET","route":"/v1/records/..%2Fpackage.json","status":400,"durationMs":…}
+    {"time":"…","level":"warn","requestId":"…","method":"GET","route":"/v1/records","status":400,"durationMs":…}
+    {"time":"…","level":"info","requestId":"support-ticket-0042","method":"GET","route":"/v1/records/w-03","status":200,"durationMs":…}
+    ```
+
+    A request of your project that breaks every field rule is in the task.
+
+    **11. Try to break it.** Remove the chunk counter (keep only `Content-Length`) — `✖ a body over 4096 bytes without Content-Length (chunked) is 413 with Connection: close, and nothing is stored`; bring back `const errors = {}` in `validate.ts` — `✖ __proto__ and constructor in a body are unknown fields, and no prototype changes`; log `req.url` instead of the path — `✖ one JSON log line per request: request id, method, route without the query, status, duration — never the body`; accept any incoming `X-Request-Id` — `✖ a well-formed incoming X-Request-Id is kept; a malformed one is replaced by the server's own`. Put the code back.
+
+    **12. Evidence and the commit.** `npm run typecheck` — not a single line; `npm run check` and `npm run check:server` — every check `✔`; `npm test` — `fail 0`. In `docs/server.md` — a section “NO-07”: the edge rules, the output of step 10 and the log lines. `cd ..`, `git add -A`, `git commit -m "Harden the API edge: body and time limits, safe keys and paths, loopback, request-id logs"`.
+
+    **Self-check:** a body over the limit is a `413` and a closed connection, with and without `Content-Length`; slow headers are a `408`; `__proto__` in a body or a query is an error, not a changed prototype; an unknown or repeated parameter and a `limit` that is not digits are a `400`; an `id` with `..` is a `400` before the store; the server listens on `127.0.0.1` until `HOST` says otherwise and warns about anything else; a log line is seven fields, no bodies and no `?`, with the same `requestId` as the answer.
+
+    **If something goes wrong:** the `413` arrives but `curl` keeps waiting — the answer has no `Connection: close`. The `408` test gets `null` — the headers arrived in time: the gap between letters must be bigger than `headersTimeoutMs` divided by the length. `__proto__` does not show up in `details` — `errors` has a prototype. What we did not do, and why: a rate limit (`429`) and CORS — the server listens only on this computer, and the web app does not call it yet; TLS — loopback does not leave the machine.
+
+    The step's reference is `Download: NO-07 — A hardened API: limits, timeouts, safe keys and request-id logs` after the export; open it after your own attempt.
+purpose:
+  uk: "Це крок твого проєкту: перевірку недовіреного введення, межі розміру й часу, безпечні помилки, прив’язку до loopback, структуровані логи з request id і тести через справжній HTTP із цього розділу ти застосовуєш до API власного сервера. Платформа цей крок не перевіряє: доказ — `npm test`, вивід curl і рядки логу, `docs/server.md` і commit."
+  en: "This is a step of your project: you apply this unit's untrusted-input checks, size and time limits, safe errors, loopback binding, structured logs with request ids and real-HTTP tests to your own server's API. The platform does not check this step: the evidence is `npm test`, the curl output and the log lines, `docs/server.md` and the commit."
+objectives:
+  - uk: "Відхиляти на межі API тіла понад межу (з `Content-Length` і без нього), повільних клієнтів, ключі `__proto__`, невідомі й повторені параметри, `id` з `..` і поля, що порушують правила домену, — до сховища, і слухати loopback за замовчуванням."
+    en: "Refuse at the API edge bodies over the limit (with and without `Content-Length`), slow clients, `__proto__` keys, unknown and repeated parameters, ids with `..` and fields that break the domain's rules — before the store — and listen on loopback by default."
+  - uk: "Писати один рядок JSON на запит із перевіреним request id і без тіл та запиту, і довести кожне правило межі тестом через справжній HTTP."
+    en: "Write one JSON line per request with a checked request id and without bodies or the query, and prove every edge rule with a test over real HTTP."
+transfer:
+  uk: "Цей крок виконується в редакторі й терміналі на твоєму комп’ютері: що зробити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor and a terminal on your computer: what to do, the expected output and the self-check list are above and on the step's page in your project."
