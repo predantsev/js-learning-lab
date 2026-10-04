@@ -8,6 +8,25 @@ import { readFile, writeFile } from 'node:fs/promises';
 const MAX_BODY_BYTES = 1024;
 const ID = /^e-\d{2,4}$/; // allowlist of ids: they become file names
 
+// Collects the body and counts its bytes as they arrive (lesson no-07-02): as soon as there are more
+// than `limit`, it stops reading and resolves null, whatever Content-Length said.
+function readBody(request, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    const onData = (chunk) => {
+      size += chunk.length;
+      if (size <= limit) return chunks.push(chunk);
+      request.off('data', onData);
+      request.pause(); // read nothing more
+      resolve(null);
+    };
+    request.on('data', onData);
+    request.on('end', () => resolve(Buffer.concat(chunks)));
+    request.on('error', reject);
+  });
+}
+
 function sendJson(response, status, value, headers = {}) {
   response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
   response.end(JSON.stringify(value));
@@ -18,12 +37,11 @@ export function createApp({ dataDir }) {
     try {
       const url = new URL(request.url, 'http://localhost');
       if (request.method === 'POST' && url.pathname === '/expenses') {
-        if (Number(request.headers['content-length'] ?? 0) > MAX_BODY_BYTES) {
-          return sendJson(response, 413, { error: { code: 'PAYLOAD_TOO_LARGE' } }, { connection: 'close' });
-        }
-        let text = '';
-        for await (const chunk of request) text += chunk;
-        const expense = JSON.parse(text);
+        const tooLarge = () => sendJson(response, 413, { error: { code: 'PAYLOAD_TOO_LARGE' } }, { connection: 'close' });
+        if (Number(request.headers['content-length'] ?? 0) > MAX_BODY_BYTES) return tooLarge(); // the fast path
+        const body = await readBody(request, MAX_BODY_BYTES); // the real limit, for a body without Content-Length too
+        if (body === null) return tooLarge();
+        const expense = JSON.parse(body.toString('utf8'));
         if (typeof expense.id !== 'string' || !ID.test(expense.id)) return sendJson(response, 400, { error: { code: 'VALIDATION_FAILED' } });
         await writeFile(path.join(dataDir, `${expense.id}.json`), JSON.stringify(expense));
         return sendJson(response, 201, expense);

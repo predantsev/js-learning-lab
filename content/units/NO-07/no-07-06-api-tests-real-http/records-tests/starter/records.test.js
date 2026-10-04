@@ -30,4 +30,4 @@ test('a valid record answers 201', async (t) => {
 });
 
 // TODO: prove that the record reaches the disk, that a body over 1024 bytes answers 413
-// and that an id such as "../w-07" answers 400.
+// and that an id such as "../w-09" answers 400.
