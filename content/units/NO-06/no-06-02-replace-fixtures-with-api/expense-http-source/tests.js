@@ -60,14 +60,23 @@ test('updateRecord sends PATCH /v1/records/:id and returns the changed expense',
 
 test('an answer that is not ok rejects with its status', async () => {
   const missing = (await sourceFor(answering(404, { error: { code: 'NOT_FOUND' } }))).source;
-  expect((await failureOf(missing.listRecords()))?.status, 'status of the error for a 404 list').toBe(404);
+  const notFound = await failureOf(missing.listRecords());
+  expect(notFound?.status, 'status of the error for a 404 list').toBe(404);
+  expect(notFound, 'what a 404 list rejects with').toBeInstanceOf(Error);
   const broken = (await sourceFor(answering(500, { error: { code: 'INTERNAL' } }))).source;
-  expect((await failureOf(broken.listRecords()))?.status, 'status of the error for a 500 list').toBe(500);
+  const serverError = await failureOf(broken.listRecords());
+  expect(serverError?.status, 'status of the error for a 500 list').toBe(500);
+  expect(serverError, 'what a 500 list rejects with').toBeInstanceOf(Error);
 });
 
 test('a list with an expense that breaks the contract is rejected', async () => {
   const { source } = await sourceFor(answering(200, [valid, { ...valid, id: 'e-08', amountMinor: '18000' }]));
   expect(await failureOf(source.listRecords()), 'what listRecords rejects with').toBeInstanceOf(Error);
+});
+
+test('a list answer that is not an array is rejected', async () => {
+  const { source } = await sourceFor(answering(200, { records: [valid] }));
+  expect(await failureOf(source.listRecords()), 'what listRecords rejects with for { records: [...] }').toBeInstanceOf(Error);
 });
 
 test('a created expense that breaks the contract is rejected', async () => {

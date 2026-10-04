@@ -26,7 +26,7 @@ test('the Android emulator uses 10.0.2.2', () => {
 });
 
 test('a device throws while the server is bound to loopback', () => {
-  for (const bindHost of ['127.0.0.1', 'localhost']) {
+  for (const bindHost of ['127.0.0.1', 'localhost', '::1']) {
     const result = errorOf(() => resolve('device', { ...loopback, bindHost }));
     expect(result.error, `what device gives with bindHost ${bindHost}`).toBeInstanceOf(Error);
   }

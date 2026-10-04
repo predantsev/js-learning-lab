@@ -14,14 +14,14 @@ const lower = (value) => String(value ?? '').toLowerCase();
 
 // Small servers made here: a correct one and one with each seeded defect.
 const good = [{ id: 'w-1', name: 'a', price: 10, acquired: false }, { id: 'w-2', name: 'b', price: null, acquired: true }];
-function labServer({ body = good, allowHeaders = 'content-type', allowMethods = 'GET, PATCH' } = {}) {
+function labServer({ body = good, status = 200, allowHeaders = 'content-type', allowMethods = 'GET, PATCH', allowOrigin = DEV } = {}) {
   return http.createServer((req, res) => {
-    if (req.headers.origin === DEV) res.setHeader('access-control-allow-origin', DEV);
+    if (req.headers.origin === DEV) res.setHeader('access-control-allow-origin', allowOrigin);
     if (req.method === 'OPTIONS') {
       res.writeHead(204, { 'access-control-allow-methods': allowMethods, 'access-control-allow-headers': allowHeaders });
       return res.end();
     }
-    res.writeHead(200, { 'content-type': 'application/json' });
+    res.writeHead(status, { 'content-type': 'application/json' });
     res.end(JSON.stringify(body));
   });
 }
@@ -63,6 +63,7 @@ test('contractTest passes a correct server and catches a renamed field', async (
   tests();
   expect(await contractTest(await listen(labServer())), 'problems on a correct server').toEqual([]);
   expect((await contractTest(await listen(labServer({ body: renamed })))).length, 'problems when price became priceUah').toBeGreaterThan(0);
+  expect((await contractTest(await listen(labServer({ status: 503, body: [] })))).length, 'problems when the server answers 503 with an empty list').toBeGreaterThan(0);
 });
 
 test('preflightTest passes a correct server and catches a missing content-type', async () => {
@@ -72,4 +73,6 @@ test('preflightTest passes a correct server and catches a missing content-type',
   expect(missing.length, 'problems when Allow-Headers lacks content-type').toBeGreaterThan(0);
   const noPatch = await preflightTest(await listen(labServer({ allowMethods: 'GET' })), DEV);
   expect(noPatch.length, 'problems when Allow-Methods lacks PATCH').toBeGreaterThan(0);
+  const star = await preflightTest(await listen(labServer({ allowOrigin: '*' })), DEV);
+  expect(star.length, 'problems when Allow-Origin is * instead of the dev origin').toBeGreaterThan(0);
 });

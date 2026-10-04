@@ -9,11 +9,11 @@ const data = createDataLayer(createWebAdapter({ baseUrl: process.env.API_BASE_UR
 if (command === 'add') {
   const [title, dueDate] = rest;
   const task = await data.createRecord({ title, dueDate: dueDate ?? null });
-  console.log(`created ${task.id}: ${task.title} (due ${task.dueDate})`);
+  console.log(`%%created%% ${task.id}: ${task.title} (%%due%% ${task.dueDate})`);
 } else if (command === 'list') {
   const { records, stale, failure } = await data.listRecords();
   for (const task of records) console.log(`${task.id}  ${task.done ? '[x]' : '[ ]'} ${task.title}  ${task.dueDate ?? '-'}`);
-  console.log(stale ? `stale: ${failure}` : `fresh from the server, due by ${rest[0]}: ${countDue(records, rest[0])}`);
+  console.log(stale ? `%%staleLabel%% ${failure}` : `%%freshDue%% ${rest[0]}: ${countDue(records, rest[0])}`);
 } else {
-  console.log('usage: node client.mjs add "<title>" <YYYY-MM-DD> | node client.mjs list <YYYY-MM-DD>');
+  console.log('%%usage%%: node client.mjs add "<title>" <YYYY-MM-DD> | node client.mjs list <YYYY-MM-DD>');
 }

@@ -1,9 +1,9 @@
-// Mistake: walks only the server's list, so a record the server deleted is never noticed.
+// Mistake: looks only for changed records, so a cached record the server no longer has is skipped silently.
 export function reconcile(cache, serverList) {
   const stale = [];
-  for (const current of serverList) {
-    const cached = cache.find((record) => record.id === current.id);
-    if (cached && Object.keys(current).some((field) => cached[field] !== current[field])) stale.push(current.id);
+  for (const cached of cache) {
+    const current = serverList.find((record) => record.id === cached.id);
+    if (current && Object.keys(current).some((field) => cached[field] !== current[field])) stale.push(cached.id);
   }
   return { records: serverList, stale, deleted: [] };
 }

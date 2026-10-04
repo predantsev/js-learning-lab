@@ -67,6 +67,13 @@ test('offline and invalid are never retried', () => {
   }
 });
 
+test('PUT, DELETE and HEAD are retried like GET', () => {
+  for (const method of ['PUT', 'DELETE', 'HEAD']) {
+    expect(retry('unavailable', { method }), `${method}, unavailable`).toBe(true);
+    expect(retry('http', { method, status: 503 }), `${method}, 503`).toBe(true);
+  }
+});
+
 test('POST and PATCH are retried only with an idempotency key', () => {
   expect(retry('unavailable', { method: 'POST' }), 'POST without a key, unavailable').toBe(false);
   expect(retry('unavailable', { method: 'PATCH' }), 'PATCH without a key, unavailable').toBe(false);
