@@ -1,0 +1,311 @@
+id: no-11-04-bounded-queues-jobs
+unit: NO-11
+title:
+  uk: "Обмежені черги й задачі"
+  en: "Bounded queues and jobs"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Реалізувати чергу задач з максимальною довжиною й обмеженням одночасності та вирішити, що стається з першою задачею понад ліміт (відмова, очікування чи відкидання)."
+    en: "Implement a job queue with a maximum length and a concurrency limit, and decide what happens to the first job over the limit (reject, wait or drop)."
+  - uk: "Передбачати загальний час і пікову пам’ять для 100 задач, запущених усі разом, і з обмеженням у 4 одночасні."
+    en: "Predict total time and peak memory for 100 jobs started all at once versus with a concurrency limit of 4."
+prerequisites: [no-11-03-event-loop-blocking, js-17-01-stacks-queues-trees]
+subskills:
+  - { family: B-08, skill: "bounded queues/jobs", depth: intro }
+glossary: [bounded-queue, concurrency-limit, load-shedding]
+selfCheck: [predict-all-at-once, job-queue]
+
+blocks:
+  - id: everything-at-once
+    kind: explanation
+    title:
+      uk: "Усе й одразу — це не найшвидше"
+      en: "Everything at once is not the fastest"
+    body:
+      uk: |
+        `Promise.all(jobs.map((job) => job()))` запускає **всі** задачі тієї ж миті. Для трьох запитів це чудово. Для сотні експортів — ні:
+
+        - кожна задача тримає свої дані, тож пікова пам’ять — сума всіх задач одразу;
+        - ресурс, до якого вони звертаються, має власну межу: база даних приймає обмежену кількість з’єднань, диск і мережа — обмежену кількість одночасних операцій. Понад межу задачі не пришвидшуються, а падають чи стають у чергу деінде.
+
+        Тому задачі пропускають крізь [[concurrency-limit|обмеження одночасності]]: працює щонайбільше N, решта чекає. Найпростіша форма — «пул»: N асинхронних «працівників», кожен бере зі спільного списку наступну задачу, доки список не спорожніє.
+      en: |
+        `Promise.all(jobs.map((job) => job()))` starts **every** job at the same instant. For three requests that is great. For a hundred exports it is not:
+
+        - every job holds its own data, so the peak memory is the sum of all the jobs at once;
+        - the resource they use has its own limit: a database accepts a limited number of connections, a disk or the network a limited number of operations at once. Above that limit jobs do not get faster, they fail or queue up somewhere else.
+
+        So jobs go through a [[concurrency-limit]]: at most N run, the rest wait. The simplest form is a “pool”: N async “workers”, each taking the next job from a shared list until the list is empty.
+
+  - id: predict-all-at-once
+    kind: prediction
+    prompt:
+      uk: "100 задач експорту, кожна тримає Buffer на 1 МБ і робить один запит до бази даних на 30 мс. База приймає щонайбільше 10 з’єднань одночасно, а 11-те відхиляє з помилкою. Що буде з `Promise.allSettled` над усіма задачами одразу і з пулом на 4 одночасні?"
+      en: "100 export jobs, each holding a 1 MB Buffer and making one 30 ms database query. The database accepts at most 10 connections at once and refuses the 11th with an error. What happens with `Promise.allSettled` over all the jobs at once, and with a pool of 4 at a time?"
+    answer:
+      type: choice
+      options:
+        - id: limit-wins
+          text:
+            uk: "Усі разом: 10 вдалих, 90 помилок, ~100 МБ, ~30 мс. Пул: 100 вдалих, ~4 МБ, ~750 мс"
+            en: "All at once: 10 succeed, 90 fail, ~100 MB, ~30 ms. Pool: 100 succeed, ~4 MB, ~750 ms"
+        - id: all-fastest
+          text:
+            uk: "Усі разом: 100 вдалих, ~100 МБ, ~30 мс. Пул: 100 вдалих, ~4 МБ, ~750 мс — тож усі разом краще"
+            en: "All at once: 100 succeed, ~100 MB, ~30 ms. Pool: 100 succeed, ~4 MB, ~750 ms — so all at once is better"
+          why:
+            uk: "Так було б, якби ресурс не мав межі. База приймає лише 10 з’єднань, тож 90 задач, що прийшли разом, отримують помилку одразу."
+            en: "That would happen if the resource had no limit. The database accepts only 10 connections, so the 90 jobs that arrived together get an error at once."
+        - id: same-memory
+          text:
+            uk: "Обидва: 100 вдалих і ~100 МБ — пул лише розтягує ту саму роботу в часі"
+            en: "Both: 100 succeed and ~100 MB — the pool only stretches the same work over time"
+          why:
+            uk: "Пам’ять тримають лише ті задачі, що працюють. У пулі одночасно живуть 4 Buffers, а не 100: попередні вже завершилися й нікому не потрібні."
+            en: "Only the running jobs hold memory. In the pool 4 Buffers live at the same time, not 100: the previous ones have finished and nobody needs them."
+      correct: [limit-wins]
+    runnable: false
+    explanation:
+      uk: "Усі разом — це 100 Buffers одночасно й 90 відмов бази. Пул тримає 4 задачі: пам’ять ~4 МБ, жодної відмови, а час — 25 «хвиль» по 30 мс. Приклад уроку «Promise.allSettled проти пулу» надрукував у Node.js v25.2.1 саме такі числа: 31 мс проти 786 мс."
+      en: "All at once means 100 Buffers at the same time and 90 refusals from the database. The pool holds 4 jobs: ~4 MB of memory, no refusal, and the time is 25 “waves” of 30 ms. The lesson’s example “Promise.allSettled versus a pool” printed exactly these numbers on Node.js v25.2.1: 31 ms versus 786 ms."
+
+  - id: all-vs-limit
+    kind: example
+    runtime: isolated-node
+    dir: all-vs-limit
+    entry: index.js
+    strings:
+      ok: { uk: "вдалих", en: "succeeded" }
+      failed: { uk: "помилок", en: "failed" }
+      peak: { uk: "найбільше одночасно", en: "most at once" }
+      mb: { uk: "МБ", en: "MB" }
+      ms: { uk: "мс", en: "ms" }
+      firstError: { uk: "перша помилка", en: "first error" }
+      tooMany: { uk: "забагато з’єднань", en: "too many connections" }
+      allAtOnce: { uk: "усі разом", en: "all at once" }
+      limit: { uk: "обмеження", en: "limit" }
+    title:
+      uk: "Promise.allSettled проти пулу"
+      en: "Promise.allSettled versus a pool"
+    body:
+      uk: |
+        Натисни **Запустити**. `fake-db.js` — імітація бази даних: запит триває 30 мс, і одночасно вона приймає щонайбільше 10 з’єднань (як обмеження з’єднань справжнього сервера бази даних). Чим вона відрізняється від справжньої, написано в коментарі на початку файла.
+
+        Програма запускає 100 задач спершу через `Promise.allSettled` (він, на відміну від `Promise.all`, показує кожну помилку, а не лише першу), а потім пулом із `CONCURRENCY` працівників.
+      en: |
+        Press **Run**. `fake-db.js` is a simulated database: a query takes 30 ms, and it accepts at most 10 connections at once (like the connection limit of a real database server). How it differs from a real one is written in the comment at the top of the file.
+
+        The program runs 100 jobs first through `Promise.allSettled` (unlike `Promise.all` it shows every failure, not only the first), then with a pool of `CONCURRENCY` workers.
+    tryIt:
+      uk: "Зміни `CONCURRENCY` на `10`: усі 100 вдалі, приблизно за 300 мс. Тепер на `11`: знову 90 помилок, і дуже швидко — працівник, чия задача впала, одразу бере наступну й теж падає, тож список «згоряє» за мить. Обмеження має бути не більшим за те, що витримує ресурс. Поверни `4`."
+      en: "Change `CONCURRENCY` to `10`: all 100 succeed, in about 300 ms. Now to `11`: 90 failures again, and very fast — a worker whose job failed takes the next one at once and fails too, so the list “burns” in a moment. The limit must be no higher than what the resource can take. Set it back to `4`."
+
+  - id: bounded-queue-explained
+    kind: explanation
+    title:
+      uk: "Черга з дном: що робити з задачею понад ліміт"
+      en: "A queue with a bottom: what to do with a job over the limit"
+    body:
+      uk: |
+        Пул годиться, коли список задач відомий наперед. Сервер же отримує задачі **з часом**: кожен `POST /jobs` — нова. Тут потрібна черга: N задач працює, решта чекає в [[fifo-queue|FIFO-черзі]].
+
+        Але черга в пам’яті без межі — той самий витік: якщо задачі надходять швидше, ніж виконуються, вона росте, доки не закінчиться пам’ять, а останні в ній чекають годинами. Тому в [[bounded-queue|обмеженої черги]] є `maxQueued` — і рішення для задачі, що прийшла, коли місць немає:
+
+        | Рішення | Що бачить клієнт | Коли доречно |
+        |---|---|---|
+        | **відмовити** одразу | `503` і `Retry-After` | сервер API: клієнт сам вирішить, коли повторити |
+        | **чекати** місця | відповідь затримується | свій власний код, що може почекати |
+        | **відкинути** найстарішу | стара задача зникає | лише свіжі дані важливі (показники, превью) |
+
+        Відмову під навантаженням називають [[load-shedding]]: краще швидко сказати «зараз ні», ніж повільно впасти для всіх.
+      en: |
+        A pool fits when the list of jobs is known in advance. A server, though, gets jobs **over time**: each `POST /jobs` is a new one. Here you need a queue: N jobs run, the rest wait in a [[fifo-queue|FIFO queue]].
+
+        But an in-memory queue without a limit is the same leak: if jobs arrive faster than they finish, it grows until memory runs out, and the last ones in it wait for hours. So a [[bounded-queue]] has `maxQueued` — and a decision for a job that arrives when there is no room:
+
+        | Decision | What the client sees | When it fits |
+        |---|---|---|
+        | **reject** at once | `503` and `Retry-After` | an API server: the client decides when to retry |
+        | **wait** for room | the answer is delayed | your own code that can afford to wait |
+        | **drop** the oldest | an old job disappears | only fresh data matters (metrics, previews) |
+
+        Refusing under load is called [[load-shedding]]: better to say “not now” quickly than to fail slowly for everyone.
+
+  - id: queue-slots
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Черга на 8 місць і 2 працівники"
+      en: "A queue of 8 places and 2 workers"
+    textEquivalent:
+      uk: "Сервер має чергу задач на 8 місць і 2 працівники, тобто одночасно виконуються щонайбільше дві задачі. Приходить 20 запитів POST /jobs майже одночасно. Перші два одразу займають працівників і починають виконуватися. Наступні вісім стають у чергу — вона заповнена. Одинадцятий запит не знаходить місця: замість того, щоб черга росла далі, сервер одразу відповідає 503 з Retry-After, і так само ще дев’яти запитам. Коли працівник завершує задачу, він бере першу з черги — найстарішу, тож задачі починаються в порядку надходження. Підсумок: 2 працюють, 8 чекають, 10 отримали відмову."
+      en: "The server has a job queue of 8 places and 2 workers, so at most two jobs run at once. 20 POST /jobs requests arrive almost together. The first two take the workers at once and start running. The next eight join the queue — it is full. The eleventh request finds no room: instead of letting the queue grow, the server answers 503 with Retry-After at once, and the same goes for nine more requests. When a worker finishes a job, it takes the first one from the queue — the oldest, so jobs start in the order they arrived. In total: 2 running, 8 waiting, 10 refused."
+    spec:
+      layout: tb
+      nodes:
+        - { id: arrivals, label: { uk: "20 × POST /jobs", en: "20 × POST /jobs" }, shape: round, w: 160 }
+        - { id: queue, label: { uk: "черга: 8 місць", en: "queue: 8 places" }, w: 160 }
+        - { id: workers, label: { uk: "2 працівники", en: "2 workers" }, w: 160 }
+        - { id: refused, label: "503 + Retry-After", shape: note, w: 160 }
+      edges:
+        - { id: in, from: arrivals, to: queue }
+        - { id: run, from: queue, to: workers, label: "shift()" }
+        - { id: shed, from: arrivals, to: refused, kind: dashed }
+      hidden: [refused, shed]
+      steps:
+        - caption:
+            uk: "Перші 2 запити одразу займають обох працівників."
+            en: "The first 2 requests take both workers at once."
+          highlight: [arrivals, workers]
+          annotate:
+            - { id: workers, text: { uk: "працює 2", en: "running 2" } }
+        - caption:
+            uk: "Наступні 8 стають у чергу. Вона заповнена: `waiting` = `maxQueued`."
+            en: "The next 8 join the queue. It is full: `waiting` = `maxQueued`."
+          highlight: [in, queue]
+          annotate:
+            - { id: queue, text: { uk: "чекає 8", en: "waiting 8" } }
+        - caption:
+            uk: "11-й запит: місця немає. Замість того щоб черга росла, сервер одразу відповідає `503` — і так ще 9 запитам."
+            en: "The 11th request: no room. Instead of the queue growing, the server answers `503` at once — and so for 9 more requests."
+          show: [refused, shed]
+          highlight: [refused, shed]
+          annotate:
+            - { id: refused, text: { uk: "відмов 10", en: "refused 10" } }
+        - caption:
+            uk: "Працівник закінчив: бере з черги **першу** задачу (`shift()`), тож задачі стартують у порядку надходження."
+            en: "A worker has finished: it takes the **first** job from the queue (`shift()`), so jobs start in the order they arrived."
+          highlight: [run, workers, queue]
+          annotate:
+            - { id: queue, text: { uk: "чекає 7", en: "waiting 7" } }
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: послідовно чи одночасно"
+      en: "Recall: sequential or concurrent"
+    items:
+      - id: all-rejects-early
+        from: js-08-08-combinators-sequential-concurrent
+        prompt:
+          uk: "`Promise.all` отримує три promises: перший виконається через 300 мс, другий відхилиться через 100 мс, третій виконається через 200 мс. Коли й чим завершиться `Promise.all`?"
+          en: "`Promise.all` gets three promises: the first fulfills after 300 ms, the second rejects after 100 ms, the third fulfills after 200 ms. When and how does `Promise.all` settle?"
+        answer:
+          type: choice
+          options:
+            - id: rejects-100
+              text:
+                uk: "Через 100 мс — відхиляється помилкою другого"
+                en: "After 100 ms — it rejects with the second one’s error"
+            - id: waits-300
+              text:
+                uk: "Через 300 мс — масивом двох значень без помилки"
+                en: "After 300 ms — with an array of the two values, without the error"
+              why:
+                uk: "`Promise.all` не пропускає помилок: щойно один promise відхилився, весь результат відхиляється тією самою помилкою. Пропускати й чекати всіх уміє `Promise.allSettled`."
+                en: "`Promise.all` does not skip failures: as soon as one promise rejects, the whole result rejects with that error. Skipping and waiting for all is what `Promise.allSettled` does."
+            - id: waits-then-rejects
+              text:
+                uk: "Через 300 мс — відхиляється, коли дочекався всіх"
+                en: "After 300 ms — it rejects once it has waited for all of them"
+              why:
+                uk: "`Promise.all` відхиляється з першою ж помилкою, не чекаючи решти. Інші два promises при цьому не зупиняються — вони просто вже нікого не цікавлять."
+                en: "`Promise.all` rejects with the very first error, without waiting for the rest. The other two promises do not stop either — they simply no longer matter to anyone."
+          correct: [rejects-100]
+        explanation:
+          uk: "Відхилення через 100 мс. І зверни увагу: дві інші задачі тривають далі — `Promise.all` нічого не скасовує. Тому задачі, що навантажують ресурс, пускають крізь обмеження, а не всі разом."
+          en: "A rejection after 100 ms. And note: the two other jobs keep going — `Promise.all` cancels nothing. That is why jobs that load a resource go through a limit rather than all at once."
+
+  - id: job-queue
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: job-queue
+    entry: index.js
+    editable: [app.js]
+    capabilities: { network: loopback }
+    strings:
+      jobFailed: { uk: "задача впала", en: "a job failed" }
+      running: { uk: "працює", en: "running" }
+      waiting: { uk: "чекає", en: "waiting" }
+      finished: { uk: "завершено задач", en: "jobs finished" }
+    title:
+      uk: "createJobQueue: обмежена черга з відмовою"
+      en: "createJobQueue: a bounded queue that refuses"
+    instructions:
+      uk: |
+        Зараз `createJobQueue` в `app.js` запускає кожну задачу одразу. Перероби її. `add(job)` отримує асинхронну функцію й повертає promise її результату:
+
+        - одночасно працює щонайбільше `concurrency` задач;
+        - ще щонайбільше `maxQueued` чекають; вони стартують у порядку, в якому їх додали;
+        - задача, що прийшла, коли й працівники, й черга зайняті, **одразу** відхиляється з `QueueFull` (з `errors.js`) і ніколи не запускається;
+        - задача, що впала, відхиляє лише свій promise, а наступна з черги все одно стартує;
+        - `stats()` повертає `{ running, waiting }`.
+
+        `index.js` і `errors.js` лише для читання. **Запустити** піднімає сервер `POST /jobs` (черга на 8, 2 працівники), надсилає 20 запитів разом і друкує, скільки отримали `202` і `503`, скільки задач працює й чекає.
+      en: |
+        Right now `createJobQueue` in `app.js` starts every job at once. Rework it. `add(job)` takes an async function and returns a promise of its result:
+
+        - at most `concurrency` jobs run at once;
+        - at most `maxQueued` more wait; they start in the order they were added;
+        - a job that arrives when both the workers and the queue are taken is rejected **at once** with `QueueFull` (from `errors.js`) and never runs;
+        - a job that fails rejects only its own promise, and the next one in the queue still starts;
+        - `stats()` returns `{ running, waiting }`.
+
+        `index.js` and `errors.js` are read-only. **Run** starts a `POST /jobs` server (a queue of 8, 2 workers), sends 20 requests together and prints how many got `202` and `503` and how many jobs are running and waiting.
+    testTitles:
+      "never runs more than concurrency jobs at once":
+        uk: "Ніколи не виконує більше за `concurrency` задач одночасно"
+        en: "Never runs more than `concurrency` jobs at once"
+      "waiting jobs start in the order they were added":
+        uk: "Задачі з черги стартують у порядку, в якому їх додали"
+        en: "Waiting jobs start in the order they were added"
+      "the first job over concurrency + maxQueued is rejected at once with QueueFull and never runs":
+        uk: "Перша задача понад `concurrency + maxQueued` одразу відхиляється з `QueueFull` і не запускається"
+        en: "The first job over `concurrency + maxQueued` is rejected at once with `QueueFull` and never runs"
+      "a failing job rejects its own promise and the next waiting job still starts":
+        uk: "Задача, що впала, відхиляє свій promise, а наступна з черги все одно стартує"
+        en: "A failing job rejects its own promise, and the next waiting job still starts"
+      "stats() reports how many jobs are running and waiting":
+        uk: "`stats()` показує, скільки задач працює і скільки чекає"
+        en: "`stats()` reports how many jobs are running and waiting"
+    hints:
+      nudge:
+        uk: "У `add` є три випадки: є вільний працівник, є місце в черзі, нічого немає. А коли працівник звільняється — успіхом чи помилкою, — хто бере наступну задачу?"
+        en: "`add` has three cases: a free worker, a free place in the queue, nothing. And when a worker frees up — by success or by failure — who takes the next job?"
+      explanation:
+        uk: "`add` може одразу повернути `new Promise((resolve, reject) => …)` і зберегти `resolve`/`reject` разом із задачею, щоб викликати їх пізніше, коли задача нарешті виконається. Черга — масив: `push` у кінець і `shift` з початку (FIFO, як у JS-17). Звільнення працівника стоїть у `.finally(…)` чи `finally` — так воно спрацює і після помилки, — і там же з черги береться наступна задача. Відмова — `reject(new QueueFull())` без запуску задачі."
+        en: "`add` can return `new Promise((resolve, reject) => …)` at once and keep `resolve`/`reject` together with the job, to call them later when the job finally finishes. The queue is an array: `push` at the end and `shift` from the front (FIFO, as in JS-17). Freeing a worker goes into `.finally(…)` or `finally` — so it also happens after a failure — and the next job is taken from the queue right there. A refusal is `reject(new QueueFull())` without starting the job."
+    solutionNote:
+      uk: "Задача разом зі своїми `resolve`/`reject` або стартує, або стає в масив `waiting`, або отримує `QueueFull`. `finally` після кожної задачі звільняє місце й стартує першу з черги (`shift`), тож помилка не блокує черги, а порядок — FIFO. Рівноцінно — `async`-функція з `try/finally`, що після задачі викликає наступну з черги. Для сервера відмова — це `503` з `Retry-After`: клієнт знає, що варто повторити пізніше."
+      en: "A job together with its `resolve`/`reject` either starts, or joins the `waiting` array, or gets `QueueFull`. The `finally` after every job frees the place and starts the first one in the queue (`shift`), so a failure does not block the queue, and the order is FIFO. Equivalent: an `async` function with `try/finally` that calls the next queued job after each one. For a server the refusal is `503` with `Retry-After`: the client knows it is worth retrying later."
+    feedback:
+      - when: { test: "never runs more than concurrency jobs at once" }
+        message:
+          uk: "Ця перевірка додає 5 задач до черги з `concurrency` 2 і очікує, що до завершення будь-якої з них стартували лише 2. Якщо працівників немає, задача має стати в чергу, а не запускатися."
+          en: "This check adds 5 jobs to a queue with `concurrency` 2 and expects only 2 of them to have started before any finished. When no worker is free, a job has to join the queue instead of starting."
+      - when: { test: "waiting jobs start in the order they were added" }
+        message:
+          uk: "Ця перевірка очікує, що задачі `w-01`…`w-04` при `concurrency` 1 стартують саме в цьому порядку. Бери наступну задачу з **початку** масиву (`shift`), а не з кінця (`pop`)."
+          en: "This check expects the jobs `w-01`…`w-04` with `concurrency` 1 to start in exactly this order. Take the next job from the **front** of the array (`shift`), not from the end (`pop`)."
+      - when: { test: "the first job over concurrency + maxQueued is rejected at once with QueueFull and never runs" }
+        message:
+          uk: "Ця перевірка (`concurrency` 2, `maxQueued` 3) очікує, що 5 задач прийнято, а 6-та одразу відхиляється з `QueueFull` і ніколи не стартує. Порівнюй довжину черги з `maxQueued` так, щоб у ній ніколи не було більше `maxQueued` задач."
+          en: "This check (`concurrency` 2, `maxQueued` 3) expects 5 jobs to be accepted and the 6th to be rejected at once with `QueueFull` and never start. Compare the queue length with `maxQueued` so that it never holds more than `maxQueued` jobs."
+      - when: { test: "a failing job rejects its own promise and the next waiting job still starts" }
+        message:
+          uk: "Ця перевірка дає задачу, що падає, а за нею — звичайну, при `concurrency` 1. Вона очікує, що promise першої відхилиться з її помилкою, а друга стартує й виконається. Звільняй місце й бери наступну задачу у `finally`, щоб це сталося й після помилки."
+          en: "This check gives a failing job followed by a normal one, with `concurrency` 1. It expects the first one’s promise to reject with its error and the second one to start and finish. Free the place and take the next job in `finally`, so it also happens after a failure."
+      - when: { test: "stats() reports how many jobs are running and waiting" }
+        message:
+          uk: "Ця перевірка очікує `{ running: 2, waiting: 3 }` після 5 задач (`concurrency` 2), `{ running: 2, waiting: 2 }` після завершення однієї і `{ running: 0, waiting: 0 }` наприкінці."
+          en: "This check expects `{ running: 2, waiting: 3 }` after 5 jobs (`concurrency` 2), `{ running: 2, waiting: 2 }` after one finished and `{ running: 0, waiting: 0 }` at the end."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-11
+    body:
+      uk: "У кроці проєкту імпорт великого файла запускається як задача. Обмеження одночасності й черга з відмовою не дадуть кільком імпортам разом з’їсти пам’ять сервера."
+      en: "In the project step the import of a large file runs as a job. A concurrency limit and a queue that refuses keep several imports at once from eating the server’s memory."
