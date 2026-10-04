@@ -4,7 +4,7 @@ const SORTS = ['name', 'price', 'category'];
 const DIGITS = /^\d+$/;
 
 export function parseListQuery(searchParams) {
-  const errors = {};
+  const errors = Object.create(null);
   for (const key of PARAMS) {
     if (searchParams.getAll(key).length > 1) errors[key] = 'repeated';
   }

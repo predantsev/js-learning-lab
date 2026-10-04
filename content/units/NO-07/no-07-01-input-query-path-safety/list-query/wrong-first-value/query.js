@@ -4,7 +4,7 @@ const SORTS = ['name', 'price', 'category'];
 const DIGITS = /^\d+$/;
 
 export function parseListQuery(searchParams) {
-  const errors = {};
+  const errors = Object.create(null);
   for (const key of new Set(searchParams.keys())) {
     if (!PARAMS.includes(key)) errors[key] = 'unknownParam';
   }

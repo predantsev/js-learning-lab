@@ -1,12 +1,10 @@
-// parseListQuery(searchParams): checks the query string of GET /items against an allowlist.
-// Returns { ok: true, value: { limit, offset, sort } } or { ok: false, errors: { param: code } }.
+// Misconception: a plain {} can collect any parameter name as a key ("__proto__" sets the prototype instead).
 const PARAMS = ['limit', 'offset', 'sort'];
 const SORTS = ['name', 'price', 'category'];
 const DIGITS = /^\d+$/; // only 0–9: no sign, no spaces, no dot, no exponent
 
 export function parseListQuery(searchParams) {
-  // No prototype: a parameter named __proto__ becomes an ordinary key here instead of changing it.
-  const errors = Object.create(null);
+  const errors = {};
   for (const key of new Set(searchParams.keys())) {
     if (!PARAMS.includes(key)) errors[key] = 'unknownParam';
     else if (searchParams.getAll(key).length > 1) errors[key] = 'repeated';
