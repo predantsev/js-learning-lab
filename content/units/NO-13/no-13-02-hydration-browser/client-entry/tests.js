@@ -10,10 +10,15 @@ function servedPage(data, renderedFrom = data) {
   return fakePage({ markup: renderToString(h(WishList, renderedFrom)), json: JSON.stringify(data) });
 }
 
-function hydrateOnce(page) {
+function hydrateCalls(page) {
   expect(typeof startClient, 'type of startClient').toBe('function');
   const calls = [];
   startClient(page, (container, element) => { calls.push({ container, element }); return {}; });
+  return calls;
+}
+
+function hydrateOnce(page) {
+  const calls = hydrateCalls(page);
   expect(calls.length, 'number of hydrateRoot calls').toBe(1);
   return calls[0];
 }
@@ -25,7 +30,9 @@ test('hydrates the #root element', () => {
 });
 
 test('hydrates WishList with exactly the initial data', () => {
-  const { element } = hydrateOnce(servedPage(pageData()));
+  const calls = hydrateCalls(servedPage(pageData()));
+  expect(calls.length > 0, 'hydrateRoot was called').toBe(true);
+  const { element } = calls[0];
   expect(element?.type, 'component passed to hydrateRoot').toBe(WishList);
   expect(element.props, 'props of the hydrated WishList').toEqual(pageData());
 });

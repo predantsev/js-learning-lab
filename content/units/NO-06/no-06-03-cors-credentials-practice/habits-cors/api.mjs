@@ -50,8 +50,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const port = Number(process.env.PORT ?? 7330);
   const server = createHabitsApi({ allowedMethods: process.env.ALLOWED_METHODS ?? 'GET, POST, PATCH' });
   server.listen(port, '127.0.0.1', () => {
-    console.log(`Habits API on http://127.0.0.1:${port}, allowed methods: ${process.env.ALLOWED_METHODS ?? 'GET, POST, PATCH'}`);
-    console.log('Stop it with Ctrl+C.');
+    console.log(`%%apiOn%% http://127.0.0.1:${port}, %%allowedMethods%% ${process.env.ALLOWED_METHODS ?? 'GET, POST, PATCH'}`);
+    console.log('%%stopHint%%');
   });
-  process.on('SIGINT', () => server.close(() => console.log('API closed.')));
+  process.on('SIGINT', () => server.close(() => console.log('%%apiClosed%%')));
 }

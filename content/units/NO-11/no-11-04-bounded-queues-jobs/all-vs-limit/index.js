@@ -1,5 +1,5 @@
 // 100 export jobs, each holding a 1 MB buffer while it queries a database that allows 10
-// connections. First all at once with Promise.all, then at most CONCURRENCY at a time.
+// connections. First all at once with Promise.allSettled, then at most CONCURRENCY at a time.
 import { createFakeDb } from './fake-db.js';
 
 const CONCURRENCY = 4; // try 10, then 11

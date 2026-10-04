@@ -13,7 +13,7 @@ export function createExpenseClient({ baseUrl, retries, baseDelayMs = 100 }) {
       } catch (error) {
         if (attempt >= retries || !noAnswer(error)) throw error;
         const delay = baseDelayMs * 2 ** attempt; // 100, 200, 400 ms…
-        console.log(`  [client] ${label}: ${error.name}, %%retryIn%% ${delay} ms`);
+        console.log(`  [client] ${label}: ${error.name}, %%retryIn%% ${delay} %%ms%%`);
         await sleep(delay);
       }
     }

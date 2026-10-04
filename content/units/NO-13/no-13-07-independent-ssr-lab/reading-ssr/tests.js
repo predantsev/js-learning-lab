@@ -50,8 +50,10 @@ test('the initial data holds exactly the public books and the filter', async () 
 });
 
 test('the initial data cannot close its script', async () => {
+  // `json` ends where an HTML parser ends the script: at the first </script>.
   const { json } = await page();
   expect(/[<>&\u2028\u2029]/.test(json), `a raw <, >, & or line separator in ${json}`).toBe(false);
+  expect(() => JSON.parse(json), `JSON.parse of the script text up to the first </script>: ${json}`).not.toThrow();
 });
 
 test('no server setting reaches the page', async () => {

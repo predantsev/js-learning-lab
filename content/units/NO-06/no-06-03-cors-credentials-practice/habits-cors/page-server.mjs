@@ -6,6 +6,11 @@ import { pathToFileURL } from 'node:url';
 
 export function createPageServer() {
   return http.createServer(async (request, response) => {
+    // The browser asks for an icon on its own; "no content" keeps a red 404 line out of the console.
+    if (request.url === '/favicon.ico') {
+      response.writeHead(204);
+      return response.end();
+    }
     if (request.method !== 'GET' || (request.url !== '/' && request.url !== '/index.html')) {
       response.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
       return response.end('not found');
@@ -20,8 +25,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const port = Number(process.env.PORT ?? 5173);
   const server = createPageServer();
   server.listen(port, '127.0.0.1', () => {
-    console.log(`Page on http://127.0.0.1:${port}`);
-    console.log('Stop it with Ctrl+C.');
+    console.log(`%%pageOn%% http://127.0.0.1:${port}`);
+    console.log('%%stopHint%%');
   });
-  process.on('SIGINT', () => server.close(() => console.log('Page server closed.')));
+  process.on('SIGINT', () => server.close(() => console.log('%%pageClosed%%')));
 }

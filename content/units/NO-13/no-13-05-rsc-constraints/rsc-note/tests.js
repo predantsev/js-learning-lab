@@ -7,13 +7,13 @@ const plannerTree = () => ({
   name: 'TaskPage', kind: 'server', props: {}, children: [
     { name: 'TaskStats', kind: 'server', props: { sortBy: fn }, children: [] },
     {
-      name: 'TaskBoard', kind: 'client', props: { tasks: [{ id: 't-01', title: L.water }], onSave: fn, today: '2026-03-01' }, children: [
-        { name: 'TaskRow', kind: 'client', props: { onDone: fn }, children: [] },
+      name: 'TaskSection', kind: 'server', props: {}, children: [
+        { name: 'DueBadge', kind: 'client', props: { due: new Date('2026-03-02'), format: fn }, children: [] },
       ],
     },
     {
-      name: 'TaskSection', kind: 'server', props: {}, children: [
-        { name: 'DueBadge', kind: 'client', props: { due: new Date('2026-03-02'), format: fn }, children: [] },
+      name: 'TaskBoard', kind: 'client', props: { tasks: [{ id: 't-01', title: L.water }], onSave: fn, today: '2026-03-01' }, children: [
+        { name: 'TaskRow', kind: 'client', props: { onDone: fn }, children: [] },
       ],
     },
   ],
@@ -43,7 +43,7 @@ test('ignores props between two server components', () => {
 });
 
 test('lists exactly the blocked props in tree order', () => {
-  expect(blocked(plannerTree()), 'blockedProps(plannerTree)').toEqual(['TaskPage → TaskBoard.onSave', 'TaskSection → DueBadge.format']);
+  expect(blocked(plannerTree()), 'blockedProps(plannerTree)').toEqual(['TaskSection → DueBadge.format', 'TaskPage → TaskBoard.onSave']);
 });
 
 test('the note cites the checker output for the wishlist tree', () => {
