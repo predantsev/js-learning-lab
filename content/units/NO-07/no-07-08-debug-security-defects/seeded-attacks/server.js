@@ -1,6 +1,6 @@
 // A wishlist API that passes its happy-path tests — and hides four security defects.
 //   GET  /items[?filter[category]=…]   the list, optionally filtered
-//   POST /items                        create a wish
+//   POST /items                        create a wish (413 over 16 KB, 400 for a body that is not JSON)
 //   GET  /items/<id>/price-per-month   a calculation (it has an ordinary bug for an unknown id)
 //   GET  /snapshots/<name>             a saved copy of the list from data/snapshots/
 import http from 'node:http';
@@ -10,15 +10,36 @@ import { parse } from './vendor/tiny-query.js';
 
 const SNAPSHOTS_DIR = path.resolve('data/snapshots');
 
-function sendJson(response, status, value) {
-  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+function sendJson(response, status, value, headers = {}) {
+  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...headers });
   response.end(JSON.stringify(value));
 }
 
-async function readBody(request) {
-  let text = '';
-  for await (const chunk of request) text += chunk;
-  return JSON.parse(text);
+const MAX_BODY_BYTES = 16 * 1024;
+
+// Reads a JSON body, counting bytes as they arrive (lesson no-07-02). Resolves null past the limit
+// and undefined for text that is not JSON, so the route can answer 413 or 400.
+function readBody(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    const onData = (chunk) => {
+      size += chunk.length;
+      if (size <= MAX_BODY_BYTES) return chunks.push(chunk);
+      request.off('data', onData);
+      request.pause(); // read nothing more
+      resolve(null);
+    };
+    request.on('data', onData);
+    request.on('end', () => {
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      } catch {
+        resolve(undefined);
+      }
+    });
+    request.on('error', reject);
+  });
 }
 
 export function createServer({ log }) {
@@ -35,7 +56,10 @@ export function createServer({ log }) {
       return sendJson(response, 200, category ? items.filter((item) => item.category === category) : items);
     }
     if (request.method === 'POST' && pathname === '/items') {
-      const item = { id: `w-${String(items.length + 1).padStart(2, '0')}`, ...(await readBody(request)) };
+      const body = await readBody(request);
+      if (body === null) return sendJson(response, 413, { error: { code: 'PAYLOAD_TOO_LARGE' } }, { connection: 'close' });
+      if (body === undefined || typeof body !== 'object') return sendJson(response, 400, { error: { code: 'MALFORMED_JSON' } });
+      const item = { id: `w-${String(items.length + 1).padStart(2, '0')}`, ...body };
       items.push(item);
       return sendJson(response, 201, item);
     }
