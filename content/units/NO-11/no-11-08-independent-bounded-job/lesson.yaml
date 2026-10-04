@@ -1,0 +1,541 @@
+id: no-11-08-independent-bounded-job
+unit: NO-11
+title:
+  uk: "Самостійно: обмежена задача з повторами й скасуванням"
+  en: "Independent: bounded retry job with cancellation"
+kind: assessment
+minutes: 35
+contentVersion: 1
+objectives:
+  - uk: "Без підказок побудувати обмежений виконавець задач з обмеженням одночасності, ідемпотентними повторами й скасуванням і довести його поведінку тестами скасування й зупинки."
+    en: "Build, without hints, a bounded job runner with a concurrency limit, idempotent retries and cancellation, and prove it with tests for cancellation and shutdown."
+  - uk: "Двома реченнями обґрунтувати, де має працювати важкий для процесора крок — на головному потоці, у worker thread чи в дочірньому процесі, — спираючись на виміряну затримку event loop."
+    en: "Justify in two sentences whether the CPU-heavy step runs on the main thread, in a worker thread or in a child process, using a measured event-loop delay."
+purpose:
+  uk: "Перевірити, що ти сам складаєш усе із цього розділу — обмежену чергу, повтори з паузами, ідемпотентність за id, скасування й чисту зупинку — і доводиш поведінку власними тестами, а рішення про потоки ухвалюєш за вимірюванням, а не на око."
+  en: "To check that you put everything from this unit together on your own — a bounded queue, retries with pauses, idempotency by id, cancellation and a clean shutdown — prove the behavior with your own tests, and decide about threads from a measurement rather than by eye."
+prerequisites: [no-11-07-debug-memory-growth]
+subskills:
+  - { family: B-08, skill: "bounded queues/jobs", depth: assess }
+  - { family: B-08, skill: "retries/idempotency", depth: assess }
+  - { family: B-08, skill: "event loop blocking", depth: assess }
+  - { family: B-08, skill: "workers/processes awareness", depth: assess }
+glossary: []
+selfCheck: [report-runner]
+
+blocks:
+  - id: what-you-build
+    kind: explanation
+    title:
+      uk: "Що ти будуєш"
+      en: "What you build"
+    body:
+      uk: |
+        Виконавець звітів про витрати: сервер отримує запити «побудуй звіт за місяць», і кожен звіт — задача. Підказок немає: умова у вправі — увесь контракт, а перевірки запускають твій код зі своїми задачами, сховищем і скасуваннями.
+
+        Потім, у локальному завданні, ти напишеш тести на `node:test` для скасування й зупинки, виміряєш затримку event loop, коли звіти рахують контрольну суму на головному потоці, і двома реченнями вирішиш, де цьому кроку місце.
+      en: |
+        A runner of expense reports: a server gets requests “build the report for a month”, and every report is a job. There are no hints: the task in the exercise is the whole contract, and the checks run your code with their own jobs, store and aborts.
+
+        Then, in the local task, you write `node:test` tests for cancellation and shutdown, measure the event loop delay while the reports compute a checksum on the main thread, and decide in two sentences where that step belongs.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: скасування"
+      en: "Recall: cancellation"
+    items:
+      - id: abort-rejects
+        from: js-08-09-cancellation-abort
+        prompt:
+          uk: "Запит `fetch` отримав `signal` від `AbortController`, і одразу після старту викликано `controller.abort()`. Що станеться з promise від `fetch`?"
+          en: "A `fetch` request got a `signal` from an `AbortController`, and `controller.abort()` is called right after it starts. What happens to the promise from `fetch`?"
+        answer:
+          type: choice
+          options:
+            - id: rejects-abort
+              text:
+                uk: "Він відхиляється з помилкою, чия назва — `AbortError`"
+                en: "It rejects with an error whose name is `AbortError`"
+            - id: hangs
+              text:
+                uk: "Він ніколи не завершиться: скасований promise «висить»"
+                en: "It never settles: a cancelled promise “hangs”"
+              why:
+                uk: "Скасування не зникає мовчки: promise відхиляється, і `catch` виконується. Інакше код, що чекає, завис би назавжди."
+                en: "A cancellation does not vanish quietly: the promise rejects, and `catch` runs. Otherwise the waiting code would hang for ever."
+            - id: rejects-type
+              text:
+                uk: "Він відхиляється з `TypeError`, як при обриві мережі"
+                en: "It rejects with a `TypeError`, as on a network failure"
+              why:
+                uk: "`TypeError` — це збій мережі. У скасування своя назва помилки — `AbortError`, і саме за нею його відрізняють від справжніх збоїв."
+                en: "`TypeError` is a network failure. Cancellation has its own error name — `AbortError` — and that is how it is told apart from real failures."
+          correct: [rejects-abort]
+        explanation:
+          uk: "Скасована операція відхиляється з `AbortError`. У виконавці звітів так само: скасована задача — це відхилений promise з `AbortError`, а не тиша."
+          en: "A cancelled operation rejects with `AbortError`. In the report runner it is the same: a cancelled job is a promise rejected with `AbortError`, not silence."
+
+  - id: report-runner
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: isolated-node
+    dir: report-runner
+    entry: index.js
+    editable: [app.js, index.js]
+    capabilities: { timeoutMs: 20000 }
+    strings:
+      report: { uk: "Звіт", en: "Report" }
+      savedReport: { uk: "збережений звіт за січень", en: "the saved January report" }
+      unknownCategory: { uk: "невідома категорія витрат", en: "unknown expense category" }
+      busy: { uk: "база зайнята", en: "the database is busy" }
+      reportFor: { uk: "звіт про витрати за", en: "expense report for" }
+      shutDown: { uk: "виконавець зупинився", en: "the runner has shut down" }
+      queueFull: { uk: "черга звітів заповнена", en: "the report queue is full" }
+      shuttingDown: { uk: "виконавець звітів зупиняється", en: "the report runner is shutting down" }
+    title:
+      uk: "Виконавець звітів: межі, повтори, скасування, зупинка"
+      en: "The report runner: limits, retries, abort, shutdown"
+    instructions:
+      uk: |
+        У `app.js` напиши `createReportRunner({ concurrency, maxQueued, maxAttempts, baseMs, store, random })`. `store` — сховище звітів із методами `get(id)` (звіт або `undefined`) і `save(id, report)`; `random` типово `Math.random`. `errors.js` має `QueueFull` і `ShutdownError`.
+
+        **`submit(job, { signal })`** — `job` має `id` і `build(attempt, signal)`, асинхронну функцію, що повертає текст звіту. Повертає promise звіту.
+
+        - Одночасно будується щонайбільше `concurrency` звітів; ще щонайбільше `maxQueued` чекають у порядку надходження; наступна задача одразу відхиляється з `QueueFull`.
+        - Якщо в `store` уже є звіт із цим `id`, promise виконується ним, і нічого не будується. Готовий звіт зберігається в `store` один раз.
+        - `build`, що впав, повторюється — разом щонайбільше `maxAttempts` спроб; перед спробою `n + 1` пауза `random() × baseMs × 2^(n − 1)` мс. Помилка з `retryable === false` не повторюється. Після останньої спроби promise відхиляється останньою помилкою.
+        - Скасований `signal`: задача, що чекає, одразу відхиляється з `AbortError` і ніколи не будується; задача, що будується, отримує `signal` у `build`, відхиляється з `AbortError` і більше не повторюється.
+
+        **`shutdown()`**: нові задачі й ті, що чекають, відхиляються з `ShutdownError`; promise виконується тоді, коли всі задачі, що будуються, завершилися; після цього не лишається жодного таймера.
+
+        `index.js` — демонстрація, яку можна змінювати.
+      en: |
+        In `app.js` write `createReportRunner({ concurrency, maxQueued, maxAttempts, baseMs, store, random })`. `store` is a store of reports with the methods `get(id)` (a report or `undefined`) and `save(id, report)`; `random` defaults to `Math.random`. `errors.js` has `QueueFull` and `ShutdownError`.
+
+        **`submit(job, { signal })`** — `job` has an `id` and `build(attempt, signal)`, an async function returning the report text. It returns a promise of the report.
+
+        - At most `concurrency` reports are built at once; at most `maxQueued` more wait in arrival order; the next job is rejected at once with `QueueFull`.
+        - If `store` already has a report with this `id`, the promise fulfills with it, and nothing is built. A finished report is saved to `store` once.
+        - A failed `build` is retried — at most `maxAttempts` attempts in total; before attempt `n + 1` there is a pause of `random() × baseMs × 2^(n − 1)` ms. An error with `retryable === false` is not retried. After the last attempt the promise rejects with the last error.
+        - An aborted `signal`: a waiting job rejects with `AbortError` at once and is never built; a job being built gets `signal` in `build`, rejects with `AbortError` and is not retried.
+
+        **`shutdown()`**: new jobs and waiting ones are rejected with `ShutdownError`; the promise fulfills once every job being built has finished; after that no timer is left.
+
+        `index.js` is a demo you may change.
+    testTitles:
+      "runs at most concurrency builds at once":
+        uk: "Будує щонайбільше `concurrency` звітів одночасно"
+        en: "Runs at most `concurrency` builds at once"
+      "rejects at once with QueueFull when maxQueued jobs are already waiting":
+        uk: "Одразу відхиляє з `QueueFull`, коли вже чекає `maxQueued` задач"
+        en: "Rejects at once with `QueueFull` when `maxQueued` jobs are already waiting"
+      "retries a failing build up to maxAttempts with doubling pauses":
+        uk: "Повторює `build`, що падає, до `maxAttempts` разів із паузами, що подвоюються"
+        en: "Retries a failing build up to `maxAttempts` with doubling pauses"
+      "does not retry an error whose retryable is false":
+        uk: "Не повторює помилку з `retryable: false`"
+        en: "Does not retry an error whose `retryable` is false"
+      "a job whose id is already in the store resolves with the saved report and builds nothing":
+        uk: "Задача з `id`, що вже є в `store`, виконується збереженим звітом і нічого не будує"
+        en: "A job whose `id` is already in the store resolves with the saved report and builds nothing"
+      "an abort stops a waiting job before it builds and a running job without more attempts":
+        uk: "Скасування зупиняє задачу, що чекає, до побудови, а задачу, що будується, — без нових спроб"
+        en: "An abort stops a waiting job before it builds and a running job without more attempts"
+      "shutdown refuses new and waiting jobs, waits for running ones and leaves no timers":
+        uk: "`shutdown` відмовляє новим і тим, що чекають, дочікується тих, що будуються, і не лишає таймерів"
+        en: "`shutdown` refuses new and waiting jobs, waits for running ones and leaves no timers"
+    solutionNote:
+      uk: "Задача або стартує, або стає в масив `waiting`, або отримує `QueueFull`; `finally` після кожної задачі звільняє місце й стартує наступну. Повтори — цикл із перевіркою `retryable` і `maxAttempts` і паузою, яку перериває `signal`. Перевірка `store.get(id)` при `submit` і перед `save` робить повторну задачу безпечною. `signal` задачі, що чекає, слухає listener, який виймає її із черги; `shutdown` відхиляє чергу й повертає promise, що виконується, коли `running` стає 0. Рівноцінно — асинхронна функція на задачу, що чекає вільного місця, і `setTimeout` з `node:timers/promises` для пауз."
+      en: "A job either starts, or joins the `waiting` array, or gets `QueueFull`; a `finally` after every job frees the place and starts the next one. Retries are a loop that checks `retryable` and `maxAttempts`, with a pause that `signal` interrupts. A `store.get(id)` check in `submit` and before `save` makes a repeated job safe. A listener on a waiting job’s `signal` takes it out of the queue; `shutdown` rejects the queue and returns a promise fulfilled when `running` reaches 0. Equivalent: an async function per job that waits for a free place, and `setTimeout` from `node:timers/promises` for the pauses."
+    feedback:
+      - when: { test: "runs at most concurrency builds at once" }
+        message:
+          uk: "Ця перевірка (`concurrency` 2, `maxQueued` 5) надсилає 4 задачі й очікує, що до завершення будь-якої почали будуватися лише 2."
+          en: "This check (`concurrency` 2, `maxQueued` 5) submits 4 jobs and expects only 2 of them to start building before any finishes."
+      - when: { test: "rejects at once with QueueFull when maxQueued jobs are already waiting" }
+        message:
+          uk: "Ця перевірка (`concurrency` 2, `maxQueued` 2) очікує, що 5-та задача протягом 20 мс відхилиться з `QueueFull` і ніколи не почне будуватися."
+          en: "This check (`concurrency` 2, `maxQueued` 2) expects the 5th job to reject with `QueueFull` within 20 ms and never start building."
+      - when: { test: "retries a failing build up to maxAttempts with doubling pauses" }
+        message:
+          uk: "Ця перевірка (`maxAttempts` 3, `baseMs` 40, `random` = 1) очікує 3 спроби, відхилення помилкою останньої й паузи близько 40 і 80 мс."
+          en: "This check (`maxAttempts` 3, `baseMs` 40, `random` = 1) expects 3 attempts, a rejection with the last one’s error and pauses of about 40 and 80 ms."
+      - when: { test: "does not retry an error whose retryable is false" }
+        message:
+          uk: "Ця перевірка дає `build`, що кидає помилку з `retryable: false`, і очікує одну спробу й відхилення цією помилкою."
+          en: "This check gives a `build` that throws an error with `retryable: false` and expects one attempt and a rejection with that error."
+      - when: { test: "a job whose id is already in the store resolves with the saved report and builds nothing" }
+        message:
+          uk: "Ця перевірка кладе в `store` звіт для `r-done` і очікує, що `submit` із цим `id` виконається збереженим звітом без жодного `build` і `save`."
+          en: "This check puts a report for `r-done` into `store` and expects `submit` with that `id` to fulfill with the saved report without any `build` or `save`."
+      - when: { test: "an abort stops a waiting job before it builds and a running job without more attempts" }
+        message:
+          uk: "Ця перевірка спершу скасовує задачу, що чекає, поки обидва місця зайняті, і очікує `AbortError` протягом 50 мс — не тоді, коли до неї дійде черга. Потім скасовує задачу, що будується, і очікує `AbortError` без другої спроби. Задача, що чекала, не повинна будуватися взагалі."
+          en: "This check first aborts a waiting job while both places are busy and expects `AbortError` within 50 ms — not when its turn comes. Then it aborts a job being built and expects `AbortError` without a second attempt. The waiting job must never be built."
+      - when: { test: "shutdown refuses new and waiting jobs, waits for running ones and leaves no timers" }
+        message:
+          uk: "Ця перевірка викликає `shutdown()`, коли 2 задачі будуються, а 1 чекає. Вона очікує `ShutdownError` для тієї, що чекала, і для нової, promise `shutdown()`, що чекає завершення обох, їхні звіти й жодного таймера після цього (через `activeResources()`)."
+          en: "This check calls `shutdown()` while 2 jobs are being built and 1 waits. It expects `ShutdownError` for the waiting one and for a new one, a `shutdown()` promise that waits for both to finish, their reports, and no timer afterwards (through `activeResources()`)."
+
+  - id: local-tests-and-delay
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Тести скасування й зупинки та вимірювання затримки"
+      en: "Tests for cancellation and shutdown, and a delay measurement"
+    intro:
+      uk: |
+        Перевірки платформи прийняли твій виконавець. Тепер доведи його поведінку **своїми** тестами на вбудованому `node:test` (npm-пакети не потрібні) і виміряй, що відбувається з event loop, коли звіти — важка робота на головному потоці.
+
+        Під час підготовки уроку все виконано на macOS з Node.js v25.2.1 і npm 11.6.2; вивід нижче справжній. Використані API (`node:test` з опцією `timeout`, `assert.rejects`, `monitorEventLoopDelay`) описано в документації Node.js 22, але на Node.js 22, Windows і Linux цей урок не перевіряли.
+
+        **Крок 3 — початковий `runner.test.js` (один тест, ти допишеш інші):**
+
+        ```js
+        // Tests of the report runner: cancellation and shutdown.
+        import { test } from 'node:test';
+        import assert from 'node:assert/strict';
+        import { createReportRunner } from './app.js';
+
+        function memoryStore() {
+          const map = new Map();
+          return { get: (id) => map.get(id), save: (id, report) => map.set(id, report) };
+        }
+
+        // A build that finishes only when the test calls the returned release function.
+        function gatedJob(id) {
+          let release;
+          const job = {
+            id,
+            started: false,
+            build: () => {
+              job.started = true;
+              return new Promise((resolve) => (release = () => resolve(`report ${id}`)));
+            },
+          };
+          return { job, release: () => release() };
+        }
+
+        test('an aborted waiting job rejects with AbortError and is never built', { timeout: 2000 }, async () => {
+          const runner = createReportRunner({ concurrency: 1, maxQueued: 5, maxAttempts: 3, baseMs: 10, store: memoryStore() });
+          const first = gatedJob('r-1');
+          const second = gatedJob('r-2');
+          const controller = new AbortController();
+          const running = runner.submit(first.job);
+          const waiting = runner.submit(second.job, { signal: controller.signal });
+          controller.abort();
+          await assert.rejects(waiting, { name: 'AbortError' });
+          first.release();
+          assert.equal(await running, 'report r-1');
+          assert.equal(second.job.started, false);
+          await runner.shutdown();
+        });
+        ```
+
+        `{ timeout: 2000 }` важливий: тест, що чекає promise, який ніколи не завершиться, без нього висів би без кінця.
+
+        **Крок 5 — звіт із двома тестами (з моїм тестом зупинки; назва твого може відрізнятися):**
+
+        ```text
+        ✔ an aborted waiting job rejects with AbortError and is never built (1.5005ms)
+        ✔ shutdown rejects waiting jobs and resolves after the running one finished (0.129ms)
+        ℹ tests 2
+        ℹ suites 0
+        ℹ pass 2
+        ℹ fail 0
+        ℹ cancelled 0
+        …
+        ```
+
+        **Крок 6 — коли задача, що чекає, не слухає `signal`:**
+
+        ```text
+        ✖ an aborted waiting job rejects with AbortError and is never built (2002.564792ms)
+        ✔ shutdown rejects waiting jobs and resolves after the running one finished (1.198792ms)
+        ℹ tests 2
+        ℹ suites 0
+        ℹ pass 1
+        ℹ fail 0
+        ℹ cancelled 1
+        …
+          'test timed out after 2000ms'
+        ```
+
+        Зверни увагу: такий тест не «fail», а «cancelled» — його зупинив `timeout`.
+
+        **Крок 7 — файл `measure-delay.js`:**
+
+        ```js
+        // Runs 8 report jobs whose build is a synchronous ~100 ms checksum, two at a time, and measures
+        // the event loop delay meanwhile.
+        import { monitorEventLoopDelay } from 'node:perf_hooks';
+        import { createReportRunner } from './app.js';
+
+        function checksum(rounds) {
+          let hash = 2166136261;
+          for (let r = 0; r < rounds; r++) for (let i = 0; i < 50_000; i++) hash = Math.imul(hash ^ i, 16777619) >>> 0;
+          return hash;
+        }
+
+        const store = new Map();
+        const runner = createReportRunner({
+          concurrency: 2,
+          maxQueued: 10,
+          maxAttempts: 1,
+          baseMs: 10,
+          store: { get: (id) => store.get(id), save: (id, report) => store.set(id, report) },
+        });
+
+        checksum(10); // warm-up
+        const delay = monitorEventLoopDelay({ resolution: 10 });
+        delay.enable();
+        // A second gauge: how late a 10 ms heartbeat fires (a request would wait as long).
+        let worstLate = 0;
+        let expected = performance.now() + 10;
+        const heartbeat = setInterval(() => {
+          worstLate = Math.max(worstLate, performance.now() - expected);
+          expected = performance.now() + 10;
+        }, 10);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const started = performance.now();
+        await Promise.all(
+          Array.from({ length: 8 }, (_, i) => runner.submit({ id: `r-${i}`, build: async () => String(checksum(2000)) })),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        clearInterval(heartbeat);
+        delay.disable();
+        await runner.shutdown();
+        const ms = (ns) => (ns / 1e6).toFixed(0);
+        console.log(`8 reports in ${(performance.now() - started).toFixed(0)} ms`);
+        console.log(`event loop delay: p99 ${ms(delay.percentile(99))} ms, max ${ms(delay.max)} ms; heartbeat late by up to ${worstLate.toFixed(0)} ms`);
+        ```
+
+        **Крок 8 — три запуски підряд у мене:**
+
+        ```text
+        8 reports in 831 ms
+        event loop delay: p99 808 ms, max 808 ms; heartbeat late by up to 798 ms
+        8 reports in 837 ms
+        event loop delay: p99 811 ms, max 811 ms; heartbeat late by up to 800 ms
+        8 reports in 835 ms
+        event loop delay: p99 813 ms, max 813 ms; heartbeat late by up to 803 ms
+        ```
+
+        `concurrency: 2` тут не допоміг: обидва «одночасні» звіти рахуються на тому самому потоці, один за одним, і жодна задача не віддає потоку між ними. Твої числа будуть іншими — порівнюй їх між собою, а не з моїми.
+      en: |
+        The platform’s checks have accepted your runner. Now prove its behavior with **your own** tests on the built-in `node:test` (no npm packages needed) and measure what happens to the event loop when the reports are heavy work on the main thread.
+
+        While preparing the lesson everything was run on macOS with Node.js v25.2.1 and npm 11.6.2; the output below is real. The APIs used (`node:test` with the `timeout` option, `assert.rejects`, `monitorEventLoopDelay`) are described in the Node.js 22 documentation, but this lesson was not checked on Node.js 22, Windows or Linux.
+
+        **Step 3 — the starting `runner.test.js` (one test; you add the others):**
+
+        ```js
+        // Tests of the report runner: cancellation and shutdown.
+        import { test } from 'node:test';
+        import assert from 'node:assert/strict';
+        import { createReportRunner } from './app.js';
+
+        function memoryStore() {
+          const map = new Map();
+          return { get: (id) => map.get(id), save: (id, report) => map.set(id, report) };
+        }
+
+        // A build that finishes only when the test calls the returned release function.
+        function gatedJob(id) {
+          let release;
+          const job = {
+            id,
+            started: false,
+            build: () => {
+              job.started = true;
+              return new Promise((resolve) => (release = () => resolve(`report ${id}`)));
+            },
+          };
+          return { job, release: () => release() };
+        }
+
+        test('an aborted waiting job rejects with AbortError and is never built', { timeout: 2000 }, async () => {
+          const runner = createReportRunner({ concurrency: 1, maxQueued: 5, maxAttempts: 3, baseMs: 10, store: memoryStore() });
+          const first = gatedJob('r-1');
+          const second = gatedJob('r-2');
+          const controller = new AbortController();
+          const running = runner.submit(first.job);
+          const waiting = runner.submit(second.job, { signal: controller.signal });
+          controller.abort();
+          await assert.rejects(waiting, { name: 'AbortError' });
+          first.release();
+          assert.equal(await running, 'report r-1');
+          assert.equal(second.job.started, false);
+          await runner.shutdown();
+        });
+        ```
+
+        `{ timeout: 2000 }` matters: a test waiting for a promise that never settles would hang without end otherwise.
+
+        **Step 5 — the report with two tests (with my shutdown test; yours may be named differently):**
+
+        ```text
+        ✔ an aborted waiting job rejects with AbortError and is never built (1.5005ms)
+        ✔ shutdown rejects waiting jobs and resolves after the running one finished (0.129ms)
+        ℹ tests 2
+        ℹ suites 0
+        ℹ pass 2
+        ℹ fail 0
+        ℹ cancelled 0
+        …
+        ```
+
+        **Step 6 — when a waiting job does not listen to `signal`:**
+
+        ```text
+        ✖ an aborted waiting job rejects with AbortError and is never built (2002.564792ms)
+        ✔ shutdown rejects waiting jobs and resolves after the running one finished (1.198792ms)
+        ℹ tests 2
+        ℹ suites 0
+        ℹ pass 1
+        ℹ fail 0
+        ℹ cancelled 1
+        …
+          'test timed out after 2000ms'
+        ```
+
+        Note: such a test is not “fail” but “cancelled” — its `timeout` stopped it.
+
+        **Step 7 — the file `measure-delay.js`:**
+
+        ```js
+        // Runs 8 report jobs whose build is a synchronous ~100 ms checksum, two at a time, and measures
+        // the event loop delay meanwhile.
+        import { monitorEventLoopDelay } from 'node:perf_hooks';
+        import { createReportRunner } from './app.js';
+
+        function checksum(rounds) {
+          let hash = 2166136261;
+          for (let r = 0; r < rounds; r++) for (let i = 0; i < 50_000; i++) hash = Math.imul(hash ^ i, 16777619) >>> 0;
+          return hash;
+        }
+
+        const store = new Map();
+        const runner = createReportRunner({
+          concurrency: 2,
+          maxQueued: 10,
+          maxAttempts: 1,
+          baseMs: 10,
+          store: { get: (id) => store.get(id), save: (id, report) => store.set(id, report) },
+        });
+
+        checksum(10); // warm-up
+        const delay = monitorEventLoopDelay({ resolution: 10 });
+        delay.enable();
+        // A second gauge: how late a 10 ms heartbeat fires (a request would wait as long).
+        let worstLate = 0;
+        let expected = performance.now() + 10;
+        const heartbeat = setInterval(() => {
+          worstLate = Math.max(worstLate, performance.now() - expected);
+          expected = performance.now() + 10;
+        }, 10);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        const started = performance.now();
+        await Promise.all(
+          Array.from({ length: 8 }, (_, i) => runner.submit({ id: `r-${i}`, build: async () => String(checksum(2000)) })),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        clearInterval(heartbeat);
+        delay.disable();
+        await runner.shutdown();
+        const ms = (ns) => (ns / 1e6).toFixed(0);
+        console.log(`8 reports in ${(performance.now() - started).toFixed(0)} ms`);
+        console.log(`event loop delay: p99 ${ms(delay.percentile(99))} ms, max ${ms(delay.max)} ms; heartbeat late by up to ${worstLate.toFixed(0)} ms`);
+        ```
+
+        **Step 8 — three runs in a row on my machine:**
+
+        ```text
+        8 reports in 831 ms
+        event loop delay: p99 808 ms, max 808 ms; heartbeat late by up to 798 ms
+        8 reports in 837 ms
+        event loop delay: p99 811 ms, max 811 ms; heartbeat late by up to 800 ms
+        8 reports in 835 ms
+        event loop delay: p99 813 ms, max 813 ms; heartbeat late by up to 803 ms
+        ```
+
+        `concurrency: 2` did not help here: both “concurrent” reports are computed on the same thread, one after another, and no job gives up the thread between them. Your numbers will differ — compare them with each other, not with mine.
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1", en: "checked with v25.2.1" } }
+      - { name: "npm", version: "10+", note: { uk: "перевірено з 11.6.2; потрібен лише для `npm init`", en: "checked with 11.6.2; needed only for `npm init`" } }
+    steps:
+      - text:
+          uk: "Створи теку й перейди в неї."
+          en: "Create a folder and go into it."
+        command: "mkdir -p ~/js-course/no11-report-runner\ncd ~/js-course/no11-report-runner"
+      - text:
+          uk: "Створи `package.json` і познач теку як ES-модулі."
+          en: "Create `package.json` and mark the folder as ES modules."
+        command: "npm init -y\nnpm pkg set type=module"
+        expect:
+          uk: "`package.json` з рядком `\"type\": \"module\"`."
+          en: "A `package.json` with the line `\"type\": \"module\"`."
+      - text:
+          uk: "У VS Code створи `app.js` і `errors.js` з вмістом однойменних файлів вправи «Виконавець звітів» (`app.js` — твоє рішення, що пройшло перевірки) і `runner.test.js` з текстом із кроку 3 вступу."
+          en: "In VS Code create `app.js` and `errors.js` with the contents of the files with the same names from the exercise “The report runner” (`app.js` is your solution that passed the checks) and `runner.test.js` with the text from step 3 of the introduction."
+      - text:
+          uk: "Без підказок допиши в `runner.test.js` тест зупинки: коли одна задача будується, а друга чекає, `shutdown()` відхиляє ту, що чекає, і нову з `ShutdownError` і виконується лише після того, як перша завершилася. Дай тесту `{ timeout: 2000 }`."
+          en: "Without hints, add a shutdown test to `runner.test.js`: while one job is being built and another waits, `shutdown()` rejects the waiting one and a new one with `ShutdownError` and fulfills only after the first has finished. Give the test `{ timeout: 2000 }`."
+      - text:
+          uk: "Запусти тести."
+          en: "Run the tests."
+        command: "node --test"
+        expect:
+          uk: "Щонайменше два тести з `✔` і `ℹ fail 0`, як у кроці 5 вступу."
+          en: "At least two tests with `✔` and `ℹ fail 0`, as in step 5 of the introduction."
+      - text:
+          uk: "Доведи, що тест скасування щось перевіряє: в `app.js` тимчасово прибери з `submit` реакцію на `signal` для задачі, що чекає, запусти `node --test`, побач, що тест скасовано через `timeout`, поверни код і запусти ще раз."
+          en: "Prove that the cancellation test checks something: in `app.js` temporarily remove `submit`’s reaction to `signal` for a waiting job, run `node --test`, see the test cancelled by its `timeout`, restore the code and run once more."
+        command: "node --test"
+        expect:
+          uk: "Спершу `ℹ cancelled 1` і `'test timed out after 2000ms'`, як у кроці 6 вступу, після відновлення — знову `ℹ fail 0` і `ℹ cancelled 0`."
+          en: "First `ℹ cancelled 1` and `'test timed out after 2000ms'`, as in step 6 of the introduction, and after restoring it `ℹ fail 0` and `ℹ cancelled 0` again."
+      - text:
+          uk: "Створи `measure-delay.js` з текстом із кроку 7 вступу."
+          en: "Create `measure-delay.js` with the text from step 7 of the introduction."
+      - text:
+          uk: "Запусти вимірювання тричі підряд і запиши числа."
+          en: "Run the measurement three times in a row and write down the numbers."
+        command: "node measure-delay.js"
+        expect:
+          uk: "Два рядки, як у кроці 8 вступу: час восьми звітів і затримку event loop. На іншому комп’ютері числа інші, але затримка близька до загального часу."
+          en: "Two lines, as in step 8 of the introduction: the time of eight reports and the event loop delay. On another computer the numbers differ, but the delay is close to the total time."
+      - text:
+          uk: "Без підказок напиши у своїх нотатках два речення: де має працювати крок контрольної суми — на головному потоці, у worker thread чи в дочірньому процесі — і чому, з посиланням на твою виміряну затримку."
+          en: "Without hints, write two sentences in your notes: where the checksum step should run — on the main thread, in a worker thread or in a child process — and why, citing your measured delay."
+    verify:
+      - id: tests-green
+        text:
+          uk: "`node --test` пройшов щонайменше два мої тести: скасування задачі, що чекає, і зупинку."
+          en: "`node --test` passed at least two of my tests: cancelling a waiting job, and shutdown."
+      - id: caught-break
+        text:
+          uk: "Коли задача, що чекає, перестала слухати `signal`, тест скасування не пройшов, а після відновлення пройшов знову."
+          en: "When a waiting job stopped listening to `signal`, the cancellation test did not pass, and it passed again after restoring the code."
+      - id: delay-and-decision
+        text:
+          uk: "Я виміряв затримку event loop трьома запусками й двома реченнями обґрунтував, де має працювати контрольна сума."
+          en: "I measured the event loop delay in three runs and justified in two sentences where the checksum should run."
+    troubleshooting:
+      - problem:
+          uk: "`node --test` пише `ℹ tests 0` і нічого не запускає"
+          en: "`node --test` prints `ℹ tests 0` and runs nothing"
+        fix:
+          uk: "Файл має називатися на `.test.js` (`runner.test.js`) і лежати в поточній теці. Перевір назву й теку командою `ls`."
+          en: "The file must end in `.test.js` (`runner.test.js`) and be in the current folder. Check the name and the folder with `ls`."
+      - problem:
+          uk: "Тест «висить», а потім `'test timed out after 2000ms'`"
+          en: "A test “hangs”, then `'test timed out after 2000ms'`"
+        fix:
+          uk: "Тест чекає promise, який не завершується: найчастіше задача, що чекає, не слухає `signal`, або `shutdown()` не виконується, бо лічильник задач, що будуються, не повертається до нуля. Перевір `finally` після кожної задачі."
+          en: "The test waits for a promise that never settles: most often a waiting job does not listen to `signal`, or `shutdown()` never fulfills because the count of jobs being built does not return to zero. Check the `finally` after every job."
+    recovery:
+      uk: "Тека `~/js-course/no11-report-runner` нічого не змінює в інших твоїх проєктах. Якщо `app.js` зіпсувався, знову скопіюй своє рішення з вправи; тести в `runner.test.js` від цього не постраждають."
+      en: "The folder `~/js-course/no11-report-runner` changes nothing in your other projects. If `app.js` got damaged, copy your solution from the exercise again; the tests in `runner.test.js` are not affected."

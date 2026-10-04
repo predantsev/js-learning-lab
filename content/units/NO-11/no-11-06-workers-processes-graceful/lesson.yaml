@@ -1,0 +1,316 @@
+id: no-11-06-workers-processes-graceful
+unit: NO-11
+title:
+  uk: "Worker threads, процеси й дбайливе використання ресурсів"
+  en: "Workers, processes and graceful resource use"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Вирішувати, де має працювати задача — на головному потоці, у worker thread чи в дочірньому процесі, — і пояснювати це вартістю для процесора, ізоляцією й ціною передачі даних."
+    en: "Decide whether a task belongs on the main thread, in a worker thread or in a child process, and justify it by CPU cost, isolation and data-transfer cost."
+  - uk: "Обмежувати записи, файли й таймери, які може тримати задача, і звільняти їх після успіху, помилки й скасування."
+    en: "Cap the records, file handles and timers a job may hold and release them on completion, failure and cancellation."
+prerequisites: [no-11-05-retries-idempotency, js-13-09-proxy-workers-awareness]
+subskills:
+  - { family: B-08, skill: "workers/processes awareness", depth: intro }
+  - { family: B-08, skill: "graceful resource use", depth: intro }
+glossary: [worker-thread, child-process, resource-budget]
+selfCheck: [predict-worker, run-job]
+
+blocks:
+  - id: three-homes
+    kind: explanation
+    title:
+      uk: "Три місця для роботи"
+      en: "Three places for work"
+    body:
+      uk: |
+        У браузері ти бачив [[web-worker|Web Worker]]: окремий потік, з яким обмінюються **копіями** повідомлень. У Node те саме — [[worker-thread|worker thread]] з `node:worker_threads`. А ще є [[child-process|дочірній процес]] з `node:child_process` — окрема програма зі своєю пам’яттю.
+
+        | Де | Коли | Ціна |
+        |---|---|---|
+        | головний потік | коротка робота; ввід-вивід (його й так чекають паралельно) | довга робота блокує всі запити |
+        | worker thread | важкі обчислення на JavaScript | дані копіюються в `postMessage`; той самий процес |
+        | дочірній процес | чужа програма, ризиковий код, потрібна ізоляція | окремий Node зі своєю пам’яттю й V8: дорожчий старт, дані — серіалізовані повідомлення |
+
+        Документація Node.js 22 каже прямо: worker threads корисні для обчислень на процесорі, але мало допомагають з вводом-виводом. І worker **не пришвидшує** саму роботу — він звільняє головний потік, щоб той відповідав іншим.
+      en: |
+        In the browser you saw a [[web-worker|Web Worker]]: a separate thread that exchanges **copies** of messages. In Node the same thing is a [[worker-thread]] from `node:worker_threads`. And there is also a [[child-process]] from `node:child_process` — a separate program with its own memory.
+
+        | Where | When | Cost |
+        |---|---|---|
+        | the main thread | short work; I/O (it is waited for in parallel anyway) | long work blocks every request |
+        | a worker thread | heavy computation in JavaScript | data is copied in `postMessage`; the same process |
+        | a child process | another program, risky code, isolation needed | a separate Node with its own memory and V8: a costlier start, data as serialized messages |
+
+        The Node.js 22 documentation says it plainly: worker threads are useful for CPU-intensive work but do not help much with I/O. And a worker **does not make** the work itself faster — it frees the main thread so that it can answer others.
+
+  - id: predict-worker
+    kind: prediction
+    prompt:
+      uk: "Контрольна сума 50 000 сум триває на головному потоці близько 200 мс. Її переносять у worker thread. Що станеться з тривалістю самої суми й з таймером «health», який має спрацьовувати кожні 10 мс?"
+      en: "A checksum of 50,000 amounts takes about 200 ms on the main thread. It is moved to a worker thread. What happens to the duration of the checksum itself and to a “health” timer that should fire every 10 ms?"
+    answer:
+      type: choice
+      options:
+        - id: same-time-free-loop
+          text:
+            uk: "Сума триває так само (~200 мс), але таймер більше не запізнюється на ~200 мс — лише на кілька мілісекунд"
+            en: "The checksum takes the same (~200 ms), but the timer is no longer ~200 ms late — only a few milliseconds"
+        - id: faster
+          text:
+            uk: "Сума стає набагато швидшою, бо worker має окреме ядро процесора, і таймер теж вчасний"
+            en: "The checksum becomes much faster, because the worker has a separate CPU core, and the timer is on time too"
+          why:
+            uk: "Окреме ядро не пришвидшує один і той самий цикл: це та сама кількість операцій. Worker виграє інше — головний потік вільний, поки цикл працює."
+            en: "A separate core does not speed up one and the same loop: it is the same number of operations. A worker wins something else — the main thread is free while the loop runs."
+        - id: no-change
+          text:
+            uk: "Нічого не зміниться: JavaScript у Node завжди виконується на одному потоці, тож таймер так само чекає"
+            en: "Nothing changes: JavaScript in Node always runs on one thread, so the timer waits just the same"
+          why:
+            uk: "Один потік — на один event loop. Worker має власний event loop і власний потік, тож цикл у ньому не тримає головного."
+            en: "One thread per event loop. A worker has its own event loop and its own thread, so a loop inside it does not hold the main one."
+      correct: [same-time-free-loop]
+    runnable: false
+    explanation:
+      uk: "Робота та сама, тож і час той самий. Але таймер головного потоку тепер вільний. Приклад цього уроку «Головний потік, worker і передача даних» надрукував у Node.js v25.2.1: головний потік — 204–221 мс із запізненням таймера 198–217 мс; worker — 206–212 мс із запізненням 2 мс."
+      en: "The work is the same, so the time is the same too. But the main thread’s timer is now free. This lesson’s example “Main thread, worker and handing data over” printed on Node.js v25.2.1: the main thread — 204–221 ms with the timer 198–217 ms late; the worker — 206–212 ms with the timer 2 ms late."
+
+  - id: three-boxes
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Головний потік, worker і дочірній процес"
+      en: "Main thread, worker and child process"
+    textEquivalent:
+      uk: "Головний потік і worker thread живуть в одному процесі Node, дочірній процес — окремо, зі своєю пам’яттю. Головний потік надсилає worker масив із 50 000 записів: postMessage копіює кожен об’єкт, і це коштувало близько 20 мс. Якщо ж числа покласти в ArrayBuffer і передати його в списку передачі, буфер переміщується, а не копіюється, — менш як 1 мс, але в головному потоці він стає порожнім. Дочірній процес отримує дані як серіалізовані повідомлення. Якщо він аварійно завершиться, головний процес лише отримає подію про це й житиме далі, бо пам’ять у них окрема. Наприкінці роботи кожен учасник має закрити те, що відкрив: worker — через terminate(), задача — свої файли й таймери, тож лічильник відкритих ресурсів повертається до нуля."
+      en: "The main thread and a worker thread live in one Node process; a child process lives apart, with its own memory. The main thread sends the worker an array of 50,000 records: postMessage copies every object, and that cost about 20 ms. If the numbers are put into an ArrayBuffer passed in the transfer list, the buffer is moved, not copied — under 1 ms, but it becomes empty on the main thread. A child process gets data as serialized messages. If it crashes, the main process only gets an event about it and lives on, because their memory is separate. At the end of the work each participant has to close what it opened: the worker through terminate(), a job its files and timers, so the count of open resources returns to zero."
+    spec:
+      layout: grid
+      groups:
+        - { id: process, label: { uk: "один процес Node", en: "one Node process" } }
+      nodes:
+        - { id: main, group: process, label: { uk: "головний потік", en: "main thread" }, w: 150, col: 0, row: 0 }
+        - { id: worker, group: process, label: "worker thread", w: 150, col: 0, row: 1 }
+        - { id: child, label: { uk: "дочірній процес", en: "child process" }, w: 150, col: 1, row: 1 }
+      edges:
+        - { id: copy, from: main, to: worker, label: "postMessage" }
+        - { id: ipc, from: main, to: child, kind: dashed }
+      steps:
+        - caption:
+            uk: "Головний потік і worker thread — в **одному** процесі, але кожен має власний event loop."
+            en: "The main thread and the worker thread are in **one** process, but each has its own event loop."
+          highlight: [main, worker]
+          dim: [child, ipc]
+        - caption:
+            uk: "`postMessage` з 50 000 об’єктів **копіює** кожен: у прикладі близько 20 мс."
+            en: "`postMessage` with 50,000 objects **copies** each one: about 20 ms in the example."
+          highlight: [main, copy, worker]
+          dim: [child, ipc]
+          annotate:
+            - { id: copy, text: { uk: "копія ≈ 20 мс", en: "copy ≈ 20 ms" } }
+        - caption:
+            uk: "`ArrayBuffer` у списку передачі **переміщується**: менш як 1 мс, але в головному потоці він тепер порожній."
+            en: "An `ArrayBuffer` in the transfer list is **moved**: under 1 ms, but on the main thread it is now empty."
+          highlight: [main, copy, worker]
+          dim: [child, ipc]
+          annotate:
+            - { id: copy, text: { uk: "передача < 1 мс", en: "transfer < 1 ms" } }
+        - caption:
+            uk: "Дочірній процес має власну пам’ять і V8. Його аварія — лише подія для батьківського процесу, а не кінець усього."
+            en: "A child process has its own memory and V8. Its crash is only an event for the parent, not the end of everything."
+          highlight: [child, ipc, main]
+          dim: [worker, copy]
+        - caption:
+            uk: "Наприкінці кожен закриває своє: `worker.terminate()`, файли, таймери — і лічильник ресурсів повертається до нуля."
+            en: "At the end each one closes its own: `worker.terminate()`, files, timers — and the resource count returns to zero."
+          highlight: [main, worker, child]
+
+  - id: worker-lab
+    kind: example
+    runtime: isolated-node
+    dir: worker-lab
+    entry: index.js
+    capabilities: { workers: true }
+    strings:
+      main: { uk: "головний потік", en: "main thread" }
+      late: { uk: "запізнився на", en: "late by" }
+      ms: { uk: "мс", en: "ms" }
+      copied: { uk: "50 000 об’єктів скопійовано за", en: "50,000 objects copied in" }
+      moved: { uk: "ArrayBuffer передано за", en: "ArrayBuffer transferred in" }
+      afterMove: { uk: "довжина в головному потоці після передачі:", en: "length on the main thread after the transfer:" }
+    title:
+      uk: "Головний потік, worker і передача даних"
+      en: "Main thread, worker and handing data over"
+    body:
+      uk: |
+        Натисни **Запустити**. Тут потрібні worker threads, тож платформа дозволяє їх саме цьому прикладу. Програма тричі (після розігріву) рахує ту саму контрольну суму на головному потоці й у `checksum-worker.js`, а таймер кожні 10 мс записує, на скільки запізнився. Потім вона тричі передає worker 50 000 записів: масивом об’єктів (копія) і `Uint32Array` з передачею його `ArrayBuffer`.
+
+        Дочірніх процесів пісочниця не запускає (це її обмеження), тому третій стовпчик таблиці — з документації, а не з прикладу.
+      en: |
+        Press **Run**. Worker threads are needed here, so the platform allows them for this example. The program (after a warm-up) computes the same checksum three times on the main thread and in `checksum-worker.js`, while a timer every 10 ms records how late it is. Then it hands the worker 50,000 records three times: as an array of objects (a copy) and as a `Uint32Array` whose `ArrayBuffer` is transferred.
+
+        The sandbox does not start child processes (that is one of its limits), so the third column of the table comes from the documentation, not from the example.
+    tryIt:
+      uk: "Зміни `ROUNDS` на `400`: сума триває ~20 мс, і на головному потоці таймер запізнюється вже лише на ~20 мс — для такої короткої роботи worker не вартий копіювання й зайвого коду. Поверни `4000`."
+      en: "Change `ROUNDS` to `400`: the checksum takes ~20 ms, and on the main thread the timer is only ~20 ms late — for such short work a worker is not worth the copying and the extra code. Set it back to `4000`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: worker у браузері"
+      en: "Recall: a worker in the browser"
+    items:
+      - id: worker-copy
+        from: js-13-09-proxy-workers-awareness
+        prompt:
+          uk: "Сторінка передає Web Worker масив id через `postMessage(ids)`, а потім змінює `ids[0]`. Чи побачить worker цю зміну?"
+          en: "A page passes a Web Worker an array of ids with `postMessage(ids)`, and then changes `ids[0]`. Does the worker see that change?"
+        answer:
+          type: choice
+          options:
+            - id: no-copy
+              text:
+                uk: "Ні: worker отримав копію, а не той самий масив"
+                en: "No: the worker got a copy, not the same array"
+            - id: yes-shared
+              text:
+                uk: "Так: масиви передаються за посиланням"
+                en: "Yes: arrays are passed by reference"
+              why:
+                uk: "Між потоками не передають посилань на звичайні об’єкти: `postMessage` копіює дані. Спільна пам’ять — виняток, лише через `SharedArrayBuffer`."
+                en: "References to plain objects are not passed between threads: `postMessage` copies the data. Shared memory is the exception, only through `SharedArrayBuffer`."
+            - id: error
+              text:
+                uk: "Зміна кине помилку: масив уже належить worker"
+                en: "The change throws an error: the array now belongs to the worker"
+              why:
+                uk: "Звичайний масив копіюється, тож сторінка лишається власником свого. «Переходить» до іншого потоку лише `ArrayBuffer` зі списку передачі — і тоді він порожніє, а не кидає помилку."
+                en: "A plain array is copied, so the page keeps its own. Only an `ArrayBuffer` in the transfer list “moves” to another thread — and then it becomes empty rather than throwing."
+          correct: [no-copy]
+        explanation:
+          uk: "Повідомлення копіюються. У Node це так само: великі дані дорого копіювати, тож їх передають `ArrayBuffer` зі списку передачі або не передають зовсім — worker читає їх сам."
+          en: "Messages are copied. In Node it is the same: large data is expensive to copy, so it is handed over as an `ArrayBuffer` in the transfer list, or not handed over at all — the worker reads it itself."
+
+  - id: budget
+    kind: explanation
+    title:
+      uk: "Бюджет задачі: що вона тримає і хто це звільнить"
+      en: "A job’s budget: what it holds and who frees it"
+    body:
+      uk: |
+        Будь-де — у головному потоці чи у worker — задача тримає ресурси: записи в пам’яті, відкриті файли, таймери, з’єднання. [[resource-budget|Бюджет ресурсів]] задачі — це межі, які ти ставиш наперед:
+
+        - **скільки записів** вона може обробити (`maxRecords`): більше — `RangeError`, а не нескінченна робота;
+        - **що вона відкриває**: один FileHandle, один інтервал прогресу — і кожен із них закривається у `finally`.
+
+        Node не закриває ресурсів задачі, коли вона завершилася: функція повернулася, а `setInterval` і далі тримає процес, і FileHandle лишається відкритим. Під час підготовки уроку `handle.readLines()` закривав файл сам лише тоді, коли дочитав до кінця; після `throw` посеред циклу FileHandle лишився відкритим (Node.js v25.2.1 і v20.18.0).
+
+        Перевірити можна так: `process.getActiveResourcesInfo()` показує таймери, що тримають процес (`'Timeout'`), а FileHandle після `close()` має `fd === -1`.
+      en: |
+        Anywhere — on the main thread or in a worker — a job holds resources: records in memory, open files, timers, connections. A job’s [[resource-budget]] is the limits you set in advance:
+
+        - **how many records** it may process (`maxRecords`): more means a `RangeError`, not endless work;
+        - **what it opens**: one FileHandle, one progress interval — and each of them is closed in `finally`.
+
+        Node does not close a job’s resources when it ends: the function has returned, but a `setInterval` still holds the process and the FileHandle stays open. While this lesson was prepared, `handle.readLines()` closed the file by itself only when it read to the end; after a `throw` in the middle of the loop the FileHandle stayed open (Node.js v25.2.1 and v20.18.0).
+
+        You can check it like this: `process.getActiveResourcesInfo()` shows timers that hold the process (`'Timeout'`), and a FileHandle has `fd === -1` after `close()`.
+
+  - id: run-job
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: run-job
+    entry: index.js
+    editable: [app.js]
+    strings:
+      expense: { uk: "Витрата", en: "Expense" }
+      records: { uk: "записів", en: "records" }
+      total: { uk: "сума", en: "total" }
+      timersLeft: { uk: "таймерів, що тримають процес", en: "timers holding the process" }
+      complete: { uk: "повна задача", en: "complete job" }
+      overBudget: { uk: "понад бюджет 500", en: "over the 500 budget" }
+      aborted: { uk: "скасована через 30 мс", en: "aborted after 30 ms" }
+    title:
+      uk: "runJob: бюджет і прибирання на кожному шляху"
+      en: "runJob: a budget and cleanup on every path"
+    instructions:
+      uk: |
+        `runJob(job, { signal, maxRecords })` в `app.js` імпортує JSON lines з `job.inputPath` порціями по 100 через `job.saveBatch(batch)` і кожні 20 мс викликає `job.onProgress(count)`. Зараз вона не має межі, не зважає на `signal` і нічого не закриває. Перероби її:
+
+        - виконується з `{ count, total }` — кількістю записів і сумою `amountMinor`;
+        - файл, у якому записів більше за `maxRecords`, відхиляє з `RangeError` і далі не читає;
+        - скасований `signal` відхиляє з `AbortError` (перевіряй його між порціями), і нових порцій більше не зберігає;
+        - після успіху, `RangeError` і скасування FileHandle закрито, а інтервал прогресу прибрано.
+
+        `index.js` лише для читання: **Запустити** проганяє три задачі й після кожної друкує, скільки таймерів тримає процес. Зі стартовим кодом програма не завершується сама й платформа зупиняє її через 10 с — це і є витік. Перевірки стежать за `open` з `node:fs/promises` і за таймерами через `activeResources()`.
+
+        Рядок «A FileHandle object was closed during garbage collection» (Node.js 25 і новіші, це помилка) чи «Closing file descriptor … on garbage collection» (Node.js 22, попередження) означає те саме: файл лишився відкритим, і його закрив збирач сміття.
+      en: |
+        `runJob(job, { signal, maxRecords })` in `app.js` imports the JSON lines of `job.inputPath` in batches of 100 through `job.saveBatch(batch)` and calls `job.onProgress(count)` every 20 ms. Right now it has no limit, ignores `signal` and closes nothing. Rework it:
+
+        - it fulfills with `{ count, total }` — the number of records and the sum of `amountMinor`;
+        - a file with more records than `maxRecords` is rejected with a `RangeError` and not read any further;
+        - an aborted `signal` rejects with `AbortError` (check it between batches), and no more batches are saved;
+        - after success, a `RangeError` and an abort the FileHandle is closed and the progress interval is cleared.
+
+        `index.js` is read-only: **Run** goes through three jobs and after each prints how many timers hold the process. With the starter code the program does not end by itself and the platform stops it after 10 s — that is the leak. The checks watch `open` from `node:fs/promises` and the timers through `activeResources()`.
+
+        A line “A FileHandle object was closed during garbage collection” (Node.js 25 and newer, an error) or “Closing file descriptor … on garbage collection” (Node.js 22, a warning) means the same thing: a file was left open, and the garbage collector closed it.
+    testTitles:
+      "resolves with the record count and the sum of amountMinor":
+        uk: "Виконується з кількістю записів і сумою `amountMinor`"
+        en: "Resolves with the record count and the sum of `amountMinor`"
+      "a job over maxRecords rejects with a RangeError and stops reading":
+        uk: "Задача понад `maxRecords` відхиляється з `RangeError` і припиняє читання"
+        en: "A job over `maxRecords` rejects with a `RangeError` and stops reading"
+      "an abort rejects with AbortError and saves no more batches":
+        uk: "Скасування відхиляє з `AbortError`, і нових порцій не зберігається"
+        en: "An abort rejects with `AbortError` and saves no more batches"
+      "every FileHandle it opened is closed — after success, RangeError and abort":
+        uk: "Кожен відкритий FileHandle закрито — після успіху, `RangeError` і скасування"
+        en: "Every FileHandle it opened is closed — after success, `RangeError` and abort"
+      "no interval or timer is left — after success, RangeError and abort":
+        uk: "Не лишається жодного інтервалу чи таймера — після успіху, `RangeError` і скасування"
+        en: "No interval or timer is left — after success, `RangeError` and abort"
+    hints:
+      nudge:
+        uk: "Скільки різних шляхів виходу з функції є після `open`? І в якому одному місці коду можна прибрати за собою так, щоб жоден із них його не оминув?"
+        en: "How many different ways out of the function are there after `open`? And in which single place in the code can you clean up so that none of them skips it?"
+      explanation:
+        uk: "Згадай `withDeadline` з NO-03: таймер дедлайну зберігався в змінній, а `clearTimeout` стояв у `.finally(…)` — тож таймер зникав і після успіху, і після помилки. Тут те саме, тільки ресурсів два: інтервал і FileHandle. `finally` виконується після `return`, після `throw` і після помилки, кинутої з `await`. Межа — лічильник, порівняний із лімітом на кожному записі; скасування — перевірка `signal` у безпечній точці, після збереженої порції; `throwIfAborted()` кидає `signal.reason`."
+        en: "Remember `withDeadline` from NO-03: the deadline timer was kept in a variable, and `clearTimeout` sat in `.finally(…)` — so the timer went away after success and after an error alike. Here it is the same, only with two resources: the interval and the FileHandle. `finally` runs after `return`, after `throw` and after an error thrown from `await`. The limit is a counter compared with the cap on every record; the abort is a check of `signal` at a safe point, after a saved batch; `throwIfAborted()` throws `signal.reason`."
+    solutionNote:
+      uk: "Один `finally` прибирає інтервал і закриває FileHandle на кожному шляху: успіх, `RangeError`, скасування, зламаний рядок. Лічильник записів порівнюється з `maxRecords` ще до розбору рядка, тож задача понад бюджет зупиняється одразу. `throwIfAborted` між порціями зупиняє задачу в безпечній точці: остання порція або вже збережена, або ще не почата. Рівноцінно — два вкладені `finally`, по одному на ресурс, і перевірка `signal.aborted` на кожному рядку."
+      en: "One `finally` clears the interval and closes the FileHandle on every path: success, a `RangeError`, an abort, a broken line. The record counter is compared with `maxRecords` before the line is parsed, so a job over budget stops at once. `throwIfAborted` between batches stops the job at a safe point: the last batch is either saved already or not started. Equivalent: two nested `finally` blocks, one per resource, and a check of `signal.aborted` on every line."
+    feedback:
+      - when: { test: "resolves with the record count and the sum of amountMinor" }
+        message:
+          uk: "Ця перевірка дає файл із 1000 записів з `amountMinor` 7 і `maxRecords` 5000 і очікує `{ count: 1000, total: 7000 }`."
+          en: "This check gives a file of 1000 records with `amountMinor` 7 and `maxRecords` 5000 and expects `{ count: 1000, total: 7000 }`."
+      - when: { test: "a job over maxRecords rejects with a RangeError and stops reading" }
+        message:
+          uk: "Ця перевірка дає 2000 записів з `maxRecords` 250 і очікує відхилення саме з `RangeError` і не більше 3 збережених порцій. Порівнюй лічильник із `maxRecords` під час читання, а не після нього."
+          en: "This check gives 2000 records with `maxRecords` 250 and expects a rejection with a `RangeError` specifically and at most 3 saved batches. Compare the counter with `maxRecords` while reading, not afterwards."
+      - when: { test: "an abort rejects with AbortError and saves no more batches" }
+        message:
+          uk: "Ця перевірка скасовує `signal` на 30-й мс (кожна порція зберігається 5 мс) і очікує відхилення з назвою `AbortError` і жодної порції після нього. Перевіряй `signal` після кожного `saveBatch`, наприклад `signal?.throwIfAborted()`."
+          en: "This check aborts `signal` at 30 ms (each batch takes 5 ms to save) and expects a rejection named `AbortError` and no batch after it. Check `signal` after every `saveBatch`, for example with `signal?.throwIfAborted()`."
+      - when: { test: "every FileHandle it opened is closed — after success, RangeError and abort" }
+        message:
+          uk: "Ця перевірка запускає задачу тричі — успіх, `RangeError`, скасування — і після кожного запуску очікує, що всі FileHandle з `open` мають `fd === -1`. Після `throw` посеред `readLines()` файл сам не закривається: `await handle.close()` має стояти у `finally`."
+          en: "This check runs the job three times — success, a `RangeError`, an abort — and after each run expects every FileHandle from `open` to have `fd === -1`. After a `throw` in the middle of `readLines()` the file does not close by itself: `await handle.close()` has to be in `finally`."
+      - when: { test: "no interval or timer is left — after success, RangeError and abort" }
+        message:
+          uk: "Ця перевірка рахує через `activeResources()` таймери, що тримають процес, до й після кожного з трьох запусків, і очікує, що нових не лишилося. Збережи результат `setInterval` і виклич `clearInterval` у `finally`."
+          en: "This check counts, through `activeResources()`, the timers holding the process before and after each of the three runs, and expects no new ones left. Keep the result of `setInterval` and call `clearInterval` in `finally`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-11
+    body:
+      uk: "У кроці проєкту імпорт отримує такий самий бюджет: межу записів і одне місце, де закриваються файл і таймери, — і після скасування сервер не тримає нічого від перерваної задачі."
+      en: "In the project step the import gets the same kind of budget: a record limit and one place where the file and the timers are closed — and after an abort the server holds nothing of the interrupted job."

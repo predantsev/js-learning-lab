@@ -1,0 +1,249 @@
+id: no-11-03-event-loop-blocking
+unit: NO-11
+title:
+  uk: "Блокування event loop"
+  en: "Blocking the event loop"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Вимірювати затримку event loop, поки працює синхронний підрахунок контрольної суми, і передбачати, як це позначиться на одночасних запитах."
+    en: "Measure event-loop delay while a synchronous checksum loop runs and predict its effect on concurrent requests."
+  - uk: "Ділити важкий для процесора цикл на порції, між якими код поступається чергою через `setImmediate`, і порівнювати затримку запитів до й після."
+    en: "Split a CPU-heavy loop into batches that yield with `setImmediate` and compare request latency before and after."
+prerequisites: [no-11-02-pipeline-error-abort, no-01-04-event-loop-phases]
+subskills:
+  - { family: B-08, skill: "event loop blocking", depth: intro }
+glossary: [cpu-bound-work, event-loop-delay]
+selfCheck: [predict-health, sum-in-batches]
+
+blocks:
+  - id: one-thread
+    kind: explanation
+    title:
+      uk: "Один потік на всі запити"
+      en: "One thread for every request"
+    body:
+      uk: |
+        Сервер на Node обслуговує багато запитів одночасно не тому, що виконує їх паралельно, а тому, що **чекає** паралельно: поки диск чи мережа працюють, JavaScript обробляє інші колбеки. Сам твій код виконується на **одному** потоці, по одному колбеку за раз.
+
+        Тому [[cpu-bound-work|робота, що навантажує процесор]], — контрольна сума 50 000 записів, `JSON.parse` величезного тексту, сортування мільйона рядків — тримає event loop, доки не закінчиться. Таймери, відповіді диска й інші запити стоять у черзі.
+
+        `async` перед функцією цього не змінює: вона так само виконується на тому самому потоці до першого `await`, а цикл без `await` — повністю. `async` змінює лише те, що функція повертає promise.
+
+        Наскільки loop запізнюється, вимірює `monitorEventLoopDelay` з `node:perf_hooks`: таймер, що мав спрацьовувати кожні 10 мс, записує, на скільки спізнився. Це [[event-loop-delay|затримка event loop]].
+      en: |
+        A Node server serves many requests at once not because it runs them in parallel, but because it **waits** in parallel: while the disk or the network works, JavaScript handles other callbacks. Your code itself runs on **one** thread, one callback at a time.
+
+        So [[cpu-bound-work|CPU-bound work]] — a checksum of 50,000 records, `JSON.parse` of a huge text, sorting a million lines — holds the event loop until it is done. Timers, disk answers and other requests wait in the queue.
+
+        `async` in front of a function does not change that: it still runs on the same thread up to its first `await`, and a loop with no `await` runs entirely. `async` only changes the function into one that returns a promise.
+
+        How late the loop is gets measured by `monitorEventLoopDelay` from `node:perf_hooks`: a timer that should fire every 10 ms records how late it was. That is the [[event-loop-delay]].
+
+  - id: predict-health
+    kind: prediction
+    prompt:
+      uk: "Сервер рахує контрольну суму витрат у `GET /checksum` синхронним циклом приблизно 200 мс. Через 20 мс після початку приходить `GET /health`, обробник якого просто відповідає `ok`. Скільки `/health` чекатиме, і що зміниться, якщо функцію контрольної суми позначити `async`?"
+      en: "A server computes a checksum of expenses in `GET /checksum` with a synchronous loop of about 200 ms. 20 ms after it starts, `GET /health` arrives, whose handler just answers `ok`. How long does `/health` wait, and what changes if the checksum function is marked `async`?"
+    answer:
+      type: choice
+      options:
+        - id: waits-both
+          text:
+            uk: "Близько 180 мс в обох випадках: `/health` чекає, доки цикл звільнить потік"
+            en: "About 180 ms in both cases: `/health` waits until the loop frees the thread"
+        - id: parallel
+          text:
+            uk: "Кілька мілісекунд в обох випадках: Node обробляє запити паралельно, повільний обробник затримує лише свого клієнта"
+            en: "A few milliseconds in both cases: Node handles requests in parallel, a slow handler delays only its own client"
+          why:
+            uk: "Паралельно Node лише чекає на ввід-вивід. Код обробників виконується на одному потоці, тож цикл контрольної суми не пускає до роботи жоден інший колбек, зокрема обробник `/health`."
+            en: "Node only waits for I/O in parallel. Handler code runs on one thread, so the checksum loop lets no other callback run, the `/health` handler included."
+        - id: async-helps
+          text:
+            uk: "Близько 180 мс із синхронною функцією, кілька мілісекунд з `async`"
+            en: "About 180 ms with the synchronous function, a few milliseconds with `async`"
+          why:
+            uk: "`async` не переносить роботу кудись іще: цикл без `await` виконується так само на головному потоці від початку до кінця, лише результат загорнуто в promise."
+            en: "`async` moves the work nowhere else: a loop with no `await` still runs on the main thread from start to finish, only its result is wrapped in a promise."
+      correct: [waits-both]
+    runnable: false
+    explanation:
+      uk: "`/health` отримує чергу лише після кінця циклу: близько 200 мс мінус 20 мс, на які він запізнився. З `async` числа ті самі. Приклад цього уроку «Лабораторний сервер: sync, async, batched» надрукував у Node.js v25.2.1 176–184 мс для обох варіантів (на твоєму комп’ютері числа будуть інші, але однакові для `sync` і `async`)."
+      en: "`/health` gets its turn only after the loop ends: about 200 ms minus the 20 ms it came late. With `async` the numbers are the same. This lesson’s example “The lab server: sync, async, batched” printed 176–184 ms for both on Node.js v25.2.1 (your computer will give other numbers, but the same for `sync` and `async`)."
+
+  - id: loop-held
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Хто чекає, поки цикл тримає потік"
+      en: "Who waits while the loop holds the thread"
+    textEquivalent:
+      uk: "Головний потік JavaScript виконує обробник /checksum із синхронним циклом приблизно на 200 мс. У черзі тим часом чекають таймер на 20 мс, обробник /health і відповідь диска. Жоден не може почати, доки цикл не закінчиться: таймер спрацьовує на 200-й мілісекунді, /health отримує відповідь лише тоді. Якщо цикл поділити на порції по 1000 записів і після кожної чекати setImmediate, між порціями потік звільняється: таймер спрацьовує вчасно, /health відповідає за кілька мілісекунд, а сама контрольна сума займає приблизно стільки ж часу, як і раніше."
+      en: "The main JavaScript thread runs the /checksum handler with a synchronous loop of about 200 ms. Meanwhile a 20 ms timer, the /health handler and a disk answer wait in the queue. None of them can start until the loop ends: the timer fires at the 200th millisecond, and /health gets its answer only then. If the loop is split into batches of 1000 records with a setImmediate wait after each, the thread is free between batches: the timer fires on time, /health answers within a few milliseconds, and the checksum itself takes about as long as before."
+    spec:
+      layout: grid
+      nodes:
+        - { id: thread, label: { uk: "потік: /checksum", en: "thread: /checksum" }, w: 170, col: 0, row: 1 }
+        - { id: timer, label: { uk: "таймер 20 мс", en: "20 ms timer" }, shape: round, w: 150, col: 1, row: 0 }
+        - { id: health, label: "GET /health", shape: round, w: 150, col: 1, row: 1 }
+        - { id: disk, label: { uk: "відповідь диска", en: "disk answer" }, shape: round, w: 150, col: 1, row: 2 }
+      edges:
+        - { id: timer-wait, from: timer, to: thread, kind: dashed }
+        - { id: health-wait, from: health, to: thread, kind: dashed }
+        - { id: disk-wait, from: disk, to: thread, kind: dashed }
+      steps:
+        - caption:
+            uk: "Обробник `/checksum` запускає синхронний цикл на ~200 мс. Потік зайнятий."
+            en: "The `/checksum` handler starts a synchronous loop of ~200 ms. The thread is busy."
+          highlight: [thread]
+          dim: [timer, health, disk, timer-wait, health-wait, disk-wait]
+        - caption:
+            uk: "Таймер, `/health` і відповідь диска вже готові, але **чекають** — колбеки виконуються лише по одному."
+            en: "The timer, `/health` and the disk answer are ready, but they **wait** — callbacks run only one at a time."
+          highlight: [timer, health, disk, timer-wait, health-wait, disk-wait]
+          annotate:
+            - { id: health, text: { uk: "чекає ~180 мс", en: "waits ~180 ms" } }
+        - caption:
+            uk: "З `async` перед функцією — та сама картина: цикл без `await` не віддає потоку."
+            en: "With `async` in front of the function — the same picture: a loop with no `await` does not give up the thread."
+          highlight: [thread]
+          annotate:
+            - { id: thread, text: "async" }
+        - caption:
+            uk: "Порції по 1000 записів і `setImmediate` між ними: після кожної порції черга отримує хід, і `/health` відповідає за кілька мілісекунд."
+            en: "Batches of 1000 records with `setImmediate` between them: after each batch the queue gets its turn, and `/health` answers within a few milliseconds."
+          highlight: [thread, timer, health, disk, timer-wait, health-wait, disk-wait]
+          annotate:
+            - { id: health, text: { uk: "~2 мс", en: "~2 ms" } }
+
+  - id: blocking-lab
+    kind: example
+    runtime: isolated-node
+    dir: blocking-lab
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      expense: { uk: "Витрата", en: "Expense" }
+      timer20: { uk: "таймер «через 20 мс» спрацював на", en: "the “in 20 ms” timer fired at" }
+      waited: { uk: "чекав", en: "waited" }
+      took: { uk: "тривав", en: "took" }
+      ms: { uk: "мс", en: "ms" }
+      loopDelay: { uk: "затримка event loop", en: "event loop delay" }
+    title:
+      uk: "Лабораторний сервер: sync, async, batched"
+      en: "The lab server: sync, async, batched"
+    body:
+      uk: |
+        Натисни **Запустити**. Сервер слухає `127.0.0.1` на вільному порту. Програма просить `/checksum`, а через 20 мс — `/health`, і так тричі після одного розігрівного раунду. Друкує, коли насправді спрацював таймер «через 20 мс», скільки чекав `/health` і скільки тривав `/checksum`, а наприкінці — p99 і максимум затримки event loop з `monitorEventLoopDelay`.
+
+        Клієнт тут у тому самому процесі, що й сервер, тож заблокований loop затримує і його таймер. Тому чекання `/health` рахується від запланованої 20-ї мілісекунди.
+      en: |
+        Press **Run**. The server listens on `127.0.0.1` on a free port. The program asks for `/checksum`, and 20 ms later for `/health`, three times after one warm-up round. It prints when the “in 20 ms” timer really fired, how long `/health` waited and how long `/checksum` took, and at the end the p99 and maximum event loop delay from `monitorEventLoopDelay`.
+
+        The client here is in the same process as the server, so a blocked loop delays its timer too. That is why the wait of `/health` is counted from the planned 20th millisecond.
+    tryIt:
+      uk: "Зміни `MODE` на `'async'`: числа ті самі. Потім на `'batched'`: таймер спрацьовує на ~20 мс, `/health` відповідає за кілька мілісекунд, p99 затримки падає до ~10 мс (це вже роздільність вимірювача), а `/checksum` триває майже стільки ж. Спробуй `BATCH_SIZE = 50000`: одна порція — і знову довге чекання."
+      en: "Change `MODE` to `'async'`: the numbers stay the same. Then to `'batched'`: the timer fires at ~20 ms, `/health` answers within a few milliseconds, the p99 delay drops to ~10 ms (that is the gauge’s own resolution), and `/checksum` takes about as long. Try `BATCH_SIZE = 50000`: a single batch — and a long wait again."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: фази event loop"
+      en: "Recall: event loop phases"
+    items:
+      - id: immediate-vs-microtask
+        from: no-01-04-event-loop-phases
+        prompt:
+          uk: "Під час довгої роботи код робить паузу між порціями. Яка пауза дасть шанс таймерам і відповідям диска, що вже чекають: `await Promise.resolve()` чи `await new Promise((resolve) => setImmediate(resolve))`?"
+          en: "During a long job the code pauses between batches. Which pause gives a chance to timers and disk answers that are already waiting: `await Promise.resolve()` or `await new Promise((resolve) => setImmediate(resolve))`?"
+        answer:
+          type: choice
+          options:
+            - id: immediate
+              text:
+                uk: "`setImmediate`: продовження чекає фази check, а до неї loop проходить poll"
+                en: "`setImmediate`: the continuation waits for the check phase, and the loop goes through poll before it"
+            - id: promise
+              text:
+                uk: "`Promise.resolve()`: promise-колбеки виконуються найпізніше"
+                en: "`Promise.resolve()`: promise callbacks run last"
+              why:
+                uk: "Навпаки: мікрозадачі promise Node спорожнює одразу після поточного колбека, ще до будь-якої фази. Продовження після `await Promise.resolve()` виконується раніше за все, що чекає в фазах."
+                en: "The opposite: Node empties promise microtasks right after the current callback, before any phase. The continuation after `await Promise.resolve()` runs before everything waiting in the phases."
+            - id: same
+              text:
+                uk: "Однаково: будь-який `await` віддає потік усім"
+                en: "Either: any `await` gives the thread to everyone"
+              why:
+                uk: "`await` віддає потік лише до того, як буде готовий його promise. Уже виконаний promise готовий одразу, тож продовження стає мікрозадачею й випереджає фази."
+                en: "`await` gives up the thread only until its promise is ready. An already resolved promise is ready at once, so the continuation becomes a microtask and overtakes the phases."
+          correct: [immediate]
+        explanation:
+          uk: "Мікрозадачі виконуються між колбеками, до наступної фази. `setImmediate` ставить продовження у фазу check, тож перед ним loop обслуговує poll — ввід-вивід, а на наступному колі — таймери."
+          en: "Microtasks run between callbacks, before the next phase. `setImmediate` puts the continuation into the check phase, so before it the loop serves poll — I/O — and on the next round, timers."
+
+  - id: sum-in-batches
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: sum-in-batches
+    entry: index.js
+    editable: [app.js]
+    strings:
+      total: { uk: "сума", en: "total" }
+      took: { uk: "тривало", en: "took" }
+      ms: { uk: "мс", en: "ms" }
+      heartbeats: { uk: "ударів «серця» кожні 10 мс", en: "10 ms heartbeats" }
+    title:
+      uk: "sumInBatches: порції з паузами"
+      en: "sumInBatches: batches with pauses"
+    instructions:
+      uk: |
+        `sumInBatches(records, batchSize)` в `app.js` рахує суму `amountMinor` одним циклом і не дає нікому ходу. Перероби її:
+
+        - promise виконується із сумою всіх `amountMinor` — зокрема коротшої останньої порції; для порожнього масиву сума `0`;
+        - після кожної порції щонайбільше з `batchSize` записів інші колбеки (таймери, ввід-вивід, `setImmediate`) отримують хід.
+
+        **Запустити** рахує 300 000 витрат порціями по 5000, поки інтервал «серце» кожні 10 мс рахує, скільки разів отримав хід. Зараз він не отримує жодного. Друга перевірка **рахує, скільки разів прочитано `amountMinor`** між ходами колбека, що перезапускає себе через `setImmediate`.
+      en: |
+        `sumInBatches(records, batchSize)` in `app.js` adds up `amountMinor` in one loop and gives nobody a turn. Rework it:
+
+        - the promise fulfills with the sum of every `amountMinor` — the shorter last batch included; for an empty array the sum is `0`;
+        - after every batch of at most `batchSize` records other callbacks (timers, I/O, `setImmediate`) get a turn.
+
+        **Run** adds up 300,000 expenses in batches of 5000 while a “heartbeat” interval every 10 ms counts how often it got a turn. Right now it gets none. The second check **counts how many times `amountMinor` is read** between the turns of a callback that reschedules itself with `setImmediate`.
+    testTitles:
+      "resolves with the sum of every amountMinor, including a shorter last batch":
+        uk: "Виконується із сумою всіх `amountMinor`, разом із коротшою останньою порцією"
+        en: "Resolves with the sum of every `amountMinor`, including a shorter last batch"
+      "other callbacks get a turn after at most batchSize records":
+        uk: "Інші колбеки отримують хід щонайпізніше після `batchSize` записів"
+        en: "Other callbacks get a turn after at most `batchSize` records"
+    hints:
+      nudge:
+        uk: "Де в циклі закінчується порція? І на що треба `await`-нути там, щоб loop пройшов свої фази, а не лише чергу мікрозадач?"
+        en: "Where in the loop does a batch end? And what do you have to `await` there so that the loop goes through its phases and not just the microtask queue?"
+      explanation:
+        uk: "Уяви, що ти розкладаєш 23 листи по конвертах по 10: виходить 10, 10 і 3 — остання пачка менша, і загубити її не можна. Так само записи йдуть пачками по `batchSize`, а остання пачка може бути коротшою. Паузу дає promise, який виконує колбек наступної фази: `setImmediate` (фаза check) або `setTimeout(…, 0)` (таймери). `await Promise.resolve()` не годиться: мікрозадача виконується ще до фаз."
+        en: "Picture putting 23 letters into envelopes of 10: you get 10, 10 and 3 — the last bundle is smaller, and it must not get lost. Records go the same way, in bundles of `batchSize`, and the last bundle may be shorter. The pause is a promise fulfilled by a callback of a later phase: `setImmediate` (the check phase) or `setTimeout(…, 0)` (timers). `await Promise.resolve()` will not do: a microtask runs before the phases."
+    solutionNote:
+      uk: "Цикл іде кроками по `batchSize`, а `Math.min` обрізає останню порцію. Після кожної порції `await` чекає promise, який виконає `setImmediate`, тож loop проходить фази й обслуговує все, що чекало. Рівноцінно — лічильник у `for...of` з паузою через `setTimeout(…, 0)` після кожної повної порції або `setImmediate` з `node:timers/promises`. Порція — компроміс: менша дає частіші ходи іншим, але більше пауз."
+      en: "The loop steps by `batchSize`, and `Math.min` trims the last batch. After every batch `await` waits for a promise that `setImmediate` fulfills, so the loop goes through its phases and serves everything that waited. Equivalent: a counter in `for...of` with a `setTimeout(…, 0)` pause after every full batch, or `setImmediate` from `node:timers/promises`. The batch size is a trade-off: smaller gives others more frequent turns, but adds more pauses."
+    feedback:
+      - when: { test: "resolves with the sum of every amountMinor, including a shorter last batch" }
+        message:
+          uk: "Ця перевірка рахує суму для 10 250 записів порціями по 500 (остання порція — 250 записів), для 30 записів і для порожнього масиву (`0`). Якщо не вистачає саме кінця, перевір межу циклу: неповну останню порцію теж треба додати."
+          en: "This check sums 10,250 records in batches of 500 (the last batch has 250 records), 30 records and an empty array (`0`). If exactly the end is missing, check the loop’s limit: the incomplete last batch has to be added too."
+      - when: { test: "other callbacks get a turn after at most batchSize records" }
+        message:
+          uk: "Ця перевірка очікує, що між двома ходами колбека `setImmediate` прочитано не більше 500 `amountMinor` (`batchSize` 500). Ні `async` перед функцією, ні `await Promise.resolve()` ходу не дають: потрібна пауза до наступної фази — `setImmediate` чи `setTimeout`."
+          en: "This check expects at most 500 reads of `amountMinor` between two turns of a `setImmediate` callback (`batchSize` 500). Neither `async` in front of the function nor `await Promise.resolve()` gives a turn: you need a pause until a later phase — `setImmediate` or `setTimeout`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-11
+    body:
+      uk: "У кроці проєкту імпорт перевіряє кожен рядок великого файла. Перевірка одного рядка дешева, але десятки тисяч підряд — уже робота для процесора: між порціями імпорт має давати серверу відповідати на інші запити."
+      en: "In the project step the import validates every line of a large file. Validating one line is cheap, but tens of thousands in a row are CPU work: between batches the import has to let the server answer other requests."
