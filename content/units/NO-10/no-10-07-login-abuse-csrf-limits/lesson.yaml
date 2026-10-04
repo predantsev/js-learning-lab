@@ -1,0 +1,429 @@
+id: no-10-07-login-abuse-csrf-limits
+unit: NO-10
+title:
+  uk: "Захист входу від зловживань, CSRF і ліміти"
+  en: "Login abuse controls, CSRF context and rate limits"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Обмежувати невдалі входи для облікового запису й для адреси обмеженим лічильником із паузою, відповідати однаково на невідомого користувача й хибний пароль і передбачати наслідки блокування."
+    en: "Throttle failed logins per account and per address with a bounded counter and backoff, answer unknown users and wrong passwords with the same message, and predict the lockout effects."
+  - uk: "Пояснити, коли запит, що змінює дані й автентифікований cookie, вразливий до CSRF — зокрема з іншого порту того самого хоста, який SameSite вважає тим самим сайтом, — і захистити його SameSite плюс перевіркою Origin або CSRF-токеном."
+    en: "Explain when a cookie-authenticated state-changing request is exposed to CSRF — including from another port on the same host, which SameSite treats as same-site — and protect it with SameSite plus an Origin check or a CSRF token."
+  - uk: "Застосувати ліміти розміру й часу (байти тіла, тривалість запиту, робота хешування), щоб вхід не міг виснажити сервер."
+    en: "Apply size and time limits (body bytes, request duration, hashing work) so that login cannot be used to exhaust the server."
+prerequisites: [no-10-06-secrets-secure-config, no-03-04-cancellation-timeouts-server]
+subskills:
+  - { family: B-06, skill: "login abuse controls/CSRF context", depth: intro }
+  - { family: B-07, skill: "rate/size/time limits", depth: intro }
+glossary: [rate-limiting, credential-stuffing, csrf, user-enumeration]
+selfCheck: [predict-twenty-attempts, login-limiter]
+
+blocks:
+  - id: login-under-attack
+    kind: explanation
+    title:
+      uk: "Форма входу — двері, які смикають"
+      en: "The login form is a door people keep trying"
+    body:
+      uk: |
+        Скрипт може надсилати тисячі паролів на хвилину: перебирати поширені паролі для одного облікового запису або пробувати пари «пошта + пароль», що витекли з інших сайтів, — це [[credential-stuffing|credential stuffing]]. Захист — [[rate-limiting|обмеження частоти]]:
+
+        - **Два лічильники невдач** — для облікового запису (один акаунт атакують з багатьох адрес) і для адреси (одна адреса пробує багато акаунтів). У лабораторній — 5 невдач за хвилину на кожен.
+        - Понад ліміт — **429 Too Many Requests** (RFC 6585) із заголовком `Retry-After: <секунди>`. Пауза тимчасова: вічне блокування дає зловмисникові змогу «замкнути» будь-кого, просто вводячи хибні паролі.
+        - **Ліміт перевіряють до хешування.** Заблокована спроба не витрачає scrypt — інакше сам захист навантажує сервер.
+        - **Лічильники обмежені**: старі записи зникають після вікна, а їхня кількість має стелю. Інакше атака з мільйоном вигаданих імен заповнить пам’ять самими лічильниками.
+
+        І одна відповідь для «такого користувача немає» і «пароль хибний». Інакше форма входу перетворюється на довідку, хто зареєстрований, — це [[user-enumeration|перелічення користувачів]]. Тому й невідомого користувача сервер хешує так само: різниця в часі відповіді теж підказка.
+      en: |
+        A script can send thousands of passwords a minute: try common passwords on one account, or try “email + password” pairs leaked from other sites — that is [[credential-stuffing]]. The protection is [[rate-limiting]]:
+
+        - **Two failure counters** — per account (one account attacked from many addresses) and per address (one address trying many accounts). In the lab, 5 failures a minute on each.
+        - Over the limit: **429 Too Many Requests** (RFC 6585) with a `Retry-After: <seconds>` header. The pause is temporary: a permanent lockout lets an attacker “lock out” anyone just by typing wrong passwords.
+        - **The limit is checked before hashing.** A blocked attempt spends no scrypt — otherwise the protection itself loads the server.
+        - **The counters are bounded**: old entries disappear after the window, and their number has a ceiling. Otherwise an attack with a million made-up names fills memory with counters alone.
+
+        And one answer for “no such user” and “wrong password”. Otherwise the login form turns into a directory of who is registered — that is [[user-enumeration]]. That is also why the server hashes for an unknown user too: a difference in response time is a hint as well.
+
+  - id: predict-twenty-attempts
+    kind: prediction
+    prompt:
+      uk: "Сервер дозволяє 5 невдалих входів на хвилину для облікового запису й перевіряє ліміт до пароля. Скрипт за кілька секунд надсилає 20 хибних паролів для одного запису. Що надрукує модель цього сервера?"
+      en: "The server allows 5 failed logins a minute per account and checks the limit before the password. A script sends 20 wrong passwords to one account within a few seconds. What does this model of the server print?"
+    code: |
+      const MAX_FAILURES = 5;
+      let failures = 0;
+      const statuses = [];
+      for (let attempt = 1; attempt <= 20; attempt++) {
+        if (failures >= MAX_FAILURES) { statuses.push(429); continue; } // blocked before hashing
+        failures++; // the password is wrong every time
+        statuses.push(401);
+      }
+      const count = (status) => statuses.filter((s) => s === status).length;
+      console.log(`401: ${count(401)}, 429: ${count(429)}`);
+    verify:
+      logs: ["401: 5, 429: 15"]
+    answer:
+      type: choice
+      options:
+        - id: right
+          code: "401: 5, 429: 15"
+        - id: no-limit
+          code: "401: 20, 429: 0"
+          why:
+            uk: "Так відповідає сервер без ліміту — і перевіряє всі 20 паролів. Тут після п’ятої невдачі спроби навіть не доходять до перевірки пароля."
+            en: "That is a server without a limit — and it checks all 20 passwords. Here after the fifth failure the attempts do not even reach the password check."
+        - id: six
+          code: "401: 6, 429: 14"
+          why:
+            uk: "Ліміт — 5 невдач: шоста спроба вже бачить `failures >= 5` і отримує 429 без перевірки пароля."
+            en: "The limit is 5 failures: the sixth attempt already sees `failures >= 5` and gets 429 without a password check."
+      correct: [right]
+    explanation:
+      uk: "П’ять справжніх перевірок, решта — дешеві 429. Зловмисник за хвилину перевіряє 5 паролів замість тисяч, а сервер не витрачає scrypt на заблоковані спроби."
+      en: "Five real checks, the rest are cheap 429s. The attacker checks 5 passwords a minute instead of thousands, and the server spends no scrypt on blocked attempts."
+
+  - id: csrf-context
+    kind: explanation
+    title:
+      uk: "CSRF: браузер додає cookie сам"
+      en: "CSRF: the browser adds the cookie by itself"
+    body:
+      uk: |
+        Сесійна cookie має зворотний бік: браузер додає її до запиту **хоч би яка сторінка його запустила**. Сторінка іншого сайту може містити форму, що сама надсилає `POST /notes` на твій сервер, — і запит прийде з cookie жертви. Це [[csrf|CSRF]]: зміну робить чужа сторінка від імені користувача.
+
+        `SameSite=Lax` закриває більшість випадків: з `POST`-формою чи `fetch` з **іншого сайту** cookie не піде. Але «сайт» ширший за походження — порт не враховується. Сторінка на `http://127.0.0.1:5173` (будь-яка інша програма на твоєму комп’ютері) і сервер на `http://127.0.0.1:4310` — **той самий сайт**, і cookie з `Lax` поїде.
+
+        Тому запити, що змінюють дані, отримують другий захист:
+
+        - **перевірку Origin**: браузер додає заголовок `Origin` до `POST`-запитів; не той, що в списку дозволених, — 403. Запит без `Origin` прийшов не зі сторінки браузера — cookie жертви в нього немає;
+        - або **CSRF-токен**: випадкове значення, яке сервер вкладає у свою форму й перевіряє в запиті; чужа сторінка його не знає.
+
+        CORS тут **не допомагає**: він вирішує, чи **прочитає** скрипт відповідь. Сам запит уже пішов і виконався.
+      en: |
+        A session cookie has a downside: the browser adds it to a request **whichever page started it**. A page of another site can contain a form that submits `POST /notes` to your server by itself — and the request arrives with the victim's cookie. That is [[csrf|CSRF]]: someone else's page makes a change on the user's behalf.
+
+        `SameSite=Lax` closes most cases: the cookie does not go with a `POST` form or a `fetch` from **another site**. But a “site” is wider than an origin — the port does not count. A page on `http://127.0.0.1:5173` (any other program on your computer) and the server on `http://127.0.0.1:4310` are **the same site**, and a `Lax` cookie goes along.
+
+        So requests that change data get a second protection:
+
+        - an **Origin check**: the browser adds an `Origin` header to `POST` requests; one that is not on the allowed list gets 403. A request without `Origin` did not come from a page in a browser — it does not carry the victim's cookie;
+        - or a **CSRF token**: a random value the server puts into its own form and checks in the request; someone else's page does not know it.
+
+        CORS does **not help** here: it decides whether a script may **read** the response. The request itself has already gone and been carried out.
+
+  - id: csrf-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Перебір паролів і підроблена форма"
+      en: "Password guessing and a forged form"
+    textEquivalent:
+      uk: "Три учасники: скрипт атаки, браузер жертви й лабораторний сервер. Скрипт надсилає хибні паролі для u-01; перші п’ять сервер перевіряє й відповідає 401, а шоста спроба отримує 429 із Retry-After: 60 ще до хешування — далі скрипт марно чекає. Тим часом жертва ввійшла, і її браузер тримає cookie сесії з SameSite=Lax. Сторінка на іншому порту того самого хоста, http://127.0.0.1:5173, змушує браузер надіслати POST /notes: для SameSite це той самий сайт, тож cookie йде разом із запитом, а заголовок Origin — http://127.0.0.1:5173. Без перевірки Origin сервер створив би нотатку від імені жертви; з перевіркою він відповідає 403. Той самий запит зі сторінки на справді іншому сайті не отримав би cookie взагалі через SameSite=Lax."
+      en: "Three participants: an attack script, the victim's browser and the lab server. The script sends wrong passwords for u-01; the server checks the first five and answers 401, and the sixth attempt gets 429 with Retry-After: 60 before any hashing — after that the script waits in vain. Meanwhile the victim has logged in, and her browser holds a session cookie with SameSite=Lax. A page on another port of the same host, http://127.0.0.1:5173, makes the browser send POST /notes: for SameSite it is the same site, so the cookie goes along with the request, and the Origin header is http://127.0.0.1:5173. Without an Origin check the server would create a note on the victim's behalf; with the check it answers 403. The same request from a page on a truly different site would not get the cookie at all because of SameSite=Lax."
+    spec:
+      actors:
+        - { id: script, label: { uk: "Скрипт атаки", en: "Attack script" } }
+        - { id: server, label: { uk: "Лабораторний сервер", en: "Lab server" } }
+        - { id: browser, label: { uk: "Браузер жертви", en: "Victim's browser" } }
+      messages:
+        - from: script
+          to: server
+          label: "POST /login ×5"
+          note: { uk: "хибні паролі для u-01", en: "wrong passwords for u-01" }
+          caption:
+            uk: "Скрипт пробує паролі для `u-01`. П’ять спроб сервер перевіряє й відповідає 401."
+            en: "The script tries passwords for `u-01`. The server checks five attempts and answers 401."
+        - from: server
+          to: script
+          kind: return
+          label: "429, Retry-After: 60"
+          caption:
+            uk: "Шоста спроба отримує **429** ще до хешування. Скрипт може лише чекати хвилину — по 5 спроб на хвилину замість тисяч."
+            en: "The sixth attempt gets **429** before any hashing. The script can only wait a minute — 5 attempts a minute instead of thousands."
+        - from: browser
+          to: server
+          label: "POST /login"
+          note: { uk: "Set-Cookie: sid=…; SameSite=Lax", en: "Set-Cookie: sid=…; SameSite=Lax" }
+          caption:
+            uk: "Тим часом жертва входить. Її браузер тримає cookie сесії з `SameSite=Lax`."
+            en: "Meanwhile the victim logs in. Her browser holds a session cookie with `SameSite=Lax`."
+        - from: browser
+          to: server
+          label: "POST /notes"
+          note: { uk: "Origin: http://127.0.0.1:5173 · Cookie: sid=…", en: "Origin: http://127.0.0.1:5173 · Cookie: sid=…" }
+          caption:
+            uk: "Сторінка на **іншому порту** того самого хоста надсилає форму. Для `SameSite` це той самий сайт — **cookie йде**."
+            en: "A page on **another port** of the same host submits a form. For `SameSite` it is the same site — **the cookie goes along**."
+        - from: server
+          to: browser
+          kind: return
+          label: "403 CSRF_ORIGIN"
+          caption:
+            uk: "Перевірка Origin бачить чуже походження й відповідає **403**. Без неї нотатку було б створено від імені жертви."
+            en: "The Origin check sees a foreign origin and answers **403**. Without it a note would have been created on the victim's behalf."
+
+  - id: predict-lax-cookie
+    kind: prediction
+    prompt:
+      uk: "Жертва ввійшла на `http://127.0.0.1:4310`; cookie сесії має `SameSite=Lax`. Яким із цих запитів до цього сервера браузер додасть cookie? Обери всі."
+      en: "The victim is logged in at `http://127.0.0.1:4310`; the session cookie has `SameSite=Lax`. To which of these requests to that server does the browser add the cookie? Pick all."
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: own-fetch
+          text: { uk: "`fetch` методом `POST` зі сторінки самого `http://127.0.0.1:4310`", en: "A `POST` `fetch` from a page of `http://127.0.0.1:4310` itself" }
+        - id: other-port
+          text: { uk: "`POST`-форма зі сторінки `http://127.0.0.1:5173`", en: "A `POST` form from a page of `http://127.0.0.1:5173`" }
+        - id: other-site
+          text: { uk: "`POST`-форма зі сторінки `https://evil.example`", en: "A `POST` form from a page of `https://evil.example`" }
+          why:
+            uk: "Це справді інший сайт, а `Lax` не відправляє cookie з `POST`-формами, які запускає сторінка іншого сайту."
+            en: "This really is another site, and `Lax` does not send the cookie with `POST` forms started by a page of another site."
+        - id: link
+          text: { uk: "Перехід за посиланням на `http://127.0.0.1:4310/notes` зі сторінки `https://evil.example`", en: "Following a link to `http://127.0.0.1:4310/notes` from a page of `https://evil.example`" }
+      correct: [own-fetch, other-port, link]
+    explanation:
+      uk: "`Lax` пропускає власні запити, запити з іншого порту того самого хоста (порт для «сайту» не рахується) і переходи за посиланням з будь-якого сайту. Тому перехід за посиланням ніколи не має нічого змінювати (`GET` лише читає), а `POST` з іншого порту зупиняє лише перевірка Origin."
+      en: "`Lax` lets through the site's own requests, requests from another port on the same host (the port does not count for a “site”) and link navigations from any site. That is why following a link must never change anything (`GET` only reads), and only the Origin check stops a `POST` from another port."
+
+  - id: predict-enumeration
+    kind: prediction
+    prompt:
+      uk: "Форма входу відповідає «Такого користувача немає» на невідоме ім’я і «Неправильний пароль» на відоме. Чим це погано?"
+      en: "The login form answers “No such user” for an unknown name and “Wrong password” for a known one. What is wrong with that?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: enumeration
+          text:
+            uk: "Будь-хто дізнається, які імена зареєстровано, і далі підбирає паролі лише для них"
+            en: "Anyone learns which names are registered and then guesses passwords only for those"
+        - id: harmless
+          text:
+            uk: "Нічим: так зручніше, а пароль однаково ніхто не дізнається"
+            en: "Nothing: it is more convenient, and nobody learns the password anyway"
+          why:
+            uk: "Список справжніх облікових записів — половина роботи для перебору й фішингу. Зручність для людини тут — довідка для скрипта."
+            en: "A list of real accounts is half the work for guessing and phishing. Convenience for a person here is a directory for a script."
+        - id: slower
+          text:
+            uk: "Лише тим, що сервер витрачає більше часу на дві різні відповіді"
+            en: "Only that the server spends more time on two different answers"
+          why:
+            uk: "Вартість двох повідомлень мізерна. Проблема в тому, що відповідь розкриває, чи існує обліковий запис."
+            en: "The cost of two messages is tiny. The problem is that the answer reveals whether the account exists."
+      correct: [enumeration]
+    explanation:
+      uk: "Одна відповідь для обох випадків — «Неправильне ім’я або пароль» — і однаковий час: невідомого користувача теж проганяють через scrypt."
+      en: "One answer for both cases — “Wrong name or password” — and the same time: an unknown user is also run through scrypt."
+
+  - id: login-limits
+    kind: explanation
+    title:
+      uk: "Ліміти розміру й часу на вході"
+      en: "Size and time limits at the login"
+    body:
+      uk: |
+        Вхід — найдорожчий маршрут: кожна спроба запускає навмисно повільний scrypt. Тому він отримує ліміти раніше за всі інші:
+
+        - **розмір тіла** — 1 КБ: ім’я й пароль більше не займають; більше — 413, ще до розбору JSON (як [[body-size-limit|ліміт тіла]] з розділу про сервер);
+        - **довжина пароля** — розумна стеля (у лабораторній 200 символів), понад неї — 400;
+        - **робота хешування** — лише для спроб, які пройшли ліміт частоти;
+        - **час** — [[handler-deadline|дедлайн обробника]], як для будь-якого маршруту: повільний запит не тримає ресурси вічно.
+
+        Докладніше про ліміти розміру й часу для всього API — у наступному розділі про безпеку бекенду.
+      en: |
+        Login is the most expensive route: every attempt runs a deliberately slow scrypt. So it gets limits before all the others:
+
+        - **body size** — 1 KB: a name and a password take no more; anything larger gets 413, before JSON is even parsed (like the [[body-size-limit]] from the server unit);
+        - **password length** — a sensible ceiling (200 characters in the lab), above it 400;
+        - **hashing work** — only for attempts that passed the rate limit;
+        - **time** — a [[handler-deadline]], as for any route: a slow request does not hold resources forever.
+
+        More on size and time limits for the whole API is in the next unit on backend security.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: body-limit-resource
+        from: no-03-03-routing-json-bodies
+        prompt:
+          uk: "Обробник входу збирає тіло так: `let text = ''; for await (const chunk of request) text += chunk;` і лише потім перевіряє розмір. Чому цього мало?"
+          en: "A login handler collects the body like this: `let text = ''; for await (const chunk of request) text += chunk;` and only then checks the size. Why is that not enough?"
+        answer:
+          type: choice
+          options:
+            - id: memory-first
+              text:
+                uk: "Поки перевірки немає, сервер уже тримає в пам’яті все тіло — хоч сто мегабайтів; рахувати байти треба під час читання й зупинитися, щойно ліміт перевищено"
+                en: "Until the check, the server already holds the whole body in memory — even a hundred megabytes; the bytes must be counted while reading and reading stopped as soon as the limit is passed"
+            - id: content-length
+              text:
+                uk: "Досить перевірити заголовок `Content-Length` — він завжди правдивий"
+                en: "Checking the `Content-Length` header is enough — it is always true"
+              why:
+                uk: "Клієнт може не надіслати `Content-Length` взагалі чи написати там що завгодно. Рахують справжні байти, що надходять."
+                en: "A client may not send `Content-Length` at all, or write anything there. The real incoming bytes are counted."
+            - id: json-limit
+              text:
+                uk: "`JSON.parse` сам відмовить на завеликому тексті"
+                en: "`JSON.parse` refuses an oversized text by itself"
+              why:
+                uk: "`JSON.parse` розбирає будь-який розмір — і до нього весь текст уже в пам’яті."
+                en: "`JSON.parse` parses any size — and by then the whole text is already in memory."
+          correct: [memory-first]
+        explanation:
+          uk: "Ліміт тіла — це ліміт ресурсу: він працює, лише коли зупиняє читання вчасно. Для входу межа маленька — 1 КБ."
+          en: "A body limit is a resource limit: it works only when it stops reading in time. For login the limit is small — 1 KB."
+
+  - id: login-guard
+    kind: example
+    runtime: isolated-node
+    dir: login-guard
+    entry: index.js
+    capabilities: { network: loopback, timeoutMs: 20000 }
+    strings:
+      bruteForce: { uk: "перебір паролів", en: "password guessing" }
+      attempts: { uk: "спроб", en: "attempts" }
+      minuteLater: { uk: "через хвилину", en: "a minute later" }
+      unknownUser: { uk: "невідомий користувач", en: "unknown user" }
+      wrongPassword: { uk: "хибний пароль", en: "wrong password" }
+      rightPassword: { uk: "правильний пароль", en: "right password" }
+      originCheck: { uk: "перевірка Origin", en: "Origin check" }
+    title:
+      uk: "Перебір, однакова відповідь і чужий Origin"
+      en: "Guessing, one answer and a foreign Origin"
+    body:
+      uk: |
+        `app.js` — сервіс нотаток із лімітом невдалих входів, однією відповіддю на невідомого користувача й хибний пароль, лімітами тіла й пароля і (з `checkOrigin: true`) перевіркою Origin. Час іде з підставленого годинника.
+
+        `index.js` спершу грає скрипт атаки: 20 хибних паролів, потім «хвилина минула». Далі він грає браузер, що вже має cookie `u-01`, і надсилає `POST /notes` з трьома різними заголовками `Origin` — без перевірки й з нею. Справжній браузер додав би cookie й `Origin` сам; ця програма додає їх руками, а `SameSite` тут не діє зовсім — його застосовує лише браузер. Натисни **Запустити**.
+      en: |
+        `app.js` is the notes service with a failed-login limit, one answer for an unknown user and a wrong password, body and password limits and (with `checkOrigin: true`) an Origin check. Time comes from an injected clock.
+
+        `index.js` first plays the attack script: 20 wrong passwords, then “a minute has passed”. Then it plays a browser that already holds `u-01`'s cookie and sends `POST /notes` with three different `Origin` headers — without the check and with it. A real browser would add the cookie and `Origin` by itself; this program adds them by hand, and `SameSite` does not apply here at all — only a browser enforces it. Press **Run**.
+    tryIt:
+      uk: |
+        1. У `app.js` заміни `const MAX_FAILURES = 5;` на `3` і запусти: у першому рядку 401 стає три, а 429 — сімнадцять.
+        2. Поверни 5. У `app.js` додай `'http://127.0.0.1:5173'` до `ALLOWED_ORIGINS` і запусти: запит з порту 5173 проходить і з перевіркою. Список дозволених походжень — це рішення про довіру, а не формальність.
+      en: |
+        1. In `app.js` replace `const MAX_FAILURES = 5;` with `3` and run: in the first line there are now three 401s and seventeen 429s.
+        2. Put 5 back. In `app.js` add `'http://127.0.0.1:5173'` to `ALLOWED_ORIGINS` and run: the request from port 5173 passes even with the check. The list of allowed origins is a decision about trust, not a formality.
+
+  - id: login-limiter
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: login-limiter
+    entry: index.js
+    editable: [guards.js]
+    capabilities: { network: loopback }
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      wrongLogins: { uk: "хибні входи", en: "wrong logins" }
+      none: { uk: "немає", en: "none" }
+    title:
+      uk: "Обмежувач входу й перевірка Origin"
+      en: "A login limiter and an Origin check"
+    instructions:
+      uk: |
+        Сервіс бажань (`app.js`, лише для читання) уже викликає функції з `guards.js`. Напиши їх.
+
+        **`createLoginLimiter({ maxFailures, windowMs, maxEntries, now })`** — окремий лічильник невдач для облікового запису й окремий для адреси (ключі на кшталт `account:u-01` і `address:10.0.0.1`):
+
+        - `recordFailure(account, address)` додає по невдачі обом лічильникам; вікно лічильника починається з його першої невдачі;
+        - `blockedFor(account, address)` повертає 0, якщо можна пробувати, або цілі секунди очікування (`Math.ceil`), коли хоч один із двох лічильників має `maxFailures` невдач у своєму вікні;
+        - лічильник, вікно якого минуло (`now() - start >= windowMs`), більше не діє;
+        - лічильників ніколи не більше за `maxEntries` — найстаріші видаляй.
+
+        Час бери лише з `now()`.
+
+        **`requireSameOrigin(request, allowedOrigins)`** — для будь-якого методу, крім `GET`, `HEAD` і `OPTIONS`: є заголовок `Origin`, і його немає в `allowedOrigins` (порівнюй повністю, разом із портом) — `throw new HttpError(403, 'CSRF_ORIGIN')`. Запит без `Origin` пропускай.
+
+        **Запустити** надсилає 7 хибних паролів і `POST /wishes` з трьома варіантами `Origin`.
+      en: |
+        The wishlist service (`app.js`, read-only) already calls the functions from `guards.js`. Write them.
+
+        **`createLoginLimiter({ maxFailures, windowMs, maxEntries, now })`** — a separate failure counter per account and per address (keys such as `account:u-01` and `address:10.0.0.1`):
+
+        - `recordFailure(account, address)` adds one failure to both counters; a counter's window starts at its first failure;
+        - `blockedFor(account, address)` returns 0 when trying is allowed, or the whole seconds to wait (`Math.ceil`) when at least one of the two counters has `maxFailures` failures within its window;
+        - a counter whose window has passed (`now() - start >= windowMs`) no longer counts;
+        - there are never more than `maxEntries` counters — delete the oldest.
+
+        Take the time only from `now()`.
+
+        **`requireSameOrigin(request, allowedOrigins)`** — for any method except `GET`, `HEAD` and `OPTIONS`: when there is an `Origin` header and it is not in `allowedOrigins` (compare it whole, port included) — `throw new HttpError(403, 'CSRF_ORIGIN')`. Let a request without `Origin` through.
+
+        **Run** sends 7 wrong passwords and `POST /wishes` with three variants of `Origin`.
+    testTitles:
+      "five failures for one account block it, from any address, with the seconds to wait":
+        uk: "П’ять невдач для облікового запису блокують його з будь-якої адреси, і відомо, скільки секунд чекати"
+        en: "Five failures for one account block it, from any address, with the seconds to wait"
+      "five failures from one address block it, for any account":
+        uk: "П’ять невдач з однієї адреси блокують її для будь-якого облікового запису"
+        en: "Five failures from one address block it, for any account"
+      "a counter expires when its window has passed":
+        uk: "Лічильник перестає діяти, коли його вікно минуло"
+        en: "A counter expires when its window has passed"
+      "the limiter keeps at most maxEntries counters":
+        uk: "Обмежувач тримає не більше `maxEntries` лічильників"
+        en: "The limiter keeps at most `maxEntries` counters"
+      "requireSameOrigin refuses a state-changing request from another origin, even another port":
+        uk: "`requireSameOrigin` відхиляє запит, що змінює дані, з іншого походження — навіть з іншого порту"
+        en: "`requireSameOrigin` refuses a state-changing request from another origin, even another port"
+      "requireSameOrigin lets GET and requests without an Origin header through":
+        uk: "`requireSameOrigin` пропускає `GET` і запити без заголовка `Origin`"
+        en: "`requireSameOrigin` lets `GET` and requests without an `Origin` header through"
+      "over HTTP: the sixth wrong login answers 429 with Retry-After, a foreign POST answers 403":
+        uk: "Через HTTP: шостий хибний вхід — 429 з `Retry-After`, чужий `POST` — 403"
+        en: "Over HTTP: the sixth wrong login answers 429 with `Retry-After`, a foreign `POST` answers 403"
+    hints:
+      nudge:
+        uk: "Почни з однієї функції, що з `account` і `address` робить два ключі. Тоді і `recordFailure`, і `blockedFor` — це один цикл по двох ключах."
+        en: "Start with one function that turns `account` and `address` into two keys. Then both `recordFailure` and `blockedFor` are one loop over two keys."
+      explanation:
+        uk: "Для лімітера завантажень лічильник міг би виглядати як `{ count: 3, start: 120_000 }`: вікно закінчується о `start + windowMs`, тож чекати лишається `start + windowMs - now()` мілісекунд. `Map` перебирає ключі в порядку вставлення, тому найстаріший — перший у `counters.keys()`. Для `Origin` порівнюй рядок цілком: `new URL(origin).hostname` відкидає порт, а з ним і різницю між 4310 і 5173."
+        en: "For an upload limiter a counter could look like `{ count: 3, start: 120_000 }`: the window ends at `start + windowMs`, so `start + windowMs - now()` milliseconds remain to wait. A `Map` iterates keys in insertion order, so the oldest is the first in `counters.keys()`. Compare `Origin` as a whole string: `new URL(origin).hostname` drops the port, and with it the difference between 4310 and 5173."
+    solutionNote:
+      uk: "Два незалежні лічильники ловлять обидві атаки: перебір для одного акаунта з багатьох адрес і перебір багатьох акаунтів з однієї. Вікно з кінцем і стеля на кількість лічильників тримають пам’ять обмеженою навіть під атакою з вигаданими іменами. Перевірка Origin порівнює походження цілком, бо саме порт відрізняє сусідню програму на `127.0.0.1` від твого клієнта."
+      en: "Two independent counters catch both attacks: guessing one account from many addresses and guessing many accounts from one. A window with an end and a ceiling on the number of counters keep memory bounded even under an attack with made-up names. The Origin check compares the origin as a whole, because it is exactly the port that tells a neighbouring program on `127.0.0.1` from your client."
+    feedback:
+      - when: { test: "five failures for one account block it, from any address, with the seconds to wait" }
+        message:
+          uk: "Ця перевірка записує 5 невдач для `u-01` з п’яти різних адрес і через 15 с чекає `blockedFor('u-01', нова адреса) === 45`, а для `u-02` з тієї ж нової адреси — 0. Лічильник облікового запису не залежить від адреси."
+          en: "This check records 5 failures for `u-01` from five different addresses and 15 s later expects `blockedFor('u-01', a new address) === 45`, and 0 for `u-02` from that new address. The account counter does not depend on the address."
+      - when: { test: "five failures from one address block it, for any account" }
+        message:
+          uk: "Ця перевірка записує по одній невдачі п’ятьом різним обліковим записам з `10.0.0.7` і чекає блокування для нового запису з цієї адреси. Потрібен окремий лічильник адреси."
+          en: "This check records one failure each for five different accounts from `10.0.0.7` and expects a new account from that address to be blocked. A separate address counter is needed."
+      - when: { test: "a counter expires when its window has passed" }
+        message:
+          uk: "Ця перевірка чекає блокування на `59_999` мс і 0 рівно на `60_000` мс після першої невдачі."
+          en: "This check expects a block at `59_999` ms and 0 at exactly `60_000` ms after the first failure."
+      - when: { test: "the limiter keeps at most maxEntries counters" }
+        message:
+          uk: "Ця перевірка записує 3000 невдач з різними іменами й адресами при `maxEntries: 100` і чекає `size() <= 100`."
+          en: "This check records 3000 failures with different names and addresses with `maxEntries: 100` and expects `size() <= 100`."
+      - when: { test: "requireSameOrigin refuses a state-changing request from another origin, even another port" }
+        message:
+          uk: "Ця перевірка чекає 403 для `POST` з `https://evil.example` і для `DELETE` з `http://127.0.0.1:5173`, коли дозволено лише `http://127.0.0.1:4310`. Порт — частина походження."
+          en: "This check expects 403 for a `POST` from `https://evil.example` and a `DELETE` from `http://127.0.0.1:5173` when only `http://127.0.0.1:4310` is allowed. The port is part of the origin."
+      - when: { test: "requireSameOrigin lets GET and requests without an Origin header through" }
+        message:
+          uk: "Ця перевірка чекає, що `GET` з чужим `Origin` і `POST` без заголовка `Origin` проходять без помилки."
+          en: "This check expects a `GET` with a foreign `Origin` and a `POST` with no `Origin` header to pass without an error."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-10 немає, і входу в однокористувацькому проєкті немає. Але урок про CSRF стосується його прямо: якщо в NO-06 твій `server/` прийматиме запити, що змінюють записи, від вебклієнта, будь-яка інша сторінка на `127.0.0.1` з іншим портом теж може їх надіслати. Список дозволених походжень і перевірка `Origin` для `POST`, `PUT`, `PATCH` і `DELETE` — запобіжник, який варто мати навіть без входу."
+      en: "Your project does not change in this unit: NO-10 has no project step, and the single-user project has no login. But the CSRF lesson concerns it directly: if in NO-06 your `server/` accepts requests that change records from the web client, any other page on `127.0.0.1` with another port can send them too. A list of allowed origins and an `Origin` check for `POST`, `PUT`, `PATCH` and `DELETE` is a safeguard worth having even without a login."
