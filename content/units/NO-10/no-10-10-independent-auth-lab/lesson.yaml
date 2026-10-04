@@ -77,7 +77,7 @@ blocks:
         - Сесія діє не більше 30 хвилин без запитів і не більше 2 годин від входу (обидві межі включно); інакше 401. `POST /logout` → 204, і стара cookie більше не працює.
         - `GET /bookmarks` — лише закладки власника; `GET` і `DELETE /bookmarks/:id` для чужої чи відсутньої закладки — 404; `POST /bookmarks` `{ title, url }` → 201. Без сесії — 401.
         - Будь-який запит, крім `GET`, `HEAD` і `OPTIONS`, із заголовком `Origin`, відмінним від `http://127.0.0.1:4310`, — 403. Без `Origin` — пропускай.
-        - Сервер обмежує час надходження запиту: `requestTimeout` і `headersTimeout` — не більше 5000 мс.
+        - Сервер обмежує час надходження запиту: `requestTimeout` і `headersTimeout` — не більше 5000 мс. Node.js перевіряє ці межі за таймером `connectionsCheckingInterval` (типово раз на 30 с), тож без нього повільний запит обірветься через 5 с або аж до 30 с пізніше.
         - Помилки — `{ error: { code, details } }`.
       en: |
         **Data.** `users.js` (read-only) holds the users `u-01`, `u-02`, `u-03` with stored scrypt records (`passwordHash`) and the bookmarks `b-1`…`b-4`. The lab passwords: `sunflower-42`, `river-stone-7`, `quiet-harbor-19`. `http-helpers.js` has `sendJson`, `sendError` and `readJsonBody(request, maxBytes)`, which throws an error with `status: 413` or `400`.
@@ -92,7 +92,7 @@ blocks:
         - A session lasts at most 30 minutes without requests and at most 2 hours after login (both limits inclusive); otherwise 401. `POST /logout` → 204, and the old cookie no longer works.
         - `GET /bookmarks` — only the owner's bookmarks; `GET` and `DELETE /bookmarks/:id` for someone else's or a missing bookmark — 404; `POST /bookmarks` `{ title, url }` → 201. Without a session — 401.
         - Any request except `GET`, `HEAD` and `OPTIONS` with an `Origin` header other than `http://127.0.0.1:4310` — 403. Without `Origin` — let it through.
-        - The server limits how long a request may take to arrive: `requestTimeout` and `headersTimeout` at most 5000 ms.
+        - The server limits how long a request may take to arrive: `requestTimeout` and `headersTimeout` at most 5000 ms. Node.js checks these limits on the `connectionsCheckingInterval` timer (every 30 s by default), so without changing it a slow request is cut after 5 s or up to 30 s later.
         - Errors are `{ error: { code, details } }`.
     testTitles:
       "passwords: scrypt with a random 16-byte salt and stored parameters":
@@ -122,14 +122,45 @@ blocks:
       "the server limits how long a request may take to arrive: at most 5 s":
         uk: "Сервер обмежує час надходження запиту: не більше 5 с"
         en: "The server limits how long a request may take to arrive: at most 5 s"
+      "errors have the shape { error: { code, details } }":
+        uk: "Помилки мають форму `{ error: { code, details } }`"
+        en: "Errors have the shape `{ error: { code, details } }`"
     solutionNote:
       uk: "Еталонне рішення перевіряє ключ до створення сервера; на кожен запит спершу дивиться на `Origin`, потім — вхід або сесія (строки з `clock.now()`, кожен запит оновлює `lastSeenAt`), а пошук закладки завжди містить власника. Лічильники невдач — окремо для облікового запису й адреси, з вікном і стелею кількості, і перевіряються до scrypt. Невідомий користувач перевіряється проти справжнього запису, щоб обидві невдачі коштували однаково. `requestTimeout` і `headersTimeout` задано в `http.createServer`."
       en: "The reference solution checks the key before creating the server; on every request it looks at `Origin` first, then the login or the session (limits from `clock.now()`, every request updates `lastSeenAt`), and the bookmark lookup always includes the owner. The failure counters are separate per account and per address, with a window and a ceiling on their number, and are checked before scrypt. An unknown user is checked against a real record, so both failures cost the same. `requestTimeout` and `headersTimeout` are set in `http.createServer`."
     feedback:
+      - when: { test: "passwords: scrypt with a random 16-byte salt and stored parameters" }
+        message:
+          uk: "Ця перевірка двічі хешує один пароль і чекає різну сіль на 16 байтів, хеш, що дорівнює scrypt пароля зі збереженими сіллю й `N`, `r`, `p`, і рівно два виклики `crypto.timingSafeEqual` на два входи."
+          en: "This check hashes one password twice and expects a different 16-byte salt, a hash equal to scrypt of the password with the stored salt and `N`, `r`, `p`, and exactly two calls of `crypto.timingSafeEqual` for two logins."
+      - when: { test: "createApp refuses a missing, placeholder or short SESSION_SECRET without printing it" }
+        message:
+          uk: "Ця перевірка викликає `createApp` з `{}`, `changeme` і `my-own-key-2026` і чекає, що кожен виклик кине помилку, у тексті якої немає значення ключа."
+          en: "This check calls `createApp` with `{}`, `changeme` and `my-own-key-2026` and expects every call to throw an error whose text does not contain the key's value."
+      - when: { test: "login sets an HttpOnly, SameSite=Lax session cookie; unknown user and wrong password get the same 401" }
+        message:
+          uk: "Ця перевірка чекає 204 і `Set-Cookie` з `sid` (43+ символи base64url чи 64+ hex), `HttpOnly`, `SameSite=Lax` і `Path=/`, а для хибного пароля й невідомого `u-77` — 401 з однаковим тілом."
+          en: "This check expects 204 and a `Set-Cookie` with `sid` (43+ base64url or 64+ hex characters), `HttpOnly`, `SameSite=Lax` and `Path=/`, and 401 with the same body for a wrong password and for the unknown `u-77`."
       - when: { test: "the sixth failed login in a minute answers 429 with Retry-After; a minute later login works" }
         message:
-          uk: "Ця перевірка надсилає шість хибних паролів для `u-02` і чекає `[401, 401, 401, 401, 401, 429]` з `Retry-After: 60`, а через 61 с за годинником — успішний вхід."
-          en: "This check sends six wrong passwords for `u-02` and expects `[401, 401, 401, 401, 401, 429]` with `Retry-After: 60`, then a successful login 61 s later by the clock."
+          uk: "Ця перевірка надсилає шість хибних паролів для `u-02` і чекає `[401, 401, 401, 401, 401, 429]` з `Retry-After: 60`, а через 61 с за годинником — успішний вхід. Потім п’ять різних імен помиляються з тієї самої адреси, і шосте ім’я теж має отримати 429: лічильник адреси окремий від лічильника облікового запису."
+          en: "This check sends six wrong passwords for `u-02` and expects `[401, 401, 401, 401, 401, 429]` with `Retry-After: 60`, then a successful login 61 s later by the clock. Then five different names fail from the same address, and a sixth name must get 429 too: the address counter is separate from the account counter."
+      - when: { test: "a login body over 1 KB answers 413" }
+        message:
+          uk: "Ця перевірка надсилає на `/login` тіло на 3 КБ і чекає 413. Обмеження задає другий аргумент `readJsonBody(request, maxBytes)`."
+          en: "This check sends a 3 KB body to `/login` and expects 413. The limit is the second argument of `readJsonBody(request, maxBytes)`."
+      - when: { test: "bookmarks are scoped to their owner: foreign ones answer 404 and stay" }
+        message:
+          uk: "Ця перевірка чекає в списку `u-01` рівно `b-1` і `b-2`, 404 для `GET` і `DELETE /bookmarks/b-1` від `u-02`, 200 для власниці після цього, 404 для `b-9`, якої немає, і 401 без сесії."
+          en: "This check expects exactly `b-1` and `b-2` in `u-01`'s list, 404 for `GET` and `DELETE /bookmarks/b-1` from `u-02`, 200 for the owner afterwards, 404 for the missing `b-9`, and 401 without a session."
+      - when: { test: "a state-changing request from a foreign origin, even another port, answers 403" }
+        message:
+          uk: "Ця перевірка надсилає `POST /bookmarks` із сесією й `Origin: http://127.0.0.1:5173` і чекає 403, а з `http://127.0.0.1:4310` і без `Origin` — 201."
+          en: "This check sends `POST /bookmarks` with a session and `Origin: http://127.0.0.1:5173` and expects 403, and 201 with `http://127.0.0.1:4310` and with no `Origin`."
+      - when: { test: "errors have the shape { error: { code, details } }" }
+        message:
+          uk: "Ця перевірка читає тіло 401 без сесії й 401 після хибного пароля й чекає в обох `error.code` (непорожній текст) і `error.details` (об’єкт). `sendError` з `http-helpers.js` уже будує саме таке тіло."
+          en: "This check reads the body of a 401 without a session and of a 401 after a wrong password and expects `error.code` (non-empty text) and `error.details` (an object) in both. `sendError` from `http-helpers.js` already builds exactly this body."
       - when: { test: "sessions expire after 30 idle minutes or 2 hours, and logout revokes them" }
         message:
           uk: "Ця перевірка чекає 401 через 30 хв + 1 мс без запитів; 200 для сесії, що робить запит кожні 20 хвилин, аж до рівно 2 годин після входу, і 401 на 1 мс пізніше; і 401 для cookie після `POST /logout`."
@@ -186,7 +217,7 @@ blocks:
       uk: |
         Тепер запусти свій сервіс як справжній процес у своєму терміналі й перевір його не своїми тестами, а чужим скриптом атаки. Скрипт надсилає справжні HTTP-запити на `127.0.0.1:4320`: читання чужої закладки, запит без сесії, підроблений `Origin`, відкликану сесію, завелике тіло, розвідку імен і перебір паролів. Сесію, що закінчилася за часом, скрипт не перевіряє — чекати 30 хвилин він не може; цю межу вже довели перевірки платформи з фіксованим годинником.
 
-        Під час підготовки уроку все виконано на macOS із Node.js v25.2.1 і npm 11.6.2; вивід нижче справжній. Пакети не встановлюються. Прапорець `--env-file` є в Node.js 22 (сторінка «Command-line API» документації Node.js 22), але на Node.js 22, Windows і Linux цей урок не перевіряли.
+        Під час підготовки уроку все виконано на macOS двічі — з Node.js v25.2.1 і npm 11.6.2 та з Node.js v22.13.1 і npm 10.9.2 — з однаковим виводом; вивід нижче справжній. Пакети не встановлюються. Прапорець `--env-file` документація Node.js 22 позначає як експериментальний до версії 22.21.0; 22.13.1 виконує його без попереджень. На Windows і Linux цей урок не перевіряли.
 
         **Крок 3 — `server.mjs`:**
 
@@ -293,7 +324,7 @@ blocks:
       en: |
         Now start your service as a real process in your own terminal and check it not with your own tests but with someone else's attack script. The script sends real HTTP requests to `127.0.0.1:4320`: reading someone else's bookmark, a request with no session, a forged `Origin`, a revoked session, an oversized body, name probing and password guessing. The script does not check a session that has expired by time — it cannot wait 30 minutes; the platform's checks with a fixed clock have already proven that limit.
 
-        While preparing the lesson everything was run on macOS with Node.js v25.2.1 and npm 11.6.2; the output below is real. No packages are installed. The `--env-file` flag exists in Node.js 22 (the “Command-line API” page of the Node.js 22 documentation), but this lesson was not checked on Node.js 22, Windows or Linux.
+        While preparing the lesson everything was run on macOS twice — with Node.js v25.2.1 and npm 11.6.2 and with Node.js v22.13.1 and npm 10.9.2 — with the same output; the output below is real. No packages are installed. The Node.js 22 documentation marks the `--env-file` flag as experimental until version 22.21.0; 22.13.1 runs it without any warning. This lesson was not checked on Windows or Linux.
 
         **Step 3 — `server.mjs`:**
 
@@ -398,8 +429,8 @@ blocks:
         Why no home-made cryptography: …
         ```
     tools:
-      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1", en: "checked with v25.2.1" } }
-      - { name: "npm", version: "10+", note: { uk: "перевірено з 11.6.2; потрібен лише для `npm init` і `npm pkg set`", en: "checked with 11.6.2; needed only for `npm init` and `npm pkg set`" } }
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1 і v22.13.1", en: "checked with v25.2.1 and v22.13.1" } }
+      - { name: "npm", version: "10+", note: { uk: "перевірено з 11.6.2 і 10.9.2; потрібен лише для `npm init` і `npm pkg set`", en: "checked with 11.6.2 and 10.9.2; needed only for `npm init` and `npm pkg set`" } }
     steps:
       - text:
           uk: "Створи теку для лабораторної й перейди в неї."
@@ -461,8 +492,8 @@ blocks:
           uk: "Другий запуск `node attack.mjs` поспіль показує `BROKEN cross-user read answers 404`"
           en: "A second `node attack.mjs` run in a row shows `BROKEN cross-user read answers 404`"
         fix:
-          uk: "Це твій ліміт входу працює: перший запуск зробив п’ять невдалих входів з адреси `127.0.0.1`, і ще хвилину всі входи з неї отримують 429 — скрипт не може навіть увійти. Перезапусти сервер (`Ctrl+C` і знову `node --env-file=.env server.mjs`) або почекай хвилину. Так відтворено під час підготовки уроку."
-          en: "That is your login limit working: the first run made five failed logins from the address `127.0.0.1`, and for another minute every login from it gets 429 — the script cannot even log in. Restart the server (`Ctrl+C` and `node --env-file=.env server.mjs` again) or wait a minute. Reproduced while preparing the lesson."
+          uk: "Це твій ліміт входу працює: перший запуск зробив п’ять невдалих входів з адреси `127.0.0.1`, і ще хвилину всі входи з неї отримують 429 — скрипт не може навіть увійти. Перезапусти сервер (`Ctrl+C` і знову `node --env-file=.env server.mjs`) або почекай хвилину. Так відтворено під час підготовки уроку на Node.js 25.2.1 і 22.13.1: другий запуск поспіль дав `6/7`."
+          en: "That is your login limit working: the first run made five failed logins from the address `127.0.0.1`, and for another minute every login from it gets 429 — the script cannot even log in. Restart the server (`Ctrl+C` and `node --env-file=.env server.mjs` again) or wait a minute. Reproduced while preparing the lesson on Node.js 25.2.1 and 22.13.1: a second run in a row gave `6/7`."
       - problem:
           uk: "Сервер не стартує: `Error: SESSION_SECRET is not set`"
           en: "The server does not start: `Error: SESSION_SECRET is not set`"
@@ -473,8 +504,8 @@ blocks:
           uk: "`attack.mjs` друкує `(… TypeError fetch failed)` у кожному рядку"
           en: "`attack.mjs` prints `(… TypeError fetch failed)` on every line"
         fix:
-          uk: "Сервер не слухає на `127.0.0.1:4320`: він не запущений або впав. Подивись на перший термінал. Точний текст цієї помилки на різних версіях Node.js під час підготовки уроку не перевіряли."
-          en: "The server is not listening on `127.0.0.1:4320`: it is not running or has crashed. Look at the first terminal. The exact text of this error on different Node.js versions was not checked while preparing the lesson."
+          uk: "Сервер не слухає на `127.0.0.1:4320`: він не запущений або впав. Подивись на перший термінал. Саме такий текст (`TypeError fetch failed`) скрипт друкував на Node.js 25.2.1 і 22.13.1, коли сервер було зупинено."
+          en: "The server is not listening on `127.0.0.1:4320`: it is not running or has crashed. Look at the first terminal. The script printed exactly this text (`TypeError fetch failed`) on Node.js 25.2.1 and 22.13.1 when the server was stopped."
     recovery:
       uk: "Тека `~/js-course/no10-bookmarks` нічого не змінює в інших твоїх проєктах. Якщо `app.js` зіпсувався, знову скопіюй своє рішення з вправи; `.env` можна перестворити тією самою командою — старі сесії просто стануть недійсними."
       en: "The folder `~/js-course/no10-bookmarks` changes nothing in your other projects. If `app.js` got damaged, copy your solution from the exercise again; `.env` can be recreated with the same command — old sessions simply become invalid."

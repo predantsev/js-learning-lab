@@ -58,6 +58,7 @@ test("a note the caller may not read answers 404 to GET, PATCH and DELETE and st
 test('a reader changing a shared note answers 403 and the note stays unchanged', async () => {
   const send = await start();
   expect((await send('u02', 'PATCH', '/notes/n-1', { title: 'hacked' })).status, 'status of u-02 PATCH /notes/n-1').toBe(403);
+  expect((await send('u02', 'DELETE', '/notes/n-1')).status, 'status of u-02 DELETE /notes/n-1').toBe(403);
   expect((await send('u01', 'GET', '/notes/n-1')).json?.title, 'title of n-1 afterwards').toBe(L.gifts);
 });
 

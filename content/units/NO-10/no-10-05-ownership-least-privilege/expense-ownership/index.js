@@ -2,6 +2,8 @@
 // first to the unscoped service, then to the scoped one.
 import { createApp } from './app.js';
 
+const caller = 'u-02'; // who sends the requests: 'u-01' or 'u-02'
+
 const calls = [
   ['GET', '/expenses'],
   ['GET', '/expenses/e-1'],
@@ -19,12 +21,12 @@ for (const scoped of [false, true]) {
     for (const [method, path, body] of calls) {
       const response = await fetch(base + path, {
         method,
-        headers: { authorization: 'Bearer lab-token-u02', ...(body ? { 'content-type': 'application/json' } : {}) },
+        headers: { authorization: `Bearer lab-token-${caller.replace('-', '')}`, ...(body ? { 'content-type': 'application/json' } : {}) },
         body: body ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(2000),
       });
       const text = await response.text();
-      console.log(`u-02 ${method} ${path} → ${response.status} ${text}`);
+      console.log(`${caller} ${method} ${path} → ${response.status} ${text}`);
     }
   } finally {
     server.closeAllConnections();
