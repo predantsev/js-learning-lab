@@ -1,5 +1,4 @@
 // A planner list: "Done" slides a task out with an animation, then removes it from state.
-import './previewSetup.js';
 import { useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';

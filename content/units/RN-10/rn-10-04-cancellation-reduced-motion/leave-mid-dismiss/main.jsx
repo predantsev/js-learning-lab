@@ -1,5 +1,4 @@
 // A habit screen: "Done today" slides the row out over 1 s. "Leave the screen" unmounts the screen mid-way.
-import './previewSetup.js';
 import { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';

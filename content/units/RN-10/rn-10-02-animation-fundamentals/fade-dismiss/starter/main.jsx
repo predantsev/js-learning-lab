@@ -1,5 +1,4 @@
 // Shows the expense list and counts how many times ExpenseRow renders. Do not edit.
-import './previewSetup.js';
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { StyleSheet, View } from 'react-native';
