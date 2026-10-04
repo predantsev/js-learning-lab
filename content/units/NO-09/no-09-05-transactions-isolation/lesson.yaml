@@ -50,7 +50,7 @@ blocks:
   - id: predict-half-done
     kind: prediction
     prompt:
-      uk: "У базі 3 видачі, у книжки 2 вільних примірників `0`. `borrowBook(db, 3, 2)` спершу вставляє видачу (`INSERT`), потім зменшує вільні примірники (`UPDATE`); друге падає на `CHECK (available >= 0)`. Скільки видач буде після невдалої спроби — без транзакції та з `BEGIN … ROLLBACK`?"
+      uk: "У базі 3 видачі, а книжка 2 не має вільних примірників (`available` — `0`). `borrowBook(db, 3, 2)` спершу вставляє видачу (`INSERT`), потім зменшує вільні примірники (`UPDATE`); друге падає на `CHECK (available >= 0)`. Скільки видач буде після невдалої спроби — без транзакції та з `BEGIN … ROLLBACK`?"
       en: "The database holds 3 loans, and book 2 has `0` available copies. `borrowBook(db, 3, 2)` first inserts a loan (`INSERT`), then decrements the available copies (`UPDATE`); the second fails on `CHECK (available >= 0)`. How many loans are there after the failed attempt — without a transaction and with `BEGIN … ROLLBACK`?"
     code: |
       function borrowInTransaction(db, memberId, bookId) {
@@ -135,7 +135,7 @@ blocks:
         | non-repeatable read | той самий рядок, прочитаний двічі в одній транзакції, має різні значення |
         | phantom read | той самий запит у транзакції вдруге повертає нові рядки |
 
-        SQLite виконує транзакції як **serializable** — так, ніби вони йшли по черзі: інше з’єднання бачить стан до `BEGIN` і не може писати, доки транзакція відкрита ([документація SQLite: isolation](https://www.sqlite.org/isolation.html)). PostgreSQL за замовчуванням працює на рівні **read committed**, де non-repeatable та phantom read можливі ([документація PostgreSQL: transaction isolation](https://www.postgresql.org/docs/current/transaction-iso.html)). Тож перш ніж покладатися на транзакцію в іншій базі, з’ясуй її рівень ізоляції.
+        SQLite виконує транзакції як **serializable** — так, ніби вони йшли по черзі: інше з’єднання бачить останній збережений стан і не може писати, щойно транзакція щось записала, бо писати SQLite дозволяє лише одному з’єднанню за раз ([документація SQLite: isolation](https://www.sqlite.org/isolation.html)). PostgreSQL за замовчуванням працює на рівні **read committed**, де non-repeatable та phantom read можливі ([документація PostgreSQL: transaction isolation](https://www.postgresql.org/docs/current/transaction-iso.html)). Тож перш ніж покладатися на транзакцію в іншій базі, з’ясуй її рівень ізоляції.
       en: |
         While a transaction is open, only its own connection sees its changes. What the others see is set by the [[isolation-level]]. Weaker isolation allows well-known anomalies:
 
@@ -145,7 +145,7 @@ blocks:
         | non-repeatable read | the same row read twice in one transaction has different values |
         | phantom read | the same query in a transaction returns new rows the second time |
 
-        SQLite runs transactions as **serializable** — as if they went one after another: another connection sees the state before `BEGIN` and cannot write while the transaction is open ([SQLite documentation: isolation](https://www.sqlite.org/isolation.html)). PostgreSQL works at **read committed** by default, where non-repeatable and phantom reads are possible ([PostgreSQL documentation: transaction isolation](https://www.postgresql.org/docs/current/transaction-iso.html)). So before relying on a transaction in another database, find out its isolation level.
+        SQLite runs transactions as **serializable** — as if they went one after another: another connection sees the last committed state and cannot write once the transaction has written something, because SQLite lets only one connection write at a time ([SQLite documentation: isolation](https://www.sqlite.org/isolation.html)). PostgreSQL works at **read committed** by default, where non-repeatable and phantom reads are possible ([PostgreSQL documentation: transaction isolation](https://www.postgresql.org/docs/current/transaction-iso.html)). So before relying on a transaction in another database, find out its isolation level.
 
   - id: two-connections
     kind: visual
@@ -200,13 +200,19 @@ blocks:
           caption:
             uk: "A відкочує транзакцію: вставку скасовано, ніби її не було."
             en: "A rolls the transaction back: the insert is undone as if it never happened."
+        - from: b
+          to: db
+          label: "SELECT COUNT(*) FROM loans"
+          caption:
+            uk: "B рахує видачі знову…"
+            en: "B counts the loans again…"
         - from: db
           to: b
           label: "3"
           kind: return
           caption:
-            uk: "B рахує знову — ті самі 3. Без транзакції тут було б 4, і одна з видач — на книжку, якої немає на полиці."
-            en: "B counts again — the same 3. Without a transaction there would be 4 here, one of them for a book that is not on the shelf."
+            uk: "…ті самі 3. Без транзакції тут було б 4, і одна з видач — на книжку, якої немає на полиці."
+            en: "…the same 3. Without a transaction there would be 4 here, one of them for a book that is not on the shelf."
 
   - id: borrow-transaction
     kind: example
@@ -224,8 +230,8 @@ blocks:
       uk: "Натисни **Запустити**. Програма двічі пробує видати книжку 2, у якої 0 вільних примірників: без транзакції й через `borrowInTransaction`. Потім відкриває два з’єднання до одного файла `library.db` в теці вправи: A вставляє видачу в транзакції, а B тим часом читає й пробує писати."
       en: "Press **Run**. The program tries twice to lend book 2, which has 0 available copies: without a transaction and through `borrowInTransaction`. Then it opens two connections to one file `library.db` in the exercise folder: A inserts a loan inside a transaction while B reads and tries to write."
     tryIt:
-      uk: "Подивись на рядок `B tries to write`: поки A тримає транзакцію, B отримує `database is locked` — так SQLite не дає двом записам перемішатися. Потім зітри в `borrowInTransaction` рядок `db.exec('ROLLBACK');` і запусти: у частині «with a transaction» тепер `loans 4` — з’єднання так і лишилося всередині незавершеної транзакції й бачить власну вставку. Поверни рядок."
-      en: "Look at the `B tries to write` line: while A holds its transaction, B gets `database is locked` — that is how SQLite keeps two writes from mixing. Then erase the line `db.exec('ROLLBACK');` in `borrowInTransaction` and run: the “with a transaction” part now shows `loans 4` — the connection stayed inside the unfinished transaction and sees its own insert. Put the line back."
+      uk: "Подивись на рядок `B tries to write`: поки незавершена транзакція A тримає свій запис, B отримує `database is locked` — так SQLite не дає двом записам перемішатися. Помилка приходить одразу: `node:sqlite` за замовчуванням не чекає, доки блокування зніметься (опція `timeout` — 0 мс). Потім зітри в `borrowInTransaction` рядок `db.exec('ROLLBACK');` і запусти: у частині «with a transaction» тепер `loans 4` — з’єднання так і лишилося всередині незавершеної транзакції й бачить власну вставку. Поверни рядок."
+      en: "Look at the `B tries to write` line: while A’s unfinished transaction holds its write, B gets `database is locked` — that is how SQLite keeps two writes from mixing. The error comes at once: by default `node:sqlite` does not wait for the lock to be released (the `timeout` option is 0 ms). Then erase the line `db.exec('ROLLBACK');` in `borrowInTransaction` and run: the “with a transaction” part now shows `loans 4` — the connection stayed inside the unfinished transaction and sees its own insert. Put the line back."
 
   - id: recall
     kind: review
