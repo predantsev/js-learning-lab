@@ -1,0 +1,392 @@
+id: no-10-04-expiry-revocation
+unit: NO-10
+title:
+  uk: "Термін дії та відкликання"
+  en: "Expiry and revocation"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Застосувати до сесій тайм-аут бездіяльності й абсолютний термін дії з підставленим годинником і передбачити, які запити буде відхилено в задані моменти."
+    en: "Enforce idle and absolute expiry on sessions with an injected clock, and predict which requests are rejected at given times."
+  - uk: "Відкликати сесію під час виходу й усі сесії користувача під час зміни пароля і пояснити, що потрібно токену без стану, щоб його можна було відкликати."
+    en: "Revoke a session on logout and all of a user’s sessions on password change, and explain what a stateless token needs before it can be revoked."
+prerequisites: [no-10-03-sessions-cookies-tokens]
+subskills:
+  - { family: B-06, skill: "expiry/revocation", depth: intro }
+glossary: [idle-timeout, absolute-expiry, credential-revocation]
+selfCheck: [predict-timeline, expiry-rules]
+
+blocks:
+  - id: two-clocks
+    kind: explanation
+    title:
+      uk: "Два годинники кожної сесії"
+      en: "Two clocks of every session"
+    body:
+      uk: |
+        Сесія, що живе вічно, — подарунок тому, хто колись украв cookie. Тому сервер перевіряє в кожному запиті два строки:
+
+        - [[idle-timeout|Тайм-аут бездіяльності]] — скільки може минути від **останнього** запиту. У лабораторній — 30 хвилин. Кожен успішний запит переносить відлік: `lastSeenAt = now`. Людина пішла від комп’ютера — сесія сама закінчиться.
+        - [[absolute-expiry|Абсолютний термін]] — скільки може минути від **входу**, хоч би якою активною була сесія. У лабораторній — 2 години. Навіть безперервно використовувана вкрадена cookie колись перестане працювати.
+
+        Обидва порівнюють із поточним часом. Якщо код сам викликає `Date.now()`, перевірити «що буде на 31-й хвилині» можна лише чекаючи 31 хвилину. Тому час **підставляють**: функція отримує `now` параметром, а сервер — об’єкт `clock`. Це той самий [[fixed-clock|фіксований годинник]], що й у тестах JavaScript: програма питає годинник, а тест вирішує, котра година.
+
+        Межі варто записати точно: у лабораторній рівно 30 хвилин бездіяльності — ще можна, 30 хвилин і 1 мс — уже ні.
+      en: |
+        A session that lives forever is a gift to whoever once stole the cookie. So in every request the server checks two limits:
+
+        - The [[idle-timeout]] — how much time may pass since the **last** request. In the lab it is 30 minutes. Every successful request moves the count: `lastSeenAt = now`. A person walked away from the computer — the session ends by itself.
+        - The [[absolute-expiry]] — how much time may pass since **login**, however active the session is. In the lab it is 2 hours. Even a stolen cookie that is used non-stop stops working some day.
+
+        Both are compared with the current time. If the code calls `Date.now()` itself, checking “what happens at minute 31” means waiting 31 minutes. So the time is **injected**: a function gets `now` as a parameter, and the server gets a `clock` object. It is the same [[fixed-clock]] as in JavaScript tests: the program asks the clock, and the test decides what time it is.
+
+        Write the boundaries down exactly: in the lab, exactly 30 minutes idle is still fine, and 30 minutes and 1 ms is not.
+
+  - id: predict-timeline
+    kind: prediction
+    prompt:
+      uk: "Сесія створена на хвилині 0; тайм-аут бездіяльності — 30 хвилин, абсолютний термін — 120 хвилин; кожен успішний запит переносить `lastSeen`. Функція `run` для кожної нової сесії надсилає запити в задані хвилини. Що надрукує код?"
+      en: "A session is created at minute 0; the idle timeout is 30 minutes, the absolute limit 120 minutes; every successful request moves `lastSeen`. The function `run` sends requests at the given minutes, each time to a new session. What does the code print?"
+    code: |
+      const IDLE = 30, ABSOLUTE = 120; // minutes
+
+      function run(minutes) {
+        const session = { createdAt: 0, lastSeen: 0 };
+        return minutes.map((now) => {
+          const ok = now - session.lastSeen <= IDLE && now - session.createdAt <= ABSOLUTE;
+          if (ok) session.lastSeen = now;
+          return ok ? 200 : 401;
+        }).join(" ");
+      }
+
+      console.log(run([5, 40]));
+      console.log(run([5, 30, 55, 80, 105, 130]));
+    verify:
+      logs: ["200 401", "200 200 200 200 200 401"]
+    answer:
+      type: choice
+      options:
+        - id: right
+          code: "200 401\n200 200 200 200 200 401"
+        - id: idle-only
+          code: "200 401\n200 200 200 200 200 200"
+          why:
+            uk: "Між запитами другого рядка ніде не більше 25 хвилин, тож тайм-аут бездіяльності не спрацьовує. Але на хвилині 130 від входу минуло понад 120 — і абсолютний термін відмовляє, хоч би якою активною була сесія."
+            en: "In the second line no gap between requests is over 25 minutes, so the idle timeout never fires. But at minute 130 more than 120 minutes have passed since login — and the absolute limit refuses, however active the session is."
+        - id: from-login
+          code: "200 401\n200 200 401 401 401 401"
+          why:
+            uk: "Бездіяльність рахують від **останнього** запиту, а не від входу: на хвилині 55 від запиту на хвилині 30 минуло лише 25 хвилин."
+            en: "Idle time is counted from the **last** request, not from login: at minute 55 only 25 minutes have passed since the request at minute 30."
+        - id: no-gap-check
+          code: "200 200\n200 200 200 200 200 401"
+          why:
+            uk: "У першому рядку між хвилиною 5 і 40 — 35 хвилин без запитів, більше за 30. Сесія вже закінчилася, хоч від входу минуло лише 40 хвилин."
+            en: "In the first line there are 35 minutes without requests between minute 5 and 40, more than 30. The session has already ended, though only 40 minutes have passed since login."
+      correct: [right]
+    explanation:
+      uk: "Два незалежні строки, і досить порушити будь-який. Перший рядок падає на бездіяльності (35 хвилин паузи), другий — на абсолютному терміні (130 хвилин від входу), хоча пауз довших за 25 хвилин у ньому немає."
+      en: "Two independent limits, and breaking either one is enough. The first line fails on idle time (a 35-minute pause), the second on the absolute limit (130 minutes after login), although it has no pause longer than 25 minutes."
+
+  - id: revoke
+    kind: explanation
+    title:
+      uk: "Відкликання: на сервері, і одразу"
+      en: "Revocation: on the server, and at once"
+    body:
+      uk: |
+        Строки — це запобіжник, а [[credential-revocation|відкликання]] — рішення «досить, негайно»:
+
+        - **Вихід** видаляє запис сесії на сервері: `sessions.delete(id)`. Відповідь ще й стирає cookie (`Set-Cookie: sid=; Max-Age=0`), але це лише прибирання в браузері. Якщо копія id лишилася деінде, на сервері вона вже нічого не відкриває.
+        - **Зміна пароля** відкликає **всі інші** сесії цього користувача: можливо, пароль міняють саме тому, що хтось чужий уже ввійшов.
+
+        Із підписаним токеном так просто не вийде: сервер нічого про нього не пам’ятає, видаляти нічого. Щоб відкликати токен до `exp`, потрібен стан на сервері — список відкликаних id токенів (їх тримають до кінця їхнього строку) або позначка «токени цього користувача, видані до моменту T, недійсні». Тому токени роблять короткими: чим довше живе токен, тим довше працює вкрадений.
+      en: |
+        Expiry limits are a safety net, while [[credential-revocation]] is the decision “enough, right now”:
+
+        - **Logout** deletes the session record on the server: `sessions.delete(id)`. The answer also wipes the cookie (`Set-Cookie: sid=; Max-Age=0`), but that is only tidying up in the browser. If a copy of the id is left somewhere, on the server it no longer opens anything.
+        - **A password change** revokes **all other** sessions of this user: the password may be changing exactly because someone else has already logged in.
+
+        A signed token does not make this easy: the server remembers nothing about it, there is nothing to delete. To revoke a token before `exp` you need state on the server — a list of revoked token ids (kept until each one's own expiry) or a mark “this user's tokens issued before moment T are invalid”. That is why tokens are made short-lived: the longer a token lives, the longer a stolen one works.
+
+  - id: timeline
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Одна історія сесій за підставленим годинником"
+      en: "One story of sessions under an injected clock"
+    textEquivalent:
+      uk: "Три учасники: ноутбук і телефон користувача u-01 та сервер; час задає підставлений годинник у хвилинах. На хвилині 0 ноутбук входить — сесія A. На хвилинах 20 і 45 ноутбук читає нотатки: обидва запити в межах 30 хвилин від попереднього, тож 200, і кожен переносить відлік бездіяльності. На хвилині 80 запит із ноутбука отримує 401: від останнього запиту минуло 35 хвилин, сесію A сервер забув. Ноутбук входить знову (сесія C, хвилина 81), а на хвилині 85 входить телефон (сесія B). На хвилині 90 з телефона змінюють пароль, і сервер у ту саму мить видаляє всі інші сесії u-01, тобто C. Запит із ноутбука на хвилині 95 отримує 401, хоча бездіяльність лише 14 хвилин. На хвилині 100 телефон виходить: сервер видаляє сесію B, і наступний запит з її id отримав би 401."
+      en: "Three participants: user u-01's laptop and phone and the server; the time is set by an injected clock in minutes. At minute 0 the laptop logs in — session A. At minutes 20 and 45 the laptop reads the notes: both requests are within 30 minutes of the previous one, so 200, and each moves the idle count. At minute 80 a request from the laptop gets 401: 35 minutes have passed since the last request, and the server has forgotten session A. The laptop logs in again (session C, minute 81), and at minute 85 the phone logs in (session B). At minute 90 the password is changed from the phone, and at that very moment the server deletes all other sessions of u-01, that is, C. A request from the laptop at minute 95 gets 401, although it was idle for only 14 minutes. At minute 100 the phone logs out: the server deletes session B, and the next request with its id would get 401."
+    spec:
+      actors:
+        - { id: laptop, label: { uk: "Ноутбук u-01", en: "u-01's laptop" } }
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+        - { id: phone, label: { uk: "Телефон u-01", en: "u-01's phone" } }
+      messages:
+        - from: laptop
+          to: server
+          label: "0′ POST /login"
+          note: { uk: "сесія A", en: "session A" }
+          caption:
+            uk: "Хвилина 0: вхід із ноутбука, сесія **A**. Бездіяльність — до 30 хвилин, загалом — до 120."
+            en: "Minute 0: login from the laptop, session **A**. Idle up to 30 minutes, in total up to 120."
+        - from: laptop
+          to: server
+          label: "20′ GET /notes → 200"
+          caption:
+            uk: "Хвилина 20: 20 хвилин після входу — 200, і відлік бездіяльності починається знову."
+            en: "Minute 20: 20 minutes after login — 200, and the idle count starts again."
+        - from: laptop
+          to: server
+          label: "45′ GET /notes → 200"
+          caption:
+            uk: "Хвилина 45: 25 хвилин після попереднього запиту — ще в межах, 200."
+            en: "Minute 45: 25 minutes after the previous request — still within the limit, 200."
+        - from: laptop
+          to: server
+          label: "80′ GET /notes → 401"
+          note: { uk: "35 хв без запитів", en: "35 min without requests" }
+          caption:
+            uk: "Хвилина 80: 35 хвилин тиші — більше за 30. Сесія **A** закінчилася, сервер її забуває, відповідь 401."
+            en: "Minute 80: 35 minutes of silence — more than 30. Session **A** has ended, the server forgets it, the answer is 401."
+        - from: laptop
+          to: server
+          label: "81′ POST /login"
+          note: { uk: "сесія C", en: "session C" }
+          caption:
+            uk: "Хвилина 81: новий вхід із ноутбука — сесія **C**."
+            en: "Minute 81: a new login from the laptop — session **C**."
+        - from: phone
+          to: server
+          label: "85′ POST /login"
+          note: { uk: "сесія B", en: "session B" }
+          caption:
+            uk: "Хвилина 85: вхід із телефона — сесія **B**. Тепер в `u-01` дві сесії."
+            en: "Minute 85: login from the phone — session **B**. Now `u-01` has two sessions."
+        - from: phone
+          to: server
+          label: "90′ POST /password"
+          note: { uk: "інші сесії u-01 видалено: C", en: "other u-01 sessions deleted: C" }
+          caption:
+            uk: "Хвилина 90: зміна пароля з телефона. Сервер одразу видаляє **всі інші** сесії `u-01` — тобто **C**."
+            en: "Minute 90: a password change from the phone. The server at once deletes **all other** sessions of `u-01` — that is, **C**."
+        - from: laptop
+          to: server
+          label: "95′ GET /notes → 401"
+          caption:
+            uk: "Хвилина 95: ноутбук отримує 401, хоча бездіяльність — лише 14 хвилин. Відкликання не чекає строків."
+            en: "Minute 95: the laptop gets 401, although it was idle for only 14 minutes. Revocation does not wait for expiry."
+        - from: phone
+          to: server
+          label: "100′ POST /logout"
+          note: { uk: "сесію B видалено", en: "session B deleted" }
+          caption:
+            uk: "Хвилина 100: вихід видаляє **B** на сервері. Стара копія її id тепер нічого не відкриває."
+            en: "Minute 100: logout deletes **B** on the server. An old copy of its id now opens nothing."
+
+  - id: predict-cookie-cleared
+    kind: prediction
+    prompt:
+      uk: "`u-01` увійшла з ноутбука й телефона. На ноутбуці вона в налаштуваннях браузера видаляє cookie сайту, не натискаючи «Вийти». Сервер видаляє сесії лише під час виходу, зміни пароля чи завершення строку. Що правда?"
+      en: "`u-01` is logged in on a laptop and a phone. On the laptop she deletes the site's cookies in the browser settings without pressing “Log out”. The server deletes sessions only on logout, a password change or expiry. Which is true?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: server-still-valid
+          text:
+            uk: "Телефон і далі працює, а сесія ноутбука жива на сервері до кінця строку: копія її id, якщо хтось її має, ще відкриває нотатки"
+            en: "The phone keeps working, and the laptop's session lives on the server until it expires: a copy of its id, if someone has one, still opens the notes"
+        - id: everywhere
+          text:
+            uk: "Вона вийшла всюди: без cookie сесії більше немає"
+            en: "She is logged out everywhere: without the cookie there is no session"
+          why:
+            uk: "Сесія живе на сервері, а cookie — лише ключ до неї в одному браузері. Телефон має власну сесію, а видалений у браузері ключ не прибирає запис на сервері."
+            en: "The session lives on the server, and the cookie is only a key to it in one browser. The phone has its own session, and a key deleted in a browser does not remove the record on the server."
+        - id: laptop-only-gone
+          text:
+            uk: "Сесію ноутбука знищено й на сервері, а телефон працює далі"
+            en: "The laptop's session is destroyed on the server too, and the phone keeps working"
+          why:
+            uk: "Сервер нічого не дізнається про те, що браузер стер cookie: жодного запиту не було. Запис сесії ноутбука на сервері лишився."
+            en: "The server learns nothing about the browser wiping a cookie: no request was made. The laptop session's record on the server is still there."
+      correct: [server-still-valid]
+    explanation:
+      uk: "Вихід — це дія сервера, а не браузера. Тому кнопка «Вийти» має надсилати запит, що видаляє сесію на сервері, а «вийти з усіх пристроїв» — видаляти всі сесії користувача."
+      en: "Logout is an action of the server, not of the browser. So a “Log out” button must send a request that deletes the session on the server, and “log out of all devices” must delete all of the user's sessions."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: clock-as-parameter
+        from: js-09-04-deterministic-fixtures
+        prompt:
+          uk: "Як перевірити тестом, що сесія закінчується через 30 хвилин бездіяльності, не чекаючи 30 хвилин і так, щоб тест давав той самий результат будь-коли?"
+          en: "How do you check with a test that a session ends after 30 minutes idle, without waiting 30 minutes and so that the test gives the same result at any time?"
+        answer:
+          type: choice
+          options:
+            - id: inject
+              text:
+                uk: "Передати час параметром (`isSessionValid(session, now)`) і в тесті задати `now` числом"
+                en: "Pass the time as a parameter (`isSessionValid(session, now)`) and give `now` as a number in the test"
+            - id: sleep
+              text:
+                uk: "Поставити в тесті `IDLE_MS = 100` і почекати `await sleep(150)`"
+                en: "Set `IDLE_MS = 100` in the test and wait `await sleep(150)`"
+              why:
+                uk: "Тест із справжнім очікуванням повільний і залежить від навантаження машини: на зайнятому комп’ютері межа «рівно 100 мс» стає лотереєю."
+                en: "A test with a real wait is slow and depends on the machine's load: on a busy computer the boundary “exactly 100 ms” becomes a lottery."
+            - id: date-now
+              text:
+                uk: "Залишити `Date.now()` у функції й порівняти з `Date.now()` у тесті"
+                en: "Keep `Date.now()` in the function and compare with `Date.now()` in the test"
+              why:
+                uk: "Тоді результат залежить від того, **коли** запущено тест, — і перевірити 31-шу хвилину без очікування неможливо."
+                en: "Then the result depends on **when** the test runs — and minute 31 cannot be checked without waiting."
+          correct: [inject]
+        explanation:
+          uk: "Той самий прийом, що з `today` у тестах JavaScript: функція не питає годинник сама, а отримує час. Тест задає будь-яку хвилину — 29, 30, 30 і 1 мс — миттєво й щоразу однаково."
+          en: "The same trick as with `today` in JavaScript tests: the function does not ask the clock itself, it gets the time. A test sets any minute — 29, 30, 30 plus 1 ms — instantly and the same way every time."
+
+  - id: session-clock
+    kind: example
+    runtime: isolated-node
+    dir: session-clock
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      gifts: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      minute: { uk: "хвилина", en: "minute" }
+      laptop: { uk: "ноутбук", en: "laptop" }
+      phone: { uk: "телефон", en: "phone" }
+      idleAndAbsolute: { uk: "бездіяльність і абсолютний строк", en: "idle and absolute limits" }
+      revocation: { uk: "відкликання", en: "revocation" }
+    title:
+      uk: "Годинник сервера в твоїх руках"
+      en: "The server's clock in your hands"
+    body:
+      uk: |
+        `app.js` — сервіс нотаток зі строками сесій і відкликанням; час він бере з об’єкта `clock`, який передає `index.js`. Тому `index.js` може сказати «зараз хвилина 130» і відразу надіслати запит — ніхто дві години не чекає.
+
+        Перша частина повторює другий рядок передбачення. Друга — зміну пароля й вихід із двох пристроїв. Натисни **Запустити** й зістав статуси з передбаченням.
+      en: |
+        `app.js` is the notes service with session limits and revocation; it takes the time from the `clock` object that `index.js` passes in. So `index.js` can say “it is minute 130 now” and send a request at once — nobody waits two hours.
+
+        The first part repeats the second line of the prediction. The second covers a password change and logout from two devices. Press **Run** and match the statuses with the prediction.
+    tryIt:
+      uk: |
+        1. У `index.js` заміни `[5, 30, 55, 80, 105, 130]` на `[5, 40]` і запусти: на хвилині 40 — 401, бо 35 хвилин без запитів.
+        2. Поверни масив. У `app.js` у маршруті `/password` закоментуй рядок з `sessions.delete(id)` і запусти: ноутбук на хвилині 216 отримує 200 — після зміни пароля стара сесія живе далі.
+      en: |
+        1. In `index.js` replace `[5, 30, 55, 80, 105, 130]` with `[5, 40]` and run: at minute 40 — 401, because there were 35 minutes without requests.
+        2. Restore the array. In `app.js`, in the `/password` route, comment out the line with `sessions.delete(id)` and run: the laptop gets 200 at minute 216 — after the password change the old session lives on.
+
+  - id: expiry-rules
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: expiry-rules
+    entry: index.js
+    editable: [sessions.js, expiry-cases.js]
+    strings:
+      revoked: { uk: "видалено", en: "deleted" }
+      left: { uk: "лишилися", en: "left" }
+    title:
+      uk: "Правила строків і їхні тести"
+      en: "Expiry rules and their tests"
+    instructions:
+      uk: |
+        **У `sessions.js`:**
+
+        - `isSessionValid(session, now)` → `true`, поки від `session.lastSeenAt` минуло **не більше** `IDLE_MS` (30 хвилин) **і** від `session.createdAt` — не більше `ABSOLUTE_MS` (2 години). Обидві межі включно: рівно 30 хвилин — ще `true`. Час — мілісекунди, `now` приходить параметром; `Date.now()` не потрібен.
+        - `revokeUserSessions(userId, { except })` видаляє з `sessions` усі сесії цього користувача, крім сесії з id `except` (без `except` — усі), чужі сесії не чіпає й повертає кількість видалених.
+
+        **У `expiry-cases.js`** допиши випадки для `isSessionValid` — по одному на кожну межу обох правил. Кожен випадок має фіксований годинник: усі часи — через `min(n)` у межах першої доби, без `Date.now()`.
+
+        Перевірки запускають твої випадки на правильному правилі (усі мають пройти) і на п’яти зламаних: бездіяльність не враховано, її рахують від входу, рівно 30 хвилин уже вважають простроченими, абсолютний строк не враховано, рівно 120 хвилин уже вважають простроченими. Кожне зламане правило має провалити хоча б один твій випадок. **Запустити** показує, як твої випадки проходять на твоїй функції.
+      en: |
+        **In `sessions.js`:**
+
+        - `isSessionValid(session, now)` → `true` while **no more than** `IDLE_MS` (30 minutes) have passed since `session.lastSeenAt` **and** no more than `ABSOLUTE_MS` (2 hours) since `session.createdAt`. Both limits are inclusive: exactly 30 minutes is still `true`. The time is in milliseconds, and `now` comes as a parameter; `Date.now()` is not needed.
+        - `revokeUserSessions(userId, { except })` deletes from `sessions` every session of this user except the one with the id `except` (without `except` — all of them), leaves other users' sessions alone and returns how many it deleted.
+
+        **In `expiry-cases.js`** add cases for `isSessionValid` — one for every boundary of both rules. Every case has a fixed clock: all times go through `min(n)` within the first day, with no `Date.now()`.
+
+        The checks run your cases on a correct rule (all must pass) and on five broken ones: idle time ignored, idle counted from login, exactly 30 minutes already treated as expired, the absolute limit ignored, exactly 120 minutes already treated as expired. Every broken rule must fail at least one of your cases. **Run** shows how your cases do on your own function.
+    testTitles:
+      "isSessionValid: idle up to exactly 30 minutes is valid, a millisecond more is not":
+        uk: "`isSessionValid`: бездіяльність до рівно 30 хвилин — дійсна, на мілісекунду більше — ні"
+        en: "`isSessionValid`: idle up to exactly 30 minutes is valid, a millisecond more is not"
+      "isSessionValid: up to exactly 2 hours after login is valid, a millisecond more is not":
+        uk: "`isSessionValid`: до рівно 2 годин після входу — дійсна, на мілісекунду більше — ні"
+        en: "`isSessionValid`: up to exactly 2 hours after login is valid, a millisecond more is not"
+      "revokeUserSessions deletes all sessions of that user except the current one":
+        uk: "`revokeUserSessions` видаляє всі сесії цього користувача, крім поточної"
+        en: "`revokeUserSessions` deletes all sessions of that user except the current one"
+      "without except, revokeUserSessions deletes every session of that user":
+        uk: "Без `except` `revokeUserSessions` видаляє всі сесії цього користувача"
+        en: "Without `except`, `revokeUserSessions` deletes every session of that user"
+      "every case uses a fixed clock: all times are within the first day":
+        uk: "Кожен випадок має фіксований годинник: усі часи — у межах першої доби"
+        en: "Every case uses a fixed clock: all times are within the first day"
+      "all your cases pass on a correct rule":
+        uk: "Усі твої випадки проходять на правильному правилі"
+        en: "All your cases pass on a correct rule"
+      "your cases catch a rule that ignores idle time or counts it from login":
+        uk: "Твої випадки ловлять правило, що не враховує бездіяльність або рахує її від входу"
+        en: "Your cases catch a rule that ignores idle time or counts it from login"
+      "your cases catch a rule that ignores the 2-hour limit":
+        uk: "Твої випадки ловлять правило без 2-годинного строку"
+        en: "Your cases catch a rule that ignores the 2-hour limit"
+      "your cases catch exactly 30 minutes idle and exactly 2 hours being treated as expired":
+        uk: "Твої випадки ловлять правило, що вважає простроченими рівно 30 хвилин бездіяльності й рівно 2 години"
+        en: "Your cases catch exactly 30 minutes idle and exactly 2 hours being treated as expired"
+    hints:
+      nudge:
+        uk: "Для кожного правила постав два випадки впритул до межі: рівно на ній і на 1 мс далі. І один випадок, де вхід давно, а останній запит — нещодавно."
+        en: "For each rule set two cases right at the boundary: exactly on it and 1 ms past it. And one case where the login was long ago but the last request recent."
+      explanation:
+        uk: "Для строку дії кошика на 15 хвилин пара граничних випадків була б `{ addedAt: min(0) }, now: min(15)` → дійсний і `now: min(15) + 1` → ні. Межа включно — це `<=`, а не `<`. Для відкликання пройди по `sessions` (`for (const [id, s] of sessions)`) і видаляй лише ті, де `s.userId` збігається, а `id` не дорівнює `except`."
+        en: "For a 15-minute cart expiry the pair of boundary cases would be `{ addedAt: min(0) }, now: min(15)` → valid and `now: min(15) + 1` → not. An inclusive boundary is `<=`, not `<`. For revocation loop over `sessions` (`for (const [id, s] of sessions)`) and delete only those whose `s.userId` matches and whose `id` is not `except`."
+    solutionNote:
+      uk: "Сесія дійсна, лише коли виконано **обидва** правила, тож `&&`. Межі включно, тому `<=`. Шість випадків тримають усі межі: рівно 30 і на 1 мс більше, рівно 120 і на 1 мс більше, давній вхід із недавнім запитом. Без випадків «рівно на межі» помилку `<` замість `<=` не впіймав би жоден тест."
+      en: "A session is valid only when **both** rules hold, hence `&&`. The limits are inclusive, hence `<=`. Six cases hold every boundary: exactly 30 and 1 ms more, exactly 120 and 1 ms more, an old login with a recent request. Without the “exactly on the boundary” cases no test would catch a `<` written instead of `<=`."
+    feedback:
+      - when: { test: "isSessionValid: idle up to exactly 30 minutes is valid, a millisecond more is not" }
+        message:
+          uk: "Ця перевірка чекає `true` для рівно 30 хвилин після `lastSeenAt`, `false` для 30 хвилин і 1 мс і `true`, коли вхід був 100 хвилин тому, а останній запит — 10. Бездіяльність рахують від `lastSeenAt`, межа включно (`<=`)."
+          en: "This check expects `true` for exactly 30 minutes after `lastSeenAt`, `false` for 30 minutes and 1 ms, and `true` when the login was 100 minutes ago and the last request 10. Idle time is counted from `lastSeenAt`, and the boundary is inclusive (`<=`)."
+      - when: { test: "isSessionValid: up to exactly 2 hours after login is valid, a millisecond more is not" }
+        message:
+          uk: "Ця перевірка чекає `true` рівно через 120 хвилин після `createdAt` і `false` на 1 мс пізніше — навіть коли останній запит був 5 хвилин тому."
+          en: "This check expects `true` exactly 120 minutes after `createdAt` and `false` 1 ms later — even when the last request was 5 minutes ago."
+      - when: { test: "revokeUserSessions deletes all sessions of that user except the current one" }
+        message:
+          uk: "Ця перевірка кладе три сесії `u-01` і одну `u-02`, викликає `revokeUserSessions('u-01', { except: 's-phone' })` і чекає, що лишаться `s-phone` і `s-other`, а функція поверне 2."
+          en: "This check puts three sessions of `u-01` and one of `u-02` in the store, calls `revokeUserSessions('u-01', { except: 's-phone' })` and expects `s-phone` and `s-other` to remain and the function to return 2."
+      - when: { test: "every case uses a fixed clock: all times are within the first day" }
+        message:
+          uk: "Ця перевірка чекає непорожній масив `cases`, у якому `createdAt`, `lastSeenAt` і `now` кожного випадку — числа від 0 до `min(1440)`. Значення з `Date.now()` — це мільярди мілісекунд, і такий випадок залежить від моменту запуску."
+          en: "This check expects a non-empty `cases` array in which every case's `createdAt`, `lastSeenAt` and `now` are numbers from 0 to `min(1440)`. A value from `Date.now()` is billions of milliseconds, and such a case depends on when it runs."
+      - when: { test: "all your cases pass on a correct rule" }
+        message:
+          uk: "Ця перевірка запускає твої випадки на правильному правилі й показує назви тих, що не пройшли: у них неправильне `valid`."
+          en: "This check runs your cases on a correct rule and shows the names of those that failed: their `valid` is wrong."
+      - when: { test: "your cases catch exactly 30 minutes idle and exactly 2 hours being treated as expired" }
+        message:
+          uk: "Ця перевірка чекає випадки рівно на межах — бездіяльність рівно `min(30)` і вік рівно `min(120)` — з `valid: true`. Лише вони відрізняють `<=` від `<`."
+          en: "This check expects cases exactly on the boundaries — idle exactly `min(30)` and age exactly `min(120)` — with `valid: true`. Only they tell `<=` from `<`."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-10 немає, а однокористувацький проєкт сесій не має. Але прийом із годинником переноситься прямо: якщо щось у твоєму `server/` залежить від часу (позначка «сьогодні», дата створення запису), передавай час параметром, як `today` у доменних функціях проєкту, і перевіряй межі тестом із фіксованим часом."
+      en: "Your project does not change in this unit: NO-10 has no project step, and the single-user project has no sessions. But the clock trick carries over directly: if anything in your `server/` depends on time (a “today” mark, a record's creation date), pass the time as a parameter, like `today` in the project's domain functions, and check the boundaries with a fixed-time test."
