@@ -1,0 +1,426 @@
+id: no-03-05-start-stop-restart-local
+unit: NO-03
+title:
+  uk: "Локально: запусти, надішли запити, зупини, перезапусти"
+  en: "Start, request, stop, restart locally"
+kind: local-task
+minutes: 20
+contentVersion: 1
+purpose:
+  uk: "На платформі сервер сам стартує й сам зупиняється. Справжній сервер живе в терміналі: ти запускаєш його, звертаєшся до нього з інших програм, зупиняєш Ctrl+C і зустрічаєш зайнятий порт. Тут ти пройдеш увесь цей цикл зі своїм маленьким сервером і підтвердиш результат сам."
+  en: "On the platform a server starts and stops by itself. A real server lives in a terminal: you start it, reach it from other programs, stop it with Ctrl+C and run into a busy port. Here you go through that whole cycle with your own tiny server and confirm the result yourself."
+objectives:
+  - uk: "Запустити маленький сервер у власному терміналі на 127.0.0.1 із заданим портом, надіслати справжні запити через curl і браузер і прочитати статус, заголовки й тіло."
+    en: "Start the tiny server in your own terminal on 127.0.0.1 with a configured port, send real requests with curl and a browser, and read status, headers and body."
+  - uk: "Зупинити його Ctrl+C через обробник SIGINT, що викликає `server.close()`, зустріти EADDRINUSE на зайнятому порту, перезапустити й переконатися, що сервер знову відповідає."
+    en: "Stop it with Ctrl+C through a SIGINT handler that calls server.close(), meet EADDRINUSE on a busy port, restart it and confirm it answers again."
+prerequisites: [no-03-04-cancellation-timeouts-server]
+subskills:
+  - { family: B-03, skill: "request/response lifecycle", depth: practice }
+glossary: [sigint, address-in-use]
+selfCheck: [predict-second-copy]
+
+blocks:
+  - id: terminal-life
+    kind: explanation
+    title:
+      uk: "Сервер у терміналі: старт, Ctrl+C, зайнятий порт"
+      en: "A server in a terminal: start, Ctrl+C, a busy port"
+    body:
+      uk: |
+        `node tiny-server.mjs` займає термінал: процес не завершується, доки сервер слухає порт (ти бачив це в першому уроці розділу). Запити надсилають з **іншого** термінала чи з браузера.
+
+        Зупиняють такий процес **Ctrl+C**: термінал надсилає йому сигнал [[sigint|SIGINT]]. Без обробника Node завершується миттєво — запит, що саме обробляється, обривається. З обробником процес спершу прибирає за собою:
+
+        ```js
+        process.on("SIGINT", () => {
+          server.close(() => console.log("closed"));
+        });
+        ```
+
+        `server.close()` перестає приймати нові з’єднання, одразу закриває бездіяльні (на кшталт тих, що тримає відкритими браузер) і чекає на ті, що ще обробляються. Коли не лишається нічого, процес завершується сам — з кодом 0.
+
+        Один порт на одній адресі може слухати лише один процес. Друга копія сервера на тому самому порту отримує [[address-in-use|EADDRINUSE]] і падає. Ліки — зупинити першу копію або взяти інший порт, наприклад через змінну середовища `PORT`.
+      en: |
+        `node tiny-server.mjs` occupies the terminal: the process does not exit while the server listens on a port (you saw that in this unit’s first lesson). Requests come from **another** terminal or from a browser.
+
+        Such a process is stopped with **Ctrl+C**: the terminal sends it the [[sigint|SIGINT]] signal. Without a handler Node exits at once — a request being handled at that moment is cut off. With a handler the process cleans up first:
+
+        ```js
+        process.on("SIGINT", () => {
+          server.close(() => console.log("closed"));
+        });
+        ```
+
+        `server.close()` stops accepting new connections, closes idle ones at once (like those a browser keeps open) and waits for those still being handled. When nothing is left, the process exits by itself — with code 0.
+
+        Only one process can listen on a given port at a given address. A second copy of the server on the same port gets [[address-in-use|EADDRINUSE]] and crashes. The cure is to stop the first copy or take another port, for example through the `PORT` environment variable.
+
+  - id: predict-second-copy
+    kind: prediction
+    prompt:
+      uk: "Сервер уже працює в першому терміналі на `127.0.0.1:7320`. У другому терміналі ти запускаєш ту саму команду `node tiny-server.mjs`. Що станеться?"
+      en: "The server is already running in the first terminal on `127.0.0.1:7320`. In a second terminal you run the same command `node tiny-server.mjs`. What happens?"
+    answer:
+      type: choice
+      options:
+        - id: eaddrinuse
+          text:
+            uk: "Друга копія падає з `Error: listen EADDRINUSE: address already in use 127.0.0.1:7320`, а перша працює далі"
+            en: "The second copy crashes with `Error: listen EADDRINUSE: address already in use 127.0.0.1:7320`, and the first keeps working"
+        - id: shared
+          text:
+            uk: "Обидві копії слухають порт і ділять запити між собою"
+            en: "Both copies listen on the port and share the requests"
+          why:
+            uk: "Звичайний `listen` не ділить порт: на одній адресі й порту слухає лише один процес. Решта отримує `EADDRINUSE`."
+            en: "A plain `listen` does not share a port: only one process listens on one address and port. The others get `EADDRINUSE`."
+        - id: replaces
+          text:
+            uk: "Друга копія забирає порт, а перша зупиняється"
+            en: "The second copy takes over the port, and the first stops"
+          why:
+            uk: "Нова програма не може відібрати порт у тієї, що вже слухає. Перша працює, як і працювала."
+            en: "A new program cannot take a port away from the one already listening. The first works as before."
+        - id: other-port
+          text:
+            uk: "Друга копія сама обирає наступний вільний порт, 7321"
+            en: "The second copy picks the next free port, 7321, by itself"
+          why:
+            uk: "Node нічого не обирає за тебе: `listen(7320, …)` означає саме 7320. Інший порт — лише якщо ти його задаси, наприклад `PORT=7321`."
+            en: "Node picks nothing for you: `listen(7320, …)` means exactly 7320. Another port only if you set it, for example `PORT=7321`."
+      correct: [eaddrinuse]
+    explanation:
+      uk: "`listen` друкує помилку `EADDRINUSE` з адресою й портом, і друга копія завершується з кодом 1. Ти побачиш це наживо в кроці 6 завдання нижче."
+      en: "`listen` reports the `EADDRINUSE` error with the address and port, and the second copy exits with code 1. You will see it live in step 6 of the task below."
+
+  - id: tiny-server
+    kind: example
+    runtime: isolated-node
+    dir: tiny-server
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      wish1: { uk: "Навушники", en: "Headphones" }
+      wish2: { uk: "Настільна лампа", en: "Desk lamp" }
+      wish4: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+    title:
+      uk: "tiny-server.mjs — сервер, який ти запустиш у терміналі"
+      en: "tiny-server.mjs — the server you will run in a terminal"
+    body:
+      uk: |
+        Файл `tiny-server.mjs` — маленький сервер списку бажань: `/health`, `/records`, `/records/<id>`, `405` на інші методи й `404` на інші адреси. Внизу файлу — частина, що виконується лише тоді, коли його запустили командою `node tiny-server.mjs`: `listen` на порту з `PORT` (типово 7320) і обробник `SIGINT`.
+
+        Тут `index.js` лише імпортує `createTinyServer`, запускає його на вільному порту й надсилає чотири запити. Натисни **Запустити**, а потім відкрий вкладку `tiny-server.mjs`: її вміст знадобиться в завданні.
+      en: |
+        The file `tiny-server.mjs` is a tiny wishlist server: `/health`, `/records`, `/records/<id>`, `405` for other methods and `404` for other addresses. At the bottom of the file is a part that runs only when it was started with `node tiny-server.mjs`: `listen` on the port from `PORT` (7320 by default) and a `SIGINT` handler.
+
+        Here `index.js` only imports `createTinyServer`, starts it on a free port and sends four requests. Press **Run**, then open the `tiny-server.mjs` tab: you will need its content in the task.
+    tryIt:
+      uk: "Додай до списку запитів у `index.js` пару `['GET', '/records']` і запусти: сервер віддає всі три бажання, а журнал `[server]` показує рядок і для цього запиту."
+      en: "Add the pair `['GET', '/records']` to the request list in `index.js` and run: the server returns all three wishes, and the `[server]` log shows a line for this request too."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: чому локальний процес не стартує"
+      en: "Recall: why a local process does not start"
+    items:
+      - id: cannot-find-module
+        from: js-10-04-debug-local-run-failure
+        prompt:
+          uk: "Ти запускаєш `node tiny-sever.mjs` і отримуєш `Error: Cannot find module '/Users/you/js-course/no03-server/tiny-sever.mjs'` з кодом `MODULE_NOT_FOUND`. Що перевірити першим?"
+          en: "You run `node tiny-sever.mjs` and get `Error: Cannot find module '/Users/you/js-course/no03-server/tiny-sever.mjs'` with the code `MODULE_NOT_FOUND`. What do you check first?"
+        answer:
+          type: choice
+          options:
+            - id: path
+              text:
+                uk: "Чи є саме такий файл у поточній теці: повний шлях у повідомленні — це те, що Node шукав"
+                en: "Whether exactly that file exists in the current folder: the full path in the message is what Node looked for"
+            - id: reinstall
+              text:
+                uk: "Перевстановити Node.js: помилка означає, що Node зламався"
+                en: "Reinstall Node.js: the error means Node is broken"
+              why:
+                uk: "Node працює: він прочитав команду й показав, де шукав. Помилка — про шлях, а не про Node."
+                en: "Node works: it read the command and showed where it looked. The error is about the path, not about Node."
+            - id: port
+              text:
+                uk: "Чи не зайнятий порт 7320"
+                en: "Whether port 7320 is taken"
+              why:
+                uk: "До порту справа не дійшла: файл не знайдено ще до запуску коду. Зайнятий порт дає інше повідомлення — `EADDRINUSE`."
+                en: "Things never got to the port: the file was not found before any code ran. A busy port gives a different message — `EADDRINUSE`."
+          correct: [path]
+        explanation:
+          uk: "`MODULE_NOT_FOUND` з повним шляхом каже, який файл Node шукав. Порівняй його з тим, що лежить у теці (`ls`), — тут у назві бракує літери `r`. Помилки запуску читаються так само, як помилки коду: назва, пояснення, місце."
+          en: "`MODULE_NOT_FOUND` with the full path tells you which file Node looked for. Compare it with what is in the folder (`ls`) — here the name is missing the letter `r`. Start-up errors are read the same way as code errors: the name, the explanation, the place."
+
+  - id: run-it-yourself
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Запусти, опитай, зупини й перезапусти сервер"
+      en: "Start, query, stop and restart the server"
+    intro:
+      uk: |
+        Тобі знадобляться Node.js, два термінали, curl і браузер. Сервер житиме в окремій теці `~/js-course/no03-server`; наступні уроки на неї не покладаються.
+
+        Команди нижче виконано під час підготовки уроку на macOS з Node.js v25.2.1 і curl 8.7.1; вивід справжній (дати у заголовку `Date` у тебе будуть свої). Крок із браузером під час підготовки не перевіряли. Windows і Linux не перевіряли: у Windows PowerShell пиши `curl.exe` замість `curl`, а змінну задавай як `$env:PORT=7321; node tiny-server.mjs`.
+
+        **Крок 3 — що друкує запуск:**
+
+        ```text
+        Tiny server listening on http://127.0.0.1:7320
+        Stop it with Ctrl+C.
+        ```
+
+        **Крок 4 — три запити з другого терміналу.** Вивід знято з англійської версії файлу: у тебе назви бажань будуть тією мовою, якою ти читаєш урок, а тому й `content-length` інший.
+
+        ```text
+        $ curl -i http://127.0.0.1:7320/records
+        HTTP/1.1 200 OK
+        content-type: application/json; charset=utf-8
+        content-length: 198
+        Date: Sun, 04 Oct 2026 04:57:13 GMT
+        Connection: keep-alive
+        Keep-Alive: timeout=5
+
+        [{"id":"w-01","name":"Headphones","price":80,"acquired":false},…]
+        $ curl -i http://127.0.0.1:7320/records/w-99
+        HTTP/1.1 404 Not Found
+        …
+        {"error":"not found","id":"w-99"}
+        $ curl -i -X DELETE http://127.0.0.1:7320/records/w-02
+        HTTP/1.1 405 Method Not Allowed
+        allow: GET
+        …
+        {"error":"method not allowed"}
+        ```
+
+        **Крок 6 — друга копія на тому самому порту (уривок):**
+
+        ```text
+        $ node tiny-server.mjs
+        node:events:486
+              throw er; // Unhandled 'error' event
+              ^
+
+        Error: listen EADDRINUSE: address already in use 127.0.0.1:7320
+        …
+          code: 'EADDRINUSE',
+          errno: -48,
+          syscall: 'listen',
+          address: '127.0.0.1',
+          port: 7320
+        }
+        ```
+
+        **Крок 7 — перший термінал після Ctrl+C:**
+
+        ```text
+        GET /records → 200
+        GET /records/w-99 → 404
+        DELETE /records/w-02 → 405
+        SIGINT received: closing the server…
+        Server closed. Bye.
+        ```
+
+        А `curl` у другому терміналі тепер пише `curl: (7) Failed to connect to 127.0.0.1 port 7320 after 0 ms: Couldn't connect to server`.
+
+        **Крок 8 — перезапуск на іншому порту:**
+
+        ```text
+        $ PORT=7321 node tiny-server.mjs
+        Tiny server listening on http://127.0.0.1:7321
+        Stop it with Ctrl+C.
+        ```
+
+        і з другого терміналу `curl -sS http://127.0.0.1:7321/health` → `{"ok":true}`.
+      en: |
+        You need Node.js, two terminals, curl and a browser. The server lives in its own folder `~/js-course/no03-server`; the next lessons do not rely on it.
+
+        The commands below were run while preparing this lesson on macOS with Node.js v25.2.1 and curl 8.7.1; the output is real (the `Date` header will show your own date). The browser step was not checked while preparing. Windows and Linux were not checked: in Windows PowerShell type `curl.exe` instead of `curl`, and set the variable as `$env:PORT=7321; node tiny-server.mjs`.
+
+        **Step 3 — what starting it prints:**
+
+        ```text
+        Tiny server listening on http://127.0.0.1:7320
+        Stop it with Ctrl+C.
+        ```
+
+        **Step 4 — three requests from a second terminal.** The output was captured from the English version of the file: in yours the wish names follow the language you read the lesson in, and so the `content-length` may differ.
+
+        ```text
+        $ curl -i http://127.0.0.1:7320/records
+        HTTP/1.1 200 OK
+        content-type: application/json; charset=utf-8
+        content-length: 198
+        Date: Sun, 04 Oct 2026 04:57:13 GMT
+        Connection: keep-alive
+        Keep-Alive: timeout=5
+
+        [{"id":"w-01","name":"Headphones","price":80,"acquired":false},…]
+        $ curl -i http://127.0.0.1:7320/records/w-99
+        HTTP/1.1 404 Not Found
+        …
+        {"error":"not found","id":"w-99"}
+        $ curl -i -X DELETE http://127.0.0.1:7320/records/w-02
+        HTTP/1.1 405 Method Not Allowed
+        allow: GET
+        …
+        {"error":"method not allowed"}
+        ```
+
+        **Step 6 — a second copy on the same port (an excerpt):**
+
+        ```text
+        $ node tiny-server.mjs
+        node:events:486
+              throw er; // Unhandled 'error' event
+              ^
+
+        Error: listen EADDRINUSE: address already in use 127.0.0.1:7320
+        …
+          code: 'EADDRINUSE',
+          errno: -48,
+          syscall: 'listen',
+          address: '127.0.0.1',
+          port: 7320
+        }
+        ```
+
+        **Step 7 — the first terminal after Ctrl+C:**
+
+        ```text
+        GET /records → 200
+        GET /records/w-99 → 404
+        DELETE /records/w-02 → 405
+        SIGINT received: closing the server…
+        Server closed. Bye.
+        ```
+
+        And `curl` in the second terminal now prints `curl: (7) Failed to connect to 127.0.0.1 port 7320 after 0 ms: Couldn't connect to server`.
+
+        **Step 8 — a restart on another port:**
+
+        ```text
+        $ PORT=7321 node tiny-server.mjs
+        Tiny server listening on http://127.0.0.1:7321
+        Stop it with Ctrl+C.
+        ```
+
+        and from the second terminal `curl -sS http://127.0.0.1:7321/health` → `{"ok":true}`.
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1", en: "checked with v25.2.1" } }
+      - { name: "curl", version: "8.7.1", note: { uk: "є в macOS, Linux і Windows 10/11 (у PowerShell — `curl.exe`)", en: "ships with macOS, Linux and Windows 10/11 (in PowerShell: `curl.exe`)" } }
+      - { name: { uk: "Браузер", en: "A browser" }, note: { uk: "будь-який", en: "any" } }
+    steps:
+      - text:
+          uk: "Створи теку для сервера й перейди в неї."
+          en: "Create a folder for the server and go into it."
+        command: "mkdir -p ~/js-course/no03-server\ncd ~/js-course/no03-server"
+      - text:
+          uk: "Створи в цій теці файл `tiny-server.mjs` у VS Code і встав у нього весь вміст вкладки `tiny-server.mjs` з прикладу «tiny-server.mjs — сервер, який ти запустиш у терміналі» (клацни в код, виділи все й скопіюй). Збережи файл."
+          en: "Create the file `tiny-server.mjs` in this folder in VS Code and paste into it the whole content of the `tiny-server.mjs` tab from the example “tiny-server.mjs — the server you will run in a terminal” (click into the code, select all and copy). Save the file."
+        expect:
+          uk: "Файл починається з коментаря `// A tiny wishlist server for your own terminal.` і закінчується обробником `SIGINT`."
+          en: "The file starts with the comment `// A tiny wishlist server for your own terminal.` and ends with the `SIGINT` handler."
+      - text:
+          uk: "Запусти сервер. Термінал лишається зайнятим, доки сервер працює."
+          en: "Start the server. The terminal stays busy while the server runs."
+        command: "node tiny-server.mjs"
+        expect:
+          uk: "Два рядки з кроку 3 вступу: адреса `http://127.0.0.1:7320` і нагадування про Ctrl+C."
+          en: "The two lines from step 3 of the introduction: the address `http://127.0.0.1:7320` and the Ctrl+C reminder."
+      - text:
+          uk: "Відкрий **другий** термінал і надішли три запити з `-i`: цей прапорець показує рядок статусу й заголовки перед тілом."
+          en: "Open a **second** terminal and send three requests with `-i`: this flag shows the status line and the headers before the body."
+        command: "curl -i http://127.0.0.1:7320/records\ncurl -i http://127.0.0.1:7320/records/w-99\ncurl -i -X DELETE http://127.0.0.1:7320/records/w-02"
+        expect:
+          uk: "Як у кроці 4 вступу: `200 OK` зі списком, `404 Not Found` і `405 Method Not Allowed` із заголовком `allow: GET`. Бажання — тією мовою, у якій ти читав урок, коли копіював файл."
+          en: "As in step 4 of the introduction: `200 OK` with the list, `404 Not Found` and `405 Method Not Allowed` with the header `allow: GET`. The wishes are in the language you read the lesson in when you copied the file."
+      - text:
+          uk: "Відкрий у браузері адресу `http://127.0.0.1:7320/records/w-02`."
+          en: "Open the address `http://127.0.0.1:7320/records/w-02` in a browser."
+        expect:
+          uk: "Браузер показує JSON одного бажання (як саме — сирим текстом чи гарно відформатованим — залежить від браузера), а в першому терміналі з’являється рядок `GET /records/w-02 → 200`. Браузер може надіслати ще й запит `/favicon.ico` — тоді поруч буде рядок із `404`."
+          en: "The browser shows the JSON of one wish (whether as raw text or nicely formatted depends on the browser), and the first terminal shows the line `GET /records/w-02 → 200`. The browser may also request `/favicon.ico` — then a line with `404` appears next to it."
+      - text:
+          uk: "Не зупиняючи першу копію, запусти в другому терміналі ще одну."
+          en: "Without stopping the first copy, start one more in the second terminal."
+        command: "cd ~/js-course/no03-server\nnode tiny-server.mjs"
+        expect:
+          uk: "Друга копія одразу завершується з `Error: listen EADDRINUSE: address already in use 127.0.0.1:7320`, як у кроці 6 вступу; перша працює далі."
+          en: "The second copy ends at once with `Error: listen EADDRINUSE: address already in use 127.0.0.1:7320`, as in step 6 of the introduction; the first keeps working."
+      - text:
+          uk: "Зупини першу копію: у першому терміналі натисни Ctrl+C. Потім у другому повтори запит."
+          en: "Stop the first copy: press Ctrl+C in the first terminal. Then repeat a request in the second one."
+        command: "curl -sS http://127.0.0.1:7320/health"
+        expect:
+          uk: "Перший термінал написав `SIGINT received: closing the server…` і `Server closed. Bye.` (перед ними термінал може показати `^C`), а `curl` — `Failed to connect`: сервера більше немає."
+          en: "The first terminal printed `SIGINT received: closing the server…` and `Server closed. Bye.` (the terminal may show `^C` before them), and `curl` says `Failed to connect`: the server is gone."
+      - text:
+          uk: "Перезапусти сервер у першому терміналі на порту 7321 і перевір його з другого. Адреса тепер інша, тож і браузер відкривай уже з портом 7321."
+          en: "Restart the server in the first terminal on port 7321 and check it from the second. The address is different now, so open it in the browser with port 7321 too."
+        command: "PORT=7321 node tiny-server.mjs"
+        expect:
+          uk: "`Tiny server listening on http://127.0.0.1:7321`, а `curl -sS http://127.0.0.1:7321/health` у другому терміналі відповідає `{\"ok\":true}`. Наостанок зупини сервер Ctrl+C."
+          en: "`Tiny server listening on http://127.0.0.1:7321`, and `curl -sS http://127.0.0.1:7321/health` in the second terminal answers `{\"ok\":true}`. Finally stop the server with Ctrl+C."
+    verify:
+      - id: requests-read
+        text:
+          uk: "Я запустив сервер, отримав через `curl -i` відповіді `200`, `404` і `405` і бачу в кожній рядок статусу, заголовки й тіло."
+          en: "I started the server, got `200`, `404` and `405` answers through `curl -i` and can see the status line, the headers and the body in each."
+      - id: browser-request
+        text:
+          uk: "Браузер показав JSON бажання, а журнал сервера — рядок для цього запиту."
+          en: "The browser showed the wish’s JSON, and the server’s log showed a line for that request."
+      - id: busy-port
+        text:
+          uk: "Друга копія на тому самому порту впала з `EADDRINUSE`, а перша продовжила працювати."
+          en: "A second copy on the same port crashed with `EADDRINUSE`, while the first kept working."
+      - id: clean-stop
+        text:
+          uk: "Після Ctrl+C сервер написав `Server closed. Bye.`, а `curl` більше не зміг підключитися."
+          en: "After Ctrl+C the server printed `Server closed. Bye.`, and `curl` could no longer connect."
+      - id: restarted
+        text:
+          uk: "Сервер, перезапущений з `PORT=7321`, відповів `{\"ok\":true}` на `/health`."
+          en: "The server restarted with `PORT=7321` answered `{\"ok\":true}` on `/health`."
+    troubleshooting:
+      - problem:
+          uk: "Уже перша копія падає з `EADDRINUSE` на порту 7320"
+          en: "Already the first copy crashes with `EADDRINUSE` on port 7320"
+        fix:
+          uk: "Порт зайняв інший процес — можливо, сервер, який ти запускав раніше й не зупинив. Знайди термінал, де він працює, і натисни там Ctrl+C, або просто запусти на іншому порту: `PORT=7322 node tiny-server.mjs`."
+          en: "Another process holds the port — perhaps a server you started earlier and did not stop. Find the terminal it runs in and press Ctrl+C there, or simply start on another port: `PORT=7322 node tiny-server.mjs`."
+      - problem:
+          uk: "Одразу після запуску `SyntaxError` з номером рядка у файлі `tiny-server.mjs`"
+          en: "Right after starting, a `SyntaxError` with a line number in `tiny-server.mjs`"
+        fix:
+          uk: "Найчастіше файл скопійовано не повністю. Відкрий вкладку `tiny-server.mjs` у прикладі ще раз, виділи все й заміни вміст файлу."
+          en: "Most often the file was not copied completely. Open the `tiny-server.mjs` tab in the example again, select all and replace the file’s content."
+      - problem:
+          uk: "Після Ctrl+C у терміналі немає рядка `Server closed. Bye.`, а з’явився запрошувальний рядок shell"
+          en: "After Ctrl+C the terminal shows no `Server closed. Bye.` line, just the shell prompt"
+        fix:
+          uk: "Мабуть, у файлі немає обробника `process.on(\"SIGINT\", …)` — тоді Node завершується одразу, без прибирання. Перевір кінець файлу й порівняй його з прикладом."
+          en: "The file probably has no `process.on(\"SIGINT\", …)` handler — then Node exits at once, without cleaning up. Check the end of the file and compare it with the example."
+      - problem:
+          uk: "У Windows PowerShell команда `PORT=7321 node tiny-server.mjs` не працює"
+          en: "In Windows PowerShell the command `PORT=7321 node tiny-server.mjs` does not work"
+        fix:
+          uk: "Запис `PORT=7321 команда` — синтаксис shell у macOS і Linux. У PowerShell задай змінну окремо: `$env:PORT=7321; node tiny-server.mjs` (під час підготовки уроку Windows не перевіряли)."
+          en: "`PORT=7321 command` is shell syntax on macOS and Linux. In PowerShell set the variable separately: `$env:PORT=7321; node tiny-server.mjs` (Windows was not checked while preparing this lesson)."
+    recovery:
+      uk: "Сервер нічого не записує на диск: Ctrl+C і новий запуск повертають його до початкового стану. Якщо файл зіпсувався, заміни весь його вміст файлом з прикладу. Якщо загубив термінал із запущеним сервером, просто бери інший порт через `PORT`."
+      en: "The server writes nothing to disk: Ctrl+C and a new start return it to its initial state. If the file got damaged, replace its whole content with the file from the example. If you lost the terminal with the running server, simply take another port through `PORT`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-03
+    body:
+      uk: "Сервер твого проєкту запускатиметься так само — у терміналі, з портом із конфігурації й обробником `SIGINT`, — а перевірятимеш ти його тими самими `curl -i`, зупинкою й перезапуском."
+      en: "Your project’s server will start the same way — in a terminal, with a port from the configuration and a `SIGINT` handler — and you will check it with the same `curl -i`, stop and restart."
