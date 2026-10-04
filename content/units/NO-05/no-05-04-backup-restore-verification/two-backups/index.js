@@ -34,7 +34,7 @@ console.log(`%%source%%: ${JSON.stringify(committed)}`);
 
 // Backup 1: SQLite's online backup API from a second connection — a consistent snapshot.
 // sqlite.backup() exists from Node 22.16; VACUUM INTO does the same in your own terminal, but the
-// course runner refuses it (it could write a file outside the exercise folder).
+// course runner refuses it (it can open a file outside the exercise folder).
 const names = ['naive-copy'];
 if (typeof sqlite.backup === 'function') {
   const backupConnection = new DatabaseSync('data/expenses.db');
