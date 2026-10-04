@@ -1,0 +1,16 @@
+# Performance: one measured fix
+
+How it was measured: `npm start`, then `http://127.0.0.1:4310/?synthetic=2000&profile#/items` in Chrome.
+`?synthetic=2000` makes the fixture API answer with 2000 generated wishes kept only in memory;
+`?profile` makes the `<Profiler id="list">` around the list print `profile list <phase> <ms>` in the
+Console after every commit. React is the development build, so the numbers are larger than in
+production; what matters is before against after on the same computer.
+
+| What | Before | After |
+|---|---|---|
+| The list mounts with all 2000 wishes | 174.6 ms | 13.5 ms |
+| The filter goes back from "wanted" to "all" | 138.6 ms | 11.1 ms |
+
+The cause: the list rendered a card for every record at once. The fix: the list shows 50 cards and a
+"Show more" button adds the next 50 (focus moves to the first new card); a filter change starts from
+the first page. No `memo`, `useMemo` or `useCallback` was added: nothing else was measured as slow.
