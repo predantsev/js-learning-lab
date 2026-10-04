@@ -586,11 +586,14 @@
   // Two macrotask turns let event handlers, promise chains and framework schedulers flush.
   // (No requestAnimationFrame here: browsers pause it in frames that are not on screen.)
   const settle = async () => { await new Promise((r) => nativeSetTimeout(r, 0)); await new Promise((r) => nativeSetTimeout(r, 4)); };
+  // Retries until the callback returns a truthy value (which it resolves with) or the timeout ends.
+  // A falsy result — false, null (an element query that found nothing), undefined, 0, '' — or a
+  // throw keeps waiting; after the timeout the last error (or "the condition stayed false") is thrown.
   async function waitFor(check, { timeout = 1500, interval = 25 } = {}) {
     const start = performance.now();
     let lastError;
     for (;;) {
-      try { const v = await check(); if (v !== false) return v; lastError = new AssertionError('waitFor: the condition stayed false', {}); } catch (e) { lastError = e; }
+      try { const v = await check(); if (v) return v; lastError = new AssertionError(`waitFor: the condition stayed false (last value: ${v === '' ? '""' : String(v)})`, {}); } catch (e) { lastError = e; }
       if (performance.now() - start > timeout) throw lastError;
       await sleep(interval);
     }

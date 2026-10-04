@@ -176,6 +176,17 @@ test('project files are served to fetch() without any network', async () => {
   assert.deepEqual(logs(xml), ['application/xml; charset=utf-8 network-security-config']);
 });
 
+test('waitFor keeps waiting while the condition is falsy (false, null, undefined, 0) and resolves with the first truthy value', async () => {
+  const source = [
+    'test("null from a query keeps waiting", async () => { setTimeout(() => document.body.append(Object.assign(document.createElement("button"), { textContent: "Late" })), 150); const b = await waitFor(() => screen.byRole("button")); expect(b).toHaveTextContent("Late"); });',
+    'test("undefined and 0 keep waiting", async () => { const list = []; setTimeout(() => list.push("a"), 100); expect(await waitFor(() => list[0])).toBe("a"); expect(await waitFor(() => list.length)).toBe(1); });',
+    'test("a condition that stays falsy fails with its last value", async () => { await waitFor(() => null, { timeout: 100 }); });',
+  ].join('\n');
+  const r = await run({ files: { 'index.js': '' }, tests: { path: '__tests__.js', source } });
+  assert.deepEqual(r.tests.map((t) => t.status), ['pass', 'pass', 'fail']);
+  assert.match(r.tests[2].message, /waitFor: the condition stayed false \(last value: null\)/);
+});
+
 test('learner code cannot reach the platform page, its storage or the API', async () => {
   await page.evaluate(() => localStorage.setItem('platform-probe', 'secret'));
   const probe = (expr) => `(() => { try { return "reached:" + (${expr}); } catch (e) { return "denied:" + e.name; } })()`;

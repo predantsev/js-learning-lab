@@ -197,9 +197,10 @@ export async function waitFor(check, { timeout = 1500, interval = 25 } = {}) {
   let lastError;
   for (;;) {
     try {
+      // Same contract as the browser runner: a truthy value ends the wait; a falsy one or a throw retries.
       const v = await check();
-      if (v !== false) return v;
-      lastError = new AssertionError('waitFor: the condition stayed false', {});
+      if (v) return v;
+      lastError = new AssertionError(`waitFor: the condition stayed false (last value: ${v === '' ? '""' : String(v)})`, {});
     } catch (e) {
       lastError = e;
     }
