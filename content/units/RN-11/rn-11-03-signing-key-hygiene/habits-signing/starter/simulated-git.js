@@ -1,6 +1,7 @@
 // SIMULATION for the preview only (read-only). It stands in for `git check-ignore` / `git status`
 // and for a secret scanner. It understands only the .gitignore forms used here:
-// `/dir` (from the root), `dir/` (a folder anywhere), `*.ext`-style globs and plain names.
+// `/dir` and `dir/sub/` or `dir/file` (a slash at the start or in the middle: from the root),
+// `dir/` (a folder anywhere), `*.ext`-style globs and plain names.
 // Real Git has more rules (negation with !, ** and others).
 
 function globToRegExp(glob) {
@@ -10,11 +11,12 @@ function globToRegExp(glob) {
 
 function matches(pattern, path) {
   const parts = path.split('/');
-  if (pattern.startsWith('/')) {
-    const anchored = pattern.slice(1).replace(/\/$/, '');
-    return path === anchored || path.startsWith(`${anchored}/`);
+  const folderOnly = pattern.endsWith('/');
+  const body = pattern.replace(/^\//, '').replace(/\/$/, '');
+  if (pattern.startsWith('/') || body.includes('/')) {
+    return path.startsWith(`${body}/`) || (!folderOnly && path === body);
   }
-  if (pattern.endsWith('/')) return parts.slice(0, -1).includes(pattern.slice(0, -1));
+  if (folderOnly) return parts.slice(0, -1).includes(body);
   const re = globToRegExp(pattern);
   return parts.some((part) => re.test(part));
 }

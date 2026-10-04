@@ -3,13 +3,13 @@ const id = 'com.example.jsll.planner';
 
 export const first = {
   version: '1.0.0',
-  android: { package: id, versionCode: 1 },
-  ios: { bundleIdentifier: id, buildNumber: '1' },
+  android: { package: id, versionCode: 3 },
+  ios: { bundleIdentifier: id, buildNumber: '3' },
 };
 
 export const second = {
   ...first,
-  version: '1.1.0',
+  version: '1.0.1',
   android: { ...first.android, versionCode: first.android.versionCode + 1 },
   ios: { ...first.ios, buildNumber: String(Number(first.ios.buildNumber) + 1) },
 };

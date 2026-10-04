@@ -1,14 +1,14 @@
 // Misconception: "the version people see decides what is newer" — only the version changed.
 export const first = {
   version: '1.0.0',
-  android: { package: 'com.example.jsll.planner', versionCode: 1 },
-  ios: { bundleIdentifier: 'com.example.jsll.planner', buildNumber: '1' },
+  android: { package: 'com.example.jsll.planner', versionCode: 3 },
+  ios: { bundleIdentifier: 'com.example.jsll.planner', buildNumber: '3' },
 };
 
 export const second = {
-  version: '1.1.0',
-  android: { package: 'com.example.jsll.planner', versionCode: 1 },
-  ios: { bundleIdentifier: 'com.example.jsll.planner', buildNumber: '1' },
+  version: '1.0.1',
+  android: { package: 'com.example.jsll.planner', versionCode: 3 },
+  ios: { bundleIdentifier: 'com.example.jsll.planner', buildNumber: '3' },
 };
 
 export const rules = {
