@@ -1,0 +1,541 @@
+id: no-08-05-troubleshoot-explain
+unit: NO-08
+title:
+  uk: "Діагностика й пояснення компромісів"
+  en: "Troubleshoot and explain tradeoffs"
+kind: local-task
+minutes: 25
+contentVersion: 1
+purpose:
+  uk: "Працюючий сервер ламається не так, як у вправі: приходить скарга людини, а не тест, що впав. Тут ти розбираєш дві скарги на запущеному лабораторному сервері за логом із request id, метриками й runbook, записуючи кожен крок, а потім своїми словами пояснюєш три компроміси своєї інтеграції — з доказами й умовою, за якої обрав би інакше."
+  en: "A running server breaks differently from an exercise: what arrives is a person’s complaint, not a failing test. Here you work through two complaints on a running lab server using the log with request ids, the metrics and the runbook, recording every step, and then explain three tradeoffs of your integration in your own words — with evidence and a condition under which you would choose differently."
+objectives:
+  - uk: "Розібрати два повідомлені симптоми на запущеному лабораторному сервері за логами, метриками й runbook, записуючи кожен крок."
+    en: "Troubleshoot two reported symptoms on a running lab server from logs, metrics and the runbook, recording every step."
+  - uk: "Своїми словами пояснити три компроміси своєї інтеграції (вибір сховища, політика кешу, політика помилок і повторів) і коли обрав би інакше."
+    en: "Explain in your own words three trade-offs in your integration (storage choice, cache policy, error and retry policy) and when you would choose differently."
+prerequisites: [no-08-04-debug-no-hint-defect]
+subskills:
+  - { family: B-13, skill: "requirements/tradeoffs", depth: assess }
+glossary: []
+selfCheck: [which-side]
+
+blocks:
+  - id: evidence-first
+    kind: explanation
+    title:
+      uk: "Від скарги до причини — через докази"
+      en: "From a complaint to a cause — through evidence"
+    body:
+      uk: |
+        Скарга каже, що людина **побачила**, а не що зламалося: «список відкривається вічність», «мою витрату не зберігає». Здогадка («мабуть, повільний диск») — найдорожчий початок. Починай із доказів, у такому порядку:
+
+        1. **Request id** — мітка запиту, яку сервер повертає в заголовку `x-request-id` і пише в рядок логу. Вона пов’язує скаргу з **одним** рядком логу.
+        2. **Рядок логу** — що саме сталося із цим запитом: статус, час (`ms`), помилка, скільки разів прочитано файл (`reads`).
+        3. **Метрики** (`GET /metrics`) — порівняння з рештою: один маршрут повільний, а інші швидкі? Тоді причина в коді цього маршруту, а не в машині.
+        4. **Runbook** — порядок кроків для відомих симптомів, щоб нічого не пропустити й не змінити нічого раніше, ніж подивився.
+
+        Кожен крок записуй: що запустив, що побачив, що це означає. Такий запис потім читає той, хто перевіряє твоє виправлення.
+      en: |
+        A complaint says what a person **saw**, not what broke: “the list takes ages to open”, “it does not save my expense”. A guess (“the disk must be slow”) is the most expensive start. Start from evidence, in this order:
+
+        1. **The request id** — a label of the request that the server returns in the `x-request-id` header and writes into the log line. It ties the complaint to **one** log line.
+        2. **The log line** — what exactly happened to this request: the status, the time (`ms`), the error, how many times the file was read (`reads`).
+        3. **The metrics** (`GET /metrics`) — a comparison with everything else: one route slow and the others fast? Then the cause is in that route’s code, not in the machine.
+        4. **The runbook** — the order of steps for known symptoms, so that you skip nothing and change nothing before you have looked.
+
+        Record every step: what you ran, what you saw, what it means. Whoever checks your fix reads that record later.
+
+  - id: which-side
+    kind: prediction
+    prompt:
+      uk: "Скарга: «Витрату на паркування 12.50 не зберігає». Рядок логу з request id цього запиту: `\"method\":\"POST\",\"route\":\"/expenses\",\"error\":{\"amountMinor\":\"notInteger\"},\"status\":400`. Контракт API: `amountMinor` — ціле число копійок, більше за 0. Сторінка надіслала `\"amountMinor\": 12.5`. Де виправлення?"
+      en: "A complaint: “My parking expense of 12.50 is not saved”. The log line with this request’s id: `\"method\":\"POST\",\"route\":\"/expenses\",\"error\":{\"amountMinor\":\"notInteger\"},\"status\":400`. The API contract: `amountMinor` is a whole number of minor units, greater than 0. The page sent `\"amountMinor\": 12.5`. Where is the fix?"
+    answer:
+      type: choice
+      options:
+        - id: client
+          text:
+            uk: "У клієнті: перед надсиланням перевести 12.50 у 1250 копійок"
+            en: "In the client: turn 12.50 into 1250 minor units before sending"
+        - id: server-accept
+          text:
+            uk: "На сервері: дозволити дробові `amountMinor`, щоб людина не бачила помилки"
+            en: "On the server: allow fractional `amountMinor`, so the person sees no error"
+          why:
+            uk: "Сервер застосовує контракт правильно. Послаблене правило зберегло б 12.5 «копійок» — у сто разів меншу суму, — а суми за категоріями перестали б бути точними цілими числами."
+            en: "The server applies the contract correctly. A looser rule would store 12.5 “minor units” — an amount a hundred times smaller — and the category totals would stop being exact whole numbers."
+        - id: server-round
+          text:
+            uk: "На сервері: округлювати `amountMinor` до цілого"
+            en: "On the server: round `amountMinor` to a whole number"
+          why:
+            uk: "Округлення дало б 13 копійок замість 1250: помилка одиниць не зникла б, а стала б тихою. Сервер не знає, що клієнт мав на увазі гривні."
+            en: "Rounding would give 13 minor units instead of 1250: the unit mistake would not go away, it would become silent. The server cannot know the client meant the main unit."
+        - id: network
+          text:
+            uk: "У мережі: запит пошкодився дорогою, треба повторити"
+            en: "In the network: the request was damaged on the way, it needs a retry"
+          why:
+            uk: "Рядок логу показує, що сервер отримав і розібрав тіло, а помилка називає конкретне правило. Повтор надіслав би те саме `12.5` і отримав би той самий `400`."
+            en: "The log line shows the server received and parsed the body, and the error names a specific rule. A retry would send the same `12.5` and get the same `400`."
+      correct: [client]
+    explanation:
+      uk: "Коли сервер правильно застосовує контракт, порушує його клієнт — і виправлення там. Суми в `amountMinor` лишаються цілими на всьому шляху: сторінка переводить введене в копійки один раз, сервер перевіряє, сховище й підсумки працюють із цілими. Помилку `400` теж не треба повторювати: вона не мине сама."
+      en: "When the server applies the contract correctly, the client is the one breaking it — and the fix is there. Amounts in `amountMinor` stay integers end to end: the page turns the input into minor units once, the server checks, the storage and the totals work with integers. A `400` is not worth retrying either: it will not go away by itself."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: порівняй маршрути"
+      en: "Recall: compare the routes"
+    items:
+      - id: one-route-slow
+        from: no-03-06-debug-hanging-request
+        prompt:
+          uk: "`GET /expenses` відповідає за 400 мс, а `GET /expenses/e-01` і `POST /expenses` того самого сервера — за кілька мілісекунд. Що це каже?"
+          en: "`GET /expenses` answers in 400 ms, while `GET /expenses/e-01` and `POST /expenses` of the same server answer in a few milliseconds. What does that tell you?"
+        answer:
+          type: choice
+          options:
+            - id: one-branch
+              text:
+                uk: "Причина — у коді саме маршруту списку: сервер загалом не перевантажений"
+                en: "The cause is in the list route’s own code: the server as a whole is not overloaded"
+            - id: overloaded
+              text:
+                uk: "Сервер перевантажений: треба потужніший комп’ютер"
+                en: "The server is overloaded: it needs a more powerful computer"
+              why:
+                uk: "Перевантажений сервер сповільнив би всі маршрути. Коли інші відповідають миттєво, повільна одна гілка коду."
+                en: "An overloaded server would slow every route down. When the others answer at once, one code path is slow."
+            - id: network-slow
+              text:
+                uk: "Повільна мережа між клієнтом і сервером"
+                en: "A slow network between the client and the server"
+              why:
+                uk: "Мережа та сама для всіх запитів до цього сервера, а час у рядку логу сервер міряє сам — від отримання запиту до відповіді."
+                en: "The network is the same for every request to this server, and the time in the log line is measured by the server itself — from receiving the request to answering it."
+          correct: [one-branch]
+        explanation:
+          uk: "Так само, як із запитом, що зависав, порівняй запити. Якщо інші маршрути того самого сервера швидкі, шукай у гілці, яку обрав саме цей запит, — тут допоможуть `reads` у рядку логу."
+          en: "As with the request that hung: compare requests. If the other routes of the same server are fast, look in the branch this particular request took — the `reads` in the log line help here."
+
+  - id: support-lab
+    kind: example
+    runtime: isolated-node
+    dir: support-lab
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      parking: { uk: "Паркування", en: "Parking" }
+      items: { uk: "записів", en: "records" }
+      runbookDoc:
+        uk: |
+          # Лабораторія витрат — runbook
+
+          Кожен запис: симптом так, як про нього повідомляють, а далі кроки по черзі. Спершу дивись, потім змінюй; записуй кожну команду й те, що вона показала.
+
+          ## Запит повільний
+
+          1. Візьми request id: заголовок `x-request-id` повільної відповіді (клієнт його друкує) або час скарги.
+          2. Знайди його рядок логу: `grep <request-id> server.log`. Запиши `ms` і `reads`.
+          3. Порівняй з іншими маршрутами: `GET /metrics` дає `count`, `maxMs` і `statuses` для кожного. Один маршрут повільний, інші швидкі — причина в коді цього маршруту, а не в машині.
+          4. Порівняй `reads` із тим, скільки маршрутові треба. Один список — одне читання файла.
+          5. Після виправлення — той самий запит, той самий рядок логу, той самий запис метрик. Запиши «до» і «після».
+
+          ## Збереження відхилено
+
+          1. Візьми request id і знайди його рядок логу, як вище. Запиши `status` і `error`.
+          2. `400` з `VALIDATION_FAILED`: сервер відмовився від тіла. Прочитай `fields`: яке поле порушило яке правило контракту. Порівняй із тим, що клієнт справді надіслав.
+          3. Виріши, яка сторона порушує контракт. Контракт важливіший: якщо сервер застосовує його правильно, виправлення належить клієнтові, а не м’якшому правилу на сервері.
+          4. `500`: дефект сервера — поле `error` у рядку логу його називає. Не повторюй запит наосліп.
+
+          ## Дані зникли після перезапуску
+
+          1. `GET /expenses` і порівняй з останнім підсумком, записаним до перезапуску.
+          2. Прочитай рядки логу потрібних записів: чи отримали вони `201`?
+          3. Лише тоді думай про відновлення з backup — і перевір backup, перш ніж відновлювати.
+        en: |
+          # Expense lab — runbook
+
+          Each entry: the symptom as people report it, then the steps in order. Look before you change anything; write down every command you ran and what it showed.
+
+          ## A request is slow
+
+          1. Get the request id: the `x-request-id` header of the slow answer (the client prints it), or the time of the report.
+          2. Find its log line: `grep <request-id> server.log`. Note `ms` and `reads`.
+          3. Compare with the other routes: `GET /metrics` gives `count`, `maxMs` and `statuses` per route. One slow route, others fast → the cause is in that route’s code, not in the machine.
+          4. Compare `reads` with what the route should need. One list = one read of the file.
+          5. After a fix: the same request again, the same log line, the same metrics entry. Record before and after.
+
+          ## A save is rejected
+
+          1. Get the request id and find its log line, as above. Note `status` and `error`.
+          2. `400` with `VALIDATION_FAILED`: the server refused the body. Read `fields`: which field broke which rule of the contract. Compare with what the client actually sent.
+          3. Decide which side breaks the contract. The contract wins: if the server applies it correctly, the fix belongs to the client, not to a looser server rule.
+          4. `500`: a server defect — the log line’s `error` names it. Do not retry blindly.
+
+          ## Data missing after a restart
+
+          1. `GET /expenses` and compare with the last summary you recorded before the restart.
+          2. Read the log lines of the writes in question: did they get `201`?
+          3. Only then think about restoring a backup — and verify the backup before restoring it.
+      ticketsDoc:
+        uk: |
+          # Скарги підтримки
+
+          ## Скарга 1 — «Список витрат відкривається вічність»
+
+          | # | Що я запустив | Що побачив | Що це означає |
+          |---|---|---|---|
+          | 1 | | | |
+
+          Причина:
+
+          Виправлення й докази (до → після):
+
+          ## Скарга 2 — «Мою витрату на паркування 12.50 не зберігає»
+
+          | # | Що я запустив | Що побачив | Що це означає |
+          |---|---|---|---|
+          | 1 | | | |
+
+          Причина:
+
+          Виправлення й докази (до → після):
+        en: |
+          # Support tickets
+
+          ## Ticket 1 — “The expense list takes ages to open”
+
+          | # | What I ran | What I saw | What it means |
+          |---|---|---|---|
+          | 1 | | | |
+
+          Cause:
+
+          Fix and evidence (before → after):
+
+          ## Ticket 2 — “My parking expense of 12.50 is not saved”
+
+          | # | What I ran | What I saw | What it means |
+          |---|---|---|---|
+          | 1 | | | |
+
+          Cause:
+
+          Fix and evidence (before → after):
+      tradeoffsDoc:
+        uk: |
+          # Компроміси моєї інтеграції
+
+          Для кожного рішення: що я обрав, від чого відмовився, на чому тримається вибір (вимір, рядок логу, перевірка) і одна умова, за якої я обрав би інакше.
+
+          ## 1. Сховище
+
+          - Обрав:
+          - Не обрав:
+          - Докази:
+          - Обрав би інакше, якби:
+
+          ## 2. Політика кешу
+
+          - Обрав:
+          - Не обрав:
+          - Докази:
+          - Обрав би інакше, якби:
+
+          ## 3. Помилки й повтори
+
+          - Обрав:
+          - Не обрав:
+          - Докази:
+          - Обрав би інакше, якби:
+        en: |
+          # Tradeoffs in my integration
+
+          For each decision: what I chose, the option I did not choose, the evidence behind the choice (a measurement, a log line, a check), and one condition under which I would choose differently.
+
+          ## 1. Storage
+
+          - Chosen:
+          - Not chosen:
+          - Evidence:
+          - I would choose differently if:
+
+          ## 2. Cache policy
+
+          - Chosen:
+          - Not chosen:
+          - Evidence:
+          - I would choose differently if:
+
+          ## 3. Errors and retries
+
+          - Chosen:
+          - Not chosen:
+          - Evidence:
+          - I would choose differently if:
+    title:
+      uk: "Лабораторія підтримки"
+      en: "The support lab"
+    body:
+      uk: |
+        Лабораторний сервер трекера витрат — окремий проєкт, не твій. У ньому 1206 витрат (шість фікстур і згенерований рік), а кожен запит отримує request id і один рядок логу у форматі JSON:
+
+        - `app.js` — API: `GET /expenses`, `GET /expenses/:id`, `POST /expenses` і `GET /metrics`;
+        - `repo.js` — репозиторій над JSON-файлом; рахує читання файла (`reads`);
+        - `client-adapter.js` — адаптер, яким сторінка зберігає витрату;
+        - `server.mjs` — сервер для твого терміналу на `127.0.0.1:7341`, лог іде і в термінал, і в `server.log`;
+        - `support-client.mjs` — дві скарги як справжні запити (`list`, `save`) і `metrics`;
+        - `RUNBOOK.md`, `TICKETS.md`, `TRADEOFFS.md` — runbook і два шаблони для твоїх записів.
+
+        **Запустити** відтворює обидві скарги в одному процесі: подивись на рядки `server:` — у них уже є все, що знадобиться в локальному завданні.
+      en: |
+        The expense tracker’s lab server is a separate project, not yours. It holds 1206 expenses (six fixtures and a generated year), and every request gets a request id and one log line in JSON:
+
+        - `app.js` — the API: `GET /expenses`, `GET /expenses/:id`, `POST /expenses` and `GET /metrics`;
+        - `repo.js` — the repository over a JSON file; it counts file reads (`reads`);
+        - `client-adapter.js` — the adapter the page saves an expense with;
+        - `server.mjs` — the server for your terminal on `127.0.0.1:7341`; the log goes both to the terminal and to `server.log`;
+        - `support-client.mjs` — the two complaints as real requests (`list`, `save`) and `metrics`;
+        - `RUNBOOK.md`, `TICKETS.md`, `TRADEOFFS.md` — the runbook and two templates for your records.
+
+        **Run** replays both complaints in one process: look at the `server:` lines — they already hold everything the local task needs.
+    tryIt:
+      uk: "Знайди в рядку логу `t1-list` поля `ms` і `reads` і порівняй `reads` із кількістю записів у відповіді. Потім знайди рядок `t2-save` і прочитай його `error`: яке поле й яке правило?"
+      en: "In the `t1-list` log line find the fields `ms` and `reads` and compare `reads` with the number of records in the answer. Then find the `t2-save` line and read its `error`: which field and which rule?"
+
+  - id: two-tickets
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Дві скарги на запущеному сервері"
+      en: "Two complaints on a running server"
+    intro:
+      uk: |
+        Потрібні Node.js, Git і два вікна терміналу; npm-пакетів немає. Кроки виконано під час підготовки уроку на macOS з Node.js v25.2.1 і Git 2.51.0, вивід нижче справжній (час, мілісекунди й request id метрик у тебе інші). Відтворення обох скарг повторено з Node.js v20.18.0: `reads` ті самі, а мілісекунди інші. На Node.js 22 (мінімум курсу), у Linux і Windows ми кроків не запускали. У Windows замість `grep` є `findstr t1-list server.log` — цю команду ми теж не запускали.
+
+        **Крок 1 — файли.** Скопіюй у нову теку всі файли прикладу «Лабораторія підтримки» з тими самими назвами — редактор уже показує їх із текстом твоєю мовою.
+
+        **Крок 3 — скарга 1, `list`, `grep` і `metrics` (у нас, до виправлення):**
+
+        ```text
+        GET /expenses → 200, x-request-id t1-list, 1206 записів, 435 ms
+        {"time":"2026-10-04T14:45:27.838Z","requestId":"t1-list","method":"GET","route":"/expenses","status":200,"ms":400,"reads":1207}
+        GET /expenses/e-01 → 200, x-request-id t1-one, 34 ms
+        ```
+
+        і в `metrics` — `"GET /expenses"` з `"maxMs": 400`, а `"GET /expenses/:id"` з `"maxMs": 1`. Час, який друкує клієнт, більший за `ms` сервера: він містить ще й з’єднання. Порівнюй `ms` сервера.
+
+        **Крок 4 — скарга 2, `save` і `grep` (у нас, до виправлення):**
+
+        ```text
+        POST /expenses → 400 {"error":{"code":"VALIDATION_FAILED","fields":{"amountMinor":"notInteger"}}}
+        {"time":"2026-10-04T14:45:28.093Z","requestId":"t2-save","method":"POST","route":"/expenses","error":{"amountMinor":"notInteger"},"status":400,"ms":1,"reads":0}
+        ```
+
+        **Крок 6 — після обох виправлень і перезапуску сервера (у нас):**
+
+        ```text
+        {"time":"2026-10-04T14:45:35.530Z","requestId":"t1-list","method":"GET","route":"/expenses","status":200,"ms":3,"reads":1}
+        {"time":"2026-10-04T14:45:35.619Z","requestId":"t2-save","method":"POST","route":"/expenses","status":201,"ms":2,"reads":1}
+        ```
+
+        Метрики живуть у пам’яті сервера, тож після перезапуску лічильники починаються з нуля — «до» і «після» записуй окремо.
+      en: |
+        You need Node.js, Git and two terminal windows; there are no npm packages. The steps were run while preparing the lesson on macOS with Node.js v25.2.1 and Git 2.51.0; the output below is real (your times, milliseconds and the metrics request ids differ). Reproducing both complaints was repeated with Node.js v20.18.0: the same `reads`, other milliseconds. We did not run the steps on Node.js 22 (the course minimum), Linux or Windows. On Windows `findstr t1-list server.log` replaces `grep` — we did not run that command either.
+
+        **Step 1 — the files.** Copy all the files of the example “The support lab” into a new folder under the same names — the editor already shows them with the text in your language.
+
+        **Step 3 — complaint 1, `list`, `grep` and `metrics` (ours, before the fix):**
+
+        ```text
+        GET /expenses → 200, x-request-id t1-list, 1206 records, 435 ms
+        {"time":"2026-10-04T14:45:27.838Z","requestId":"t1-list","method":"GET","route":"/expenses","status":200,"ms":400,"reads":1207}
+        GET /expenses/e-01 → 200, x-request-id t1-one, 34 ms
+        ```
+
+        and in `metrics` — `"GET /expenses"` with `"maxMs": 400`, while `"GET /expenses/:id"` has `"maxMs": 1`. The time the client prints is larger than the server’s `ms`: it also includes the connection. Compare the server’s `ms`.
+
+        **Step 4 — complaint 2, `save` and `grep` (ours, before the fix):**
+
+        ```text
+        POST /expenses → 400 {"error":{"code":"VALIDATION_FAILED","fields":{"amountMinor":"notInteger"}}}
+        {"time":"2026-10-04T14:45:28.093Z","requestId":"t2-save","method":"POST","route":"/expenses","error":{"amountMinor":"notInteger"},"status":400,"ms":1,"reads":0}
+        ```
+
+        **Step 6 — after both fixes and a server restart (ours):**
+
+        ```text
+        {"time":"2026-10-04T14:45:35.530Z","requestId":"t1-list","method":"GET","route":"/expenses","status":200,"ms":3,"reads":1}
+        {"time":"2026-10-04T14:45:35.619Z","requestId":"t2-save","method":"POST","route":"/expenses","status":201,"ms":2,"reads":1}
+        ```
+
+        The metrics live in the server’s memory, so after a restart the counters start from zero — record “before” and “after” separately.
+    tools:
+      - name: "Node.js"
+        version: { uk: "22.13 або новіший", en: "22.13 or newer" }
+        note:
+          uk: "Мінімум курсу; під час підготовки — v25.2.1 і v20.18.0."
+          en: "The course minimum; v25.2.1 and v20.18.0 while preparing."
+      - name: "Git"
+        version: { uk: "будь-яка сучасна", en: "any current version" }
+        note:
+          uk: "Під час підготовки — 2.51.0."
+          en: "2.51.0 while preparing."
+      - name: { uk: "Два вікна терміналу", en: "Two terminal windows" }
+        note:
+          uk: "У першому працює сервер, у другому — запити й `grep`."
+          en: "The server runs in the first, the requests and `grep` in the second."
+    steps:
+      - text:
+          uk: "Створи теку лабораторії, поклади в неї файли з кроку 1 вступу й зафіксуй їх."
+          en: "Create the lab folder, put the files from step 1 of the introduction into it and commit them."
+        command: "mkdir -p ~/js-course/no-08-support-lab\ncd ~/js-course/no-08-support-lab\ngit init\ngit add -A\ngit commit -m \"Add the NO-08 support lab\""
+        expect:
+          uk: "Commit створено; `git status` каже, що робоче дерево чисте."
+          en: "The commit is created; `git status` says the working tree is clean."
+      - text:
+          uk: "У першому терміналі запусти сервер."
+          en: "In the first terminal start the server."
+        command: "node server.mjs"
+        expect:
+          uk: "`expense lab listening on http://127.0.0.1:7341`; далі сюди йдуть рядки логу. Порт зайнятий — `PORT=7343 node server.mjs`, і тоді `PORT=7343` перед кожною командою в другому терміналі."
+          en: "`expense lab listening on http://127.0.0.1:7341`; the log lines come here next. If the port is taken — `PORT=7343 node server.mjs`, and then `PORT=7343` before every command in the second terminal."
+      - text:
+          uk: "Скарга 1 у другому терміналі, за `RUNBOOK.md` («Запит повільний»): відтвори, знайди рядок логу за request id, порівняй з іншим маршрутом і з метриками. Кожну команду й побачене запиши в `TICKETS.md`."
+          en: "Complaint 1 in the second terminal, following `RUNBOOK.md` (“A request is slow”): reproduce it, find the log line by its request id, compare with another route and with the metrics. Write every command and what you saw into `TICKETS.md`."
+        command: "node support-client.mjs list\ngrep t1-list server.log\nnode support-client.mjs one\nnode support-client.mjs metrics"
+        expect:
+          uk: "Як у кроці 3 вступу: сотні мілісекунд і `reads` на одне більше, ніж записів, у списку — і одна-дві мілісекунди в одного запису. Причина в коді маршруту списку."
+          en: "As in step 3 of the introduction: hundreds of milliseconds and `reads` one more than the number of records for the list — and a millisecond or two for one record. The cause is in the list route’s code."
+      - text:
+          uk: "Скарга 2, за runbook («Збереження відхилено»): відтвори й прочитай рядок логу. Виріши, яка сторона порушує контракт, і запиши в `TICKETS.md`."
+          en: "Complaint 2, following the runbook (“A save is rejected”): reproduce it and read the log line. Decide which side breaks the contract, and write it into `TICKETS.md`."
+        command: "node support-client.mjs save\ngrep t2-save server.log"
+        expect:
+          uk: "`400` з `\"amountMinor\":\"notInteger\"`, як у кроці 4 вступу."
+          en: "`400` with `\"amountMinor\":\"notInteger\"`, as in step 4 of the introduction."
+      - text:
+          uk: "Зупини сервер (Ctrl+C) і виправ обидві причини в тих файлах, де вони є. Переконайся, що змінилося лише потрібне."
+          en: "Stop the server (Ctrl+C) and fix both causes in the files where they are. Make sure only what is needed changed."
+        command: "git diff --stat"
+        expect:
+          uk: "У нас — два файли: `repo.js` (список читає файл один раз) і `client-adapter.js` (сума переводиться в копійки цілим числом). `app.js` не змінено: сервер застосовував контракт правильно."
+          en: "For us — two files: `repo.js` (the list reads the file once) and `client-adapter.js` (the amount is turned into minor units as a whole number). `app.js` is unchanged: the server applied the contract correctly."
+      - text:
+          uk: "Доведи обидва виправлення тими самими командами: знову `node server.mjs` у першому терміналі, потім у другому — команди нижче. Запиши «до → після» в `TICKETS.md`."
+          en: "Prove both fixes with the same commands: `node server.mjs` again in the first terminal, then the commands below in the second. Write “before → after” into `TICKETS.md`."
+        command: "node support-client.mjs list\nnode support-client.mjs save\ngrep -e t1-list -e t2-save server.log\nnode support-client.mjs metrics"
+        expect:
+          uk: "Останні два рядки `grep` — як у кроці 6 вступу: `\"reads\":1` і кілька мілісекунд для списку, `201` для збереження з `amountMinor` 1250. Рядки «до» теж на місці: `server.log` дописується, а не переписується."
+          en: "The last two `grep` lines are as in step 6 of the introduction: `\"reads\":1` and a few milliseconds for the list, `201` for the save with `amountMinor` 1250. The “before” lines are still there: `server.log` is appended to, not rewritten."
+      - text:
+          uk: "Зупини сервер і зафіксуй виправлення разом із `TICKETS.md`."
+          en: "Stop the server and commit the fixes together with `TICKETS.md`."
+        command: "git add -A\ngit commit -m \"Fix the slow expense list and the rejected save\""
+        expect:
+          uk: "Commit створено; `server.log` і файл даних у нього не потрапили (їх виключає `.gitignore`)."
+          en: "The commit is created; `server.log` and the data file are not in it (`.gitignore` leaves them out)."
+    verify:
+      - id: ticket-one
+        text:
+          uk: "Для скарги 1 я знайшов рядок логу за `t1-list`, порівняв маршрути в метриках і записав причину з доказом «до → після» (`reads` і `ms`)."
+          en: "For complaint 1 I found the log line by `t1-list`, compared the routes in the metrics and recorded the cause with “before → after” evidence (`reads` and `ms`)."
+      - id: ticket-two
+        text:
+          uk: "Для скарги 2 я за рядком логу визначив сторону, що порушує контракт, виправив її й побачив `201` із цілим `amountMinor`."
+          en: "For complaint 2 I used the log line to decide which side breaks the contract, fixed it and saw `201` with an integer `amountMinor`."
+      - id: tickets-recorded
+        text:
+          uk: "`TICKETS.md` має кожну команду, побачене й висновок для обох скарг, і все зафіксовано."
+          en: "`TICKETS.md` has every command, what I saw and the conclusion for both complaints, and everything is committed."
+    troubleshooting:
+      - problem:
+          uk: "`grep t1-list server.log` нічого не друкує."
+          en: "`grep t1-list server.log` prints nothing."
+        fix:
+          uk: "Запит не дійшов до цього сервера або `server.log` лежить в іншій теці: сервер пише його в теку, з якої його запустили. Запусти обидва термінали з теки лабораторії й повтори `list`."
+          en: "The request did not reach this server, or `server.log` is in another folder: the server writes it into the folder it was started from. Run both terminals from the lab folder and repeat `list`."
+      - problem:
+          uk: "`node support-client.mjs list` падає з `TypeError: fetch failed`."
+          en: "`node support-client.mjs list` fails with `TypeError: fetch failed`."
+        fix:
+          uk: "Сервер не працює або слухає інший порт. Запусти `node server.mjs` у першому терміналі (з тим самим `PORT`, якщо змінював)."
+          en: "The server is not running or listens on another port. Start `node server.mjs` in the first terminal (with the same `PORT`, if you changed it)."
+      - problem:
+          uk: "Після виправлення `save` досі дає `400` з `\"amountMinor\":\"notInteger\"` для деяких сум."
+          en: "After the fix `save` still gives `400` with `\"amountMinor\":\"notInteger\"` for some amounts."
+        fix:
+          uk: "Переведення в копійки множить суму на 100 і робить її цілим числом. Перевір у терміналі: `node -e 'console.log(0.29 * 100)'` друкує `28.999999999999996` (Node.js v25.2.1) — множення дробових чисел неточне, тож без `Math.round` ціле число виходить не завжди."
+          en: "Turning the amount into minor units multiplies it by 100 and makes it a whole number. Check it in the terminal: `node -e 'console.log(0.29 * 100)'` prints `28.999999999999996` (Node.js v25.2.1) — multiplying fractional numbers is inexact, so without `Math.round` a whole number does not always come out."
+    recovery:
+      uk: "Перший commit тримає лабораторію такою, як її отримано: `git diff` показує саме твої виправлення, а `git checkout HEAD -- <файл>` повертає останню зафіксовану версію. `node server.mjs --fresh` записує дані лабораторії заново."
+      en: "The first commit holds the lab as you received it: `git diff` shows exactly your fixes, and `git checkout HEAD -- <file>` brings back the last committed version. `node server.mjs --fresh` writes the lab data again."
+
+  - id: explain-tradeoffs
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Поясни три компроміси"
+      en: "Explain three tradeoffs"
+    intro:
+      uk: |
+        Тепер не лабораторія, а твої рішення. Заповни `TRADEOFFS.md` з прикладу «Лабораторія підтримки» — три рішення: **сховище**, **політика кешу** й **помилки та повтори**. Пиши про свій проєкт, якщо ти вже пройшов його крок CP-NO; крок проєкту цього розділу ще не написано, тож якщо проєкту на сервері в тебе ще немає, пиши про лабораторії цього розділу (план списку бажань, лабораторія звичок, лабораторія витрат).
+
+        Для кожного рішення — чотири рядки шаблону: що обрав, від чого відмовився, **доказ** (вимір, рядок логу, перевірка, яку ти сам запускав) і **одна умова**, за якої обрав би інакше. Наприклад, для кешу доказом може бути підсумок харнесу з уроку про план інтеграції, а умовою — «якби втрата кількох секунд змін була прийнятною, а запис на диск — вузьким місцем, підтвердженим виміром».
+
+        Пиши своїми словами й так, щоб рецензент міг перевірити кожен доказ. Твердження без доказу познач як «не перевірено».
+      en: |
+        Now not a lab but your own decisions. Fill in `TRADEOFFS.md` from the example “The support lab” — three decisions: **storage**, **cache policy** and **errors and retries**. Write about your project if you have done its CP-NO step; the project step of this unit is not written yet, so if you have no server project yet, write about the labs of this unit (the wishlist plan, the habit lab, the expense lab).
+
+        For each decision — the template’s four lines: what you chose, what you did not choose, the **evidence** (a measurement, a log line, a check you ran yourself) and **one condition** under which you would choose differently. For example, for the cache the evidence can be the harness summary from the lesson on the integration plan, and the condition “if losing a few seconds of changes were acceptable and the disk write were a bottleneck confirmed by a measurement”.
+
+        Write in your own words, so that a reviewer can check every piece of evidence. Mark a claim without evidence as “not verified”.
+    tools:
+      - name: { uk: "Редактор коду", en: "A code editor" }
+        version: { uk: "будь-який", en: "any" }
+      - name: "Git"
+        version: { uk: "будь-яка сучасна", en: "any current version" }
+        note:
+          uk: "Під час підготовки — 2.51.0."
+          en: "2.51.0 while preparing."
+    steps:
+      - text:
+          uk: "Заповни три розділи `TRADEOFFS.md` у теці лабораторії підтримки (або поклади файл у свій проєкт) і зафіксуй."
+          en: "Fill in the three sections of `TRADEOFFS.md` in the support lab folder (or put the file into your project) and commit it."
+        command: "git add TRADEOFFS.md\ngit commit -m \"Explain three tradeoffs of my integration\""
+        expect:
+          uk: "Commit створено; у кожному розділі чотири заповнені рядки."
+          en: "The commit is created; each section has four filled-in lines."
+    verify:
+      - id: three-decisions
+        text:
+          uk: "Я описав три рішення — сховище, кеш, помилки й повтори — і для кожного назвав відкинутий варіант."
+          en: "I described three decisions — storage, cache, errors and retries — and named the rejected option for each."
+      - id: evidence-each
+        text:
+          uk: "Кожне рішення спирається на доказ, який я сам бачив, або позначене «не перевірено»."
+          en: "Every decision rests on evidence I saw myself, or is marked “not verified”."
+      - id: condition-each
+        text:
+          uk: "Для кожного рішення я назвав одну конкретну умову, за якої обрав би інакше."
+          en: "For every decision I named one concrete condition under which I would choose differently."
+    troubleshooting:
+      - problem:
+          uk: "Не знаю, що писати про помилки й повтори."
+          en: "I do not know what to write about errors and retries."
+        fix:
+          uk: "Почни з того, що бачив сьогодні: `400` повторювати немає сенсу, бо він не мине сам, а мережеву помилку повторити можна — але лише запит, повтор якого нічого не подвоїть (згадай ідемпотентність із NO-04). Що із цього робить твій клієнт?"
+          en: "Start from what you saw today: a `400` is not worth retrying, because it will not go away by itself, while a network error can be retried — but only for a request whose retry doubles nothing (recall idempotency from NO-04). Which of this does your client do?"
+    recovery:
+      uk: "`TRADEOFFS.md` — звичайний файл у Git: попередню версію повертає `git checkout HEAD -- TRADEOFFS.md`."
+      en: "`TRADEOFFS.md` is an ordinary file in Git: `git checkout HEAD -- TRADEOFFS.md` brings back the previous version."
