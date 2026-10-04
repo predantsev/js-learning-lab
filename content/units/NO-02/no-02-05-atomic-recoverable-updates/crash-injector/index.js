@@ -10,6 +10,8 @@ import { open, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 const oldData = { schemaVersion: 1, records: [{ id: 'w-02', name: '%%lamp%%', acquired: false }] };
 const newData = { schemaVersion: 1, records: [{ id: 'w-02', name: '%%lamp%%', acquired: true }] };
 
+const CRASH = true; // try false: every write completes
+
 class SimulatedCrash extends Error {}
 const crash = () => {
   throw new SimulatedCrash('crash');
@@ -19,8 +21,12 @@ async function writeHalfThenCrash(file, data) {
   const bytes = Buffer.from(JSON.stringify(data));
   const handle = await open(file, 'w'); // 'w' empties the file at once
   try {
-    await handle.write(bytes.subarray(0, bytes.length / 2));
-    crash();
+    if (CRASH) {
+      await handle.write(bytes.subarray(0, bytes.length / 2));
+      crash();
+    } else {
+      await handle.write(bytes);
+    }
   } finally {
     await handle.close();
   }
