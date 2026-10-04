@@ -1,0 +1,301 @@
+id: no-07-03-safe-errors-redaction
+unit: NO-07
+title:
+  uk: "Безпечні помилки й приховування секретів"
+  en: "Safe errors and secret redaction"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Перетворювати внутрішні збої на стабільну модель помилок так, щоб клієнт ніколи не бачив стека, шляху до файлу чи сирого повідомлення парсера."
+    en: "Map internal failures to the stable error model so a client never sees a stack trace, a file path or a raw parser message."
+  - uk: "Приховувати секрети й особисті поля в деталях помилок і в контексті журналу, перш ніж вони покинуть обробник, — разом із вкладеними причинами помилок."
+    en: "Redact secrets and personal fields from error details and log context before they leave the handler, including nested causes."
+prerequisites: [no-07-02-size-time-limits, no-04-03-error-model]
+subskills:
+  - { family: B-07, skill: "safe errors", depth: intro }
+  - { family: B-07, skill: "secret redaction", depth: intro }
+glossary: [safe-error-response, secret-redaction]
+selfCheck: [predict-enoent, redact-deep]
+
+blocks:
+  - id: what-messages-carry
+    kind: explanation
+    title:
+      uk: "Що несе в собі err.message"
+      en: "What err.message carries"
+    body:
+      uk: |
+        У темі NO-04 ти вже прибрав `error.stack` з відповіді 500. Але й саме `error.message` писали не для клієнта — його писали Node.js і бібліотеки, щоб розробник зрозумів, що сталося. Тому там буває зайве:
+
+        | Збій | Повідомлення (Node.js 25.2.1) | Що видає |
+        |---|---|---|
+        | файлу немає | `ENOENT: no such file or directory, open '/Users/olena/app/data/habits.json'` | ім’я користувача, будову тек |
+        | зіпсований JSON | `Unexpected token 'k', ..."iToken": tk_demo_51x"... is not valid JSON` | шматок вмісту файлу — тут токен |
+
+        Повідомлення парсера цитує сусідні символи вхідного тексту, а якщо це файл налаштувань — то й секрет у ньому. Точний текст залежить від версії рушія V8, тож не покладайся на нього ні для безпеки, ні для логіки.
+
+        Правило [[safe-error-response|безпечної відповіді]]: клієнт отримує лише поля, які ти **сам вибрав** — `code`, `messageKey`, `details`, `requestId`, — а функція на кшталт `toPublicError(error, requestId)` будує їх без жодного слова з `error.message`. Повна помилка йде в журнал сервера.
+      en: |
+        In topic NO-04 you already removed `error.stack` from the 500 answer. But `error.message` itself was not written for the client either — Node.js and libraries wrote it so that a developer understands what happened. So it can carry too much:
+
+        | Failure | Message (Node.js 25.2.1) | What it gives away |
+        |---|---|---|
+        | the file is missing | `ENOENT: no such file or directory, open '/Users/olena/app/data/habits.json'` | the user name, the folder layout |
+        | broken JSON | `Unexpected token 'k', ..."iToken": tk_demo_51x"... is not valid JSON` | a piece of the file's contents — a token here |
+
+        A parser message quotes the characters around the problem in the input text, and if that is a settings file, it quotes the secret in it too. The exact text depends on the version of the V8 engine, so rely on it neither for safety nor for logic.
+
+        The rule of a [[safe-error-response]]: the client gets only fields that **you chose** — `code`, `messageKey`, `details`, `requestId` — and a function such as `toPublicError(error, requestId)` builds them without a single word of `error.message`. The full error goes to the server's log.
+
+  - id: logs-leak-too
+    kind: explanation
+    title:
+      uk: "Секрет потрапляє в журнал і без наміру"
+      en: "A secret reaches the log without anyone meaning it"
+    body:
+      uk: |
+        «Я ж не логую токен» — але журнал часто отримує його разом із чимось іншим:
+
+        - `console.error(request.headers)` — у заголовках є `authorization: Bearer …`;
+        - `console.error(error)` — Node.js друкує не лише повідомлення й стек, а й `[cause]` з усіма полями причини; якщо причина — об’єкт налаштувань, там і пароль;
+        - `console.log(config)` під час запуску «щоб перевірити, що все прочиталось».
+
+        Журнали живуть довше за запити, їх копіюють у сервіси збору й показують колегам. Тому перед записом значення проходить [[secret-redaction|приховування секретів]]: значення ключів на кшталт `token`, `password`, `authorization` замінюються на `"[REDACTED]"` — на будь-якій глибині й у будь-якому регістрі літер, бо заголовок може прийти і як `Authorization`.
+
+        Чесне обмеження: приховування за назвою ключа не бачить секрет **усередині тексту** — у тому ж повідомленні парсера. Таке повідомлення краще не писати в журнал цілим: досить `error.name` і `error.code`.
+      en: |
+        “But I do not log the token” — the log often gets it together with something else, though:
+
+        - `console.error(request.headers)` — the headers contain `authorization: Bearer …`;
+        - `console.error(error)` — Node.js prints not only the message and the stack but also `[cause]` with every field of the cause; if the cause is a settings object, the password is there too;
+        - `console.log(config)` at startup, “to check that everything was read”.
+
+        Logs live longer than requests; they are copied into collection services and shown to colleagues. So before it is written a value goes through [[secret-redaction]]: the values of keys such as `token`, `password`, `authorization` are replaced with `"[REDACTED]"` — at any depth and in any letter case, because the header may also arrive as `Authorization`.
+
+        An honest limit: redaction by key name does not see a secret **inside a text** — in that same parser message. Such a message is better not written to the log whole: `error.name` and `error.code` are enough.
+
+  - id: predict-enoent
+    kind: prediction
+    prompt:
+      uk: "Центральний `catch` API звичок відповідає `sendJson(response, 500, { error: error.message })`. Обробник читає `path.resolve(\"data/habits.json\")`, а файлу немає. Що побачить клієнт у тілі відповіді?"
+      en: "The habits API's central `catch` answers `sendJson(response, 500, { error: error.message })`. The handler reads `path.resolve(\"data/habits.json\")`, and the file does not exist. What does the client see in the answer's body?"
+    answer:
+      type: choice
+      options:
+        - id: full-path
+          text:
+            uk: "`ENOENT: no such file or directory, open '…'` з повним абсолютним шляхом до файлу на сервері"
+            en: "`ENOENT: no such file or directory, open '…'` with the full absolute path of the file on the server"
+        - id: not-found
+          text:
+            uk: "`{ error: { code: \"NOT_FOUND\" } }`: Node.js сам перетворює `ENOENT` на 404"
+            en: "`{ error: { code: \"NOT_FOUND\" } }`: Node.js turns `ENOENT` into 404 by itself"
+          why:
+            uk: "Node.js нічого не знає про модель помилок твого API. Яку відповідь отримає `ENOENT`, вирішує лише твій `catch`, а він віддає `error.message`."
+            en: "Node.js knows nothing about your API's error model. Only your `catch` decides which answer `ENOENT` gets, and it hands out `error.message`."
+        - id: short
+          text:
+            uk: "Лише `ENOENT`: повідомлення коротке й нічого не видає"
+            en: "Just `ENOENT`: the message is short and gives nothing away"
+          why:
+            uk: "`ENOENT` — це `error.code`. У `error.message` Node.js додає дію й шлях, а `path.resolve` зробив його абсолютним."
+            en: "`ENOENT` is `error.code`. In `error.message` Node.js adds the action and the path, and `path.resolve` made it absolute."
+      correct: [full-path]
+    explanation:
+      uk: "`error.message` для `ENOENT` містить операцію й шлях, переданий у `readFile`, — тут абсолютний, тож клієнт дізнається ім’я користувача й будову тек сервера. Безпечна відповідь будується з `error.code`: `ENOENT` → `NOT_FOUND` без жодного тексту з повідомлення."
+      en: "The `error.message` of `ENOENT` contains the operation and the path given to `readFile` — an absolute one here, so the client learns the server's user name and folder layout. A safe answer is built from `error.code`: `ENOENT` → `NOT_FOUND` without any text from the message."
+
+  - id: predict-cause-log
+    kind: prediction
+    prompt:
+      uk: "Сервер витрат пише в журнал лише `console.error(\"[sync] failed\", error)`, де `error = new Error(\"backup failed\", { cause: settings })`, а `settings = { target: \"backups/\", apiToken: \"demo-sync-token\" }`. Чи з’явиться `demo-sync-token` у журналі?"
+      en: "An expenses server writes only `console.error(\"[sync] failed\", error)` to its log, where `error = new Error(\"backup failed\", { cause: settings })` and `settings = { target: \"backups/\", apiToken: \"demo-sync-token\" }`. Does `demo-sync-token` appear in the log?"
+    code: |
+      const settings = { target: "backups/", apiToken: "demo-sync-token" };
+      const error = new Error("backup failed", { cause: settings });
+      console.error("[sync] failed", error);
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: yes-cause
+          text:
+            uk: "Так: Node.js друкує під помилкою `[cause]` з усіма полями `settings`"
+            en: "Yes: under the error Node.js prints `[cause]` with every field of `settings`"
+        - id: no-message
+          text:
+            uk: "Ні: друкуються лише повідомлення `backup failed` і стек"
+            en: "No: only the message `backup failed` and the stack are printed"
+          why:
+            uk: "Node.js показує й причину помилки: під стеком іде рядок `[cause]: { target: 'backups/', apiToken: 'demo-sync-token' }` (виміряно на Node.js 25.2.1 і 20.18)."
+            en: "Node.js shows the error's cause too: under the stack comes the line `[cause]: { target: 'backups/', apiToken: 'demo-sync-token' }` (measured on Node.js 25.2.1 and 20.18)."
+        - id: no-purpose
+          text:
+            uk: "Ні: токен же ніхто не логував навмисно"
+            en: "No: nobody logged the token on purpose"
+          why:
+            uk: "Намір тут ні до чого: секрет їде в журнал разом з об’єктом, у якому лежить. Саме тому значення перед записом проходять приховування."
+            en: "Intent has nothing to do with it: the secret travels into the log with the object it lives in. That is exactly why values go through redaction before they are written."
+      correct: [yes-cause]
+    explanation:
+      uk: "Помилка з причиною — це ланцюжок, і `console.error` друкує його весь. Тому приховувач секретів має проходити й у `cause`, на будь-яку глибину."
+      en: "An error with a cause is a chain, and `console.error` prints all of it. So a redactor must walk into `cause` as well, at any depth."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: error-shape
+        from: no-04-03-error-model
+        prompt:
+          uk: "Які чотири поля має об’єкт `error` у стабільній моделі помилок API і для кого поле `code`?"
+          en: "Which four fields does the `error` object have in the API's stable error model, and who is the `code` field for?"
+        answer:
+          type: choice
+          options:
+            - id: four
+              text:
+                uk: "`code`, `messageKey`, `details`, `requestId`; `code` — для програм, клієнт розгалужується за ним"
+                en: "`code`, `messageKey`, `details`, `requestId`; `code` is for programs, the client branches on it"
+            - id: message-stack
+              text:
+                uk: "`message`, `stack`, `status`, `requestId`; `message` — щоб людина зрозуміла причину"
+                en: "`message`, `stack`, `status`, `requestId`; `message` is for a person to understand the cause"
+              why:
+                uk: "Стек у відповідь не потрапляє, а текст для людини клієнт будує сам за `messageKey`."
+                en: "The stack never goes into the answer, and the client builds the text for a person itself from `messageKey`."
+            - id: free
+              text:
+                uk: "Кожен маршрут вибирає свої поля; `code` — для журналу"
+                en: "Each route picks its own fields; `code` is for the log"
+              why:
+                uk: "Сенс моделі — **одна** форма для всіх збоїв, щоб клієнт не вгадував, як читати кожен."
+                en: "The point of the model is **one** shape for every failure, so the client does not have to guess how to read each one."
+          correct: [four]
+        explanation:
+          uk: "`code` — стабільний код для програм, `messageKey` — ключ перекладеного тексту, `details` — подробиці полів чи `id`, `requestId` — номер запиту для пошуку в журналі сервера."
+          en: "`code` is a stable code for programs, `messageKey` the key of a translated text, `details` the field specifics or an `id`, `requestId` the request's number for finding it in the server's log."
+
+  - id: leaky-errors
+    kind: example
+    runtime: isolated-node
+    dir: leaky-errors
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      client: { uk: "клієнт:", en: "client:" }
+      absolutePath: { uk: "відповідь містить абсолютний шлях до теки програми", en: "the answer contains the absolute path of the program's folder" }
+      "yes": { uk: "так", en: "yes" }
+      "no": { uk: "ні", en: "no" }
+    title:
+      uk: "Два збої, що видають забагато"
+      en: "Two failures that give away too much"
+    body:
+      uk: |
+        API звичок має два маршрути, що падають: `/habits` читає файл, якого немає, а `/settings` розбирає `settings.txt` з одруківкою — значення `apiToken` не в лапках. `index.js` викликає обидва із заголовком `authorization`, як клієнт, що увійшов у систему.
+
+        Натисни **Запустити**. Червоні рядки — журнал сервера: там увесь `request.headers` разом з `authorization` і повідомлення парсера зі шматком токена. Рядки `клієнт:` — відповіді: шлях до файлу й той самий шматок токена. Консоль платформи скорочує шляхи всередині теки вправи до відносних (`data/habits.json`), але справжній клієнт отримав повний абсолютний шлях — рядок під відповіддю перевіряє це в сирому тексті.
+      en: |
+        The habits API has two routes that fail: `/habits` reads a file that does not exist, and `/settings` parses `settings.txt`, which has a typo — the `apiToken` value is not in quotes. `index.js` calls both with an `authorization` header, like a signed-in client.
+
+        Press **Run**. The red lines are the server's log: all of `request.headers` including `authorization`, and the parser message with a piece of the token. The `client:` lines are the answers: the file's path and the same piece of the token. The platform's console shortens paths inside the exercise folder to relative ones (`data/habits.json`), but the real client received the full absolute path — the line under the answer checks that in the raw text.
+    tryIt:
+      uk: |
+        1. У `app.js` у `catch` заміни `sendJson(response, 500, { error: error.message });` на два рядки коду: `const { status, body } = toPublicError(error, requestId);` і `sendJson(response, status, body);`. Запусти: клієнт отримує `404 NOT_FOUND` і `500 INTERNAL` з `requestId`, без шляху й токена, а перевірка абсолютного шляху каже «ні».
+        2. Журнал усе ще видає заголовок і токен. Заміни `console.error('[server] failed', request.headers, error.message);` на `console.error('[server] failed', requestId, error.name, error.code ?? '');` і запусти. Тепер журнал каже, **що** сталося (`Error ENOENT`, `SyntaxError`) і з яким запитом, але не містить секретів.
+      en: |
+        1. In `app.js`, in the `catch`, replace `sendJson(response, 500, { error: error.message });` with two lines of code: `const { status, body } = toPublicError(error, requestId);` and `sendJson(response, status, body);`. Run: the client gets `404 NOT_FOUND` and `500 INTERNAL` with a `requestId`, without the path or the token, and the absolute-path check says “no”.
+        2. The log still gives away the header and the token. Replace `console.error('[server] failed', request.headers, error.message);` with `console.error('[server] failed', requestId, error.name, error.code ?? '');` and run. Now the log says **what** happened (`Error ENOENT`, `SyntaxError`) and for which request, but holds no secrets.
+
+  - id: redact-deep
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: redact-deep
+    entry: index.js
+    editable: [redact.js]
+    strings:
+      syncFailed: { uk: "Синхронізація не вдалася", en: "Sync failed" }
+      innerFailed: { uk: "Копію не записано", en: "The copy was not written" }
+      lunch: { uk: "Обід", en: "Lunch" }
+    title:
+      uk: "redact: секрети на будь-якій глибині"
+      en: "redact: secrets at any depth"
+    instructions:
+      uk: |
+        Напиши в `redact.js` функцію `redact(value, { keys })`, яка повертає **копію** `value`, безпечну для журналу:
+
+        - значення кожної властивості, чия назва є в `keys`, замінюється на текст `"[REDACTED]"`, яким би воно не було (текст, число, об’єкт);
+        - назви порівнюються без урахування регістру літер: при `keys: ["authorization"]` приховується й `Authorization`; збіг — лише повна назва (`Token_id` не секрет);
+        - вкладені об’єкти й масиви обходяться на будь-яку глибину, масиви лишаються масивами;
+        - об’єкт `Error` стає `{ name, message }`, а якщо в нього є `cause` — ще й `cause`, теж оброблений `redact`;
+        - вхідне значення не змінюється.
+
+        Текст, числа, `true`/`false` і `null` повертаються як є. Перевірки передають `keys: ["token", "password", "authorization"]`.
+      en: |
+        Write the function `redact(value, { keys })` in `redact.js`. It returns a **copy** of `value` that is safe for a log:
+
+        - the value of every property whose name is in `keys` becomes the text `"[REDACTED]"`, whatever it was (text, number, object);
+        - names are compared ignoring letter case: with `keys: ["authorization"]`, `Authorization` is redacted too; only a full name matches (`Token_id` is not a secret);
+        - nested objects and arrays are walked at any depth, and arrays stay arrays;
+        - an `Error` object becomes `{ name, message }`, and if it has a `cause`, also `cause`, processed by `redact` too;
+        - the input value is not changed.
+
+        Texts, numbers, `true`/`false` and `null` come back as they are. The checks pass `keys: ["token", "password", "authorization"]`.
+    testTitles:
+      "a secret key at the top level is replaced":
+        uk: "Секретний ключ на верхньому рівні замінюється"
+        en: "A secret key at the top level is replaced"
+      "secrets inside nested objects and arrays are replaced; arrays stay arrays":
+        uk: "Секрети у вкладених об’єктах і масивах замінюються; масиви лишаються масивами"
+        en: "Secrets inside nested objects and arrays are replaced; arrays stay arrays"
+      "key names match in any letter case":
+        uk: "Назви ключів збігаються в будь-якому регістрі"
+        en: "Key names match in any letter case"
+      "an error becomes { name, message, cause } with the cause redacted, at any depth":
+        uk: "Помилка стає `{ name, message, cause }` з обробленою причиною, на будь-якій глибині"
+        en: "An error becomes `{ name, message, cause }` with the cause redacted, at any depth"
+      "the original value is not changed":
+        uk: "Вхідне значення не змінюється"
+        en: "The original value is not changed"
+    hints:
+      nudge:
+        uk: "Значення буває трьох видів: помилка, масив чи інший об’єкт — і все решта. Функція, що викликає сама себе для кожного вкладеного значення, дійде до будь-якої глибини."
+        en: "A value comes in three kinds: an error, an array or another object — and everything else. A function that calls itself for every nested value reaches any depth."
+      explanation:
+        uk: "Перевіряй вид значення в такому порядку: `instanceof Error`, потім `Array.isArray`, потім `typeof … === \"object\"` (і не `null`). У `Error` поля `message` і `cause` не перелічуються через `Object.entries`, тож їх треба взяти явно. Для порівняння назв зручно один раз перетворити `keys` у нижній регістр. Схожа ідея на іншій задачі: щоб скопіювати об’єкт і прибрати всі ключі `draft`, будують новий об’єкт з пар `Object.entries(obj)` і для кожного вкладеного значення викликають ту саму функцію."
+        en: "Check the kind of value in this order: `instanceof Error`, then `Array.isArray`, then `typeof … === \"object\"` (and not `null`). The `message` and `cause` fields of an `Error` are not listed by `Object.entries`, so they have to be taken explicitly. For comparing names it is handy to turn `keys` to lower case once. A similar idea on another task: to copy an object and drop every `draft` key, you build a new object from the pairs of `Object.entries(obj)` and call the same function for every nested value."
+    solutionNote:
+      uk: "Рекурсивний обхід створює нові об’єкти й масиви, тож вхідне значення лишається цілим. Помилки обробляються окремо, бо їхні поля не перелічуються, а `cause` проходить той самий обхід — тому секрет у причині причини теж прихований."
+      en: "The recursive walk creates new objects and arrays, so the input stays intact. Errors are handled separately because their fields are not enumerable, and `cause` goes through the same walk — so a secret in the cause of a cause is hidden too."
+    feedback:
+      - when: { test: "secrets inside nested objects and arrays are replaced; arrays stay arrays" }
+        message:
+          uk: "Ця перевірка ховає `password` в `database` і `token` в елементі масиву `backups` і чекає, що `backups` лишиться масивом (`Array.isArray`). `Object.entries` перетворює масив на об’єкт з ключами `\"0\"`, `\"1\"` — для масивів потрібна окрема гілка."
+          en: "This check hides `password` inside `database` and `token` inside an element of the `backups` array and expects `backups` to stay an array (`Array.isArray`). `Object.entries` turns an array into an object with the keys `\"0\"`, `\"1\"` — arrays need their own branch."
+      - when: { test: "key names match in any letter case" }
+        message:
+          uk: "Ця перевірка чекає, що `Authorization` і `TOKEN` будуть приховані, а `Token_id` — ні. Порівнюй назви в одному регістрі, наприклад після `toLowerCase()`, і лише повністю."
+          en: "This check expects `Authorization` and `TOKEN` to be redacted and `Token_id` not. Compare names in one case, for example after `toLowerCase()`, and only as whole names."
+      - when: { test: "an error becomes { name, message, cause } with the cause redacted, at any depth" }
+        message:
+          uk: "Ця перевірка передає `Error`, чия `cause` — `TypeError`, чия `cause` — об’єкт із `token`, і чекає ланцюжок звичайних об’єктів `{ name, message, cause }`. Поля помилки не перелічуються, тож бери `name`, `message` і `cause` явно."
+          en: "This check passes an `Error` whose `cause` is a `TypeError` whose `cause` is an object with `token`, and expects a chain of plain objects `{ name, message, cause }`. An error's fields are not enumerable, so take `name`, `message` and `cause` explicitly."
+      - when: { test: "the original value is not changed" }
+        message:
+          uk: "Ця перевірка після виклику `redact` порівнює вхідний об’єкт з його початковим виглядом. Будуй нові об’єкти й масиви замість того, щоб записувати `\"[REDACTED]\"` у вхідні."
+          en: "After calling `redact` this check compares the input object with how it looked at first. Build new objects and arrays instead of writing `\"[REDACTED]\"` into the input ones."
+      - when: { test: "a secret key at the top level is replaced" }
+        message:
+          uk: "Ця перевірка чекає `\"[REDACTED]\"` замість значення `token` і `password` — навіть коли значення є об’єктом, — і незмінну копію об’єкта без секретів."
+          en: "This check expects `\"[REDACTED]\"` instead of the values of `token` and `password` — even when the value is an object — and an unchanged copy of an object with no secrets."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-07
+    body:
+      uk: "У кроці проєкту центральний `catch` твого API відповідатиме лише полями моделі помилок, а все, що йде в журнал — заголовки, налаштування, помилки з причинами, — спершу пройде через такий самий `redact`."
+      en: "In the project step your API's central `catch` answers only with the fields of the error model, and everything going to the log — headers, settings, errors with causes — first goes through the same kind of `redact`."
