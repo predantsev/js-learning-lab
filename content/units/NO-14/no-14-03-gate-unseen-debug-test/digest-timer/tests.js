@@ -24,8 +24,10 @@ function start() {
 }
 
 test('before a reload, digests follow the first settings', () => {
-  const { timers, sent, digest } = start();
-  timers.advance(125 * MINUTE);
+  const { timers, sent, digest, change } = start();
+  timers.advance(10 * MINUTE);
+  change({ language: 'en', topCount: 1, everyMs: 60 * MINUTE }); // stored, but nobody called reload()
+  timers.advance(115 * MINUTE);
   digest.stop();
   expect(sent, 'digests in the first 125 minutes').toEqual([
     { at: 60, language: 'uk', names: ['B', 'C', 'A'] },

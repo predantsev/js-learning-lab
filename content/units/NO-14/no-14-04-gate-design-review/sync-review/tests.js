@@ -1,6 +1,7 @@
 // Checks of the review: comments that point at real lines and at the PR's four problems, a decision
 // record that keeps R1, a runbook in the right order, and your conflict test run against the PR's
 // sync.js and against a sync.js that keeps R1 (written here, never shown in the exercise).
+// This is a no-hint gate: failure messages name the requirement, never the line or the answer.
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -12,7 +13,12 @@ for (const file of PR_FILES) lines[file] = (await readFile(file, 'utf8')).split(
 const lineOf = (file, text) => lines[file].findIndex((line) => line.includes(text)) + 1;
 const list = Array.isArray(comments) ? comments : [];
 const near = (comment, file, line, by) => comment?.file === file && Math.abs(comment.line - line) <= by;
-const findComment = (kind, places) => list.find((c) => c?.kind === kind && c.severity === 'blocking' && places.some(([file, line, by]) => near(c, file, line, by)));
+const findComment = (kinds, places) => list.find((c) => kinds.includes(c?.kind) && c.severity === 'blocking' && places.some(([file, line, by]) => near(c, file, line, by)));
+const allComments = (kinds, places, blocking = true) => list.filter((c) => kinds.includes(c?.kind) && (!blocking || c.severity === 'blocking') && places.some(([file, line, by]) => near(c, file, line, by)));
+// Lines of different problems sit close together, so one comment never counts for two requirements.
+const ownComment = (candidates, otherRequirement) => candidates.some((c) => otherRequirement.length === 0 || otherRequirement.some((other) => other !== c));
+const R1_PLACES = () => [['sync.js', lineOf('sync.js', 'change.editedAt >= task.editedAt'), 1]];
+const R4_PLACES = () => [['server.js', lineOf('server.js', "'POST /sync'"), 1], ['sync.js', lineOf('sync.js', 'export function createSyncRoute'), 1]];
 const longEnough = (text, n) => typeof text === 'string' && text.trim().length >= n;
 
 test('every comment points at an existing line of a PR file and has a kind, a severity and a reason', () => {
@@ -26,27 +32,31 @@ test('every comment points at an existing line of a PR file and has a kind, a se
   }
 });
 
-test('a blocking correctness comment points at the comparison of device clocks', () => {
+test('R1 has a blocking correctness comment where the code breaks it', () => {
   const line = lineOf('sync.js', 'change.editedAt >= task.editedAt');
-  expect(findComment('correctness', [['sync.js', line, 1]]) !== undefined, `a blocking correctness comment on sync.js:${line} (±1)`).toBe(true);
+  expect(findComment(['correctness'], [['sync.js', line, 1]]) !== undefined, 'a blocking correctness comment on the line where the code breaks R1 (±1)').toBe(true);
 });
 
-test('a blocking security comment points at the request read without size or count limits', () => {
+test('R2 has a blocking comment where the code breaks it', () => {
   const read = lineOf('sync.js', 'await readJson(request)');
   const loop = lineOf('sync.js', 'for (const change of changes)');
-  expect(findComment('security', [['sync.js', read, 1], ['sync.js', loop, 0]]) !== undefined, `a blocking security comment on sync.js:${read} (±1) or sync.js:${loop}`).toBe(true);
+  const candidates = allComments(['security', 'operability'], [['sync.js', read, 1], ['sync.js', loop, 0]]);
+  const forR4 = allComments(['operability'], R4_PLACES(), false);
+  expect(ownComment(candidates, forR4), 'a blocking security or operability comment of its own on a line where the code breaks R2').toBe(true);
 });
 
-test('a blocking security comment points at the fields copied without validation', () => {
+test('R3 has a blocking comment where the code breaks it', () => {
   const line = lineOf('sync.js', 'Object.assign(task, change.fields)');
-  expect(findComment('security', [['sync.js', line, 1]]) !== undefined, `a blocking security comment on sync.js:${line} (±1)`).toBe(true);
+  const candidates = allComments(['security', 'correctness'], [['sync.js', line, 1]]);
+  const forR1 = allComments(['correctness'], R1_PLACES());
+  expect(ownComment(candidates, forR1), 'a blocking security or correctness comment of its own on the line where the code breaks R3 (±1)').toBe(true);
 });
 
-test('an operability comment points at the sync route that cannot be switched off', () => {
+test('R4 has an operability comment where the sync route is wired', () => {
   const route = lineOf('server.js', "'POST /sync'");
   const factory = lineOf('sync.js', 'export function createSyncRoute');
   const found = list.find((c) => c?.kind === 'operability' && (near(c, 'server.js', route, 1) || near(c, 'sync.js', factory, 1)));
-  expect(found !== undefined, `an operability comment on server.js:${route} (±1) or sync.js:${factory} (±1)`).toBe(true);
+  expect(found !== undefined, 'an operability comment on the line where the sync route is wired or created (±1)').toBe(true);
 });
 
 const STRATEGIES = ['client-clock-last-write-wins', 'server-time-last-write-wins', 'field-merge', 'server-version-check'];
@@ -64,7 +74,7 @@ test('the decision compares the PR strategy with another one and states conseque
 
 test('the decision chooses a strategy that keeps R1', () => {
   expect(options.some((option) => option?.strategy === decision?.choice), 'the choice is one of the options').toBe(true);
-  expect(decision.choice, 'the chosen strategy').toBe('server-version-check');
+  expect(decision.choice === 'server-version-check', 'the chosen strategy keeps R1').toBe(true);
   expect(longEnough(decision.consequences, 40), 'consequences of the choice have at least 40 characters').toBe(true);
 });
 

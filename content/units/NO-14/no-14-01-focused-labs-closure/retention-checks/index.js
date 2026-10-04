@@ -21,7 +21,7 @@ try {
   const foreign = await get('/wishlists/l-2');
   clock.time += IDLE_MS + 1;
   const idle = await get('/wishlists/l-1');
-  console.log(`auth: own ${own} · foreign ${foreign} · after 30 min + 1 ms ${idle}`);
+  console.log(`auth: %%own%% ${own} · %%foreign%% ${foreign} · %%afterIdle%% ${idle}`);
 } finally {
   server.closeAllConnections();
   server.close();
@@ -34,4 +34,4 @@ const tasks = [
 ];
 const sent = serverRender({ tasks, today: '2026-05-04' });
 const fromPage = JSON.parse(sent.payload);
-console.log('SSR: server and client markup match:', clientRender(fromPage) === sent.html);
+console.log(`SSR: %%markupMatch%%`, clientRender(fromPage) === sent.html);

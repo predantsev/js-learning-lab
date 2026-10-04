@@ -10,6 +10,7 @@ import { run } from './testing.js';
 const file = freshClub('demo');
 const line = (members, id) => {
   const member = members.find((m) => m.id === id);
+  if (!member) return `${id} — %%notListed%%`;
   return `${member.name} — %%pages%%: ${member.pagesRead}, %%votes%%: ${member.votes}`;
 };
 
