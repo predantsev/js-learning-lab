@@ -8,7 +8,7 @@ import { run } from './testing.js';
 
 createRoot(document.getElementById('root')).render(
   <View style={{ padding: 16 }}>
-    <OverdueBadge tasks={tasks} day="2026-03-02" />
+    <OverdueBadge tasks={tasks.map((task) => ({ ...task }))} day="2026-03-02" />
   </View>,
 );
 
