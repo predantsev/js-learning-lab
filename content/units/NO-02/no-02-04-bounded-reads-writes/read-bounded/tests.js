@@ -5,6 +5,11 @@ import fsp, { writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { readBounded } from './app.js';
 
+// Every FileHandle opened during the checks stays referenced here until the process ends, so a
+// handle that was never closed is not closed by the garbage collector in the middle of a later check.
+const retained = [];
+
+
 async function watch(run) {
   const probe = await fsp.open(tmp('probe.txt'), 'w');
   const proto = Object.getPrototypeOf(probe);
@@ -17,6 +22,7 @@ async function watch(run) {
   fsp.open = async (...args) => {
     const handle = await realOpen(...args);
     opened.push(handle);
+    retained.push(handle);
     return handle;
   };
   fsp.readFile = (...args) => {
@@ -80,6 +86,14 @@ test('an oversized file is refused before any byte is read', async () => {
   const file = await fileOf('huge.txt', 300_000);
   const { reads } = await watch(() => readBounded(file, 1000));
   expect(reads, 'read calls for a 300000-byte file with maxBytes 1000').toBe(0);
+});
+
+test('an allowed file is read through a FileHandle from open()', async () => {
+  expect(typeof readBounded, 'type of readBounded').toBe('function');
+  const file = await fileOf('through-handle.txt', 300);
+  const { opened, error } = await watch(() => readBounded(file, 1000));
+  if (error) throw error;
+  expect(opened, 'FileHandles opened with open() while reading a 300-byte file').toBeGreaterThan(0);
 });
 
 test('every opened FileHandle is closed, on success and on refusal', async () => {

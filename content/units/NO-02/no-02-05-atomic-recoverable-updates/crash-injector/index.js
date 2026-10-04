@@ -48,7 +48,7 @@ try {
 } catch (error) {
   if (!(error instanceof SimulatedCrash)) throw error;
 }
-console.log('in place, after the crash:', await readerSees('wishlist.json'));
+console.log('%%inPlaceCrash%%:', await readerSees('wishlist.json'));
 
 // 2. Temp file, then rename: the crash hits the temp file.
 await writeFile('wishlist.json', JSON.stringify(oldData));
@@ -57,8 +57,8 @@ try {
 } catch (error) {
   if (!(error instanceof SimulatedCrash)) throw error;
 }
-console.log('temp file, after the crash:', await readerSees('wishlist.json'));
-console.log('folder:', (await readdir('.')).filter((name) => name.startsWith('wishlist')).join(', '));
+console.log('%%tempCrash%%:', await readerSees('wishlist.json'));
+console.log('%%folder%%:', (await readdir('.')).filter((name) => name.startsWith('wishlist')).join(', '));
 
 // 3. The same, without a crash: write the temp file completely, flush it, then one rename.
 const handle = await open('wishlist.json.2.tmp', 'w');
@@ -69,4 +69,4 @@ try {
   await handle.close();
 }
 await rename('wishlist.json.2.tmp', 'wishlist.json');
-console.log('temp file, after the rename:', await readerSees('wishlist.json'));
+console.log('%%tempRename%%:', await readerSees('wishlist.json'));

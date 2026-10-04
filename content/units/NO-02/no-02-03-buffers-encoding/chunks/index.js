@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 
 for (const text of ['cat', 'кіт', '🐈']) {
-  console.log(`${text}: length ${text.length}, bytes ${Buffer.byteLength(text)}`);
+  console.log(`${text}: length ${text.length}, %%bytes%% ${Buffer.byteLength(text)}`);
 }
 
 // A habit name in Ukrainian, stored as UTF-8: 9 characters, 17 bytes.
@@ -17,7 +17,7 @@ for (let start = 0; start < bytes.length; start += 3) chunks.push(bytes.subarray
 
 let eachAlone = '';
 for (const chunk of chunks) eachAlone += chunk.toString('utf8');
-console.log('each chunk alone:', eachAlone);
+console.log('%%eachAlone%%:', eachAlone);
 
 const decoder = new StringDecoder('utf8');
 let joined = '';

@@ -6,6 +6,11 @@ import path from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
 import { removeStaleTemps, writeAtomic } from './app.js';
 
+// Every FileHandle opened during the checks stays referenced here until the process ends, so a
+// handle that was never closed is not closed by the garbage collector in the middle of a later check.
+const retained = [];
+
+
 const oldData = { schemaVersion: 1, records: [{ id: 'w-02', name: L.lamp, acquired: false }] };
 const newData = { schemaVersion: 1, records: [{ id: 'w-02', name: L.lamp, acquired: true }] };
 let folders = 0;
@@ -31,6 +36,7 @@ async function instrument(run, { crashWrites = false } = {}) {
   fsp.open = async (...args) => {
     const handle = await real.open(...args);
     opened.push(handle);
+    retained.push(handle);
     return handle;
   };
   fsp.rename = async (from, to) => {
@@ -114,6 +120,8 @@ test('every FileHandle it opens is closed', async () => {
   const { stillOpen, error } = await instrument(() => writeAtomic(target, newData));
   if (error) throw error;
   expect(stillOpen, 'FileHandles left open after one save').toBe(0);
+  const crashed = await instrument(() => writeAtomic(target, oldData), { crashWrites: true });
+  expect(crashed.stillOpen, 'FileHandles left open after a save whose write failed').toBe(0);
 });
 
 test('a crash in the middle of writing leaves the old file whole', async () => {

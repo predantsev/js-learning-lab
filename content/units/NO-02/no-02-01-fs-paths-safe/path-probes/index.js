@@ -7,7 +7,7 @@ const short = (p) => path.relative(root, p) || '.'; // print paths relative to t
 fs.mkdirSync('data/archive', { recursive: true });
 
 console.log('join:', path.join('data', '../config/.env'));
-console.log('resolve with an absolute name:', path.resolve('data', '/tmp/other.json'));
+console.log('%%absoluteName%%:', path.resolve('data', '/tmp/other.json'));
 
 // The same two ways to build a path, before and after the working directory changes.
 const fromWorkingDir = () => path.resolve('data/wishlist.json');

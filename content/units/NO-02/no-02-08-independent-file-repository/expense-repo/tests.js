@@ -7,6 +7,11 @@ import path from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
 import { createFileRepository } from './repository.js';
 
+// Every FileHandle opened during the checks stays referenced here until the process ends, so a
+// handle that was never closed is not closed by the garbage collector in the middle of a later check.
+const retained = [];
+
+
 const groceries = { id: 'e-01', label: L.groceries, amountMinor: 84550, date: '2026-03-01', category: 'food' };
 const pass = { id: 'e-02', label: L.pass, amountMinor: 52000, date: '2026-03-01', category: 'transport' };
 const coffee = { id: 'e-03', label: L.coffee, amountMinor: 18000, date: '2026-02-28', category: 'fun' };
@@ -53,6 +58,7 @@ async function instrument(run, { crashWrites = false, slow = false } = {}) {
   fsp.open = timed(async (...args) => {
     const handle = await real.open(...args);
     opened.push(handle);
+    retained.push(handle);
     return handle;
   });
   fsp.stat = timed(real.stat);

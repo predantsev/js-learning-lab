@@ -4,6 +4,11 @@ import fsp, { mkdir, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { readJsonFile } from './app.js';
 
+// Every FileHandle opened during the checks stays referenced here until the process ends, so a
+// handle that was never closed is not closed by the garbage collector in the middle of a later check.
+const retained = [];
+
+
 const habits = [{ id: 'h-01', name: L.habit1, completions: ['2026-02-27', '2026-02-28'] }];
 
 async function files() {
@@ -22,6 +27,7 @@ async function watch(run) {
   fsp.open = async (...args) => {
     const handle = await real(...args);
     opened.push(handle);
+    retained.push(handle);
     return handle;
   };
   syncBuiltinESMExports();
