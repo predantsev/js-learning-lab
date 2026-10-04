@@ -397,7 +397,7 @@ exit 0
 
 ## NO-06 — the web client on the real API
 
-Node.js v25.2.1 and v22.13.1 (the server with `NODE_OPTIONS=--experimental-strip-types`). `.env` of the web
+Node.js v25.2.1 and v22.13.1 (the server with `NODE_OPTIONS=--experimental-strip-types`), the Ukrainian workspace (the page text below is Ukrainian). `.env` of the web
 project: `PORT=4310`, `DATA_SOURCE=http`, `API_BASE_URL=http://127.0.0.1:4311`. For the curl check below the
 server was started with `PORT=7392 node src/server.ts` in `server/` on a fresh `server/data/`; the default port
 is 4311.

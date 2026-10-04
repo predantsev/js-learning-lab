@@ -374,7 +374,7 @@ exit 0
 
 ## NO-06 — the web client on the real API
 
-Node.js v25.2.1 and v22.13.1 (the server with `NODE_OPTIONS=--experimental-strip-types`).
+Node.js v25.2.1 and v22.13.1 (the server with `NODE_OPTIONS=--experimental-strip-types`), the Ukrainian workspace (the page text below is Ukrainian).
 `.env` of the web project: `PORT=4310`, `DATA_SOURCE=http`, `API_BASE_URL=http://127.0.0.1:4311`.
 The preflight below was asked of a server started with `PORT=7391 node src/server.ts` in `server/` on a fresh
 `server/data/` (`npm start` gives the same headers on 4311).
