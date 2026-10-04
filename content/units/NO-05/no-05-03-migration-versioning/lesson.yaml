@@ -1,0 +1,369 @@
+id: no-05-03-migration-versioning
+unit: NO-05
+title:
+  uk: "Міграції й версіонування на практиці"
+  en: "Migration and versioning in practice"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Написати міграцію зі `schemaVersion` 1 на 2, яка перетворює наявні записи, виконується рівно один раз і записує нову версію лише після успіху."
+    en: "Write a migration from `schemaVersion` 1 to 2 that transforms existing records, runs exactly once and records the new version only after it has succeeded."
+  - uk: "Перевірити міграцію на копії реалістичних синтетичних даних — кількість, інваріанти й повторний запуск, — перш ніж вона торкнеться живого сховища."
+    en: "Test the migration on a copy of realistically shaped synthetic data — counts, invariants and a rerun — before it touches the live store."
+prerequisites: [no-05-02-initialization-seed]
+subskills:
+  - { family: B-05, skill: "migration/versioning", depth: practice }
+glossary: [migration-dry-run]
+selfCheck: [predict-migrate, notes-migration]
+
+blocks:
+  - id: copy-first
+    kind: explanation
+    title:
+      uk: "Міграція працює з чужими даними"
+      en: "A migration works on data you have not seen"
+    body:
+      uk: |
+        [[schema-migration|Міграція]] переводить сховище з версії 1 на версію 2: перетворює **кожен** наявний запис і ставить нову версію. Фікстури ти знаєш напам’ять, а живе сховище — ні: там може бути запис, який ще ніхто не бачив, — ціна текстом, порожнє поле, тисяча записів замість шести.
+
+        Тому міграцію спершу проганяють як [[migration-dry-run|пробний запуск]] — на **копії**:
+
+        1. скопіювати сховище й перенести копію;
+        2. порівняти «до» і «після»: стільки ж записів, ті самі `id`, та сама загальна сума — [[invariant|інваріанти]], які міграція не має права змінити;
+        3. перенести результат ще раз: друга міграція не має змінити нічого;
+        4. лише тоді замінити живе сховище — одним атомарним кроком, у якому нова версія з’являється **разом** із новими даними.
+
+        Якщо щось не так, копію викидають, а живе сховище лишається на версії 1 — цілим.
+      en: |
+        A [[schema-migration]] moves a store from version 1 to version 2: it transforms **every** existing record and sets the new version. You know the fixtures by heart, but not the live store: it may hold a record nobody has seen yet — a price as text, an empty field, a thousand records instead of six.
+
+        So a migration first runs as a [[migration-dry-run]] — on a **copy**:
+
+        1. copy the store and migrate the copy;
+        2. compare “before” and “after”: the same number of records, the same `id`s, the same total — [[invariant|invariants]] the migration has no right to change;
+        3. migrate the result again: the second migration must change nothing;
+        4. only then replace the live store — in one atomic step in which the new version appears **together** with the new data.
+
+        If something is wrong, the copy is thrown away, and the live store stays on version 1 — whole.
+
+  - id: predict-migrate
+    kind: prediction
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+    prompt:
+      uk: "Міграція переводить ціну бажань у мінорні одиниці (копійки, центи). Її запускають на сховищі версії 1, версії 2 і на сховищі з ціною текстом. Що надрукує програма?"
+      en: "A migration moves wish prices into minor units (cents, kopiykas). It runs on a version 1 store, a version 2 store and a store with a price as text. What does the program print?"
+    code: |
+      function migrate1to2(store) {
+        if (store.schemaVersion === 2) return store;
+        const records = store.records.map(({ price, ...rest }) => {
+          if (price !== null && typeof price !== "number") throw new Error(`${rest.id}: bad price`);
+          return { ...rest, priceMinor: price === null ? null : price * 100 };
+        });
+        return { schemaVersion: 2, records };
+      }
+
+      const v1 = { schemaVersion: 1, records: [{ id: "w-02", name: "%%lamp%%", price: 45 }] };
+      const v2 = { schemaVersion: 2, records: [{ id: "w-06", name: "%%mug%%", priceMinor: 1800 }] };
+      const broken = { schemaVersion: 1, records: [{ id: "w-02", price: 45 }, { id: "w-04", price: "25" }] };
+
+      console.log(migrate1to2(v1).records[0].priceMinor, v1.schemaVersion);
+      console.log(migrate1to2(v2).records[0].priceMinor);
+      try {
+        migrate1to2(broken);
+      } catch (error) {
+        console.log(error.message, broken.schemaVersion, "priceMinor" in broken.records[0]);
+      }
+    verify:
+      logs: ["4500 1", "1800", "w-04: bad price 1 false"]
+    answer:
+      type: choice
+      options:
+        - id: pure
+          code: "4500 1\n1800\nw-04: bad price 1 false"
+        - id: mutated
+          code: "4500 2\n1800\nw-04: bad price 2 true"
+          why:
+            uk: "`migrate1to2` будує **новий** об’єкт і нові записи (`{ ...rest, … }`), а вхідний не змінює. Тому `v1` лишається версії 1, а частково перенесеного `broken` не буває: помилка на другому записі просто зупиняє побудову нового масиву."
+            en: "`migrate1to2` builds a **new** object and new records (`{ ...rest, … }`) and does not change its input. So `v1` stays version 1, and a half-migrated `broken` cannot exist: the error at the second record simply stops building the new array."
+        - id: twice
+          code: "4500 1\n180000\nw-04: bad price 1 false"
+          why:
+            uk: "Перша ж перевірка повертає сховище версії 2 як є. Без неї друга міграція помножила б уже мінорні одиниці ще раз на 100 — саме тому міграція має виконуватися рівно один раз."
+            en: "The very first check returns a version 2 store as it is. Without it, a second migration would multiply the minor units by 100 again — exactly why a migration must run once."
+        - id: skipped
+          code: "4500 1\n1800\n4500"
+          why:
+            uk: "Запис із ціною `\"25\"` не можна перетворити, тож міграція кидає помилку, а не пропускає запис і не повертає частковий результат."
+            en: "The record with the price `\"25\"` cannot be transformed, so the migration throws instead of skipping the record or returning a partial result."
+      correct: [pure]
+    explanation:
+      uk: "Сховище версії 1 переноситься в нове сховище, а оригінал лишається версії 1 — його можна порівняти з результатом. Сховище версії 2 повертається без змін. Запис, який не можна перетворити, зупиняє всю міграцію, і `broken` лишається таким, як був: жодного запису в змішаній формі."
+      en: "A version 1 store is migrated into a new store, while the original stays version 1 — it can be compared with the result. A version 2 store comes back unchanged. A record that cannot be transformed stops the whole migration, and `broken` stays as it was: no record in a mixed shape."
+
+  - id: dry-run-picture
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Спершу копія, потім живе сховище"
+      en: "First the copy, then the live store"
+    textEquivalent:
+      uk: "Живе сховище має версію 1. Міграція спершу копіює його в пробний файл і переносить копію. Перевірки порівнюють копію до і після: кількість записів, id, загальну суму, а також запускають міграцію вдруге. Якщо всі перевірки пройдено, нова версія 2 одним rename стає живим сховищем — дані й номер версії з’являються одночасно. Якщо перевірка не пройшла, копію викидають, а живе сховище лишається на версії 1 без змін."
+      en: "The live store has version 1. The migration first copies it into a dry-run file and migrates the copy. The checks compare the copy before and after: record count, ids, total, and they run the migration a second time. If every check passes, version 2 becomes the live store in one rename — the data and the version number appear at the same moment. If a check fails, the copy is thrown away, and the live store stays on version 1, unchanged."
+    spec:
+      layout: tb
+      nodes:
+        - { id: live1, label: { uk: "живе, v1", en: "live, v1" }, shape: cylinder }
+        - { id: copy, label: { uk: "копія → v2", en: "copy → v2" }, shape: cylinder }
+        - { id: checks, label: { uk: "перевірки", en: "checks" } }
+        - { id: live2, label: { uk: "живе, v2", en: "live, v2" }, shape: cylinder }
+      edges:
+        - { id: copied, from: live1, to: copy, label: "copyFile" }
+        - { id: checked, from: copy, to: checks }
+        - { id: swapped, from: checks, to: live2, label: "rename" }
+      hidden: [live2, swapped]
+      steps:
+        - caption:
+            uk: "Живе сховище має `schemaVersion: 1`. Його ніхто не змінюватиме, доки не буде доказів."
+            en: "The live store has `schemaVersion: 1`. Nobody changes it until there is evidence."
+          highlight: [live1]
+        - caption:
+            uk: "Міграція копіює файл і переносить **копію** на версію 2."
+            en: "The migration copies the file and moves the **copy** to version 2."
+          highlight: [copy, copied]
+        - caption:
+            uk: "Перевірки порівнюють «до» і «після»: стільки ж записів, ті самі `id`, та сама сума. Потім міграцію запускають удруге — результат має не змінитися."
+            en: "The checks compare “before” and “after”: the same number of records, the same `id`s, the same total. Then the migration runs a second time — the result must not change."
+          highlight: [checks, checked]
+        - caption:
+            uk: "Якщо перевірка не пройшла, копію викидають. Живе сховище досі на версії 1 і ціле — сервер може працювати далі."
+            en: "If a check fails, the copy is thrown away. The live store is still on version 1 and whole — the server can keep working."
+          highlight: [live1]
+          dim: [copy, checks]
+          annotate:
+            - { id: checks, text: { uk: "не пройдено", en: "failed" } }
+        - caption:
+            uk: "Якщо все пройдено, одне `rename` ставить версію 2 на місце живого сховища: нові дані й новий номер версії з’являються в ту саму мить."
+            en: "If everything passes, one `rename` puts version 2 in place of the live store: the new data and the new version number appear at the same moment."
+          show: [live2, swapped]
+          highlight: [live2, swapped]
+          dim: [live1]
+
+  - id: dry-run-then-apply
+    kind: example
+    runtime: isolated-node
+    dir: dry-run-then-apply
+    entry: index.js
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      nothing: { uk: "вже версія 2, нічого не роблю", en: "already version 2, nothing to do" }
+      dryRunOk: { uk: "пробний запуск пройдено", en: "dry run passed" }
+      applied: { uk: "застосовано до живого сховища", en: "applied to the live store" }
+      refused: { uk: "відмовлено, живе сховище не змінено", en: "refused, the live store is unchanged" }
+      live: { uk: "живе сховище", en: "live store" }
+    title:
+      uk: "Пробний запуск, потім заміна"
+      en: "A dry run, then the swap"
+    body:
+      uk: |
+        Натисни **Запустити**. `index.js` двічі викликає `upgrade()` для `data/wishlist.json`:
+
+        - перший виклик копіює файл, переносить копію (`migrate1to2` з `migrate.js`), порівнює `facts` до і після — кількість, `id`, суму в мінорних одиницях, кількість бажань без ціни, — запускає міграцію вдруге й лише тоді замінює живий файл через тимчасовий файл і `rename`;
+        - другий виклик бачить версію 2 й нічого не робить.
+
+        Останній рядок показує бажання `w-02` у живому файлі вже з `priceMinor`.
+      en: |
+        Press **Run**. `index.js` calls `upgrade()` twice for `data/wishlist.json`:
+
+        - the first call copies the file, migrates the copy (`migrate1to2` from `migrate.js`), compares `facts` before and after — the count, the `id`s, the total in minor units, the number of wishes without a price — runs the migration a second time and only then replaces the live file through a temp file and `rename`;
+        - the second call sees version 2 and does nothing.
+
+        The last line shows the wish `w-02` in the live file, now with `priceMinor`.
+    tryIt:
+      uk: |
+        Зламай дані й подивись, як пробний запуск захищає живе сховище:
+
+        1. У `data/wishlist.json` заміни в `w-04` `"price": 25` на `"price": "25"` і запусти. Перший рядок: `відмовлено, живе сховище не змінено: w-04: price "25" cannot become priceMinor`; другий — така сама відмова, бо файл досі версії 1; останній рядок показує `schemaVersion 1` і стару `price`. Поверни `25`.
+        2. У `migrate.js` заміни `Math.round(price * 100)` на `Math.round(price)` — помилка в самій міграції. Запусти: `totalMinor` до і після не збігаються, і заміну знову відхилено. Поверни `price * 100`.
+      en: |
+        Break the data and watch the dry run protect the live store:
+
+        1. In `data/wishlist.json`, change `"price": 25` of `w-04` to `"price": "25"` and run. The first line: `refused, the live store is unchanged: w-04: price "25" cannot become priceMinor`; the second is the same refusal, because the file is still version 1; the last line shows `schemaVersion 1` and the old `price`. Put `25` back.
+        2. In `migrate.js`, replace `Math.round(price * 100)` with `Math.round(price)` — a bug in the migration itself. Run: `totalMinor` before and after differ, and the swap is refused again. Put `price * 100` back.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: номер версії вирішує, що запускати"
+      en: "Recall: the version number decides what runs"
+    items:
+      - id: numbered-migrations
+        from: no-09-07-migrations-seed
+        prompt:
+          uk: "База зберігає номер версії схеми, а програма має впорядкований список міграцій. Що надрукує цей код?"
+          en: "A database stores its schema version number, and the program has an ordered list of migrations. What does this code print?"
+        code: |
+          const migrations = ["001 create tables", "002 add dueDate", "003 add priority"];
+          let userVersion = 2; // what PRAGMA user_version reports
+
+          migrations.forEach((name, index) => {
+            const version = index + 1;
+            if (version > userVersion) {
+              console.log("run", name);
+              userVersion = version;
+            }
+          });
+          console.log(userVersion);
+        verify:
+          logs: ["run 003 add priority", "3"]
+        answer:
+          type: choice
+          options:
+            - id: only-new
+              code: "run 003 add priority\n3"
+            - id: all
+              code: "run 001 create tables\nrun 002 add dueDate\nrun 003 add priority\n3"
+              why:
+                uk: "Міграції 1 і 2 вже записано номером версії 2, тож вони не запускаються вдруге. Саме номер версії робить міграцію одноразовою."
+                en: "Migrations 1 and 2 are already recorded by version number 2, so they do not run again. The version number is what makes a migration run once."
+            - id: none
+              code: "3"
+              why:
+                uk: "Версія 2 менша за 3, тож третя міграція ще не застосована й запускається."
+                en: "Version 2 is lower than 3, so the third migration has not been applied yet and runs."
+          correct: [only-new]
+        explanation:
+          uk: "Застосовуються лише міграції з номером, більшим за збережену версію, по черзі, і після кожної версія росте. У файловому сховищі роль `PRAGMA user_version` грає поле `schemaVersion`."
+          en: "Only migrations with a number above the stored version run, in order, and the version grows after each. In a file store the field `schemaVersion` plays the role of `PRAGMA user_version`."
+
+  - id: notes-migration
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: notes-migration
+    entry: index.js
+    editable: [app.js]
+    strings:
+      shopping: { uk: "Покупки", en: "Shopping" }
+      shoppingBody: { uk: "Хліб і чай. #Їжа #магазин #їжа", en: "Bread and tea. #Food #shop #food" }
+      shoppingTags: { uk: "магазин,їжа", en: "food,shop" }
+      ideas: { uk: "Ідеї на вихідні", en: "Weekend ideas" }
+      ideasBody: { uk: "Похід у гори #вихідні", en: "A hike in the hills #weekend" }
+      ideasTags: { uk: "вихідні", en: "weekend" }
+      draft: { uk: "Чернетка", en: "Draft" }
+      empty: { uk: "Порожня нотатка", en: "Empty note" }
+    title:
+      uk: "Міграція нотаток і її пробний запуск"
+      en: "A notes migration and its dry run"
+    instructions:
+      uk: |
+        Версія 2 сховища нотаток додає кожній нотатці поле `tags` — #слова з її `body` (їх уже вміє знаходити `tagsOf` з `tags.js`). Перепиши обидві функції в `app.js`.
+
+        `migrate1to2(store)`:
+
+        - сховище версії 1 → **нове** сховище `{ schemaVersion: 2, records }`, де кожна нотатка має всі старі поля й `tags: tagsOf(body)`;
+        - сховище версії 2 повертає без змін (там `tags` могла вже змінити людина);
+        - не змінює сховище, яке отримала;
+        - якщо `body` нотатки не текст — кидає помилку, а не пропускає нотатку.
+
+        `dryRun(store, migrate = migrate1to2)` перевіряє будь-яку міграцію `migrate`:
+
+        - запускає її на **копії** `store` (`structuredClone`), тож `store` лишається тим самим, навіть якщо `migrate` змінює те, що отримала;
+        - повертає `{ ok: true, count }` (кількість записів), коли все гаразд;
+        - повертає `{ ok: false, problem }` (текст), а **не кидає**, якщо міграція кинула помилку, змінила кількість записів або повторний запуск на її результаті щось змінює.
+      en: |
+        Version 2 of the notes store gives every note a `tags` field — the #words of its `body` (`tagsOf` from `tags.js` already finds them). Rewrite both functions in `app.js`.
+
+        `migrate1to2(store)`:
+
+        - a version 1 store → a **new** store `{ schemaVersion: 2, records }` in which every note has all its old fields and `tags: tagsOf(body)`;
+        - returns a version 2 store unchanged (a person may already have edited its `tags`);
+        - does not change the store it was given;
+        - when a note’s `body` is not text — throws an error instead of skipping the note.
+
+        `dryRun(store, migrate = migrate1to2)` checks any migration `migrate`:
+
+        - runs it on a **copy** of `store` (`structuredClone`), so `store` stays the same even when `migrate` changes what it was given;
+        - returns `{ ok: true, count }` (the number of records) when all is well;
+        - returns `{ ok: false, problem }` (a text) instead of **throwing** when the migration threw, changed the number of records, or a rerun on its result changes something.
+    testTitles:
+      "a v1 store becomes v2 with the tags of each body":
+        uk: "Сховище v1 стає v2 з тегами кожного `body`"
+        en: "A v1 store becomes v2 with the tags of each `body`"
+      "a v2 store comes back unchanged":
+        uk: "Сховище v2 повертається без змін"
+        en: "A v2 store comes back unchanged"
+      "migrate1to2 does not change the store it is given":
+        uk: "`migrate1to2` не змінює отримане сховище"
+        en: "`migrate1to2` does not change the store it is given"
+      "a body that is not text makes migrate1to2 throw":
+        uk: "`body`, що не є текстом, змушує `migrate1to2` кинути помилку"
+        en: "A `body` that is not text makes `migrate1to2` throw"
+      "dryRun passes a good store and reports its count":
+        uk: "`dryRun` пропускає правильне сховище й повідомляє кількість"
+        en: "`dryRun` passes a good store and reports its count"
+      "dryRun reports a migration that throws instead of throwing itself":
+        uk: "`dryRun` повідомляє про міграцію, що кидає помилку, а не кидає сам"
+        en: "`dryRun` reports a migration that throws instead of throwing itself"
+      "dryRun catches a migration that loses a record":
+        uk: "`dryRun` ловить міграцію, що губить запис"
+        en: "`dryRun` catches a migration that loses a record"
+      "dryRun catches a migration that is not safe to rerun":
+        uk: "`dryRun` ловить міграцію, яку небезпечно запускати вдруге"
+        en: "`dryRun` catches a migration that is not safe to rerun"
+      "dryRun leaves the store it checks unchanged":
+        uk: "`dryRun` не змінює сховище, яке перевіряє"
+        en: "`dryRun` leaves the store it checks unchanged"
+    hints:
+      nudge:
+        uk: "Для `migrate1to2` подумай про `map` і розгортання `{ ...note }`, а не про присвоєння в наявний об’єкт. Для `dryRun` — про `try`/`catch` навколо всього, що робить міграція, і про два її запуски."
+        en: "For `migrate1to2`, think of `map` and spreading `{ ...note }` rather than assigning into an existing object. For `dryRun`, think of `try`/`catch` around everything the migration does, and of running it twice."
+      explanation:
+        uk: "Для схожої міграції справ, яка додає `priority: 'normal'`, чиста версія виглядала б як `{ schemaVersion: 2, records: store.records.map((task) => ({ ...task, priority: 'normal' })) }` — новий масив, нові об’єкти. Перевірка «повторний запуск нічого не змінює» — це порівняння `JSON.stringify(першийРезультат)` і `JSON.stringify(migrate(копіяПершогоРезультату))`. Кількість порівнюй з `store.records.length`, узятою до запуску. Будь-який виняток усередині `try` стає `{ ok: false, problem: error.message }`."
+        en: "For a similar task migration that adds `priority: 'normal'`, a pure version would look like `{ schemaVersion: 2, records: store.records.map((task) => ({ ...task, priority: 'normal' })) }` — a new array, new objects. The check “a rerun changes nothing” compares `JSON.stringify(firstResult)` with `JSON.stringify(migrate(copyOfFirstResult))`. Compare the count with `store.records.length` taken before the run. Any exception inside `try` becomes `{ ok: false, problem: error.message }`."
+    solutionNote:
+      uk: "`migrate1to2` будує нові записи й нове сховище, тож оригінал лишається для порівняння, а помилка на будь-якому записі зупиняє все — частково перенесеного сховища не буває. Перевірка версії на початку робить міграцію одноразовою. `dryRun` працює лише з копіями й перетворює кожну проблему на звіт: його можна запускати перед кожним оновленням, і він ніколи не зачепить живих даних. Варіант зі списком перевірок і копією через `JSON.parse(JSON.stringify(…))` теж правильний."
+      en: "`migrate1to2` builds new records and a new store, so the original remains for comparison, and an error at any record stops everything — a half-migrated store cannot exist. The version check at the start makes the migration run once. `dryRun` works only with copies and turns every problem into a report: you can run it before every upgrade, and it never touches live data. A version with a list of checks and a copy made by `JSON.parse(JSON.stringify(…))` is correct too."
+    feedback:
+      - when: { test: "a v2 store comes back unchanged" }
+        message:
+          uk: "Ця перевірка дає сховище версії 2, де людина вже змінила `tags` на `['mine']`, і очікує його без змін. Сховище версії 2 міграцію не проходить."
+          en: "This check gives a version 2 store where a person already changed `tags` to `['mine']` and expects it unchanged. A version 2 store does not go through the migration."
+      - when: { test: "migrate1to2 does not change the store it is given" }
+        message:
+          uk: "Ця перевірка порівнює отримане сховище до і після `migrate1to2` й очікує той самий текст JSON. Не присвоюй `note.tags` чи `store.schemaVersion` — будуй нові об’єкти."
+          en: "This check compares the given store before and after `migrate1to2` and expects the same JSON text. Do not assign `note.tags` or `store.schemaVersion` — build new objects."
+      - when: { test: "a body that is not text makes migrate1to2 throw" }
+        message:
+          uk: "Ця перевірка додає нотатку з `body: null` і очікує, що `migrate1to2` кине помилку. Нотатку, яку не можна перенести, не можна й тихо викинути."
+          en: "This check adds a note with `body: null` and expects `migrate1to2` to throw. A note that cannot be migrated must not be silently dropped either."
+      - when: { test: "dryRun reports a migration that throws instead of throwing itself" }
+        message:
+          uk: "Ця перевірка передає в `dryRun` міграцію, що кидає помилку, і очікує звіт `{ ok: false, problem: '…' }` замість винятку. Обгорни запуски міграції в `try`/`catch`."
+          en: "This check passes `dryRun` a migration that throws and expects the report `{ ok: false, problem: '…' }` instead of an exception. Wrap the runs of the migration in `try`/`catch`."
+      - when: { test: "dryRun catches a migration that loses a record" }
+        message:
+          uk: "Ця перевірка передає міграцію, що губить нотатку з порожнім `body`, і очікує `ok: false`. Порівняй кількість записів до і після."
+          en: "This check passes a migration that loses the note with an empty `body` and expects `ok: false`. Compare the number of records before and after."
+      - when: { test: "dryRun catches a migration that is not safe to rerun" }
+        message:
+          uk: "Ця перевірка передає міграцію, яка щоразу додає ще один тег, і очікує `ok: false`. Запусти міграцію вдруге на її власному результаті й порівняй."
+          en: "This check passes a migration that adds one more tag every time and expects `ok: false`. Run the migration a second time on its own result and compare."
+      - when: { test: "dryRun leaves the store it checks unchanged" }
+        message:
+          uk: "Ця перевірка передає міграцію, яка змінює отримане сховище, і очікує, що `store` після `dryRun` той самий. Передавай міграції `structuredClone(store)`, а не сам `store`."
+          en: "This check passes a migration that changes the store it receives and expects `store` to be the same after `dryRun`. Give the migration `structuredClone(store)`, not `store` itself."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-05
+    body:
+      uk: "Крок проєкту цього розділу просить міграцію сховища твого домену з версії 1 на 2 і тест до неї. Перш ніж застосувати її до свого живого файла чи бази, прожени її на копії так само, як тут: кількість, інваріанти твого домену й повторний запуск."
+      en: "This unit’s project step asks for a migration of your domain’s store from version 1 to 2, with a test. Before applying it to your live file or database, run it on a copy as here: the count, your domain’s invariants and a rerun."
