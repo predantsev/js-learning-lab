@@ -11,8 +11,10 @@ export function sendJson(response, status, value, headers = {}) {
   response.end(text);
 }
 
-// Reads the whole body as text. Past maxBytes the rest is read and thrown away (so the client can
-// still receive an answer), and the promise rejects with an error whose status is 413.
+// Reads the whole body as text. Past maxBytes the rest is read and thrown away, and the promise
+// rejects with an error whose status is 413. Reading to the end lets the client receive that answer:
+// measured on Node.js 25 and 20, a reader that throws inside the loop instead still answered 413 for
+// bodies up to 64 KB, but with a 1 MB body some requests met a reset connection or no answer at all.
 export async function readBodyText(request, maxBytes) {
   const chunks = [];
   let size = 0;
