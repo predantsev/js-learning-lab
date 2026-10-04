@@ -1,7 +1,10 @@
 // Durable storage for room bookings in SQLite (node:sqlite). Chosen because "one room per day" is a
 // UNIQUE constraint the database itself enforces, and every change is one synchronous statement or a
-// transaction with no await inside. sqlite.backup() needs Node 22.16 or newer; older Node copies the
-// file while no connection of this function is open and no transaction is in progress.
+// transaction with no await inside. sqlite.backup() needs Node 22.16 or newer. On Node 22.13-22.15
+// backupStore copies the file after closing its own connection: in this process that is a consistent
+// moment (no transaction here spans an await), but a second PROCESS writing the same file at that
+// moment could still leave the copy broken. That fallback was tried only by hiding sqlite.backup on
+// Node 25.2.1, never on a real 22.13-22.15.
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
