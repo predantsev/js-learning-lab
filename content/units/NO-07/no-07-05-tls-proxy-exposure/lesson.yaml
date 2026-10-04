@@ -1,0 +1,344 @@
+id: no-07-05-tls-proxy-exposure
+unit: NO-07
+title:
+  uk: "TLS, довіра до проксі та мережева доступність"
+  en: "TLS, proxy trust and network exposure"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Пояснювати, чому сервер проєкту за замовчуванням слухає 127.0.0.1 і що змінюється, коли він слухає 0.0.0.0."
+    en: "Explain why the capstone server binds to 127.0.0.1 by default and what changes when it binds to 0.0.0.0."
+  - uk: "Описувати, де закінчується TLS за зворотним проксі і чому X-Forwarded-For можна вірити лише тоді, коли з’єднання прийшло від відомого проксі."
+    en: "Describe where TLS terminates behind a reverse proxy and why X-Forwarded-For is trusted only when the socket peer is a known proxy."
+prerequisites: [no-07-04-dependency-risks, no-03-01-http-server-lifecycle]
+subskills:
+  - { family: B-07, skill: "TLS/proxy trust/context", depth: intro }
+glossary: [reverse-proxy, tls-termination, trusted-proxy]
+selfCheck: [predict-bind, client-ip]
+
+blocks:
+  - id: who-can-reach
+    kind: explanation
+    title:
+      uk: "Хто може достукатися до сервера"
+      en: "Who can reach the server"
+    body:
+      uk: |
+        Другий аргумент `server.listen(port, host)` вирішує, **з яких мереж** приходять з’єднання:
+
+        | `host` | Хто достукається |
+        |---|---|
+        | `127.0.0.1` (IPv4) або `::1` (IPv6) | лише програми на цьому самому комп’ютері (loopback) |
+        | `localhost` | так само, але це назва: вона стає `127.0.0.1` чи `::1` залежно від системи |
+        | `0.0.0.0` або `::` | усі мережі комп’ютера: телефон у тому ж Wi‑Fi, сусід у кав’ярні |
+        | не вказано | `::`, а на більшості систем ще й `0.0.0.0` |
+
+        Останній рядок — з [документації Node.js 22](https://nodejs.org/docs/latest-v22.x/api/net.html#serverlistenport-host-backlog-callback): без `host` сервер приймає з’єднання з усіх мереж. Тому сервер навчального проєкту слухає `127.0.0.1` **за замовчуванням**, а інша адреса — свідомий вибір, про який сервер попереджає в журналі. Платформа курсу взагалі не дає запустити сервер не на loopback.
+
+        «`localhost` і `0.0.0.0` — це ж обидва мій комп’ютер»? Ні: `localhost` — адреса, **на яку** до тебе звертаються лише зсередини, а `0.0.0.0` — «слухай на всіх адресах цього комп’ютера», зокрема тій, що видно в мережі.
+      en: |
+        The second argument of `server.listen(port, host)` decides **from which networks** connections arrive:
+
+        | `host` | Who can reach it |
+        |---|---|
+        | `127.0.0.1` (IPv4) or `::1` (IPv6) | only programs on this same computer (loopback) |
+        | `localhost` | the same, but it is a name: it becomes `127.0.0.1` or `::1` depending on the system |
+        | `0.0.0.0` or `::` | every network of the computer: a phone on the same Wi‑Fi, a neighbour in a café |
+        | not given | `::`, and on most systems `0.0.0.0` as well |
+
+        The last row comes from the [Node.js 22 documentation](https://nodejs.org/docs/latest-v22.x/api/net.html#serverlistenport-host-backlog-callback): without `host` the server accepts connections from every network. So the course project's server listens on `127.0.0.1` **by default**, and any other address is a deliberate choice the server warns about in its log. The course platform does not let a server start off loopback at all.
+
+        “`localhost` and `0.0.0.0` are both my computer, right?” No: `localhost` is an address **at which** you are reached only from inside, while `0.0.0.0` means “listen on every address of this computer”, including the one visible on the network.
+
+  - id: behind-proxy
+    kind: explanation
+    title:
+      uk: "За зворотним проксі"
+      en: "Behind a reverse proxy"
+    body:
+      uk: |
+        Коли сервер колись вийде в інтернет, перед ним зазвичай стоїть [[reverse-proxy|зворотний проксі]] — окрема програма, що приймає з’єднання клієнтів. Вона тримає сертифікат і розшифровує HTTPS — це [[tls-termination|завершення TLS]] — а далі передає запит твоєму серверу звичайним HTTP на `127.0.0.1`. Тому сервер за проксі й далі слухає лише loopback.
+
+        Але тепер `request.socket.remoteAddress` — це адреса **проксі**, а не клієнта. Справжню адресу проксі дописує в заголовок `X-Forwarded-For`. І тут пастка: заголовок — просто текст, і клієнт може надіслати свій `X-Forwarded-For: 192.0.2.66` ще до проксі. Проксі **допише** справжню адресу в кінець: `192.0.2.66, 203.0.113.7`.
+
+        Звідси правило [[trusted-proxy|довіреного проксі]]:
+
+        - якщо з’єднання прийшло не від проксі зі списку, заголовок ігнорується — адреса клієнта є адресою сокета;
+        - якщо від проксі — читаємо записи **справа наліво**, пропускаємо адреси наших проксі, і перший чужий запис — клієнт.
+
+        HTTPS тут нічого не змінює: шифрування захищає дорогу, а не правдивість того, що клієнт написав у заголовку.
+      en: |
+        When the server someday goes onto the internet, a [[reverse-proxy]] usually stands in front of it — a separate program that accepts the clients' connections. It holds the certificate and decrypts HTTPS — that is [[tls-termination]] — and then passes the request to your server in plain HTTP on `127.0.0.1`. So a server behind a proxy still listens on loopback only.
+
+        But now `request.socket.remoteAddress` is the **proxy's** address, not the client's. The proxy appends the real address to the `X-Forwarded-For` header. And here is the trap: a header is just text, and a client can send its own `X-Forwarded-For: 192.0.2.66` before it ever reaches the proxy. The proxy **appends** the real address at the end: `192.0.2.66, 203.0.113.7`.
+
+        Hence the rule of a [[trusted-proxy]]:
+
+        - if the connection did not come from a proxy on the list, the header is ignored — the client's address is the socket's address;
+        - if it came from a proxy, read the entries **from right to left**, skip the addresses of our own proxies, and the first foreign entry is the client.
+
+        HTTPS changes nothing here: encryption protects the road, not the truth of what the client wrote in a header.
+
+  - id: exposure-map
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Хто достукається і кому вірити"
+      en: "Who gets through and whom to believe"
+    textEquivalent:
+      uk: "Сервер на комп’ютері учня слухає порт 4310. Коли він слухає 127.0.0.1, до нього доходить лише браузер на тому самому комп’ютері, а телефон у тому ж Wi‑Fi — ні. Коли він слухає 0.0.0.0, телефон у мережі теж доходить до сервера. У можливому розгортанні клієнт з інтернету звертається HTTPS до зворотного проксі; проксі завершує TLS і передає запит застосунку, що слухає 127.0.0.1, звичайним HTTP із заголовком X-Forwarded-For. Застосунок вірить цьому заголовку лише тому, що з’єднання прийшло від цього проксі."
+      en: "The server on the learner's computer listens on port 4310. When it listens on 127.0.0.1, only a browser on the same computer gets through, and a phone on the same Wi‑Fi does not. When it listens on 0.0.0.0, the phone on the network reaches the server too. In a possible deployment a client from the internet talks HTTPS to a reverse proxy; the proxy terminates TLS and passes the request to an app that listens on 127.0.0.1, in plain HTTP with an X-Forwarded-For header. The app believes that header only because the connection came from that proxy."
+    spec:
+      layout: grid
+      nodes:
+        - { id: browser, label: { uk: "браузер, цей комп’ютер", en: "browser, this computer" }, w: 180, col: 0, row: 0 }
+        - { id: phone, label: { uk: "телефон у Wi‑Fi", en: "phone on the Wi‑Fi" }, w: 150, col: 1, row: 0 }
+        - { id: server, label: { uk: "сервер :4310", en: "server :4310" }, shape: cylinder, w: 180, col: 0, row: 1 }
+        - { id: client, label: { uk: "клієнт в інтернеті", en: "internet client" }, w: 150, col: 1, row: 2 }
+        - { id: proxy, label: { uk: "проксі: TLS", en: "proxy: TLS" }, shape: round, w: 150, col: 1, row: 3 }
+        - { id: app, label: { uk: "застосунок 127.0.0.1", en: "app 127.0.0.1" }, shape: cylinder, w: 180, col: 0, row: 3 }
+      edges:
+        - { id: e-browser, from: browser, to: server, label: "127.0.0.1" }
+        - { id: e-phone, from: phone, to: server, kind: dashed, label: "192.168.…" }
+        - { id: e-client, from: client, to: proxy, label: "HTTPS" }
+        - { id: e-proxy, from: proxy, to: app, label: "HTTP + X-Forwarded-For" }
+      steps:
+        - caption:
+            uk: "Сервер слухає `127.0.0.1`: до нього доходить лише браузер на цьому самому комп’ютері."
+            en: "The server listens on `127.0.0.1`: only a browser on this same computer gets through."
+          highlight: [browser, server, e-browser]
+          dim: [phone, e-phone, client, proxy, app, e-client, e-proxy]
+        - caption:
+            uk: "Сервер слухає `0.0.0.0`: тепер і телефон у тому ж Wi‑Fi з’єднується за мережевою адресою комп’ютера."
+            en: "The server listens on `0.0.0.0`: now a phone on the same Wi‑Fi connects too, at the computer's network address."
+          highlight: [phone, server, e-phone, e-browser, browser]
+          dim: [client, proxy, app, e-client, e-proxy]
+        - caption:
+            uk: "Можливе розгортання: клієнт говорить HTTPS із проксі, а проксі завершує TLS — сертифікат лежить у нього."
+            en: "A possible deployment: the client speaks HTTPS to the proxy, and the proxy terminates TLS — it holds the certificate."
+          highlight: [client, proxy, e-client]
+          dim: [browser, phone, server, e-browser, e-phone]
+        - caption:
+            uk: "Проксі передає запит застосунку на `127.0.0.1` звичайним HTTP і дописує `X-Forwarded-For`. Застосунок вірить заголовку лише тому, що з’єднання прийшло від цього проксі."
+            en: "The proxy passes the request to the app on `127.0.0.1` in plain HTTP and appends `X-Forwarded-For`. The app believes the header only because the connection came from that proxy."
+          highlight: [proxy, app, e-proxy]
+          dim: [browser, phone, server, e-browser, e-phone]
+          annotate:
+            - { id: app, text: { uk: "довіряє проксі", en: "trusts the proxy" } }
+
+  - id: predict-bind
+    kind: prediction
+    prompt:
+      uk: "Сервер списку бажань запущено на ноутбуці в кав’ярні командою `server.listen(4310, \"0.0.0.0\")`. Хто може відкрити `GET /items`?"
+      en: "A wishlist server is started on a laptop in a café with `server.listen(4310, \"0.0.0.0\")`. Who can open `GET /items`?"
+    answer:
+      type: choice
+      options:
+        - id: network
+          text:
+            uk: "Будь-хто в тій самій мережі кав’ярні, хто знає адресу ноутбука й порт, — і, звісно, сам ноутбук"
+            en: "Anyone on the same café network who knows the laptop's address and the port — and the laptop itself, of course"
+        - id: only-me
+          text:
+            uk: "Лише сам ноутбук: `0.0.0.0` — це те саме, що `localhost`"
+            en: "Only the laptop itself: `0.0.0.0` is the same as `localhost`"
+          why:
+            uk: "`0.0.0.0` у `listen` означає «на всіх адресах комп’ютера», зокрема на тій, яку отримав Wi‑Fi. `localhost` — лише loopback."
+            en: "`0.0.0.0` in `listen` means “on every address of the computer”, including the one the Wi‑Fi gave it. `localhost` is loopback only."
+        - id: nobody
+          text:
+            uk: "Ніхто: `0.0.0.0` — недійсна адреса, і з’єднатися з нею не можна"
+            en: "Nobody: `0.0.0.0` is not a valid address, so nobody can connect to it"
+          why:
+            uk: "Підключитися **до** `0.0.0.0` справді не можна, але слухати на ній — означає приймати з’єднання на всіх справжніх адресах комп’ютера."
+            en: "You indeed cannot connect **to** `0.0.0.0`, but listening on it means accepting connections on every real address of the computer."
+      correct: [network]
+    explanation:
+      uk: "Тому типова адреса сервера в навчальному проєкті — `127.0.0.1`. Брандмауер системи може ще щось заблокувати, але покладатися на нього не варто: безпечне значення має бути в самому коді."
+      en: "That is why the course project's default server address is `127.0.0.1`. The system's firewall may still block something, but do not rely on it: the safe value belongs in the code itself."
+
+  - id: predict-forwarded
+    kind: prediction
+    prompt:
+      uk: "API стоїть за проксі, що приймає HTTPS і дописує `X-Forwarded-For`. Клієнт сам надсилає `X-Forwarded-For: 192.0.2.66`, а його справжня адреса — `203.0.113.7`. Сервер обмежує частоту запитів за **першим** записом заголовка. Що станеться?"
+      en: "An API sits behind a proxy that accepts HTTPS and appends `X-Forwarded-For`. A client itself sends `X-Forwarded-For: 192.0.2.66`, while its real address is `203.0.113.7`. The server rate-limits by the **first** entry of the header. What happens?"
+    answer:
+      type: choice
+      options:
+        - id: dodges
+          text:
+            uk: "Сервер бачить `192.0.2.66, 203.0.113.7` і рахує запити для `192.0.2.66`; змінюючи цей текст, клієнт обходить ліміт"
+            en: "The server sees `192.0.2.66, 203.0.113.7` and counts requests for `192.0.2.66`; by changing that text the client dodges the limit"
+        - id: https-protects
+          text:
+            uk: "Нічого: з’єднання HTTPS, тож заголовки підробити не можна"
+            en: "Nothing: the connection is HTTPS, so headers cannot be forged"
+          why:
+            uk: "HTTPS захищає дані в дорозі від сторонніх, але не від самого клієнта: він пише в заголовки що завгодно, і шифрування доставить це в цілості."
+            en: "HTTPS protects data on the road from outsiders, not from the client itself: it writes whatever it likes into the headers, and encryption delivers that intact."
+        - id: proxy-replaces
+          text:
+            uk: "Проксі замінює заголовок клієнта своїм, тож сервер бачить лише `203.0.113.7`"
+            en: "The proxy replaces the client's header with its own, so the server sees only `203.0.113.7`"
+          why:
+            uk: "Типовий проксі **дописує** адресу в кінець наявного заголовка, а не замінює його. Тому вірити можна лише правому краю."
+            en: "A typical proxy **appends** the address to the end of the existing header rather than replacing it. That is why only the right end can be believed."
+      correct: [dodges]
+    explanation:
+      uk: "Ліва частина `X-Forwarded-For` — те, що написав клієнт. Довіряти можна лише записам, які дописали твої проксі, тобто правому краю, і лише коли саме з’єднання прийшло від проксі."
+      en: "The left part of `X-Forwarded-For` is what the client wrote. Only the entries your own proxies appended can be trusted — the right end — and only when the connection itself came from a proxy."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: tls-check-off
+        from: rn-06-05-transport-tls-config
+        prompt:
+          uk: "У мобільному застосунку для `https://` вимкнули перевірку сертифіката сервера. Що з’єднання ще дає, а чого вже ні?"
+          en: "A mobile app turned off checking the server's certificate for `https://`. What does the connection still give, and what not any more?"
+        answer:
+          type: choice
+          options:
+            - id: encrypted-wrong-server
+              text:
+                uk: "Трафік шифрується, але вже невідомо, чи на тому кінці справжній сервер: будь-хто посередині може видати себе за нього"
+                en: "The traffic is encrypted, but it is no longer known whether the real server is at the other end: anyone in the middle can pose as it"
+            - id: same
+              text:
+                uk: "Нічого не змінилося: HTTPS є HTTPS"
+                en: "Nothing changed: HTTPS is HTTPS"
+              why:
+                uk: "Без перевірки сертифіката TLS не знає, з ким саме говорить, тож шифрований канал може вести до чужого сервера."
+                en: "Without the certificate check TLS does not know whom it is talking to, so the encrypted channel can lead to a foreign server."
+            - id: plain
+              text:
+                uk: "Трафік іде відкритим текстом, як у HTTP"
+                en: "The traffic goes in plain text, as with HTTP"
+              why:
+                uk: "Шифрування лишається, зникає лише перевірка, **з ким** воно встановлене."
+                en: "Encryption remains; only the check of **with whom** it is set up disappears."
+          correct: [encrypted-wrong-server]
+        explanation:
+          uk: "TLS дає дві речі: шифрування й перевірку, що на тому кінці той, за кого себе видає. Вимкнена перевірка лишає першу без другої. На сервері за проксі цю роботу робить проксі, що тримає сертифікат."
+          en: "TLS gives two things: encryption and a check that the other end is who it claims to be. Turning the check off keeps the first without the second. On a server behind a proxy, the proxy that holds the certificate does that work."
+
+  - id: bind-host
+    kind: example
+    runtime: isolated-node
+    dir: bind-host
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      warning: { uk: "увага: сервер слухає не loopback і доступний з інших комп’ютерів:", en: "warning: the server listens off loopback and is reachable from other computers:" }
+      plain: { uk: "звичайний запит", en: "plain request" }
+      spoofed: { uk: "запит із підробленим X-Forwarded-For", en: "request with a forged X-Forwarded-For" }
+    title:
+      uk: "Де слухає сервер і хто його кличе"
+      en: "Where the server listens and who calls it"
+    body:
+      uk: |
+        `bindHost(env)` у `server.js` бере адресу з `env.HOST`, за замовчуванням — `127.0.0.1`, і попереджає в журналі про будь-яку адресу поза loopback. Об’єкт `env` в `index.js` заміняє `process.env`, щоб його можна було змінити просто в коді. Сервер відповідає двома полями: `socketAddress` — хто справді відкрив з’єднання, і `forwardedFor` — що клієнт написав у заголовку.
+
+        Натисни **Запустити**. `server.address()` показує `127.0.0.1` і `IPv4`. У другому запиті клієнт написав `203.0.113.7`, але сокет і далі каже `127.0.0.1`: заголовок — лише текст.
+      en: |
+        `bindHost(env)` in `server.js` takes the address from `env.HOST`, `127.0.0.1` by default, and warns in the log about any address off loopback. The `env` object in `index.js` stands in for `process.env`, so you can change it right in the code. The server answers with two fields: `socketAddress` — who really opened the connection, and `forwardedFor` — what the client wrote in the header.
+
+        Press **Run**. `server.address()` shows `127.0.0.1` and `IPv4`. In the second request the client wrote `203.0.113.7`, but the socket still says `127.0.0.1`: a header is only text.
+    tryIt:
+      uk: |
+        1. Зміни в `index.js` `HOST: undefined` на `HOST: '::1'` і запусти: `server.address()` — `::1` і `IPv6`, а `socketAddress` — теж `::1`. У URL IPv6-адреса стоїть у квадратних дужках.
+        2. Зміни на `HOST: '0.0.0.0'` і запусти. Спершу журнал показує попередження з `bindHost`, а потім платформа зупиняє програму помилкою `ERR_JSLL_POLICY`: тут сервер може слухати лише loopback. На твоєму комп’ютері поза платформою такий сервер запустився б і став доступним з мережі.
+        3. Поверни `HOST: undefined`.
+      en: |
+        1. In `index.js` change `HOST: undefined` to `HOST: '::1'` and run: `server.address()` is `::1` and `IPv6`, and `socketAddress` is `::1` too. In a URL an IPv6 address goes in square brackets.
+        2. Change it to `HOST: '0.0.0.0'` and run. First the log shows the warning from `bindHost`, and then the platform stops the program with the error `ERR_JSLL_POLICY`: here a server may listen on loopback only. On your computer outside the platform such a server would start and become reachable from the network.
+        3. Put `HOST: undefined` back.
+
+  - id: client-ip
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: client-ip
+    entry: index.js
+    editable: [client-ip.js]
+    capabilities: { network: loopback }
+    strings:
+      direct: { uk: "прямий клієнт", en: "direct client" }
+      viaProxy: { uk: "через проксі", en: "via the proxy" }
+      spoofedViaProxy: { uk: "підробка через проксі", en: "forged via the proxy" }
+    title:
+      uk: "clientIp з довіреними проксі"
+      en: "clientIp with trusted proxies"
+    instructions:
+      uk: |
+        Напиши в `client-ip.js` функцію `clientIp(request, { trustedProxies })`, що повертає адресу клієнта, від якого прийшов запит:
+
+        - якщо `request.socket.remoteAddress` **немає** в `trustedProxies`, відповідь — ця адреса, а `X-Forwarded-For` ігнорується;
+        - якщо є — заголовок `x-forwarded-for` (записи через кому) читається **справа наліво**: записи, що є в `trustedProxies`, пропускаються, а перший інший запис і є відповіддю;
+        - пробіли навколо записів не враховуються;
+        - якщо заголовка немає або в ньому лише довірені проксі, відповідь — адреса сокета.
+
+        Адреси в перевірках — з діапазонів для документації (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`) і приватної мережі (`10.x`).
+      en: |
+        Write the function `clientIp(request, { trustedProxies })` in `client-ip.js`. It returns the address of the client the request came from:
+
+        - if `request.socket.remoteAddress` is **not** in `trustedProxies`, the answer is that address, and `X-Forwarded-For` is ignored;
+        - if it is, the `x-forwarded-for` header (entries separated by commas) is read **from right to left**: entries that are in `trustedProxies` are skipped, and the first other entry is the answer;
+        - spaces around the entries do not count;
+        - if there is no header, or it holds only trusted proxies, the answer is the socket's address.
+
+        The addresses in the checks come from ranges reserved for documentation (`192.0.2.x`, `198.51.100.x`, `203.0.113.x`) and a private network (`10.x`).
+    testTitles:
+      "a direct client gets its socket address, whatever its headers say":
+        uk: "Прямий клієнт отримує адресу сокета, що б не казали заголовки"
+        en: "A direct client gets its socket address, whatever its headers say"
+      "behind a trusted proxy the rightmost entry counts, not a spoofed one on the left":
+        uk: "За довіреним проксі важить правий запис, а не підроблений лівий"
+        en: "Behind a trusted proxy the rightmost entry counts, not a spoofed one on the left"
+      "entries added by other trusted proxies are skipped":
+        uk: "Записи інших довірених проксі пропускаються"
+        en: "Entries added by other trusted proxies are skipped"
+      "spaces around entries are ignored, and a missing header gives the socket address":
+        uk: "Пробіли навколо записів ігноруються, а без заголовка — адреса сокета"
+        en: "Spaces around entries are ignored, and a missing header gives the socket address"
+      "over a real connection a spoofed header is ignored unless loopback is a trusted proxy":
+        uk: "Через справжнє з’єднання підроблений заголовок ігнорується, якщо loopback не є довіреним проксі"
+        en: "Over a real connection a spoofed header is ignored unless loopback is a trusted proxy"
+    hints:
+      nudge:
+        uk: "Перше питання — не «що в заголовку», а «хто відкрив з’єднання». Лише коли це довірений проксі, заголовок узагалі варто читати."
+        en: "The first question is not “what is in the header” but “who opened the connection”. Only when that is a trusted proxy is the header worth reading at all."
+      explanation:
+        uk: "Заголовок — текст на кшталт `\"a, b, c\"`: `split(\",\")` дає записи, а `trim()` прибирає пробіли. Читати справа наліво можна циклом від останнього індексу до нуля. Схожа задача: у списку `[\"draft\", \"draft\", \"v2\", \"draft\"]` знайти останній запис, що не `draft`, — цикл від кінця повертає `\"v2\"`."
+        en: "The header is text like `\"a, b, c\"`: `split(\",\")` gives the entries, and `trim()` removes the spaces. Reading from right to left can be a loop from the last index down to zero. A similar task: in the list `[\"draft\", \"draft\", \"v2\", \"draft\"]` find the last entry that is not `draft` — a loop from the end returns `\"v2\"`."
+    solutionNote:
+      uk: "Довіра будується від того, що перевірено: сокет — правда, заголовок — лише заява. Тому заголовок читається тільки від довіреного проксі й тільки з правого краю, який дописали наші проксі."
+      en: "Trust is built from what is verified: the socket is the truth, the header only a claim. So the header is read only from a trusted proxy and only from the right end, which our own proxies appended."
+    feedback:
+      - when: { test: "a direct client gets its socket address, whatever its headers say" }
+        message:
+          uk: "Ця перевірка надсилає `X-Forwarded-For` від клієнта, чия адреса сокета не в `trustedProxies`, і чекає саме адресу сокета. Перевір сокет до того, як читати заголовок."
+          en: "This check sends `X-Forwarded-For` from a client whose socket address is not in `trustedProxies` and expects exactly the socket address. Check the socket before reading the header."
+      - when: { test: "behind a trusted proxy the rightmost entry counts, not a spoofed one on the left" }
+        message:
+          uk: "Ця перевірка надсилає `192.0.2.66,203.0.113.7` через довірений проксі й чекає `203.0.113.7`. Ліві записи міг написати сам клієнт — іди від правого краю."
+          en: "This check sends `192.0.2.66,203.0.113.7` through a trusted proxy and expects `203.0.113.7`. The left entries may have been written by the client itself — go from the right end."
+      - when: { test: "entries added by other trusted proxies are skipped" }
+        message:
+          uk: "Ця перевірка має два довірені проксі (`10.0.0.2` і `10.0.0.3`) і заголовок `203.0.113.7,10.0.0.3`. Чекається `203.0.113.7`: останній запис дописав наш другий проксі, його треба пропустити."
+          en: "This check has two trusted proxies (`10.0.0.2` and `10.0.0.3`) and the header `203.0.113.7,10.0.0.3`. It expects `203.0.113.7`: the last entry was appended by our second proxy and must be skipped."
+      - when: { test: "spaces around entries are ignored, and a missing header gives the socket address" }
+        message:
+          uk: "Ця перевірка надсилає ` 203.0.113.7 ,  198.51.100.4 ` і чекає `198.51.100.4` без пробілів, а без заголовка — адресу сокета `10.0.0.2`."
+          en: "This check sends ` 203.0.113.7 ,  198.51.100.4 ` and expects `198.51.100.4` without spaces, and without the header the socket address `10.0.0.2`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-07
+    body:
+      uk: "У кроці проєкту сервер твого застосунку братиме адресу зі змінної середовища `HOST` з `127.0.0.1` за замовчуванням і попереджатиме в журналі про будь-яку іншу. Проксі в навчальному проєкті немає, тож список довірених проксі там порожній."
+      en: "In the project step your app's server takes its address from the `HOST` environment variable with `127.0.0.1` as the default and warns in the log about any other. There is no proxy in the course project, so its list of trusted proxies is empty."

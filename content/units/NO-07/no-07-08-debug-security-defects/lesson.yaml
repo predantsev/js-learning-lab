@@ -1,0 +1,255 @@
+id: no-07-08-debug-security-defects
+unit: NO-07
+title:
+  uk: "Налагодження: path traversal, витік у логах, вразлива залежність"
+  en: "Debug: traversal, leak in logs, vulnerable dependency"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Відтворювати справжніми запитами читання файлу за межами теки, токен у журналі, стек у відповіді про помилку й досяжну вразливу допоміжну бібліотеку."
+    en: "Reproduce a path-traversal read, a token leaking into the logs, a stack trace in an error response and a reachable vulnerable helper with real requests."
+  - uk: "Виправляти кожен дефект, не ламаючи правильних запитів, і доводити це перевіркою через справжній HTTP чи журнал, що спершу падає, а потім проходить."
+    en: "Fix each defect without breaking valid requests and prove it with a failing-then-passing real-HTTP test or log assertion."
+prerequisites: [no-07-07-structured-logs-request-ids]
+subskills:
+  - { family: B-07, skill: "input validation/query/path safety", depth: assess }
+  - { family: B-07, skill: "dependency risks", depth: assess }
+  - { family: B-07, skill: "secret redaction", depth: assess }
+  - { family: B-07, skill: "safe errors", depth: assess }
+glossary: []
+selfCheck: [predict-green-tests, repair-wishlist]
+
+blocks:
+  - id: green-is-not-safe
+    kind: explanation
+    title:
+      uk: "Зелені тести — ще не безпека"
+      en: "Green tests are not safety yet"
+    body:
+      uk: |
+        Тести «щасливого шляху» перевіряють, що правильні запити працюють: список, створення, знімок за датою. Атакувальник правильних запитів не надсилає. Тому дефект безпеки живе поруч із зеленими тестами роками — аж поки хтось не надішле **той самий** запит, що й атакувальник.
+
+        Робота з таким дефектом має три кроки:
+
+        1. **Відтворити** справжнім запитом: побачити секрет у відповіді, токен у журналі, стек у тілі, змінений `Object.prototype`.
+        2. **Виправити** на межі тим інструментом, що його закриває: список дозволеного чи перевірка остаточного шляху, журнал без заголовків, [[safe-error-response|безпечна відповідь]], заміна вразливої бібліотеки вбудованим API.
+        3. **Довести** перевіркою, яка до виправлення падала, а після — проходить. Ця перевірка лишається в наборі як регресійний тест: якщо дефект повернеться, вона впаде знову.
+
+        І ще одне: виправлення не має ламати правильні запити. Відмовити **всім** знімкам — теж «закрити traversal», але це вже інша поломка.
+      en: |
+        Happy-path tests check that valid requests work: the list, creating, a snapshot by date. An attacker does not send valid requests. So a security defect lives next to green tests for years — until someone sends **the same** request as the attacker.
+
+        Working on such a defect takes three steps:
+
+        1. **Reproduce** it with a real request: see the secret in the answer, the token in the log, the stack in the body, a changed `Object.prototype`.
+        2. **Fix** it at the edge with the tool that closes it: an allowlist or a check of the final path, a log without headers, a [[safe-error-response]], replacing the vulnerable library with a built-in API.
+        3. **Prove** it with a check that failed before the fix and passes after it. That check stays in the suite as a regression test: if the defect comes back, it fails again.
+
+        One more thing: a fix must not break valid requests. Refusing **every** snapshot also “closes the traversal”, but that is a different breakage.
+
+  - id: predict-green-tests
+    kind: prediction
+    prompt:
+      uk: "API списку бажань проходить усі свої тести щасливого шляху: фільтр `GET /items?filter[category]=home`, `POST /items` і `GET /snapshots/2026-03-01.json`. Його код прибирає `../` з імені знімка, пише в журнал метод, адресу й усі заголовки, віддає в 500 `error.message` і `error.stack`, а query розбирає бібліотекою з відомою вразливістю `__proto__`. Скільки із чотирьох атак — `/snapshots/....%2F%2Fsecret.json`, запит з `authorization: Bearer …`, `/items/w-99/price-per-month` і `/items?__proto__[isAdmin]=true` — досягнуть мети?"
+      en: "A wishlist API passes all its happy-path tests: the filter `GET /items?filter[category]=home`, `POST /items` and `GET /snapshots/2026-03-01.json`. Its code removes `../` from a snapshot name, logs the method, the address and all the headers, puts `error.message` and `error.stack` into a 500, and parses the query with a library that has a known `__proto__` vulnerability. How many of the four attacks — `/snapshots/....%2F%2Fsecret.json`, a request with `authorization: Bearer …`, `/items/w-99/price-per-month` and `/items?__proto__[isAdmin]=true` — reach their goal?"
+    answer:
+      type: choice
+      options:
+        - id: all-four
+          text:
+            uk: "Усі чотири: зелені тести не надсилають жодного із цих запитів"
+            en: "All four: the green tests send none of these requests"
+        - id: none
+          text:
+            uk: "Жодна: тести зелені, отже сервер працює правильно"
+            en: "None: the tests are green, so the server works correctly"
+          why:
+            uk: "Тести перевіряють лише те, що в них написано. Жоден із них не надсилає `....//`, заголовок `authorization` чи `__proto__`, тож про ці дефекти вони нічого не знають."
+            en: "Tests check only what is written in them. None of them sends `....//`, an `authorization` header or `__proto__`, so they know nothing about these defects."
+        - id: three
+          text:
+            uk: "Три: `replaceAll(\"../\", \"\")` зупиняє traversal"
+            en: "Three: `replaceAll(\"../\", \"\")` stops the traversal"
+          why:
+            uk: "`replaceAll` проходить текст один раз: у `....//` він вирізає середнє `../`, і краї, що лишилися, складаються в нове `../`."
+            en: "`replaceAll` goes over the text once: in `....//` it cuts out the middle `../`, and the edges that remain form a new `../`."
+      correct: [all-four]
+    explanation:
+      uk: "Кожен із чотирьох дефектів лежить поза щасливим шляхом. Знайти його може лише запит атакувальника, і саме такий запит, загорнутий у перевірку, стає регресійним тестом після виправлення."
+      en: "Each of the four defects lies off the happy path. Only an attacker's request can find it, and exactly such a request, wrapped in a check, becomes a regression test after the fix."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: resolve-then-compare
+        from: no-02-01-fs-paths-safe
+        prompt:
+          uk: "Як надійно перевірити, що ім’я файлу від користувача не виведе за теку `data`?"
+          en: "How do you reliably check that a file name from a user does not lead out of the `data` folder?"
+        answer:
+          type: choice
+          options:
+            - id: resolve-relative
+              text:
+                uk: "Визначити остаточний шлях через `path.resolve`, взяти `path.relative` від теки й відхилити, якщо він починається з `..` чи є абсолютним"
+                en: "Work out the final path with `path.resolve`, take `path.relative` from the folder and reject it if it starts with `..` or is absolute"
+            - id: strip
+              text:
+                uk: "Прибрати з імені всі `../` і з’єднати через `path.join`"
+                en: "Remove every `../` from the name and join it with `path.join`"
+              why:
+                uk: "Видалення не повторюється для того, що склалося після нього: `....//` після `replaceAll(\"../\", \"\")` стає `../`."
+                en: "Removal is not repeated for what forms after it: `....//` becomes `../` after `replaceAll(\"../\", \"\")`."
+            - id: starts-with
+              text:
+                uk: "Перевірити, що `path.join(\"data\", name)` починається з `\"data\"`"
+                en: "Check that `path.join(\"data\", name)` starts with `\"data\"`"
+              why:
+                uk: "Шлях `data-old/secret.json` теж починається з `data`, а це інша тека. Порівнювати треба відносний шлях, а не початок тексту."
+                en: "The path `data-old/secret.json` starts with `data` too, and it is another folder. Compare the relative path, not the start of the text."
+          correct: [resolve-relative]
+        explanation:
+          uk: "`path.resolve` прибирає всі `..` і дає остаточний шлях, а `path.relative` від теки показує, чи він виходить назовні. Так працює `resolveInside` з NO-02. Ще простіше — список дозволених імен, коли їхня форма відома, як дата знімка."
+          en: "`path.resolve` removes every `..` and gives the final path, and `path.relative` from the folder shows whether it goes outside. That is how `resolveInside` from NO-02 works. Simpler still is an allowlist of names when their shape is known, like a snapshot's date."
+
+  - id: seeded-attacks
+    kind: example
+    runtime: isolated-node
+    dir: seeded-attacks
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      happyPath: { uk: "Щасливий шлях", en: "Happy path" }
+      vulnerable: { uk: "ВРАЗЛИВО", en: "VULNERABLE" }
+      tokenInLog: { uk: "токен у журналі", en: "token in the log" }
+      stackInResponse: { uk: "стек у відповіді", en: "stack in the answer" }
+      prototype: { uk: "зміна Object.prototype", en: "Object.prototype changed" }
+    title:
+      uk: "Чотири атаки на зелений сервер"
+      en: "Four attacks on a green server"
+    body:
+      uk: |
+        `server.js` — API списку бажань із чотирма закладеними дефектами (коментар угорі файлу описує маршрути). `vendor/tiny-query.js` — замінник npm-пакета з відомою вразливістю. `index.js` спершу повторює щасливий шлях, а потім надсилає чотири атаки й друкує, чого кожна досягла. Журнал сервера тут — масив рядків, який перевіряє атака 2.
+
+        Натисни **Запустити** й зістав кожен рядок `ВРАЗЛИВО` зі своїм передбаченням. Наприкінці `index.js` прибирає `isAdmin` з `Object.prototype`, щоб наслідок атаки 4 не жив далі.
+      en: |
+        `server.js` is a wishlist API with four planted defects (the comment at the top of the file describes the routes). `vendor/tiny-query.js` stands in for an npm package with a known vulnerability. `index.js` first repeats the happy path and then sends four attacks and prints what each achieved. The server's log here is an array of lines, which attack 2 checks.
+
+        Press **Run** and match every `VULNERABLE` line with your prediction. At the end `index.js` removes `isAdmin` from `Object.prototype`, so the effect of attack 4 does not live on.
+    tryIt:
+      uk: |
+        1. Додай перед атаками рядок коду `console.log(logLines);` і запусти: у журналі видно `authorization` разом із токеном.
+        2. Додай `console.log(traversalText);` після атаки 1: це вміст `data/secret.json`, що лежить поза текою `data/snapshots`.
+        3. Прибери обидва рядки. Виправляти дефекти ти будеш у вправі цього уроку.
+      en: |
+        1. Before the attacks add the line of code `console.log(logLines);` and run: the log shows `authorization` together with the token.
+        2. Add `console.log(traversalText);` after attack 1: it is the content of `data/secret.json`, which lies outside the `data/snapshots` folder.
+        3. Remove both lines. You repair the defects in this lesson's exercise.
+
+  - id: repair-wishlist
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: repair-wishlist
+    entry: index.js
+    editable: [server.js]
+    capabilities: { network: loopback }
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      happyPath: { uk: "Щасливий шлях", en: "Happy path" }
+      vulnerable: { uk: "ВРАЗЛИВО", en: "VULNERABLE" }
+      tokenInLog: { uk: "токен у журналі", en: "token in the log" }
+      stackInResponse: { uk: "стек у відповіді", en: "stack in the answer" }
+      prototype: { uk: "зміна Object.prototype", en: "Object.prototype changed" }
+    title:
+      uk: "Полагодь чотири дефекти"
+      en: "Repair four defects"
+    instructions:
+      uk: |
+        Це той самий сервер. Виправ у `server.js` усі чотири дефекти так, щоб правильні запити працювали як раніше:
+
+        - ім’я знімка не може вивести за теку `data/snapshots` — такий запит отримує `400` чи `404`, а знімок `2026-03-01.json` і далі читається;
+        - журнал не містить заголовків запиту (зокрема `authorization`), але рядок для кожного запиту лишається;
+        - непередбачена помилка дає `500` з `{ "error": { "code": "INTERNAL" } }` — без повідомлення й стека;
+        - query з `__proto__[…]` не може змінити `Object.prototype`, а фільтр `?filter[category]=home` і далі працює.
+
+        Запусти — `index.js` друкує, які атаки ще вдаються. Перевірки — це регресійні тести: по одній на кожен дефект і одна на щасливий шлях.
+      en: |
+        This is the same server. Repair all four defects in `server.js` so that valid requests keep working as before:
+
+        - a snapshot name cannot lead out of the `data/snapshots` folder — such a request gets `400` or `404`, and the snapshot `2026-03-01.json` can still be read;
+        - the log holds no request headers (`authorization` in particular), but a line for every request remains;
+        - an unexpected error gives `500` with `{ "error": { "code": "INTERNAL" } }` — without the message and the stack;
+        - a query with `__proto__[…]` cannot change `Object.prototype`, and the filter `?filter[category]=home` still works.
+
+        Run it — `index.js` prints which attacks still succeed. The checks are regression tests: one per defect and one for the happy path.
+    testTitles:
+      "valid requests still work: filter, create, a dated snapshot and a log line":
+        uk: "Правильні запити працюють: фільтр, створення, знімок за датою й рядок журналу"
+        en: "Valid requests still work: filter, create, a dated snapshot and a log line"
+      "a snapshot name cannot leave the snapshots folder":
+        uk: "Ім’я знімка не може вийти за теку знімків"
+        en: "A snapshot name cannot leave the snapshots folder"
+      "the log never contains the authorization header":
+        uk: "Журнал ніколи не містить заголовка `authorization`"
+        en: "The log never contains the `authorization` header"
+      "an unexpected error answers 500 INTERNAL with no message and no stack":
+        uk: "Непередбачена помилка дає `500 INTERNAL` без повідомлення й стека"
+        en: "An unexpected error answers `500 INTERNAL` with no message and no stack"
+      "a crafted query cannot change Object.prototype":
+        uk: "Підготовлений query не може змінити `Object.prototype`"
+        en: "A crafted query cannot change `Object.prototype`"
+    hints:
+      nudge:
+        uk: "Іди по одному дефекту: запусти, знайди перший рядок `ВРАЗЛИВО`, полагодь лише його й запусти знову. Кожен дефект закриває інструмент з одного з уроків цієї теми."
+        en: "Go one defect at a time: run, find the first `VULNERABLE` line, fix only that and run again. Each defect is closed by a tool from one of this topic's lessons."
+      explanation:
+        uk: |
+          - Видалення `../` не виправити ще одним видаленням: перевіряй або форму імені (знімки мають вигляд дати й `.json`), або остаточний шлях через `path.resolve` і `path.relative`.
+          - Рядок журналу будуй із методу й `pathname`, а не з усього `request`.
+          - Тіло 500 — лише стабільний код; деталі помилки можна записати в журнал.
+          - Вбудований `URLSearchParams` не розбирає вкладених ключів: для нього `filter[category]` — звичайна назва параметра, яку читають через `get`. Наприклад, `new URL("http://x/?sort[by]=price").searchParams.get("sort[by]")` дає `"price"`.
+        en: |
+          - Removing `../` is not fixed by removing it once more: check either the shape of the name (snapshots look like a date and `.json`) or the final path with `path.resolve` and `path.relative`.
+          - Build the log line from the method and the `pathname`, not from the whole `request`.
+          - A 500 body is only the stable code; the error's details can go into the log.
+          - The built-in `URLSearchParams` does not parse nested keys: to it `filter[category]` is an ordinary parameter name, read with `get`. For example, `new URL("http://x/?sort[by]=price").searchParams.get("sort[by]")` gives `"price"`.
+    solutionNote:
+      uk: "Кожне виправлення закриває клас атак, а не один рядок: список дозволених імен знімків не залежить від того, як закодовано `..`; журнал без заголовків не залежить від того, які заголовки прийдуть; `URLSearchParams` не має шляху до `Object.prototype`. А перевірки, що падали до виправлення, тепер стережуть, щоб дефекти не повернулися."
+      en: "Each fix closes a class of attacks rather than one line: an allowlist of snapshot names does not depend on how `..` is encoded; a log without headers does not depend on which headers arrive; `URLSearchParams` has no path to `Object.prototype`. And the checks that failed before the fix now guard against the defects coming back."
+    feedback:
+      - when: { test: "valid requests still work: filter, create, a dated snapshot and a log line" }
+        message:
+          uk: "Ця перевірка чекає `200` і `[\"w-02\"]` для `?filter[category]=home`, `201` для `POST /items`, `200` з двома записами для `/snapshots/2026-03-01.json` і рядок журналу з `GET` і `/items`. Виправлення не має відмовляти правильним запитам."
+          en: "This check expects `200` and `[\"w-02\"]` for `?filter[category]=home`, `201` for `POST /items`, `200` with two records for `/snapshots/2026-03-01.json` and a log line with `GET` and `/items`. A fix must not refuse valid requests."
+      - when: { test: "a snapshot name cannot leave the snapshots folder" }
+        message:
+          uk: "Ця перевірка надсилає `....%2F%2Fsecret.json`, `..%2Fsecret.json` та ще два варіанти й чекає `400` або `404` без `sessionSecret` у відповіді. Повторне видалення `../` не допоможе — перевіряй форму імені чи остаточний шлях."
+          en: "This check sends `....%2F%2Fsecret.json`, `..%2Fsecret.json` and two more variants and expects `400` or `404` without `sessionSecret` in the answer. Removing `../` again does not help — check the name's shape or the final path."
+      - when: { test: "the log never contains the authorization header" }
+        message:
+          uk: "Ця перевірка надсилає `authorization: Bearer demo-session-7f3a` і чекає, що жоден рядок журналу не містить `demo-session`, а самі рядки є."
+          en: "This check sends `authorization: Bearer demo-session-7f3a` and expects that no log line contains `demo-session`, while the lines themselves exist."
+      - when: { test: "an unexpected error answers 500 INTERNAL with no message and no stack" }
+        message:
+          uk: "Ця перевірка викликає `/items/w-99/price-per-month` і чекає `500` з кодом `INTERNAL`, без `TypeError`, тексту повідомлення чи рядків стека."
+          en: "This check calls `/items/w-99/price-per-month` and expects `500` with the code `INTERNAL`, without `TypeError`, the message text or stack lines."
+      - when: { test: "a crafted query cannot change Object.prototype" }
+        message:
+          uk: "Ця перевірка надсилає `?__proto__[isAdmin]=true` і чекає, що новий порожній об’єкт не має `isAdmin`. Заміни розбір query з `vendor/tiny-query.js` на `URLSearchParams`."
+          en: "This check sends `?__proto__[isAdmin]=true` and expects a new empty object to have no `isAdmin`. Replace the query parsing from `vendor/tiny-query.js` with `URLSearchParams`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-07
+    body:
+      uk: "У кроці проєкту для кожного правила межі твого API з’явиться перевірка, що надсилає саме запит атакувальника: ім’я з `..`, токен у заголовку, запит, що викликає помилку. Спершу переконайся, що вона падає на старому коді, — тоді вона справді стереже."
+      en: "In the project step every edge rule of your API gets a check that sends exactly the attacker's request: a name with `..`, a token in a header, a request that causes an error. First make sure it fails on the old code — then it really guards."
