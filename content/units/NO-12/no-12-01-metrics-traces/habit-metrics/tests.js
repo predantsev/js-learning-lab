@@ -47,6 +47,11 @@ test('percentile uses the nearest rank of the sorted durations', () => {
   for (let i = 0; i < 4; i++) tail.observe('/habits', 700);
   expect(tail.percentile('/habits', 95), 'p95 of 96 × 12 ms and 4 × 700 ms').toBe(12);
   expect(tail.percentile('/habits', 97), 'p97 of 96 × 12 ms and 4 × 700 ms').toBe(700);
+  // 11 durations: ⌈0.95 × 11⌉ = ⌈10.45⌉ = 11, so p95 is the 11th (the largest) value, not the 10th.
+  const eleven = createMetrics();
+  for (const ms of [110, 10, 100, 20, 90, 30, 80, 40, 70, 50, 60]) eleven.observe('/habits', ms);
+  expect(eleven.percentile('/habits', 95), 'p95 of 10, 20 … 110 (11 durations)').toBe(110);
+  expect(eleven.percentile('/habits', 40), 'p40 of 10, 20 … 110 (11 durations)').toBe(50);
 });
 
 test('percentile of a route without durations is null', () => {

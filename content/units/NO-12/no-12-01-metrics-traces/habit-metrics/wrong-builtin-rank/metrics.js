@@ -1,5 +1,8 @@
 // Request metrics of one service process, with Node's built-in histogram (perf_hooks).
-// It stores whole numbers from 1 up, so durations are kept as whole milliseconds (at least 1).
+// A natural attempt that looks right: the histogram has percentile(), but it rounds the place
+// p / 100 × n to the nearest whole place instead of up, so on some counts it is one place lower
+// than the nearest rank (11 durations: its p95 is the 10th value, the nearest rank is the 11th;
+// measured on Node v25.2.1 and v22.13.1).
 import { createHistogram } from 'node:perf_hooks';
 
 export function createMetrics() {
