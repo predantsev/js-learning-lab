@@ -80,6 +80,9 @@ test('the sixth failed login in a minute answers 429 with Retry-After; a minute 
   expect(last.headers['retry-after'], 'Retry-After').toBe('60');
   clock.ms = MIN + 1000;
   expect((await login('u-02', 'river-stone-7')).status, 'a right login a minute and a second later').toBe(204);
+  // The address counter: five different names fail from this one address, then a sixth name is refused too.
+  for (const name of ['u-01', 'u-03', 'u-77', 'u-88', 'u-99']) await login(name, 'guess');
+  expect((await login('u-02', 'guess')).status, 'a sixth name from the same address after five failures').toBe(429);
 });
 
 test('a login body over 1 KB answers 413', async () => {
@@ -95,6 +98,7 @@ test('bookmarks are scoped to their owner: foreign ones answer 404 and stay', as
   expect((await call('GET', '/bookmarks/b-1', { cookie: bohdan })).status, 'u-02 GET /bookmarks/b-1').toBe(404);
   expect((await call('DELETE', '/bookmarks/b-1', { cookie: bohdan })).status, 'u-02 DELETE /bookmarks/b-1').toBe(404);
   expect((await call('GET', '/bookmarks/b-1', { cookie: marta })).status, 'u-01 GET /bookmarks/b-1 afterwards').toBe(200);
+  expect((await call('GET', '/bookmarks/b-9', { cookie: marta })).status, 'u-01 GET /bookmarks/b-9 (no such bookmark)').toBe(404);
   expect((await call('GET', '/bookmarks')).status, 'GET /bookmarks with no session').toBe(401);
 });
 
@@ -129,4 +133,13 @@ test('the server limits how long a request may take to arrive: at most 5 s', asy
   const { server } = await start();
   expect(server.requestTimeout > 0 && server.requestTimeout <= 5000, `requestTimeout ${server.requestTimeout}`).toBe(true);
   expect(server.headersTimeout > 0 && server.headersTimeout <= 5000, `headersTimeout ${server.headersTimeout}`).toBe(true);
+});
+
+test('errors have the shape { error: { code, details } }', async () => {
+  const { call, login } = await start();
+  for (const response of [await call('GET', '/bookmarks'), await login('u-01', 'guess')]) {
+    const error = response.json?.error;
+    expect(typeof error?.code === 'string' && error.code !== '', `error.code in ${response.status} ${response.text}`).toBe(true);
+    expect(typeof error?.details === 'object' && error.details !== null, `error.details in ${response.status} ${response.text}`).toBe(true);
+  }
 });
