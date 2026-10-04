@@ -37,6 +37,7 @@ export function createApp({ clock }) {
     }
 
     if (request.method === 'POST' && path === '/logout') {
+      sessions.delete(sidOf(request)); // forget it on the server, not only in the browser
       return send(response, 204, undefined, { 'set-cookie': 'sid=; Max-Age=0; Path=/' });
     }
 
@@ -44,8 +45,8 @@ export function createApp({ clock }) {
     if (request.method === 'GET' && path === '/notes') {
       // CORS only tells browsers who may read the answer; the session decides who gets data.
       if (!userId) return fail(response, 401, 'UNAUTHENTICATED');
-      const own = notes.filter((note) => note.ownerId === userId);
-      return send(response, 200, own, request.headers.origin === WEB_CLIENT ? { 'access-control-allow-origin': WEB_CLIENT } : {});
+      // Signed in, so they may see the list.
+      return send(response, 200, notes, request.headers.origin === WEB_CLIENT ? { 'access-control-allow-origin': WEB_CLIENT } : {});
     }
 
     const id = /^\/notes\/([^/]+)$/.exec(path)?.[1];

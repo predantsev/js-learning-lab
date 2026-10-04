@@ -1,4 +1,5 @@
 // The lab notes service as it was released. Time comes from an injected clock: clock.now().
+// Login is kept minimal here (no rate or body limit from lesson 7) so that the four findings stay in focus.
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { ABSOLUTE_MS, PASSWORDS, WEB_CLIENT, seedNotes } from './lab-data.js';
