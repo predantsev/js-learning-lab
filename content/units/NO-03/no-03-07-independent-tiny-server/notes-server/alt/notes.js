@@ -61,6 +61,7 @@ export function createNotesServer() {
     try {
       [status, value] = await route(req);
     } catch (error) {
+      if (error instanceof URIError) error.status = 400; // a broken encoding such as /notes/%E0
       status = error.status ?? 500;
       value = { error: error.status ? error.message : 'internal error' };
       headers = error.headers ?? {};

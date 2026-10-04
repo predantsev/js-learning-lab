@@ -84,6 +84,7 @@ export function createNotesServer() {
       await route.handle(req, res, params);
     } catch (error) {
       if (res.headersSent) return res.end();
+      if (error instanceof URIError) error.status = 400; // a broken encoding such as /notes/%E0
       if (error.status === 413) res.setHeader('connection', 'close');
       if (!error.status) console.error(error);
       sendJson(res, error.status ?? 500, { error: error.status ? error.message : 'internal error' });
