@@ -18,8 +18,13 @@ async function together() {
   return habits.length + expenses.length;
 }
 
-for (const [label, load] of [['one after the other', sequential], ['Promise.all', together]]) {
+// A first, untimed round of both: the very first read pays for warming Node up,
+// and that cost must not land on whichever way happens to be measured first.
+await sequential();
+await together();
+
+for (const [label, load] of [['%%inTurn%%', sequential], ['Promise.all', together]]) {
   const started = performance.now();
   const characters = await load();
-  console.log(`${label}: ${characters} characters in ${(performance.now() - started).toFixed(1)} ms`);
+  console.log(`${label}: ${characters} %%characters%%, ${(performance.now() - started).toFixed(1)} ms`);
 }
