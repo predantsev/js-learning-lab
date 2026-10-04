@@ -52,14 +52,28 @@ test('initStore twice gives the same store as once, and a store with bookings is
   await again.close?.();
 });
 
+test('initStore fills an existing empty store with the fixtures', async () => {
+  guard();
+  const w = await where();
+  await initStore(w.file, []); // a store in your own format, with no bookings
+  await initStore(w.file, fixtures());
+  const repo = await opened(w.file);
+  expect(await repo.list(), 'list() after initStore on the empty store').toEqual(fixtures());
+  await repo.close?.();
+});
+
 test('initStore refuses a damaged store and leaves it byte for byte', async () => {
   guard();
-  for (const damaged of ['{"schemaVersion":1,"records":[{"id":"k-0', JSON.stringify({ schemaVersion: 1, records: [{ id: 'k-01', room: 'Z', date: 'soon', guests: 0 }] })]) {
+  const doubleBooked = JSON.stringify({ schemaVersion: 1, records: [
+    { id: 'k-01', room: 'A', date: '2026-03-02', guests: 2, note: '' },
+    { id: 'k-04', room: 'A', date: '2026-03-02', guests: 1, note: '' },
+  ] });
+  for (const damaged of ['{"schemaVersion":1,"records":[{"id":"k-0', JSON.stringify({ schemaVersion: 1, records: [{ id: 'k-01', room: 'Z', date: 'soon', guests: 0 }] }), doubleBooked]) {
     const w = await where();
     await mkdir(path.dirname(w.file), { recursive: true });
     await writeFile(w.file, damaged);
     const outcome = await settle(initStore(w.file, fixtures()));
-    expect(outcome.startsWith('rejected'), `initStore of ${damaged.slice(0, 30)}…`).toBe(true);
+    expect(outcome.startsWith('rejected'), `initStore of ${damaged.slice(0, 75)}…`).toBe(true);
     expect(await readFile(w.file, 'utf8'), 'the store file afterwards').toBe(damaged);
   }
 });
@@ -74,6 +88,9 @@ test('add fills the default note and rejects a booking that breaks the contract'
     { id: 'k-13', room: 'B', date: '2026-03-07', guests: 9 },
     { id: 'k-14', room: 'B', date: '2026-03-08', guests: '2' },
     { id: 'k-15', room: 'B', date: '2026-03-09', guests: 2, colour: 'red' },
+    { id: '', room: 'C', date: '2026-03-10', guests: 1 },
+    { id: 'k-01', room: 'C', date: '2026-03-11', guests: 1 }, // the id is taken already
+    { id: 'k-16', room: 'C', date: '2026-03-12', guests: 1, note: 'x'.repeat(201) },
   ];
   for (const booking of bad) {
     expect((await settle(repo.add(booking))).startsWith('rejected'), `add(${JSON.stringify(booking)})`).toBe(true);
