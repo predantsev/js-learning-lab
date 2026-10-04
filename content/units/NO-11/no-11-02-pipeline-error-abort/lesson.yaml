@@ -1,0 +1,391 @@
+id: no-11-02-pipeline-error-abort
+unit: NO-11
+title:
+  uk: "pipeline: помилки, скасування й прибирання"
+  en: "pipeline: error, abort and cleanup"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "З’єднувати джерело, transform і призначення через `pipeline` і передбачати, які потоки закриються, коли один етап зламався."
+    en: "Connect a source, a transform and a destination with `pipeline` and predict which streams are destroyed when one stage fails."
+  - uk: "Скасовувати запущений `pipeline` через `AbortSignal` і переконуватися, що файл закрито, а частковий результат прибрано."
+    en: "Cancel a running `pipeline` with an `AbortSignal` and make sure the file is closed and the partial output removed."
+prerequisites: [no-11-01-streams-backpressure, no-02-06-errors-handle-cleanup]
+subskills:
+  - { family: B-08, skill: "pipeline/error/abort/cleanup", depth: intro }
+glossary: [stream-pipeline, transform-stream]
+selfCheck: [predict-open, export-records]
+
+blocks:
+  - id: pipe-moves-pipeline-owns
+    kind: explanation
+    title:
+      uk: ".pipe() лише передає дані, pipeline() відповідає за весь ланцюжок"
+      en: ".pipe() only moves data, pipeline() owns the whole chain"
+    body:
+      uk: |
+        Між джерелом і файлом часто стоїть етап, що змінює дані: розбирає рядки JSON, перевіряє записи, стискає. Такий етап — [[transform-stream|transform stream]]: з одного боку він writable (приймає шматки), з другого — readable (віддає змінені).
+
+        З’єднати етапи можна двома способами:
+
+        - `source.pipe(parse).pipe(file)` передає дані далі й поважає backpressure. Але кожна ланка знає лише про сусіда: якщо `parse` зламався, `source` і `file` **лишаються відкритими**. Документація Node.js 22 прямо попереджає, що їх треба закривати вручну.
+        - [[stream-pipeline|`pipeline(source, parse, file)`]] з `node:stream/promises` повертає **один** promise для всього ланцюжка. Коли будь-який етап падає, `pipeline` закриває (`destroy`) усі потоки й відхиляє promise цією помилкою — один раз.
+
+        Етапом `pipeline` може бути й асинхронна функція-генератор: вона отримує попередній потік як [[async-iterator|асинхронний ітератор]] (`for await`) і `yield`-ить нові шматки.
+      en: |
+        Between a source and a file there is often a stage that changes the data: it parses JSON lines, validates records, compresses. Such a stage is a [[transform-stream|transform stream]]: on one side it is writable (it takes chunks), on the other readable (it hands over changed ones).
+
+        There are two ways to connect stages:
+
+        - `source.pipe(parse).pipe(file)` moves data on and respects backpressure. But each link knows only its neighbour: if `parse` fails, `source` and `file` **stay open**. The Node.js 22 documentation warns explicitly that you have to close them by hand.
+        - [[stream-pipeline|`pipeline(source, parse, file)`]] from `node:stream/promises` returns **one** promise for the whole chain. When any stage fails, `pipeline` destroys every stream and rejects the promise with that error — once.
+
+        A `pipeline` stage can also be an async generator function: it gets the previous stream as an [[async-iterator]] (`for await`) and `yield`s new chunks.
+
+  - id: predict-open
+    kind: prediction
+    prompt:
+      uk: "Ланцюжок «файл справ → `parseJsonLines()` → новий файл». Рядок 501 — не JSON, тож `parseJsonLines` падає з помилкою. Які етапи лишаються відкритими через 100 мс — з `.pipe()` і з `pipeline()`?"
+      en: "A chain “tasks file → `parseJsonLines()` → new file”. Line 501 is not JSON, so `parseJsonLines` fails with an error. Which stages are still open after 100 ms — with `.pipe()` and with `pipeline()`?"
+    code: |
+      // A
+      source.pipe(parse).pipe(file);
+
+      // B
+      await pipeline(source, parse, file);
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: pipe-leaks
+          text:
+            uk: "A: `source` і `file` відкриті, закрито лише `parse`. B: закрито всі три"
+            en: "A: `source` and `file` are open, only `parse` is closed. B: all three are closed"
+        - id: pipe-closes-all
+          text:
+            uk: "A і B: закрито всі три — помилка однаково зупиняє весь ланцюжок"
+            en: "A and B: all three are closed — an error stops the whole chain either way"
+          why:
+            uk: "`.pipe()` не передає помилок далі. Зламаний `parse` закривається сам, а джерело лише від’єднується від нього й завмирає відкритим; файл узагалі нічого не дізнається."
+            en: "`.pipe()` does not pass errors on. The broken `parse` closes itself, while the source is only detached from it and freezes open; the file learns nothing at all."
+        - id: nothing-closes
+          text:
+            uk: "A і B: відкриті всі три — закривати потоки завжди треба вручну"
+            en: "A and B: all three are open — streams always have to be closed by hand"
+          why:
+            uk: "Для `.pipe()` це майже правда, але `pipeline` саме тим і корисний, що викликає `destroy` для кожного потоку, коли якийсь етап падає."
+            en: "That is almost true for `.pipe()`, but `pipeline` is useful precisely because it calls `destroy` on every stream when a stage fails."
+      correct: [pipe-leaks]
+    explanation:
+      uk: "З `.pipe()` джерело від’єднується від зламаного етапу й лишається відкритим, а файл не отримує жодного сигналу. `pipeline` закриває всі етапи й відхиляє свій promise помилкою рядка 501. Так надрукував приклад цього уроку «.pipe() проти pipeline() і скасування» в Node.js v25.2.1; у v20.18.0 стан етапів той самий."
+      en: "With `.pipe()` the source is detached from the broken stage and stays open, and the file gets no signal at all. `pipeline` closes every stage and rejects its promise with the error of line 501. That is what this lesson’s example “.pipe() versus pipeline() and abort” printed on Node.js v25.2.1; on v20.18.0 the states of the stages are the same."
+
+  - id: who-closes-what
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Хто закриває етапи, коли parse падає"
+      en: "Who closes the stages when parse fails"
+    textEquivalent:
+      uk: "Три етапи стоять в ряд: джерело createReadStream, transform parseJsonLines і файл createWriteStream. На рядку 501 parseJsonLines падає. З .pipe() зламаний етап закривається сам, джерело від’єднується від нього й завмирає відкритим, а файл не отримує жодного сигналу й теж лишається відкритим — обидва треба закривати вручну. З pipeline() функція бачить помилку, викликає destroy для всіх трьох етапів і один раз відхиляє свій promise. Частковий файл на диску лишається в обох випадках: потоки закрито, але видалити незавершений результат має твій код."
+      en: "Three stages stand in a row: the source createReadStream, the transform parseJsonLines and the file createWriteStream. At line 501 parseJsonLines fails. With .pipe() the broken stage closes itself, the source is detached from it and freezes open, and the file gets no signal and stays open too — both have to be closed by hand. With pipeline() the function sees the error, calls destroy on all three stages and rejects its promise once. The partial file on disk is left in both cases: the streams are closed, but removing the unfinished result is your code’s job."
+    spec:
+      layout: tb
+      nodes:
+        - { id: source, label: "createReadStream", shape: round, w: 170 }
+        - { id: parse, label: "parseJsonLines()", w: 170 }
+        - { id: file, label: "createWriteStream", shape: cylinder, w: 170 }
+      edges:
+        - { id: s-p, from: source, to: parse }
+        - { id: p-f, from: parse, to: file }
+      steps:
+        - caption:
+            uk: "Дані йдуть ланцюжком: джерело → `parseJsonLines` → файл."
+            en: "Data flows down the chain: source → `parseJsonLines` → file."
+          highlight: [source, s-p, parse, p-f, file]
+        - caption:
+            uk: "Рядок 501 — не JSON: `parseJsonLines` падає й закривається сам."
+            en: "Line 501 is not JSON: `parseJsonLines` fails and closes itself."
+          highlight: [parse]
+          annotate:
+            - { id: parse, text: "Error" }
+        - caption:
+            uk: "З `.pipe()`: джерело від’єднується й завмирає **відкритим**, файл не дізнається нічого й теж **відкритий**."
+            en: "With `.pipe()`: the source is detached and freezes **open**, the file learns nothing and is **open** too."
+          highlight: [source, file]
+          dim: [parse, s-p, p-f]
+          annotate:
+            - { id: source, text: { uk: "відкрито", en: "open" } }
+            - { id: file, text: { uk: "відкрито", en: "open" } }
+        - caption:
+            uk: "Інший запуск, з `pipeline()`: він викликає `destroy` для **всіх трьох** етапів і відхиляє свій promise один раз."
+            en: "Another run, with `pipeline()`: it calls `destroy` on **all three** stages and rejects its promise once."
+          highlight: [source, parse, file]
+          annotate:
+            - { id: source, text: "destroy" }
+            - { id: file, text: "destroy" }
+        - caption:
+            uk: "В обох запусках частковий файл лишився на диску: потоки закрито, але прибрати незавершений результат має твій код."
+            en: "In both runs the partial file is left on disk: the streams are closed, but removing the unfinished result is your code’s job."
+          highlight: [file]
+          annotate:
+            - { id: file, text: { uk: "частковий файл", en: "partial file" } }
+
+  - id: abort-and-leftovers
+    kind: explanation
+    title:
+      uk: "Скасування: потоки закриє pipeline, файл прибереш ти"
+      en: "Abort: pipeline closes the streams, you remove the file"
+    body:
+      uk: |
+        `pipeline(…, { signal })` приймає [[abort-signal|AbortSignal]]. Після `controller.abort()` він закриває всі етапи й відхиляє promise помилкою з назвою `AbortError`. Якщо ж скасування бачить лише твій колбек (наприклад, перевіряє `signal.aborted` у циклі), то потоки, файли й сокети ніхто не закриє: їх треба передати тому, хто вміє закривати.
+
+        Але навіть `pipeline` не видаляє файлів. Після помилки чи скасування на диску лишається **частковий** результат. Звідси правило з NO-02:
+
+        1. Пиши в тимчасовий файл (`export.jsonl.tmp`).
+        2. Після успіху — `rename` на справжню назву: старий файл замінюється одним кроком.
+        3. Після будь-якої помилки — `rm` тимчасового файла і повтор помилки (`throw`), щоб той, хто викликав, дізнався про неї.
+
+        Як перевірити, що потік закрито? `stream.destroyed`. `process.getActiveResourcesInfo()` тут не допоможе: під час підготовки уроку (Node.js v25.2.1) відкритий файловий потік, що нічого не робить, у ньому не з’являвся.
+      en: |
+        `pipeline(…, { signal })` takes an [[abort-signal|AbortSignal]]. After `controller.abort()` it closes every stage and rejects the promise with an error named `AbortError`. If only your callback sees the abort (for example, it checks `signal.aborted` in a loop), nobody closes the streams, files and sockets: they have to be handed to something that knows how to close them.
+
+        But even `pipeline` deletes no files. After an error or an abort a **partial** result is left on disk. Hence the rule from NO-02:
+
+        1. Write into a temporary file (`export.jsonl.tmp`).
+        2. After success — `rename` it to the real name: the old file is replaced in one step.
+        3. After any error — `rm` the temporary file and rethrow (`throw`), so that the caller learns about it.
+
+        How do you check that a stream is closed? `stream.destroyed`. `process.getActiveResourcesInfo()` does not help here: while this lesson was prepared (Node.js v25.2.1), an open file stream doing nothing did not show up in it.
+
+  - id: predict-abort
+    kind: prediction
+    prompt:
+      uk: "`pipeline(source, slow, file, { signal })` пише файл справ, і через 100 мс викликано `controller.abort()`. Що правда після цього?"
+      en: "`pipeline(source, slow, file, { signal })` writes a tasks file, and after 100 ms `controller.abort()` is called. What is true afterwards?"
+    answer:
+      type: choice
+      options:
+        - id: closed-file-left
+          text:
+            uk: "Усі три потоки закрито, promise відхилено з `AbortError`, а частковий файл лишився на диску"
+            en: "All three streams are closed, the promise is rejected with `AbortError`, and the partial file is left on disk"
+        - id: callback-only
+          text:
+            uk: "Зупинився лише код, що чекав на promise; потоки й файл закриються самі пізніше"
+            en: "Only the code waiting for the promise stopped; the streams and the file close by themselves later"
+          why:
+            uk: "`pipeline` отримав сигнал і сам викликає `destroy` для кожного етапу. Нічого «само» не закривається: якби сигнал побачив лише твій колбек, потоки лишилися б відкритими."
+            en: "`pipeline` got the signal and calls `destroy` on every stage itself. Nothing closes “by itself”: if only your callback saw the signal, the streams would stay open."
+        - id: all-gone
+          text:
+            uk: "Усі потоки закрито, а частковий файл `pipeline` видалив"
+            en: "All streams are closed, and `pipeline` deleted the partial file"
+          why:
+            uk: "`pipeline` не знає, що файл неповний і що його варто видалити, — це рішення твого коду: тимчасовий файл і `rm` у `catch`."
+            en: "`pipeline` does not know that the file is incomplete or that it should go — that is your code’s decision: a temporary file and `rm` in `catch`."
+      correct: [closed-file-left]
+    runnable: false
+    explanation:
+      uk: "Сигнал закриває всі етапи, і promise відхиляється з `AbortError`. Записані до скасування байти лишаються у файлі: у прикладі уроку «.pipe() проти pipeline() і скасування» це кілька кілобайтів."
+      en: "The signal closes every stage, and the promise rejects with `AbortError`. The bytes written before the abort stay in the file: in the lesson’s example “.pipe() versus pipeline() and abort” it is a few kilobytes."
+
+  - id: pipe-vs-pipeline
+    kind: example
+    runtime: isolated-node
+    dir: pipe-vs-pipeline
+    entry: index.js
+    strings:
+      task: { uk: "Справа", en: "Task" }
+      line: { uk: "рядок", en: "line" }
+      notJson: { uk: "це не JSON", en: "not JSON" }
+      broken: { uk: "тут не JSON", en: "this is not JSON" }
+      open: { uk: "відкрито", en: "open" }
+      closed: { uk: "закрито", en: "closed" }
+      source: { uk: "джерело", en: "source" }
+      parser: { uk: "transform", en: "transform" }
+      file: { uk: "файл", en: "file" }
+      error: { uk: "помилка", en: "error" }
+      leftOnDisk: { uk: "лишилося на диску", en: "left on disk" }
+      bytes: { uk: "байтів", en: "bytes" }
+      aborted: { uk: "скасовано", en: "aborted" }
+      finishedAll: { uk: "встигло завершитися до скасування", en: "finished before the abort" }
+    title:
+      uk: ".pipe() проти pipeline() і скасування"
+      en: ".pipe() versus pipeline() and abort"
+    body:
+      uk: |
+        Натисни **Запустити**. Програма створює 1000 справ у форматі JSON lines із зламаним рядком 501 і проводить їх через `parseJsonLines` (файл `parse-lines.js`) двічі: через `.pipe()` і через `pipeline()`. Після кожного запуску вона друкує, які етапи відкриті (`stream.destroyed`) і скільки байтів лишилося у файлі.
+
+        Третій запуск — `pipeline` з `AbortSignal` і повільним етапом (5 мс на шматок), що скасовується через `ABORT_AFTER_MS` мілісекунд.
+      en: |
+        Press **Run**. The program creates 1000 tasks as JSON lines with a broken line 501 and sends them through `parseJsonLines` (the file `parse-lines.js`) twice: with `.pipe()` and with `pipeline()`. After each run it prints which stages are open (`stream.destroyed`) and how many bytes are left in the file.
+
+        The third run is a `pipeline` with an `AbortSignal` and a slow stage (5 ms per chunk), aborted after `ABORT_AFTER_MS` milliseconds.
+    tryIt:
+      uk: "Зміни `ABORT_AFTER_MS` на `5`: файл майже порожній, бо скасування настало одразу. Потім на `2000`: ланцюжок встигає завершитися, і скасування вже нічого не змінює. Поверни `100`."
+      en: "Change `ABORT_AFTER_MS` to `5`: the file is almost empty, because the abort came at once. Then to `2000`: the chain has time to finish, and the abort no longer changes anything. Set it back to `100`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: протокол ітерації й finally"
+      en: "Recall: the iteration protocol and finally"
+    items:
+      - id: why-for-await-works
+        from: js-13-01-iterable-protocol
+        prompt:
+          uk: "Чому цикл може перебрати readable stream, а `for...of` над звичайним об’єктом `{ id: \"t-01\" }` кидає `TypeError`?"
+          en: "Why can a loop go over a readable stream, while `for...of` over a plain object `{ id: \"t-01\" }` throws a `TypeError`?"
+        answer:
+          type: choice
+          options:
+            - id: protocol-method
+              text:
+                uk: "У readable stream є метод протоколу ітерації (асинхронний, `Symbol.asyncIterator`), а в звичайного об’єкта такого методу немає"
+                en: "A readable stream has a method of the iteration protocol (the async one, `Symbol.asyncIterator`), and a plain object has no such method"
+            - id: has-length
+              text:
+                uk: "Потік має `length` і нумеровані шматки, а об’єкт — ні"
+                en: "A stream has a `length` and numbered chunks, and the object does not"
+              why:
+                uk: "Цикли не дивляться на `length` чи номери — це робить лише `Array.from`. Вони просять в об’єкта метод протоколу й викликають `next()`."
+                en: "Loops do not look at `length` or numbers — only `Array.from` does. They ask the object for the protocol method and call `next()`."
+            - id: streams-special
+              text:
+                uk: "Потоки — особливий випадок, який цикли знають окремо"
+                en: "Streams are a special case that loops know about separately"
+              why:
+                uk: "Особливих випадків немає: будь-який об’єкт із методом протоколу ітерації можна перебрати циклом, і потік просто має такий метод."
+                en: "There are no special cases: any object with an iteration protocol method can be looped over, and a stream simply has such a method."
+          correct: [protocol-method]
+        explanation:
+          uk: "Цикл просить метод протоколу й викликає `next()`, доки не прийде `done: true`. Readable stream реалізує асинхронний варіант протоколу, тож `for await` отримує його шматки по одному."
+          en: "A loop asks for the protocol method and calls `next()` until `done: true` arrives. A readable stream implements the async variant of the protocol, so `for await` gets its chunks one by one."
+      - id: finally-closes
+        from: no-02-06-errors-handle-cleanup
+        prompt:
+          uk: "Функція відкриває файл через `open`, читає його й може кинути помилку посередині. Де має стояти `handle.close()`, щоб файл закрився на кожному шляху?"
+          en: "A function opens a file with `open`, reads it and may throw in the middle. Where should `handle.close()` go so that the file is closed on every path?"
+        answer:
+          type: choice
+          options:
+            - id: in-finally
+              text:
+                uk: "У `finally` після `try`"
+                en: "In `finally` after `try`"
+            - id: before-return
+              text:
+                uk: "Останнім рядком перед `return`"
+                en: "As the last line before `return`"
+              why:
+                uk: "Кинута посередині помилка пропускає решту рядків, зокрема й цей. Файл лишиться відкритим."
+                en: "An error thrown in the middle skips the remaining lines, including this one. The file stays open."
+            - id: garbage-collector
+              text:
+                uk: "Ніде: збирач сміття закриє файл сам"
+                en: "Nowhere: the garbage collector closes the file by itself"
+              why:
+                uk: "На це не можна покладатися: таке закриття може не статися, Node.js 22 друкує попередження (DEP0137), а Node.js 25 зупиняє процес помилкою."
+                en: "You cannot rely on that: such a close may not happen, Node.js 22 prints a warning (DEP0137), and Node.js 25 stops the process with an error."
+          correct: [in-finally]
+        explanation:
+          uk: "`finally` виконується після `return`, після `throw` і після звичайного завершення. `pipeline` робить для потоків те саме, що `finally` для FileHandle: закриває на кожному шляху."
+          en: "`finally` runs after `return`, after `throw` and after a normal finish. `pipeline` does for streams what `finally` does for a FileHandle: it closes them on every path."
+
+  - id: export-records
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: export-records
+    entry: index.js
+    editable: [app.js]
+    strings:
+      habit: { uk: "Звичка", en: "Habit" }
+      unreadable: { uk: "не вдалося прочитати", en: "could not be read" }
+      expense: { uk: "Витрата", en: "Expense" }
+      ok: { uk: "готово", en: "done" }
+      files: { uk: "файли", en: "files" }
+      linesIn: { uk: "рядків у", en: "lines in" }
+      complete: { uk: "повний експорт", en: "complete export" }
+      failing: { uk: "джерело падає", en: "the source fails" }
+      abort: { uk: "скасування через 30 мс", en: "abort after 30 ms" }
+    title:
+      uk: "exportRecords: увесь файл або нічого"
+      en: "exportRecords: the whole file or nothing"
+    instructions:
+      uk: |
+        Зараз `exportRecords(source, destPath, { signal })` в `app.js` пише записи просто в `destPath`, не зважає на `false` від `write()`, на помилки й на `signal`. Перероби її:
+
+        - пише кожен запис із `source` (readable stream об’єктів) у `destPath` одним рядком JSON;
+        - коли джерело падає, відхиляється **з тією самою помилкою**, а старий `destPath` лишається таким, як був;
+        - після помилки чи скасування в теці не лишається ні часткового, ні тимчасового файла;
+        - `signal` скасовує експорт: promise відхиляється з `AbortError`;
+        - коли файл не вдається записати, джерело теж закривається.
+
+        `index.js` і `habit-source.js` лише для читання. **Запустити** робить повний експорт, експорт із джерелом, що падає на записі 300, і скасований через 30 мс — і друкує файли в теці. Перевірки дають функції щонайбільше 2 с і роблять для кожного випадку окрему теку.
+      en: |
+        Right now `exportRecords(source, destPath, { signal })` in `app.js` writes the records straight into `destPath` and ignores `write()`’s `false`, errors and the `signal`. Rework it:
+
+        - it writes every record of `source` (a readable stream of objects) into `destPath` as one line of JSON;
+        - when the source fails, it rejects **with that same error**, and the old `destPath` stays as it was;
+        - after an error or an abort the folder holds neither a partial nor a temporary file;
+        - `signal` cancels the export: the promise rejects with `AbortError`;
+        - when the file cannot be written, the source is closed too.
+
+        `index.js` and `habit-source.js` are read-only. **Run** makes a complete export, an export whose source fails at record 300, and one aborted after 30 ms — and prints the files in the folder. The checks give the function at most 2 s and use a separate folder for each case.
+    testTitles:
+      "writes every record to destPath as one JSON line":
+        uk: "Пише кожен запис у `destPath` одним рядком JSON"
+        en: "Writes every record to `destPath` as one JSON line"
+      "a failing source rejects with its error and leaves the old destPath untouched":
+        uk: "Джерело, що падає, відхиляє з його помилкою, а старий `destPath` не змінено"
+        en: "A failing source rejects with its error and leaves the old `destPath` untouched"
+      "no partial or temporary file is left after a failure":
+        uk: "Після помилки не лишається ні часткового, ні тимчасового файла"
+        en: "No partial or temporary file is left after a failure"
+      "an abort rejects with an AbortError and leaves no file":
+        uk: "Скасування відхиляє з `AbortError` і не лишає файла"
+        en: "An abort rejects with an `AbortError` and leaves no file"
+      "when the file cannot be written, the source is closed too":
+        uk: "Коли файл не вдається записати, джерело теж закрито"
+        en: "When the file cannot be written, the source is closed too"
+    hints:
+      nudge:
+        uk: "Яка функція закриває всі етапи ланцюжка, коли один із них падає, і приймає `signal`? І куди писати, щоб незавершений файл ніколи не мав справжньої назви?"
+        en: "Which function closes every stage of a chain when one of them fails, and takes a `signal`? And where do you write so that an unfinished file never has the real name?"
+      explanation:
+        uk: "`pipeline` з `node:stream/promises` приймає етапи по черзі й наостанок об’єкт `{ signal }`. Записи — це об’єкти, а файл приймає текст, тож між ними потрібен етап, що робить із запису рядок: асинхронна функція-генератор (`async function* (items) { for await (const item of items) yield … }`) або `Transform` з `writableObjectMode: true`. Тимчасовий файл і `rename` ти знаєш з NO-02: так приклад NO-02 писав `wishlist.json.2.tmp`, а потім `rename` ставив його на місце `wishlist.json`. У `catch` прибери тимчасовий файл через `rm(path, { force: true })` і кинь ту саму помилку далі."
+        en: "`pipeline` from `node:stream/promises` takes the stages in order and, last, an object `{ signal }`. Records are objects and the file takes text, so between them you need a stage that turns a record into a line: an async generator function (`async function* (items) { for await (const item of items) yield … }`) or a `Transform` with `writableObjectMode: true`. You know the temporary file and `rename` from NO-02: that is how the NO-02 example wrote `wishlist.json.2.tmp` and then `rename` put it in place of `wishlist.json`. In `catch` remove the temporary file with `rm(path, { force: true })` and throw the same error on."
+    solutionNote:
+      uk: "`pipeline` з’єднує джерело, генератор, що робить із кожного запису рядок, і файл `.tmp`; він же стежить за backpressure, закриває всі потоки при помилці чи скасуванні й відхиляє promise один раз. Лише повний файл перейменовується на `destPath`, тож старий файл замінюється одним кроком. `catch` прибирає тимчасовий файл і повторює помилку. Рівноцінно — `Transform` замість генератора й прибирання у `finally`, якщо `rename` не відбувся."
+      en: "`pipeline` connects the source, a generator that turns each record into a line, and the `.tmp` file; it also watches backpressure, closes every stream on an error or an abort and rejects the promise once. Only a complete file is renamed to `destPath`, so the old file is replaced in one step. `catch` removes the temporary file and rethrows. Equivalently — a `Transform` instead of the generator and cleanup in `finally` when the `rename` did not happen."
+    feedback:
+      - when: { test: "writes every record to destPath as one JSON line" }
+        message:
+          uk: "Ця перевірка експортує 400 записів і очікує в теці лише `expenses.jsonl` із 400 рядками JSON — останній `{\"id\":\"e-400\", …}`. Якщо в теці лишився тимчасовий файл, після успіху його треба перейменувати на `destPath`."
+          en: "This check exports 400 records and expects the folder to hold only `expenses.jsonl` with 400 lines of JSON — the last one `{\"id\":\"e-400\", …}`. If a temporary file is left in the folder, it has to be renamed to `destPath` after success."
+      - when: { test: "a failing source rejects with its error and leaves the old destPath untouched" }
+        message:
+          uk: "Ця перевірка кладе в `expenses.jsonl` старий експорт, а джерело падає на записі 250. Вона очікує відхилення саме з помилкою джерела (`record 250 could not be read`) і старий вміст файла без змін. Пиши в тимчасовий файл, а `destPath` замінюй лише після успіху."
+          en: "This check puts an old export into `expenses.jsonl`, and the source fails at record 250. It expects a rejection with exactly the source’s error (`record 250 could not be read`) and the old content of the file unchanged. Write into a temporary file and replace `destPath` only after success."
+      - when: { test: "no partial or temporary file is left after a failure" }
+        message:
+          uk: "Ця перевірка очікує порожню теку після експорту, що впав на записі 250. `pipeline` закриває потоки, але файлів не видаляє: прибери тимчасовий файл у `catch` чи `finally`."
+          en: "This check expects an empty folder after an export that failed at record 250. `pipeline` closes the streams but deletes no files: remove the temporary file in `catch` or `finally`."
+      - when: { test: "an abort rejects with an AbortError and leaves no file" }
+        message:
+          uk: "Ця перевірка скасовує повільний експорт через 40 мс і очікує відхилення з назвою `AbortError` і порожню теку. Передай `signal` у `pipeline` (останнім аргументом, `{ signal }`) і прибери тимчасовий файл."
+          en: "This check aborts a slow export after 40 ms and expects a rejection named `AbortError` and an empty folder. Pass `signal` to `pipeline` (as the last argument, `{ signal }`) and remove the temporary file."
+      - when: { test: "when the file cannot be written, the source is closed too" }
+        message:
+          uk: "Ця перевірка пише в теку, якої немає (помилка `ENOENT`), і очікує, що після відхилення `source.destroyed` буде `true`. `.pipe()` не закриває інших етапів, коли один падає; `pipeline` закриває."
+          en: "This check writes into a folder that does not exist (the error `ENOENT`) and expects `source.destroyed` to be `true` after the rejection. `.pipe()` does not close the other stages when one fails; `pipeline` does."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-11
+    body:
+      uk: "У кроці проєкту імпорт великого файла твого домену теж піде через `pipeline`: зламаний рядок чи скасування закриють усі етапи, а частковий результат не потрапить у сховище."
+      en: "In the project step the import of your domain’s large file also goes through `pipeline`: a broken line or an abort closes every stage, and a partial result never reaches the store."
