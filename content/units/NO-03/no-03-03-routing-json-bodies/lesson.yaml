@@ -1,0 +1,397 @@
+id: no-03-03-routing-json-bodies
+unit: NO-03
+title:
+  uk: "Маршрутизація і JSON-тіла запитів"
+  en: "Routing and JSON bodies"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Маршрутизувати запити за методом і шляхом через `new URL(req.url, base)`, безпечно витягаючи id зі шляху й параметри з query."
+    en: "Route requests by method and pathname with new URL(req.url, base), extracting an id from the path and query parameters safely."
+  - uk: "Читати JSON-тіло запиту шматок за шматком із лімітом байтів, відповідаючи 413 на завелике тіло й 400 на зіпсований JSON."
+    en: "Read a JSON request body chunk by chunk with a byte limit, answering an oversized body with 413 and malformed JSON with 400."
+prerequisites: [no-03-02-methods-status-headers-server, js-16-01-url-query-encoding]
+subskills:
+  - { family: B-03, skill: "request/response lifecycle", depth: practice }
+glossary: [route-table, path-parameter, body-size-limit]
+selfCheck: [predict-routes, read-json-body]
+
+blocks:
+  - id: url-to-route
+    kind: explanation
+    title:
+      uk: "Від `req.url` до маршруту"
+      en: "From `req.url` to a route"
+    body:
+      uk: |
+        `req.url` — це шлях **разом із query**, як його надіслав клієнт: `/records?status=active`. Тож `req.url === "/records"` для такого запиту — `false`, і простий маршрутизатор відповів би 404.
+
+        Розбирай адресу так само, як у браузері:
+
+        ```js
+        const url = new URL(req.url, "http://localhost");
+        url.pathname;                   // "/records"
+        url.searchParams.get("status"); // "active"
+        ```
+
+        Другий аргумент лише доповнює відносний `req.url` до повної адреси — на маршрут він не впливає.
+
+        Далі — [[route-table|таблиця маршрутів]]: рядки «метод + шаблон шляху → обробник». Змінну частину шляху ловить група в регулярному виразі: шаблон `^/records/([^/]+)$` у `/records/h-02` дає [[path-parameter|параметр шляху]] `"h-02"`. Це текст від клієнта: пропусти його через `decodeURIComponent` і порівнюй, а не вставляй куди завгодно.
+
+        Шлях не знайшовся в жодному рядку — `404`. Шлях знайшовся, а метод ні — `405` з `Allow`, де перелічено методи цього шляху.
+      en: |
+        `req.url` is the path **together with the query**, as the client sent it: `/records?status=active`. So `req.url === "/records"` is `false` for such a request, and a naive router would answer 404.
+
+        Parse the address the same way as in the browser:
+
+        ```js
+        const url = new URL(req.url, "http://localhost");
+        url.pathname;                   // "/records"
+        url.searchParams.get("status"); // "active"
+        ```
+
+        The second argument only completes the relative `req.url` into a full address — it does not affect the route.
+
+        Next comes a [[route-table]]: rows of “method + path pattern → handler”. The variable part of the path is caught by a group in a regular expression: the pattern `^/records/([^/]+)$` on `/records/h-02` gives the [[path-parameter]] `"h-02"`. It is text from the client: pass it through `decodeURIComponent` and compare it, do not paste it anywhere.
+
+        No row matches the path — `404`. A row matches the path but not the method — `405` with an `Allow` listing that path’s methods.
+
+  - id: body-is-a-stream
+    kind: explanation
+    title:
+      uk: "Тіло — це потік, а не `req.body`"
+      en: "The body is a stream, not `req.body`"
+    body:
+      uk: |
+        У `node:http` немає `req.body`. Фреймворки на кшталт Express заповнюють його спеціальним проміжним кодом — тут цим займаєшся ти. Тіло приходить **шматками** (`Buffer`) через події `'data'`, а `'end'` каже, що шматків більше не буде.
+
+        Порядок дій:
+
+        1. Збирай шматки в масив і **рахуй їхні байти**, поки вони надходять.
+        2. Щойно сума перевищила ліміт — перестань збирати й відповідай `413`. Це [[body-size-limit|обмеження розміру тіла]]: без нього один великий запит може забрати всю пам’ять процесу.
+        3. На `'end'` склей шматки `Buffer.concat` і лише тоді перетвори на текст: літера в UTF-8 може розірватися між двома шматками.
+        4. `JSON.parse` у `try`: зіпсований JSON — помилка клієнта, отже `400`, а не `500`.
+
+        Заголовку `Content-Length` вистачає для швидкої відмови, але покладатися лише на нього не можна: клієнт може не надіслати його взагалі (тіло тоді йде без наперед відомої довжини) — тож рахують справжні байти.
+
+        Одна чесна примітка: якщо тіло в десятки разів більше за ліміт, клієнт іноді бачить обірване з’єднання замість `413` — сервер закрив його, поки той ще надсилав. Пам’ять сервера захищено в обох випадках.
+      en: |
+        `node:http` has no `req.body`. Frameworks such as Express fill one in with a special middle layer of code — here that job is yours. The body arrives **in chunks** (`Buffer`s) through `'data'` events, and `'end'` says no more chunks are coming.
+
+        The order of work:
+
+        1. Collect the chunks in an array and **count their bytes** as they arrive.
+        2. As soon as the sum is over the limit, stop collecting and answer `413`. That is the [[body-size-limit]]: without it a single large request can take all of the process’s memory.
+        3. On `'end'` join the chunks with `Buffer.concat` and only then turn them into text: a UTF-8 letter can be split between two chunks.
+        4. `JSON.parse` inside `try`: malformed JSON is the client’s mistake, so `400`, not `500`.
+
+        The `Content-Length` header is enough for a quick refusal, but you cannot rely on it alone: a client may not send it at all (the body then comes without a length known in advance) — so the real bytes are counted.
+
+        One honest note: when the body is dozens of times larger than the limit, the client sometimes sees a broken connection instead of `413` — the server closed it while the client was still sending. The server’s memory is protected either way.
+
+  - id: routing-diagram
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Шлях запиту: розбір, таблиця, ліміт, JSON"
+      en: "A request’s path: parsing, the table, the limit, JSON"
+    textEquivalent:
+      uk: "Запит спершу розбирають через new URL(req.url, base) на метод, pathname і searchParams. Pathname порівнюють із рядками таблиці маршрутів: GET /records, GET /records/:id і POST /records. GET /records?status=active потрапляє в GET /records, бо query до pathname не входить, і обробник читає status із searchParams. GET /records/h-02 потрапляє в GET /records/:id, а група регулярного виразу дає id = h-02. Якщо шлях є в таблиці, а метод ні (DELETE /records), відповідь — 405 з Allow; якщо шляху немає взагалі — 404. Для POST /records тіло проходить лічильник байтів: щойно сума шматків перевищує ліміт, сервер відповідає 413, і JSON.parse не виконується. Тіло в межах ліміту склеюють і розбирають: зіпсований JSON дає 400, правильний іде в обробник, який відповідає 201."
+      en: "A request is first parsed with new URL(req.url, base) into the method, the pathname and searchParams. The pathname is compared with the rows of the route table: GET /records, GET /records/:id and POST /records. GET /records?status=active lands in GET /records, because the query is not part of the pathname, and the handler reads status from searchParams. GET /records/h-02 lands in GET /records/:id, and the regular-expression group gives id = h-02. If the path is in the table but the method is not (DELETE /records), the answer is 405 with Allow; if the path is not there at all, 404. For POST /records the body goes through a byte counter: as soon as the chunks add up to more than the limit, the server answers 413 and JSON.parse never runs. A body within the limit is joined and parsed: malformed JSON gives 400, valid JSON goes to the handler, which answers 201."
+    spec:
+      layout: grid
+      groups:
+        - { id: routes, label: { uk: "Таблиця маршрутів", en: "Route table" } }
+      nodes:
+        - { id: req, label: { uk: "запит", en: "request" }, shape: pill, col: 0, row: 0 }
+        - { id: parse, label: "new URL(req.url, base)", col: 0, row: 1, w: 200 }
+        - { id: r-list, group: routes, label: "GET /records", col: 0, row: 2 }
+        - { id: r-item, group: routes, label: "GET /records/:id", col: 0, row: 3 }
+        - { id: r-post, group: routes, label: "POST /records", col: 0, row: 4 }
+        - { id: count, label: { uk: "лічильник байтів", en: "byte counter" }, col: 0, row: 5 }
+        - { id: json, label: "JSON.parse", col: 0, row: 6 }
+        - { id: handler, label: { uk: "обробник → 201", en: "handler → 201" }, shape: round, col: 0, row: 7 }
+        - { id: s404, label: "404", shape: note, col: 1, row: 1 }
+        - { id: s405, label: "405 + Allow", shape: note, col: 1, row: 2 }
+        - { id: s413, label: "413", shape: note, col: 1, row: 5 }
+        - { id: s400, label: "400", shape: note, col: 1, row: 6 }
+      edges:
+        - { id: e-parse, from: req, to: parse }
+        - { id: e-list, from: parse, to: r-list }
+        - { id: e-404, from: parse, to: s404, kind: dashed }
+        - { id: e-405, from: r-list, to: s405, kind: dashed }
+        - { id: e-item, from: r-list, to: r-item, kind: line }
+        - { id: e-post, from: r-item, to: r-post, kind: line }
+        - { id: e-count, from: r-post, to: count }
+        - { id: e-413, from: count, to: s413, kind: dashed }
+        - { id: e-json, from: count, to: json }
+        - { id: e-400, from: json, to: s400, kind: dashed }
+        - { id: e-handler, from: json, to: handler }
+      steps:
+        - caption:
+            uk: "Кожен запит проходить зверху вниз: розбір адреси, таблиця маршрутів, для `POST` — лічильник байтів і `JSON.parse`. Праворуч — відповіді, якими шлях може обірватися."
+            en: "Every request goes top to bottom: parsing the address, the route table, and for `POST` the byte counter and `JSON.parse`. On the right are the answers that can end the path early."
+        - highlight: [req, parse, e-parse]
+          caption:
+            uk: "`GET /records?status=active` розбирають на метод `GET`, `pathname` `/records` і `searchParams` зі `status=active`."
+            en: "`GET /records?status=active` is parsed into the method `GET`, the `pathname` `/records` and `searchParams` with `status=active`."
+        - highlight: [r-list, e-list]
+          caption:
+            uk: "Таблиця порівнює лише `pathname`, тож запит із query потрапляє в `GET /records`. Обробник сам читає `status` із `searchParams`."
+            en: "The table compares only the `pathname`, so the request with a query lands in `GET /records`. The handler reads `status` from `searchParams` itself."
+        - highlight: [r-item]
+          caption:
+            uk: "`GET /records/h-02` збігається з `^/records/([^/]+)$`, і група дає параметр шляху `id = \"h-02\"`."
+            en: "`GET /records/h-02` matches `^/records/([^/]+)$`, and the group gives the path parameter `id = \"h-02\"`."
+        - highlight: [s405, e-405]
+          caption:
+            uk: "`DELETE /records`: шлях у таблиці є, а метод — ні. Відповідь `405` з `Allow`, де перелічено методи цього шляху."
+            en: "`DELETE /records`: the path is in the table, the method is not. The answer is `405` with an `Allow` listing that path’s methods."
+        - highlight: [s404, e-404]
+          caption:
+            uk: "`GET /nope`: жоден рядок не збігся з шляхом — `404`."
+            en: "`GET /nope`: no row matches the path — `404`."
+        - highlight: [r-post, count, s413, e-count, e-413]
+          caption:
+            uk: "`POST /records` із 64 КБ при ліміті 16 КБ: лічильник додає байти кожного шматка й, перевищивши ліміт, відповідає `413`. `JSON.parse` так і не виконується."
+            en: "`POST /records` with 64 KB against a 16 KB limit: the counter adds up the bytes of each chunk and, once over the limit, answers `413`. `JSON.parse` never runs."
+        - highlight: [json, s400, e-json, e-400]
+          caption:
+            uk: "Тіло в межах ліміту, але обірване: `JSON.parse` кидає `SyntaxError`, і сервер відповідає `400` — це помилка клієнта."
+            en: "A body within the limit but cut off: `JSON.parse` throws a `SyntaxError`, and the server answers `400` — it is the client’s mistake."
+        - highlight: [json, handler, e-handler]
+          caption:
+            uk: "Правильний JSON у межах ліміту доходить до обробника вже як значення, і той відповідає `201`."
+            en: "Valid JSON within the limit reaches the handler as a value, and the handler answers `201`."
+
+  - id: predict-routes
+    kind: prediction
+    prompt:
+      uk: "Сервер звичок має маршрути `GET /records` (фільтр `?status=`), `GET /records/:id` і `POST /records` (ліміт тіла 16 КБ), а маршрутизує так, як у коді. Він отримує чотири запити: А — `GET /records?status=active`; Б — `GET /records/h-02`; В — `POST /records` з тілом 64 КБ; Г — `POST /records` з тілом `{\"name\": \"Read` (JSON обірвано). Які твердження правдиві? Обери всі."
+      en: "A habit server has the routes `GET /records` (a `?status=` filter), `GET /records/:id` and `POST /records` (a 16 KB body limit), and routes as in the code. It receives four requests: A — `GET /records?status=active`; B — `GET /records/h-02`; C — `POST /records` with a 64 KB body; D — `POST /records` with the body `{\"name\": \"Read` (the JSON is cut off). Which statements are true? Choose all that are."
+    code: |
+      const url = new URL(req.url, "http://localhost");
+      const sameRoute = routes.filter((r) => r.pattern.test(url.pathname));
+      if (sameRoute.length === 0) return sendJson(res, 404, { error: "not found" });
+      const route = sameRoute.find((r) => r.method === req.method);
+      // … 405 when no route has this method …
+      const params = url.pathname.match(route.pattern).slice(1).map(decodeURIComponent);
+      await route.handler(req, res, url, params);
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: a-list
+          text:
+            uk: "А обробляє `GET /records`, і той читає `active` з `url.searchParams`"
+            en: "A is handled by `GET /records`, which reads `active` from `url.searchParams`"
+        - id: a-404
+          text:
+            uk: "А отримує `404`: адреси `/records?status=active` у таблиці немає"
+            en: "A gets `404`: the address `/records?status=active` is not in the table"
+          why:
+            uk: "Так було б, якби таблицю порівнювали з `req.url`. Тут порівнюють `url.pathname`, а query живе окремо в `searchParams`."
+            en: "That would happen if the table were compared with `req.url`. Here `url.pathname` is compared, and the query lives separately in `searchParams`."
+        - id: b-item
+          text:
+            uk: "Б обробляє `GET /records/:id` з параметром `\"h-02\"`"
+            en: "B is handled by `GET /records/:id` with the parameter `\"h-02\"`"
+        - id: c-413
+          text:
+            uk: "В отримує `413`, і `JSON.parse` для нього не виконується"
+            en: "C gets `413`, and `JSON.parse` never runs for it"
+        - id: c-201
+          text:
+            uk: "В отримує `201`: сервер спершу читає все тіло, а вже тоді зберігає запис"
+            en: "C gets `201`: the server reads the whole body first and then saves the record"
+          why:
+            uk: "Сервер із лімітом рахує байти, поки тіло надходить, і зупиняється, щойно їх забагато. 64 КБ більше за 16 КБ — отже `413`."
+            en: "A server with a limit counts bytes while the body arrives and stops as soon as there are too many. 64 KB is more than 16 KB — so `413`."
+        - id: d-400
+          text:
+            uk: "Г отримує `400`"
+            en: "D gets `400`"
+        - id: d-req-body
+          text:
+            uk: "Для Г `req.body` — `undefined`, обробник падає з `TypeError`, і клієнт отримує `500`"
+            en: "For D `req.body` is `undefined`, the handler crashes with a `TypeError`, and the client gets `500`"
+          why:
+            uk: "`req.body` тут ніхто не заповнює й ніхто не читає: обробник сам збирає тіло з потоку й розбирає його `JSON.parse` у `try`. Обірваний JSON — помилка клієнта, отже `400`."
+            en: "Nobody fills in or reads `req.body` here: the handler collects the body from the stream itself and parses it with `JSON.parse` inside `try`. Cut-off JSON is the client’s mistake, so `400`."
+      correct: [a-list, b-item, c-413, d-400]
+    explanation:
+      uk: "Маршрут обирають за `pathname`, тож query йому не заважає, а параметр шляху береться з групи регулярного виразу. Тіло лічать у байтах ще до розбору: 64 КБ відсікає ліміт (`413`), а обірваний JSON доходить до `JSON.parse` і дає `400`. Перевір у прикладі нижче."
+      en: "The route is chosen by `pathname`, so the query does not get in the way, and the path parameter comes from the regular-expression group. The body is counted in bytes before parsing: the limit cuts off 64 KB (`413`), while cut-off JSON reaches `JSON.parse` and gives `400`. Check it in the example below."
+
+  - id: habit-router
+    kind: example
+    runtime: isolated-node
+    dir: habit-router
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      habit1: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      habit2: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      habit5: { uk: "Вчити англійські слова", en: "Learn English words" }
+      habit7: { uk: "Розтяжка", en: "Stretching" }
+    title:
+      uk: "Маршрутизатор звичок із лімітом тіла"
+      en: "A habit router with a body limit"
+    body:
+      uk: |
+        Тут таблиця маршрутів, розбір адреси й простий читач тіла. Цей читач довіряє заголовку `Content-Length`: якщо клієнт заявив більше за ліміт, він одразу відмовляє `413`, а інакше читає тіло цілком. Клієнт у тому самому модулі надсилає п’ять запитів — чотири з передбачення і правильний `POST`.
+
+        Натисни **Запустити** й порівняй статуси з передбаченням.
+      en: |
+        Here are a route table, address parsing and a simple body reader. This reader trusts the `Content-Length` header: if the client declared more than the limit, it refuses with `413` at once, otherwise it reads the whole body. The client in the same module sends five requests — the four from the prediction and a valid `POST`.
+
+        Press **Run** and compare the statuses with your prediction.
+    tryIt:
+      uk: |
+        1. Зменш `MAX_BODY_BYTES` до `10`: тепер усі три `POST` отримують `413`. Поверни `16 * 1024`.
+        2. У маршрутизаторі заміни `route.pattern.test(url.pathname)` на `route.pattern.test(req.url)`: `GET /records?status=active` тепер `404`, а `GET /records/h-02` працює як раніше — у ньому немає query. Поверни `url.pathname`.
+        3. Додай у список `requests` рядок `['DELETE', '/records/h-02'],`: відповідь `405` і `{"error":"method not allowed"}`, бо для цього шляху є лише `GET`.
+      en: |
+        1. Lower `MAX_BODY_BYTES` to `10`: now all three `POST`s get `413`. Put `16 * 1024` back.
+        2. In the router replace `route.pattern.test(url.pathname)` with `route.pattern.test(req.url)`: `GET /records?status=active` is now `404`, while `GET /records/h-02` works as before — it has no query. Put `url.pathname` back.
+        3. Add the line `['DELETE', '/records/h-02'],` to the `requests` list: the answer is `405` with `{"error":"method not allowed"}`, because this path has only `GET`.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: JSON з іншого origin"
+      en: "Recall: JSON from another origin"
+    items:
+      - id: json-preflight
+        from: js-16-04-same-origin-cors
+        prompt:
+          uk: "Сторінка на `http://127.0.0.1:5173` надсилає `POST` з `Content-Type: application/json` на сервер `http://127.0.0.1:4310`. Що браузер зробить спершу?"
+          en: "A page on `http://127.0.0.1:5173` sends a `POST` with `Content-Type: application/json` to a server on `http://127.0.0.1:4310`. What does the browser do first?"
+        answer:
+          type: choice
+          options:
+            - id: options-first
+              text:
+                uk: "Надішле запит `OPTIONS` (preflight) і відправить `POST`, лише якщо відповідь його дозволяє"
+                en: "It sends an `OPTIONS` request (a preflight) and sends the `POST` only if the answer allows it"
+            - id: post-straight
+              text:
+                uk: "Одразу надішле `POST`: це той самий комп’ютер"
+                en: "It sends the `POST` at once: it is the same computer"
+              why:
+                uk: "Origin — це схема, хост **і порт**. Порти різні, отже origin різні, а `application/json` не входить до «простих» типів."
+                en: "An origin is the scheme, the host **and the port**. The ports differ, so the origins differ, and `application/json` is not one of the “simple” types."
+            - id: blocked
+              text:
+                uk: "Нічого не надішле: `POST` на інший origin заборонено завжди"
+                en: "It sends nothing: a `POST` to another origin is always forbidden"
+              why:
+                uk: "Заборони немає: браузер питає дозволу через preflight, і сервер може його дати заголовками `Access-Control-Allow-*`."
+                en: "There is no ban: the browser asks for permission through a preflight, and the server can grant it with `Access-Control-Allow-*` headers."
+          correct: [options-first]
+        explanation:
+          uk: "`Content-Type: application/json` робить запит «непростим», тож браузер спершу питає `OPTIONS`. Для твого маршрутизатора це звичайний запит з іншим методом: якщо в таблиці для шляху немає `OPTIONS`, він відповість `405`, і браузер справжній `POST` не надішле."
+          en: "`Content-Type: application/json` makes the request “non-simple”, so the browser asks with `OPTIONS` first. To your router it is an ordinary request with another method: if the table has no `OPTIONS` for the path, it answers `405`, and the browser never sends the real `POST`."
+
+  - id: read-json-body
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: read-json-body
+    entry: index.js
+    editable: [body.js]
+    capabilities: { network: loopback }
+    strings:
+      habit: { uk: "Розтяжка", en: "Stretching" }
+      gaveUp: { uk: "Клієнт перестав чекати:", en: "Client stopped waiting:" }
+    title:
+      uk: "readJsonBody: тіло з лімітом"
+      en: "readJsonBody: a body with a limit"
+    instructions:
+      uk: |
+        Читач із прикладу довіряє `Content-Length`. Напиши в `body.js` надійніший `readJsonBody(req, maxBytes)`, що рахує справжні байти:
+
+        - збирає шматки тіла й рахує їхні **байти**, поки вони надходять;
+        - щойно байтів стало **більше** за `maxBytes`, перестає збирати й відхиляється з `new HttpError(413, …)` — не чекаючи кінця тіла; тіло рівно в `maxBytes` байтів приймається;
+        - наприкінці склеює шматки в один `Buffer` і лише тоді перетворює на текст UTF-8;
+        - виконується з розібраним значенням, а якщо текст — не JSON, відхиляється з `new HttpError(400, …)`.
+
+        `errors.js` і `server.js` лише для читання: сервер відповідає статусом із `error.status`. **Запустити** стартує сервер із лімітом 256 байтів і надсилає три тіла. **Перевірити** надсилає справжні запити, серед них такі: тіло, що заявляє мільйон байтів і зависає після двох кілобайтів; тіло з українськими літерами; і тіло, у якому одна літера приходить двома шматками з паузою.
+      en: |
+        The example’s reader trusts `Content-Length`. Write a sturdier `readJsonBody(req, maxBytes)` in `body.js` that counts the real bytes:
+
+        - it collects the body’s chunks and counts their **bytes** as they arrive;
+        - as soon as there are **more** than `maxBytes` bytes, it stops collecting and rejects with `new HttpError(413, …)` — without waiting for the end of the body; a body of exactly `maxBytes` bytes is accepted;
+        - at the end it joins the chunks into one `Buffer` and only then turns it into UTF-8 text;
+        - it resolves with the parsed value, and if the text is not JSON it rejects with `new HttpError(400, …)`.
+
+        `errors.js` and `server.js` are read-only: the server answers with the status from `error.status`. **Run** starts the server with a 256-byte limit and sends three bodies. **Check** sends real requests, among them: a body that declares a million bytes and stalls after two kilobytes; a body with non-English letters; and a body in which one letter arrives in two chunks with a pause between them.
+    testTitles:
+      "returns the parsed value of a JSON body":
+        uk: "Повертає розібране значення JSON-тіла (`201`)"
+        en: "Returns the parsed value of a JSON body (`201`)"
+      "answers 413 for a body over the limit":
+        uk: "Тіло понад ліміт дає `413`"
+        en: "A body over the limit gives `413`"
+      "answers 413 without waiting for the rest of the body":
+        uk: "`413` приходить, не чекаючи решти тіла"
+        en: "`413` comes without waiting for the rest of the body"
+      "counts the limit in bytes, not characters":
+        uk: "Ліміт рахується в байтах, а не в символах"
+        en: "The limit counts bytes, not characters"
+      "accepts a body of exactly the limit":
+        uk: "Тіло рівно в ліміт приймається"
+        en: "A body of exactly the limit is accepted"
+      "answers 400 for malformed JSON":
+        uk: "Зіпсований JSON дає `400`"
+        en: "Malformed JSON gives `400`"
+      "keeps a character that arrives split between two chunks":
+        uk: "Літера, розірвана між двома шматками, не псується"
+        en: "A letter split between two chunks stays intact"
+    hints:
+      nudge:
+        uk: "`req` — потік: підпишись на `'data'` (шматок) і `'end'` (кінець). Де саме треба перевіряти ліміт, щоб не чекати кінця?"
+        en: "`req` is a stream: subscribe to `'data'` (a chunk) and `'end'` (the end). Where exactly must the limit be checked so you do not wait for the end?"
+      explanation:
+        uk: "Шматок — це `Buffer`, і його `length` уже в байтах; `chunk.toString().length` рахував би символи. Перевіряй суму в обробнику `'data'` і, перевищивши ліміт, зніми свої обробники через `req.off` і відхили проміс — читати решту вже не треба. Літера може прийти половинками в різних шматках, тому текст роби один раз із `Buffer.concat(масив)`, а не додаванням рядків. Те, що кидає `JSON.parse`, перехопи й заміни своєю помилкою зі статусом. Перехід за межу — це «більше ніж», не «більше або дорівнює»."
+        en: "A chunk is a `Buffer`, and its `length` is already in bytes; `chunk.toString().length` would count characters. Check the sum in the `'data'` handler and, once over the limit, remove your handlers with `req.off` and reject the promise — there is no need to read the rest. A letter may arrive in halves in different chunks, so make the text once from `Buffer.concat(array)`, not by adding strings. Catch what `JSON.parse` throws and replace it with your own error carrying a status. Going over the limit means “more than”, not “more than or equal”."
+    solutionNote:
+      uk: "Обробник `'data'` додає `chunk.length` (байти) і, щойно сума перевищує `maxBytes`, знімає обробники й відхиляється з `HttpError(413)`; решта тіла вже не накопичується. На `'end'` `Buffer.concat` склеює байти до декодування, тож розірвана між шматками літера не псується, а `JSON.parse` у `try` перетворює `SyntaxError` на `HttpError(400)`. Цикл `for await (const chunk of req)` теж годиться: кинута в ньому помилка закриває потік."
+      en: "The `'data'` handler adds `chunk.length` (bytes) and, as soon as the sum exceeds `maxBytes`, removes the handlers and rejects with `HttpError(413)`; the rest of the body is no longer collected. On `'end'` `Buffer.concat` joins the bytes before decoding, so a letter split between chunks stays intact, and `JSON.parse` inside `try` turns a `SyntaxError` into `HttpError(400)`. A `for await (const chunk of req)` loop works too: an error thrown in it closes the stream."
+    feedback:
+      - when: { test: "returns the parsed value of a JSON body" }
+        message:
+          uk: "Ця перевірка надсилає маленьке правильне JSON-тіло й чекає `201`, а в `received` — те саме значення. `readJsonBody` має виконатися з результатом `JSON.parse` тексту тіла."
+          en: "This check sends a small valid JSON body and expects `201` with the same value in `received`. `readJsonBody` must resolve with the result of `JSON.parse` on the body’s text."
+      - when: { test: "answers 413 for a body over the limit" }
+        message:
+          uk: "Ця перевірка надсилає 8 КБ при ліміті 256 байтів і чекає `413`. Відхиляй проміс через `new HttpError(413, …)`, коли сума байтів перевищила `maxBytes`."
+          en: "This check sends 8 KB against a 256-byte limit and expects `413`. Reject the promise with `new HttpError(413, …)` when the sum of bytes exceeds `maxBytes`."
+      - when: { test: "answers 413 without waiting for the rest of the body" }
+        message:
+          uk: "Ця перевірка заявляє 1 000 000 байтів, надсилає 2 КБ і чекає на відповідь 1 с, не закриваючи з’єднання. Відповідь `413` має прийти вже тоді: перевіряй суму в обробнику кожного шматка, а не наприкінці тіла."
+          en: "This check declares 1,000,000 bytes, sends 2 KB and waits 1 s for an answer without closing the connection. The `413` answer must come by then: check the sum in the handler of each chunk, not at the end of the body."
+      - when: { test: "counts the limit in bytes, not characters" }
+        message:
+          uk: "Ця перевірка надсилає тіло з 211 символів, але 411 байтів (літера «ї» займає два байти) і чекає `413` при ліміті 256. Рахуй `chunk.length` шматка-`Buffer`, а не довжину рядка."
+          en: "This check sends a body of 211 characters but 411 bytes (the letter “ї” takes two bytes) and expects `413` with a 256-byte limit. Count `chunk.length` of the `Buffer` chunk, not the length of a string."
+      - when: { test: "accepts a body of exactly the limit" }
+        message:
+          uk: "Ця перевірка надсилає рівно 256 байтів при ліміті 256 і чекає `201`. Відмовляй лише тоді, коли байтів **більше** за `maxBytes`."
+          en: "This check sends exactly 256 bytes with a 256-byte limit and expects `201`. Refuse only when there are **more** bytes than `maxBytes`."
+      - when: { test: "answers 400 for malformed JSON" }
+        message:
+          uk: "Ця перевірка надсилає обірваний JSON і чекає `400`. Якщо приходить `500`, помилку `JSON.parse` ніхто не замінив: перехопи її й відхили проміс через `new HttpError(400, …)`."
+          en: "This check sends cut-off JSON and expects `400`. If `500` arrives, nobody replaced the `JSON.parse` error: catch it and reject with `new HttpError(400, …)`."
+      - when: { test: "keeps a character that arrives split between two chunks" }
+        message:
+          uk: "Ця перевірка надсилає `{\"name\":\"ї\"}` так, що два байти літери «ї» приходять у різних шматках, і чекає `201` з тією самою літерою. Додавання шматків до рядка (`text += chunk`) декодує кожну половинку окремо й дає «�». Збирай шматки в масив і декодуй один раз після `Buffer.concat`."
+          en: "This check sends `{\"name\":\"ї\"}` so that the two bytes of the letter “ї” arrive in different chunks, and expects `201` with the same letter. Adding chunks to a string (`text += chunk`) decodes each half separately and gives “�”. Collect the chunks in an array and decode once after `Buffer.concat`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-03
+    body:
+      uk: "У кроці проєкту цього розділу сервер відповідає на `GET /records` і JSON-помилкою на невідомий шлях — маршрутизацію за `url.pathname` ти вже вмієш. Коли згодом з’являться маршрути, що приймають записи, вони читатимуть тіло через обмежений читач на кшталт `readJsonBody`, а не через `req.body`."
+      en: "In this unit’s project step the server answers `GET /records` and a JSON error for an unknown path — routing by `url.pathname` is something you can already do. When routes that accept records appear later, they will read the body through a bounded reader like `readJsonBody`, not through `req.body`."
