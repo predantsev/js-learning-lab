@@ -1,6 +1,7 @@
 // Durable storage for room bookings in SQLite (node:sqlite). Chosen because "one room per day" is a
 // UNIQUE constraint the database itself enforces, and every change is one synchronous statement or a
-// transaction with no await inside. sqlite.backup() needs Node 22.16 or newer.
+// transaction with no await inside. sqlite.backup() needs Node 22.16 or newer; older Node copies the
+// file while no connection of this function is open and no transaction is in progress.
 import { createHash } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -106,10 +107,11 @@ export async function backupStore(file, backupPath) {
   const db = openChecked(file);
   try {
     rmSync(backupPath, { force: true });
-    await sqlite.backup(db, backupPath);
+    if (typeof sqlite.backup === 'function') await sqlite.backup(db, backupPath);
   } finally {
     db.close();
   }
+  if (typeof sqlite.backup !== 'function') copyFileSync(file, backupPath);
   const check = new DatabaseSync(backupPath, { readOnly: true });
   const { count } = check.prepare('SELECT count(*) AS count FROM bookings').get();
   check.close();
