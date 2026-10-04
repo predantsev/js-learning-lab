@@ -1,20 +1,69 @@
-// Checks for retry() and importBatch(). Timing checks pass `random` so that the expected waits are
-// known; each wait may run up to 60 ms late (timers are never early, but can be late).
+// Checks for retry() and importBatch(). No check measures time: the pause checks record the delay
+// that code in retry.js asks a timer for (global setTimeout, node:timers or node:timers/promises),
+// while the timers still run for real, and they pass `random` so that the expected delays are known.
+import timers from 'node:timers';
+import timersPromises from 'node:timers/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { createDb, countExpenses } from './db.js';
 import { ValidationError } from './errors.js';
 import { importBatch } from './import.js';
 import { retry } from './retry.js';
 
-// fn that fails `failures` times with a retryable error and records when each attempt started.
+const fromRetryFile = () => /retry\.js:\d/.test(new Error().stack);
+
+// Runs body(waits) while every setTimeout called from retry.js is recorded as { ms, fired }.
+// onWait(wait) is called when such a timer is created.
+async function recordWaits(body, onWait = () => {}) {
+  const waits = [];
+  const original = { global: globalThis.setTimeout, timers: timers.setTimeout, promises: timersPromises.setTimeout };
+  const note = (ms) => {
+    const wait = { ms: Number(ms ?? 0), fired: false };
+    waits.push(wait);
+    onWait(wait);
+    return wait;
+  };
+  const wrapCallback = (setTimeoutFn) =>
+    function (callback, ms, ...rest) {
+      if (typeof callback !== 'function' || !fromRetryFile()) return setTimeoutFn.call(this, callback, ms, ...rest);
+      const wait = note(ms);
+      return setTimeoutFn.call(this, (...args) => {
+        wait.fired = true;
+        return callback(...args);
+      }, ms, ...rest);
+    };
+  globalThis.setTimeout = wrapCallback(original.global);
+  timers.setTimeout = wrapCallback(original.timers);
+  timersPromises.setTimeout = (ms, value, options) => {
+    if (!fromRetryFile()) return original.promises(ms, value, options);
+    const wait = note(ms);
+    return original.promises(ms, value, options).then((result) => {
+      wait.fired = true;
+      return result;
+    });
+  };
+  syncBuiltinESMExports();
+  try {
+    return await body(waits);
+  } finally {
+    globalThis.setTimeout = original.global;
+    timers.setTimeout = original.timers;
+    timersPromises.setTimeout = original.promises;
+    syncBuiltinESMExports();
+  }
+}
+
+// The delays rounded to whole milliseconds, so Math.round in a solution changes nothing.
+const delays = (waits) => waits.map((wait) => Math.round(wait.ms));
+
+// fn that fails `failures` times with a retryable error and records the attempt numbers it got.
 function flaky(failures) {
   const calls = [];
-  const started = performance.now();
   const fn = async (attempt) => {
-    calls.push({ attempt, at: performance.now() - started });
+    calls.push({ attempt });
     if (calls.length <= failures) throw new Error(`attempt ${calls.length} failed`);
     return 'imported';
   };
-  return { fn, calls, gaps: () => calls.slice(1).map((c, i) => c.at - calls[i].at) };
+  return { fn, calls };
 }
 
 const rows = () => [
@@ -41,24 +90,22 @@ test('gives up after maxAttempts and rejects with the last error', async () => {
 
 test('the wait doubles after every attempt', async () => {
   expect(typeof retry, 'type of retry').toBe('function');
-  const { fn, gaps } = flaky(3);
-  await retry(fn, { maxAttempts: 4, baseMs: 40, random: () => 1 });
-  const [first, second, third] = gaps();
-  expect(first, 'wait before attempt 2 (baseMs 40, random 1)').toBeGreaterThanOrEqual(38);
-  expect(first, 'wait before attempt 2 (baseMs 40, random 1)').toBeLessThan(100);
-  expect(second, 'wait before attempt 3').toBeGreaterThanOrEqual(78);
-  expect(second, 'wait before attempt 3').toBeLessThan(140);
-  expect(third, 'wait before attempt 4').toBeGreaterThanOrEqual(158);
-  expect(third, 'wait before attempt 4').toBeLessThan(220);
+  const { fn } = flaky(3);
+  const waits = await recordWaits(async (waits) => {
+    await retry(fn, { maxAttempts: 4, baseMs: 40, random: () => 1 });
+    return waits;
+  });
+  expect(delays(waits), 'the delays retry.js asked a timer for (baseMs 40, random 1)').toEqual([40, 80, 160]);
 });
 
 test('each wait is scaled by random() (jitter)', async () => {
   expect(typeof retry, 'type of retry').toBe('function');
-  const { fn, gaps } = flaky(1);
-  await retry(fn, { maxAttempts: 2, baseMs: 200, random: () => 0.25 });
-  const [first] = gaps();
-  expect(first, 'wait before attempt 2 (baseMs 200, random 0.25 → 50 ms)').toBeGreaterThanOrEqual(48);
-  expect(first, 'wait before attempt 2 (baseMs 200, random 0.25 → 50 ms)').toBeLessThan(110);
+  const { fn } = flaky(1);
+  const waits = await recordWaits(async (waits) => {
+    await retry(fn, { maxAttempts: 2, baseMs: 200, random: () => 0.25 });
+    return waits;
+  });
+  expect(delays(waits), 'the delay retry.js asked a timer for (baseMs 200, random 0.25)').toEqual([50]);
 });
 
 test('a non-retryable error ends it after one attempt', async () => {
@@ -80,14 +127,21 @@ test('an abort during a wait rejects with AbortError at once and makes no more a
   expect(typeof retry, 'type of retry').toBe('function');
   const { fn, calls } = flaky(100);
   const controller = new AbortController();
-  setTimeout(() => controller.abort(), 50);
-  const started = performance.now();
   let failure = null;
-  await retry(fn, { maxAttempts: 2, baseMs: 1000, random: () => 1, signal: controller.signal }).catch((error) => (failure = error));
-  const ms = performance.now() - started;
+  let pauseFiredFirst = null;
+  const waits = await recordWaits(
+    async (waits) => {
+      await retry(fn, { maxAttempts: 2, baseMs: 1000, random: () => 1, signal: controller.signal }).catch((error) => (failure = error));
+      pauseFiredFirst = waits.some((wait) => wait.fired);
+      return waits;
+    },
+    // The abort comes as soon as retry.js has started its 1000 ms pause.
+    () => queueMicrotask(() => controller.abort()),
+  );
+  expect(delays(waits), 'the pauses retry.js started').toEqual([1000]);
   expect(failure?.name, 'the name of the rejection').toBe('AbortError');
-  expect(ms, 'milliseconds until the rejection (aborted at 50 ms, the wait was 1000 ms)').toBeLessThan(300);
-  await sleep(50);
+  expect(pauseFiredFirst, 'the 1000 ms pause ran to its end before retry rejected').toBe(false);
+  await sleep(20);
   expect(calls.length, 'attempts made').toBe(1);
 });
 
