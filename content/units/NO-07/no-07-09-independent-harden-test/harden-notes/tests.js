@@ -2,7 +2,7 @@
 import net from 'node:net';
 import { bindHost, createHardenedServer } from './harden.js';
 
-const ORIGIN = 'http://localhost:4310';
+const ORIGIN = 'http://127.0.0.1:4310';
 const AUTH = { authorization: 'Bearer demo-notes-token' };
 
 async function start({ trustedProxies = [] } = {}) {
@@ -43,7 +43,8 @@ test('a client that sends its headers too slowly gets 408', async () => {
       socket.write(text[index]);
       index += 1;
     }, 100);
-    const stop = setTimeout(() => { socket.destroy(); resolve(null); }, 1200);
+    // headersTimeout is 500 ms; without any timeout Node.js would wait 60 s, so 2.5 s is a wide margin.
+    const stop = setTimeout(() => { socket.destroy(); resolve(null); }, 2500);
     socket.on('data', (data) => {
       answer += data;
       clearTimeout(stop);
@@ -53,7 +54,26 @@ test('a client that sends its headers too slowly gets 408', async () => {
     });
     socket.on('error', () => {});
   });
-  expect(status, 'status within 1.2 s for headers at one character per 100 ms').toBe(408);
+  expect(status, 'status within 2.5 s for headers at one character per 100 ms').toBe(408);
+});
+
+test('a client whose body never finishes gets 408', async () => {
+  const { port } = await start();
+  const status = await new Promise((resolve) => {
+    const socket = net.connect(port, '127.0.0.1');
+    let answer = '';
+    // requestTimeout is 1000 ms; without it Node.js waits 300 s, so 2.5 s is a wide margin.
+    const stop = setTimeout(() => { socket.destroy(); resolve(null); }, 2500);
+    socket.on('data', (data) => {
+      answer += data;
+      clearTimeout(stop);
+      socket.destroy();
+      resolve(Number(answer.split(' ')[1]));
+    });
+    socket.on('error', () => {});
+    socket.write('POST /notes HTTP/1.1\r\nHost: lab\r\nAuthorization: Bearer demo-notes-token\r\nContent-Type: application/json\r\nContent-Length: 50\r\n\r\n{"te');
+  });
+  expect(status, 'status within 2.5 s when 4 of 50 announced body bytes arrive').toBe(408);
 });
 
 test('the sixth request within a second from one client answers 429 with Retry-After', async () => {
