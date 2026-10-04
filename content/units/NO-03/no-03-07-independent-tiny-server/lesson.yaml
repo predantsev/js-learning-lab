@@ -1,0 +1,365 @@
+id: no-03-07-independent-tiny-server
+unit: NO-03
+title:
+  uk: "Самостійно: маленький сервер і справжні запити"
+  en: "Independent: a tiny server with real requests"
+kind: assessment
+minutes: 30
+contentVersion: 1
+purpose:
+  uk: "Перевірити, що ти сам, без підказок, збираєш HTTP-сервер з усього, що було в розділі: маршрути, методи, чесні статуси й заголовки, обмежене JSON-тіло, адреса 127.0.0.1 і чиста зупинка. Доказ — справжні HTTP-запити: спершу перевірки платформи, потім скрипт перевірки на твоєму комп’ютері."
+  en: "To check that you can build an HTTP server yourself, without hints, from everything in this unit: routes, methods, honest statuses and headers, a bounded JSON body, the address 127.0.0.1 and a clean shutdown. The proof is real HTTP requests: first the platform’s checks, then a check script on your own computer."
+objectives:
+  - uk: "Без підказок зібрати сервер `node:http` на loopback із трьома маршрутами, правильними методами, статусами й заголовками, обмеженим JSON-тілом і чистою зупинкою."
+    en: "Build, without hints, a node:http server on loopback with three routes, correct methods, status codes and headers, a bounded JSON body and a clean shutdown."
+  - uk: "Довести його поведінку справжніми HTTP-запитами зі свого комп’ютера, а не прямими викликами функції-обробника."
+    en: "Prove its behavior with real HTTP requests from your machine, not by calling the handler function directly."
+prerequisites: [no-03-06-debug-hanging-request]
+subskills:
+  - { family: B-03, skill: "request/response lifecycle", depth: assess }
+  - { family: B-03, skill: "methods/status/headers", depth: assess }
+glossary: []
+
+blocks:
+  - id: the-brief
+    kind: explanation
+    title:
+      uk: "Завдання: сервер нотаток"
+      en: "The task: a notes server"
+    body:
+      uk: |
+        Ти напишеш сервер синтетичних нотаток — `{ id, text }` — і доведеш, що він працює, двічі: перевірками платформи (справжні запити до сервера в процесі Node.js) і скриптом `check.mjs` у власному терміналі.
+
+        | Запит | Відповідь |
+        |---|---|
+        | `GET /notes` | `200`, усі нотатки |
+        | `GET /notes/<id>` | `200`, одна нотатка; немає такої — `404` |
+        | `POST /notes` з `{ "text": … }` | `201`, нова нотатка з новим `id`; далі вона є в `GET /notes` |
+        | тіло, більше за 1 КБ (1024 байти) | `413` |
+        | зіпсований JSON | `400` |
+        | `text` відсутній, порожній, із самих пробілів чи довший за 200 символів | `400` |
+        | інший метод на `/notes` чи `/notes/<id>` | `405` із заголовком `Allow` |
+        | будь-яка інша адреса | `404` |
+
+        Кожна відповідь, і помилки теж, — JSON з `Content-Type: application/json`. Запущений командою `node notes.js`, сервер слухає `127.0.0.1` на порту з `PORT` (типово 7330) і на Ctrl+C закривається через `server.close()`.
+
+        Підказок не буде — це перевірка того, що ти вмієш. Усе потрібне було в уроках цього розділу.
+      en: |
+        You will write a server of synthetic notes — `{ id, text }` — and prove it works twice: with the platform’s checks (real requests to the server in a Node.js process) and with the `check.mjs` script in your own terminal.
+
+        | Request | Answer |
+        |---|---|
+        | `GET /notes` | `200`, every note |
+        | `GET /notes/<id>` | `200`, one note; no such note — `404` |
+        | `POST /notes` with `{ "text": … }` | `201`, the new note with a new `id`; from then on it is in `GET /notes` |
+        | a body larger than 1 KB (1024 bytes) | `413` |
+        | malformed JSON | `400` |
+        | `text` missing, empty, only spaces or longer than 200 characters | `400` |
+        | another method on `/notes` or `/notes/<id>` | `405` with an `Allow` header |
+        | any other address | `404` |
+
+        Every answer, errors included, is JSON with `Content-Type: application/json`. Started with `node notes.js`, the server listens on `127.0.0.1` on the port from `PORT` (7330 by default) and on Ctrl+C closes through `server.close()`.
+
+        There are no hints — this checks what you can do. Everything you need was in this unit’s lessons.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: статус-помилка чи відхилений fetch"
+      en: "Recall: an error status or a rejected fetch"
+    items:
+      - id: status-or-reject
+        from: js-16-09-debug-http-fetch-cors
+        prompt:
+          uk: "Клієнт робить `await fetch(\"http://127.0.0.1:7330/notes/n-99\")`. У яких випадках `await fetch(…)` **відхиляється**, а не повертає відповідь? Обери всі."
+          en: "A client does `await fetch(\"http://127.0.0.1:7330/notes/n-99\")`. In which cases does `await fetch(…)` **reject** instead of returning a response? Choose all that apply."
+        answer:
+          type: multi
+          options:
+            - id: stopped
+              text:
+                uk: "Сервер зупинено, і на порту 7330 ніхто не слухає"
+                en: "The server is stopped, and nobody listens on port 7330"
+            - id: crashed
+              text:
+                uk: "Обробник кинув помилку без `catch`, і процес сервера впав посеред запиту"
+                en: "The handler threw without a `catch`, and the server process crashed in the middle of the request"
+            - id: s404
+              text:
+                uk: "Сервер відповів `404`"
+                en: "The server answered `404`"
+              why:
+                uk: "`404` — це відповідь. `fetch` виконується з нею, а `response.ok` — `false`."
+                en: "`404` is a response. `fetch` fulfills with it, and `response.ok` is `false`."
+            - id: s500
+              text:
+                uk: "Сервер відповів `500`"
+                en: "The server answered `500`"
+              why:
+                uk: "`500` — теж відповідь: `fetch` виконується, `ok` — `false`. Відхиляється `fetch` лише тоді, коли відповіді немає взагалі."
+                en: "`500` is a response too: `fetch` fulfills, `ok` is `false`. `fetch` rejects only when there is no response at all."
+          correct: [stopped, crashed]
+        explanation:
+          uk: "Будь-який статус, навіть `500`, — відповідь, і `fetch` з нею виконується. Відхиляється він, коли відповіді немає: нікому прийняти з’єднання (`ECONNREFUSED`) чи з’єднання обірвалося. Тому скрипт перевірки показує біля провалу назву помилки — так видно, сервер відповів неправильно чи не відповів зовсім."
+          en: "Any status, even `500`, is a response, and `fetch` fulfills with it. It rejects when there is no response: nobody accepts the connection (`ECONNREFUSED`) or the connection broke. That is why the check script shows the error’s name next to a failure — so you can see whether the server answered wrongly or did not answer at all."
+
+  - id: notes-server
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: isolated-node
+    dir: notes-server
+    entry: index.js
+    editable: [notes.js]
+    capabilities: { network: loopback }
+    strings:
+      note1: { uk: "Купити лампочки", en: "Buy light bulbs" }
+      note2: { uk: "Подзвонити бабусі", en: "Call grandma" }
+      note3: { uk: "Повернути книжки в бібліотеку", en: "Return the library books" }
+      newNote: { uk: "Полити квіти в суботу", en: "Water the plants on Saturday" }
+      gaveUp: { uk: "Клієнт перестав чекати:", en: "Client stopped waiting:" }
+    title:
+      uk: "Сервер нотаток"
+      en: "The notes server"
+    instructions:
+      uk: |
+        Напиши в `notes.js`:
+
+        1. `createNotesServer()` — повертає `http.Server`, що ще не слухає, з маршрутами з таблиці вище. Кожен виклик починає з копії нотаток із `data.js`, тож сервери не ділять стан. Ліміт тіла — `MAX_BODY_BYTES` (1024 байти): тіло рівно в 1024 байти ще читається.
+        2. Нижню частину файлу, що виконується лише командою `node notes.js`: `listen` на `127.0.0.1` і порту з `PORT` (типово 7330) та обробник `SIGINT`, що викликає `server.close()`.
+
+        `data.js`, `index.js` і `check.mjs` лише для читання. **Запустити** стартує `createNotesServer()` на вільному порту й надсилає чотири запити. **Перевірити** для кожної перевірки створює новий сервер і надсилає йому справжні HTTP-запити, на кожен чекаючи щонайбільше 1 с. Нижню частину файлу (порт 7330 і Ctrl+C) платформа не перевіряє — це завдання для терміналу в наступному блоці.
+      en: |
+        Write in `notes.js`:
+
+        1. `createNotesServer()` — returns an `http.Server` that is not listening yet, with the routes from the table above. Every call starts from a copy of the notes in `data.js`, so servers do not share state. The body limit is `MAX_BODY_BYTES` (1024 bytes): a body of exactly 1024 bytes is still read.
+        2. The bottom part of the file that runs only with `node notes.js`: `listen` on `127.0.0.1` and the port from `PORT` (7330 by default), and a `SIGINT` handler that calls `server.close()`.
+
+        `data.js`, `index.js` and `check.mjs` are read-only. **Run** starts `createNotesServer()` on a free port and sends four requests. **Check** creates a new server for every check and sends it real HTTP requests, waiting at most 1 s for each. The platform does not check the bottom part of the file (port 7330 and Ctrl+C) — that is the task for the terminal in the next block.
+    testTitles:
+      "GET /notes answers 200 with every note":
+        uk: "`GET /notes` відповідає `200` з усіма нотатками"
+        en: "`GET /notes` answers `200` with every note"
+      "GET /notes/:id answers 200 with that note":
+        uk: "`GET /notes/<id>` відповідає `200` із цією нотаткою"
+        en: "`GET /notes/<id>` answers `200` with that note"
+      "a missing note answers 404":
+        uk: "Відсутня нотатка дає `404`"
+        en: "A missing note gives `404`"
+      "POST /notes creates a note that GET /notes then lists":
+        uk: "`POST /notes` створює нотатку, яку потім показує `GET /notes`"
+        en: "`POST /notes` creates a note that `GET /notes` then lists"
+      "malformed JSON answers 400":
+        uk: "Зіпсований JSON дає `400`"
+        en: "Malformed JSON gives `400`"
+      "a note without valid text answers 400":
+        uk: "Нотатка без правильного `text` дає `400`"
+        en: "A note without a valid `text` gives `400`"
+      "a body over 1 KB answers 413":
+        uk: "Тіло понад 1 КБ дає `413`"
+        en: "A body over 1 KB gives `413`"
+      "a body of exactly 1 KB is read, not refused":
+        uk: "Тіло рівно в 1 КБ читається, а не відкидається"
+        en: "A body of exactly 1 KB is read, not refused"
+      "a wrong method answers 405 with Allow":
+        uk: "Недозволений метод дає `405` з `Allow`"
+        en: "A method that is not allowed gives `405` with `Allow`"
+      "an unknown path answers 404":
+        uk: "Невідома адреса дає `404`"
+        en: "An unknown path gives `404`"
+      "every answer is JSON":
+        uk: "Кожна відповідь — JSON"
+        en: "Every answer is JSON"
+    solutionNote:
+      uk: "Маршрутизатор порівнює `url.pathname` з таблицею: шлях без жодного рядка — `404`, шлях без потрібного методу — `405` з `Allow` зі списку методів цього шляху. Тіло рахується в байтах під час надходження й відкидається з `413` понад 1024, `JSON.parse` у `try` дає `400`, а одна `sendJson` задає статус, `Content-Type` і довжину кожної відповіді. Помилки маршрутів кидаються з полем `status` і перетворюються на відповідь в одному `catch`."
+      en: "The router compares `url.pathname` with the table: a path with no row is `404`, a path without the right method is `405` with `Allow` from that path’s methods. The body is counted in bytes as it arrives and refused with `413` above 1024, `JSON.parse` inside `try` gives `400`, and a single `sendJson` sets the status, `Content-Type` and length of every answer. Route errors are thrown with a `status` field and turned into an answer in one `catch`."
+    feedback:
+      - when: { test: "GET /notes answers 200 with every note" }
+        message:
+          uk: "Ця перевірка чекає на `GET /notes` статус `200` і JSON-масив трьох нотаток з `data.js` у тому самому порядку."
+          en: "This check expects `GET /notes` to give status `200` and a JSON array of the three notes from `data.js` in the same order."
+      - when: { test: "GET /notes/:id answers 200 with that note" }
+        message:
+          uk: "Ця перевірка надсилає `GET /notes/n-02` і чекає `200` та саме цю нотатку."
+          en: "This check sends `GET /notes/n-02` and expects `200` and exactly that note."
+      - when: { test: "a missing note answers 404" }
+        message:
+          uk: "Ця перевірка надсилає `GET /notes/n-99` і чекає `404`."
+          en: "This check sends `GET /notes/n-99` and expects `404`."
+      - when: { test: "POST /notes creates a note that GET /notes then lists" }
+        message:
+          uk: "Ця перевірка надсилає `POST /notes` з правильним `text`, чекає `201` з новою нотаткою (рядок `id` і той самий `text`), а потім — що `GET /notes` того самого сервера показує чотири нотатки, нова — остання."
+          en: "This check sends `POST /notes` with a valid `text`, expects `201` with the new note (a string `id` and the same `text`), and then that `GET /notes` on the same server shows four notes, the new one last."
+      - when: { test: "malformed JSON answers 400" }
+        message:
+          uk: "Ця перевірка надсилає обірваний JSON і чекає `400`, а не `500`."
+          en: "This check sends cut-off JSON and expects `400`, not `500`."
+      - when: { test: "a note without valid text answers 400" }
+        message:
+          uk: "Ця перевірка надсилає три тіла — без `text`, з `text` із самих пробілів і з `text` у 201 символ — і чекає `400` для кожного."
+          en: "This check sends three bodies — without `text`, with a `text` of only spaces, and with a 201-character `text` — and expects `400` for each."
+      - when: { test: "a body over 1 KB answers 413" }
+        message:
+          uk: "Ця перевірка надсилає тіло у 8 КБ і чекає `413`."
+          en: "This check sends an 8 KB body and expects `413`."
+      - when: { test: "a body of exactly 1 KB is read, not refused" }
+        message:
+          uk: "Ця перевірка надсилає правильне тіло рівно в 1024 байти й чекає `201`: відкидати можна лише тіло, **більше** за ліміт."
+          en: "This check sends a valid body of exactly 1024 bytes and expects `201`: only a body **larger** than the limit may be refused."
+      - when: { test: "a wrong method answers 405 with Allow" }
+        message:
+          uk: "Ця перевірка надсилає `DELETE /notes` і `PUT /notes/n-01` і чекає `405` із заголовком `Allow`: для `/notes` — `GET` і `POST`, для `/notes/n-01` — `GET`."
+          en: "This check sends `DELETE /notes` and `PUT /notes/n-01` and expects `405` with an `Allow` header: `GET` and `POST` for `/notes`, `GET` for `/notes/n-01`."
+      - when: { test: "an unknown path answers 404" }
+        message:
+          uk: "Ця перевірка надсилає `GET /nothing-here` і чекає `404`."
+          en: "This check sends `GET /nothing-here` and expects `404`."
+      - when: { test: "every answer is JSON" }
+        message:
+          uk: "Ця перевірка дивиться на успішну відповідь і на чотири помилки (`404`, `400`, `405`, `404`) і чекає для кожної `Content-Type: application/json` з тілом-JSON."
+          en: "This check looks at a success answer and four errors (`404`, `400`, `405`, `404`) and expects `Content-Type: application/json` with a JSON body for each."
+
+  - id: prove-it-locally
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Доведи це у своєму терміналі"
+      en: "Prove it in your own terminal"
+    intro:
+      uk: |
+        Перевірки платформи кличуть `createNotesServer()` напряму. Тепер — увесь сервер як окрема програма: команда `node notes.js`, порт 7330, справжні запити зі скрипту `check.mjs` і зупинка Ctrl+C.
+
+        Команди нижче виконано під час підготовки уроку на macOS з Node.js v25.2.1, на зразковому розв’язку; вивід справжній. Windows і Linux не перевіряли (у PowerShell порт задають як `$env:PORT=7331; node notes.js`).
+
+        **Крок 3 — скрипт перевірки проти зразкового розв’язку:**
+
+        ```text
+        $ node check.mjs
+        Checking http://127.0.0.1:7330
+        ✔ GET /notes → 200, a JSON array
+        ✔ GET /notes/n-02 → 200, that note
+        ✔ GET /notes/n-99 → 404, JSON
+        ✔ POST /notes valid → 201, then listed
+        ✔ POST /notes malformed JSON → 400
+        ✔ POST /notes without text → 400
+        ✔ POST /notes 8 KB body → 413
+        ✔ DELETE /notes → 405 with Allow
+        ✔ GET /nothing-here → 404
+        9 of 9 checks passed
+        ```
+
+        Рядок твого сервера після старту й після Ctrl+C буде твоїм власним — зразок друкував `Notes server on http://127.0.0.1:7330 (Ctrl+C to stop)`, а потім `Closing…` і `Closed.`.
+
+        **Крок 5 — той самий скрипт, коли сервер уже зупинено (уривок):**
+
+        ```text
+        ✖ DELETE /notes → 405 with Allow (TypeError: ECONNREFUSED)
+        ✖ GET /nothing-here → 404 (TypeError: ECONNREFUSED)
+        0 of 9 checks passed
+        ```
+      en: |
+        The platform’s checks call `createNotesServer()` directly. Now the whole server as a separate program: the `node notes.js` command, port 7330, real requests from the `check.mjs` script and a Ctrl+C stop.
+
+        The commands below were run while preparing this lesson on macOS with Node.js v25.2.1, against the reference solution; the output is real. Windows and Linux were not checked (in PowerShell the port is set as `$env:PORT=7331; node notes.js`).
+
+        **Step 3 — the check script against the reference solution:**
+
+        ```text
+        $ node check.mjs
+        Checking http://127.0.0.1:7330
+        ✔ GET /notes → 200, a JSON array
+        ✔ GET /notes/n-02 → 200, that note
+        ✔ GET /notes/n-99 → 404, JSON
+        ✔ POST /notes valid → 201, then listed
+        ✔ POST /notes malformed JSON → 400
+        ✔ POST /notes without text → 400
+        ✔ POST /notes 8 KB body → 413
+        ✔ DELETE /notes → 405 with Allow
+        ✔ GET /nothing-here → 404
+        9 of 9 checks passed
+        ```
+
+        Your server’s line after starting and after Ctrl+C will be your own — the reference printed `Notes server on http://127.0.0.1:7330 (Ctrl+C to stop)`, then `Closing…` and `Closed.`.
+
+        **Step 5 — the same script once the server is stopped (an excerpt):**
+
+        ```text
+        ✖ DELETE /notes → 405 with Allow (TypeError: ECONNREFUSED)
+        ✖ GET /nothing-here → 404 (TypeError: ECONNREFUSED)
+        0 of 9 checks passed
+        ```
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1", en: "checked with v25.2.1" } }
+    steps:
+      - text:
+          uk: "Створи теку й перейди в неї. Створи в ній у VS Code три файли й скопіюй у них вміст однойменних вкладок вправи: свій `notes.js`, а також `data.js` і `check.mjs`."
+          en: "Create a folder and go into it. In VS Code create three files in it and copy into them the content of the exercise tabs with the same names: your `notes.js`, plus `data.js` and `check.mjs`."
+        command: "mkdir -p ~/js-course/no03-notes\ncd ~/js-course/no03-notes"
+        expect:
+          uk: "У теці три файли: `notes.js`, `data.js`, `check.mjs`."
+          en: "The folder holds three files: `notes.js`, `data.js`, `check.mjs`."
+      - text:
+          uk: "Запусти сервер у першому терміналі."
+          en: "Start the server in the first terminal."
+        command: "node notes.js"
+        expect:
+          uk: "Твій рядок про старт з адресою `127.0.0.1:7330`; термінал лишається зайнятим. Якщо нічого не надруковано й термінал звільнився, нижня частина файлу не запускає сервер."
+          en: "Your start-up line with the address `127.0.0.1:7330`; the terminal stays busy. If nothing is printed and the terminal is free again, the bottom part of the file does not start the server."
+      - text:
+          uk: "У другому терміналі запусти скрипт перевірки."
+          en: "Run the check script in a second terminal."
+        command: "cd ~/js-course/no03-notes\nnode check.mjs"
+        expect:
+          uk: "`9 of 9 checks passed`, як у кроці 3 вступу. Якщо якийсь рядок з `✖`, виправ `notes.js`, перезапусти сервер (Ctrl+C і `node notes.js`) і запусти скрипт знову."
+          en: "`9 of 9 checks passed`, as in step 3 of the introduction. If some line has `✖`, fix `notes.js`, restart the server (Ctrl+C and `node notes.js`) and run the script again."
+      - text:
+          uk: "Зупини сервер Ctrl+C у першому терміналі."
+          en: "Stop the server with Ctrl+C in the first terminal."
+        expect:
+          uk: "Твій рядок про закриття з’являється, і процес завершується сам — знову видно запрошувальний рядок shell."
+          en: "Your closing line appears, and the process ends by itself — the shell prompt is back."
+      - text:
+          uk: "Ще раз запусти скрипт перевірки, коли сервер уже зупинено."
+          en: "Run the check script once more, with the server stopped."
+        command: "node check.mjs"
+        expect:
+          uk: "Кожен рядок з `✖` і `ECONNREFUSED`, як у кроці 5 вступу: тепер `fetch` відхиляється, бо слухати нікому."
+          en: "Every line has `✖` and `ECONNREFUSED`, as in step 5 of the introduction: now `fetch` rejects because nobody is listening."
+    verify:
+      - id: check-passed
+        text:
+          uk: "Скрипт `check.mjs` проти мого сервера, запущеного командою `node notes.js`, надрукував `9 of 9 checks passed`."
+          en: "The `check.mjs` script against my server started with `node notes.js` printed `9 of 9 checks passed`."
+      - id: clean-stop
+        text:
+          uk: "Після Ctrl+C мій сервер надрукував рядок про закриття й завершився сам, а повторний `check.mjs` отримав `ECONNREFUSED`."
+          en: "After Ctrl+C my server printed its closing line and ended by itself, and a repeated `check.mjs` got `ECONNREFUSED`."
+    troubleshooting:
+      - problem:
+          uk: "`node notes.js` нічого не друкує й одразу повертає термінал"
+          en: "`node notes.js` prints nothing and gives the terminal back at once"
+        fix:
+          uk: "Нижня частина файлу не викликає `listen`. Вона виконується лише тоді, коли файл запущено напряму, — перевір, що умова з `import.meta.url` лишилася, а всередині неї є `listen` на `127.0.0.1`."
+          en: "The bottom part of the file does not call `listen`. It runs only when the file is started directly — check that the condition with `import.meta.url` is still there and that it contains a `listen` on `127.0.0.1`."
+      - problem:
+          uk: "Під час старту `Error: listen EADDRINUSE: address already in use 127.0.0.1:7330`"
+          en: "On start `Error: listen EADDRINUSE: address already in use 127.0.0.1:7330`"
+        fix:
+          uk: "Порт 7330 зайнятий — найчастіше твоїм же сервером в іншому терміналі. Зупини його там Ctrl+C або запусти на іншому порту: `PORT=7331 node notes.js` і `node check.mjs http://127.0.0.1:7331`."
+          en: "Port 7330 is taken — most often by your own server in another terminal. Stop it there with Ctrl+C, or start on another port: `PORT=7331 node notes.js` and `node check.mjs http://127.0.0.1:7331`."
+      - problem:
+          uk: "Повторний `check.mjs` без перезапуску сервера проходить, але нотаток у `GET /notes` дедалі більше"
+          en: "Repeated `check.mjs` runs without a restart pass, but `GET /notes` holds more and more notes"
+        fix:
+          uk: "Так і має бути: скрипт щоразу створює одну нотатку, а сервер тримає їх у пам’яті. Перезапуск повертає три початкові нотатки."
+          en: "That is expected: the script creates one note every time, and the server keeps them in memory. A restart brings back the three starting notes."
+    recovery:
+      uk: "Сервер нічого не записує на диск: Ctrl+C і новий запуск повертають його до трьох початкових нотаток. Твій код живе у вправі на платформі — якщо локальний файл зіпсувався, скопіюй вкладку `notes.js` ще раз."
+      en: "The server writes nothing to disk: Ctrl+C and a new start bring it back to the three starting notes. Your code lives in the exercise on the platform — if the local file got damaged, copy the `notes.js` tab again."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-03
+    body:
+      uk: "Сервер нотаток — це вже форма першого endpoint твого проєкту: `GET /records` з файлового сховища, `sendJson` для кожної відповіді, JSON-помилки `404`/`405`, `127.0.0.1` і порт із конфігурації, чиста зупинка й перевірка справжніми запитами."
+      en: "The notes server already has the shape of your project’s first endpoint: `GET /records` from the file storage, `sendJson` for every answer, `404`/`405` JSON errors, `127.0.0.1` and a port from the configuration, a clean stop and a check with real requests."
