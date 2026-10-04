@@ -61,7 +61,7 @@ function Simulator() {
       </View>
       <View style={styles.controls}>
         {Object.keys(seeds).map((name) => (
-          <Pressable key={name} role="button" style={styles.button} onPress={() => launchWith(name)}>
+          <Pressable key={name} accessibilityRole="button" style={styles.button} onPress={() => launchWith(name)}>
             <Text>{`%%launchWith%% ${name}`}</Text>
           </Pressable>
         ))}
