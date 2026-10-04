@@ -42,6 +42,10 @@ test('an invalid body answers 400 VALIDATION_FAILED with field details and store
   expect(response.status, 'status of the invalid POST').toBe(400);
   expect(codeOf(response), 'code of the invalid POST').toBe('VALIDATION_FAILED');
   expect(Object.keys(response.json?.error?.details ?? {}).sort(), 'fields in details').toEqual(['color', 'pinned', 'title']);
+  const long = await request(`${base}/v1/notes`, { method: 'POST', body: { title: 'x'.repeat(61) } });
+  expect(long.status, 'status for a 61-character title').toBe(400);
+  const filter = await request(`${base}/v1/notes?pinned=maybe`);
+  expect(filter.status, 'status for pinned=maybe').toBe(400);
   const patched = await request(`${base}/v1/notes/n-02`, { method: 'PATCH', body: { title: 42 } });
   expect(patched.status, 'status of PATCH { title: 42 }').toBe(400);
   expect((await request(`${base}/v1/notes/n-02`)).json?.title, 'title of n-02 after the bad PATCH').toBe(L.n02);
