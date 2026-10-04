@@ -1,0 +1,117 @@
+# Capstone step of unit RN-06 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of RN-06 from this file.
+# A local step: done in the learner's editor, terminal and on the declared native target; no platform
+# checks. The project page shows only the intro of a local step, so the intro carries the whole procedure.
+# Every computer-side command was run on macOS (Node.js 25.2.1, npm 11.6.2, Expo SDK 57) in a scratch home
+# on all four projects, continuing the RN-05 scratch projects: `node tools/mock-service.mjs` with curl
+# (/health, /records/wishlist, fail=1&key=…, invalid=1, Ctrl+C), tsc, the course test runner against the
+# real mock service on a free port (Ukrainian and English strings, TZ=Pacific/Kiritimati), expo export for
+# android and ios, the commit. Deliberately wrong variants were run against the tests and failed them: a
+# fourth attempt, an outer signal not forwarded to the attempt, an answer used without the contract.
+# Nothing was run on an emulator, a simulator or a phone. Quoted output is from the wishlist run.
+# reference/ is the native project after the step without the files the template generates and the
+# platform cannot carry (assets/*.png, LICENSE, package-lock.json, node_modules/).
+unit: RN-06
+mode: local
+entry: App.tsx
+title:
+  uk: "Записи з сервісу: адреса, тайм-аут, повтори, офлайн"
+  en: "Records from a service: address, timeout, retries, offline"
+intro:
+  uk: |
+    Застосунок уперше говорить із сервером — навчальним сервісом курсу на порту 7310. Новий екран «Записи з сервісу» читає записи з `/records/<проєкт>` з тайм-аутом і щонайбільше трьома спробами, без з’єднання показує вбудовані стартові записи, скасовує запит, коли екран втрачає фокус, а похідне значення рахує лише з даних, які справді завантажилися. Твій список на пристрої лишається головним: записи сервісу тут лише для перегляду.
+
+    | Проєкт | Адреса | Що рахується з завантажених даних |
+    |---|---|---|
+    | Список бажань | `/records/wishlist` | «Ще хочу на суму» — `summarizeItems(…).wantedTotal` |
+    | Планувальник | `/records/planner` | «Треба зробити станом на» — `countDueTasks(records, clock.today())` |
+    | Трекер звичок | `/records/habits` | кількість виконань кожної звички |
+    | Трекер витрат | `/records/expenses` | підсумки категорій у копійках — `summarizeExpenses` |
+
+    | Що сталося (після спроб) | Що показує екран |
+    |---|---|
+    | відповідь пройшла контракт | записи сервісу й підсумок |
+    | немає з’єднання | вбудовані стартові записи, підсумок із них і пояснення |
+    | відповідь неправильної форми | вбудовані стартові записи, підсумок із них і пояснення |
+    | три тайм-аути або три помилки 5xx, чи інший код помилки | жодних даних, жодного підсумку, «Завантажити ще раз» |
+    | екран утратив фокус | запит скасовано, нічого не показується |
+
+    Нижче — «Список бажань». Команди на комп’ютері виконано на macOS (Node.js 25.2.1, Expo SDK 57) на всіх чотирьох проєктах; тести в Node.js запускають ті самі функції застосунку проти справжнього навчального сервісу. Емулятора, симулятора й телефона не було: крок 8 описано за документацією React Native 0.86 і уроками розділу, його виводу тут немає.
+
+    **1. Стан на початку.** `cd ~/js-course/wishlist-native`, `git status` — чисто, `git log --oneline -1` — commit збереження на пристрої.
+
+    **2. Сервіс поруч.** `mkdir -p tools`, `cp ../rn06-mock/mock-service.mjs tools/` — той самий файл, що в уроці про фікстури й навчальний сервіс (якщо теки `rn06-mock` немає, створи файл за тим уроком); рядок у `docs/shared-code.md`. `node tools/mock-service.mjs` — у нас `Mock service listening on http://127.0.0.1:7310` і `Only this computer can reach it (loopback).`; у другому терміналі `curl -sS http://127.0.0.1:7310/health` — `{"ok":true}`, а `curl -sS "http://127.0.0.1:7310/records/wishlist?lang=uk"` — масив із шести бажань (`[{"id":"w-01","name":"Навушники","price":80,…`). Ctrl+C — `Mock service stopped.`
+
+    **3. Адреса в одному місці.** `src/devConfig.ts`: `TARGET` (зі свого `native-target.md`), `MOCK_PORT = 7310`, `LAN_ADDRESS`, `REHEARSAL` і `mockBaseUrl(target)`: емулятор Android — `10.0.2.2`, симулятор iOS — `127.0.0.1`, Android-телефон через USB — `127.0.0.1` після `adb reverse tcp:7310 tcp:7310`, телефон у Wi-Fi — адреса комп’ютера в мережі й сервіс із `--host 0.0.0.0`. Жоден запит застосунку не містить хоста. Це розробницька конфігурація: Expo Go та розробницька збірка Android дозволяють `http://`, випускна збірка — ні.
+
+    **4. Запит із межами.** `src/fetchWithRetry.ts`: `fetchWithRetry(url, { fetchFn, timeoutMs = 5000, maxAttempts = 3, baseDelayMs = 300, signal })`. У React Native 0.86 немає `AbortSignal.timeout()`, тож кожна спроба отримує свій `AbortController` і таймер, що його скасовує; зовнішній `signal` передається в спробу через `addEventListener('abort', …)`; відповідь нижче 500 — остаточна; між спробами пауза подвоюється; скасування — `AbortError`, три тайм-аути — `TimeoutError`.
+
+    **5. Джерело записів.** `src/recordsSource.ts`: `loadFromService(request, bundled)` повертає `{ source: 'service', records }`, `{ source: 'bundled', records, failure: 'offline' | 'invalid' }` або `{ source: 'none', failure: 'timeout' | 'server' }`; відповідь проходить спільний контракт `parseItemList`, як будь-які дані ззовні; `AbortError` передається далі.
+
+    **6. Екран.** `src/ServiceScreen.tsx`: на кожному фокусі — новий `AbortController`, `loadFromService(…)` і `return () => controller.abort()` у прибиранні. Рядок стану з `accessibilityRole="alert"`; підсумок — лише коли є записи; для «жодних даних» — «Завантажити ще раз». На списку — кнопка «Записи з сервісу», у стеку — екран `Service`, у контексті — стартові записи для відступу.
+
+    **7. Перевірка на комп’ютері.** `npx tsc --noEmit` — жодного рядка; `npm test` — `Пройшли: 50 · не пройшли: 0`. `tests/service.test.js` запускає `createMockService` з `tools/mock-service.mjs` на вільному порту й перевіряє: шість бажань і «Ще хочу на суму» 365; `fail=2` — третя спроба відповідає; `fail=5` — рівно три запити й жодних даних; `hang=1` — тайм-аут; `invalid=1` і зупинений сервіс — вбудовані записи; скасування зупиняє все одразу. `npx expo export --platform android` — у нас `Android Bundled 1994ms index.ts (851 modules)`.
+
+    **8. На заявленій цілі.** `node tools/mock-service.mjs` (для телефона в Wi-Fi — з `--host 0.0.0.0`), `TARGET` у `src/devConfig.ts`, `npm start`, «Записи з сервісу». Очікувано: шість бажань і «Ще хочу на суму: 365 ₴», а в журналі сервісу — рядок `[mock] GET /records/wishlist?lang=uk → 200 from …` з адресою пристрою. Зупини сервіс і відкрий екран знову — пояснення про відсутність з’єднання й вбудовані бажання (у нас їх теж шість). `REHEARSAL = "fail=5&key=r1"` — три рядки `503` у журналі, жодного підсумку й «Завантажити ще раз». `REHEARSAL = "hang=1"` і повернення на список до кінця тайм-ауту — запит скасовано (у журналі лише один рядок `no answer (hang)`). Поверни `REHEARSAL = ""`. Цих екранів ми не бачили.
+
+    **9. Доказ і commit.** У `EVIDENCE.md` — розділ «RN-06»: рядки кроків 2 і 7, побачене на цілі й рядки журналу сервісу, або запис «не виконано» (що, ціль, чому, що потрібно, щоб повернутися). `REHEARSAL` у commit — порожній. `git add -A`, `git commit -m "Load records from the mock service with a timeout, bounded retry, cancellation and offline fallback"` — у нас `13 files changed`.
+
+    **Самоперевірка:** хост є лише в `src/devConfig.ts`; спроб щонайбільше три; кожен запит має тайм-аут; втрата фокуса скасовує запит; підсумок рахується лише з даних, що завантажилися; відповідь сервісу проходить контракт; записи сервісу не потрапляють у сховище пристрою.
+
+    **Якщо щось пішло не так:** на емуляторі Android `localhost` веде в сам емулятор — потрібна `10.0.2.2`. Телефон у Wi-Fi не дістає сервіс — сервіс запущено без `--host 0.0.0.0` або в `LAN_ADDRESS` не та адреса. Екран «завис» на завантаженні — у запиту немає тайм-ауту. Після повернення на список сервіс усе ще отримує спроби — прибирання фокус-ефекту не викликає `abort()`.
+
+    Еталон кроку — `Завантажити: RN-06 — Записи з сервісу: адреса, тайм-аут, повтори, офлайн` після експорту (без `assets/*.png`, `LICENSE`, `package-lock.json` і `node_modules/` — див. крок RN-01). Команди виконано лише на macOS; у Linux і Windows (Git Bash) їх не запускали.
+  en: |
+    For the first time the app talks to a server — the course's mock service on port 7310. A new screen “Records from the service” reads the records of `/records/<project>` with a timeout and at most three attempts, shows the bundled starting records without a connection, cancels the request when the screen loses the focus, and computes the derived value only from data that actually loaded. Your list on the device stays the main one: the service's records are read only here.
+
+    | Project | Address | What is computed from the loaded data |
+    |---|---|---|
+    | Wishlist | `/records/wishlist` | “Still wanted, total” — `summarizeItems(…).wantedTotal` |
+    | Planner | `/records/planner` | “Due as of” — `countDueTasks(records, clock.today())` |
+    | Habit tracker | `/records/habits` | the completion count of every habit |
+    | Expense tracker | `/records/expenses` | the category totals in kopiykas — `summarizeExpenses` |
+
+    | What happened (after the attempts) | What the screen shows |
+    |---|---|
+    | the answer passed the contract | the service's records and the total |
+    | no connection | the bundled starting records, the total from them and an explanation |
+    | an answer of the wrong shape | the bundled starting records, the total from them and an explanation |
+    | three timeouts or three 5xx errors, or another error status | no data, no total, “Load again” |
+    | the screen lost the focus | the request is cancelled, nothing is shown |
+
+    Below is the wishlist. The computer commands were run on macOS (Node.js 25.2.1, Expo SDK 57) on all four projects; the Node.js tests run the app's own functions against the real mock service. There was no emulator, simulator or phone: step 8 follows the React Native 0.86 documentation and this unit's lessons, and no output of it is quoted here.
+
+    **1. The starting state.** `cd ~/js-course/wishlist-native`, `git status` — clean, `git log --oneline -1` — the commit of saving on the device.
+
+    **2. The service next to it.** `mkdir -p tools`, `cp ../rn06-mock/mock-service.mjs tools/` — the same file as in the lesson on fixtures and the mock service (if there is no `rn06-mock` folder, create the file from that lesson); a row in `docs/shared-code.md`. `node tools/mock-service.mjs` — for us `Mock service listening on http://127.0.0.1:7310` and `Only this computer can reach it (loopback).`; in a second terminal `curl -sS http://127.0.0.1:7310/health` — `{"ok":true}`, and `curl -sS "http://127.0.0.1:7310/records/wishlist?lang=en"` — an array of six wishes (`[{"id":"w-01","name":"Headphones","price":80,…`). Ctrl+C — `Mock service stopped.`
+
+    **3. The address in one place.** `src/devConfig.ts`: `TARGET` (from your `native-target.md`), `MOCK_PORT = 7310`, `LAN_ADDRESS`, `REHEARSAL` and `mockBaseUrl(target)`: the Android emulator — `10.0.2.2`, the iOS simulator — `127.0.0.1`, an Android phone on USB — `127.0.0.1` after `adb reverse tcp:7310 tcp:7310`, a phone on Wi-Fi — the computer's network address and the service with `--host 0.0.0.0`. No request of the app contains a host. This is development configuration: Expo Go and an Android development build allow `http://`, a release build does not.
+
+    **4. A request with limits.** `src/fetchWithRetry.ts`: `fetchWithRetry(url, { fetchFn, timeoutMs = 5000, maxAttempts = 3, baseDelayMs = 300, signal })`. React Native 0.86 has no `AbortSignal.timeout()`, so every attempt gets its own `AbortController` and a timer that aborts it; the outer `signal` reaches the attempt through `addEventListener('abort', …)`; an answer below 500 is final; the pause between attempts doubles; a cancel is an `AbortError`, three timeouts a `TimeoutError`.
+
+    **5. The records source.** `src/recordsSource.ts`: `loadFromService(request, bundled)` returns `{ source: 'service', records }`, `{ source: 'bundled', records, failure: 'offline' | 'invalid' }` or `{ source: 'none', failure: 'timeout' | 'server' }`; the answer goes through the shared contract `parseItemList`, like any data from outside; an `AbortError` is passed on.
+
+    **6. The screen.** `src/ServiceScreen.tsx`: on every focus a new `AbortController`, `loadFromService(…)` and `return () => controller.abort()` in the cleanup. A status line with `accessibilityRole="alert"`; the total only when there are records; for “no data” — “Load again”. On the list a “Records from the service” button, in the stack a `Service` screen, in the context the starting records for the fallback.
+
+    **7. The check on the computer.** `npx tsc --noEmit` — not a single line; `npm test` — `Passed: 50 · failed: 0`. `tests/service.test.js` starts `createMockService` of `tools/mock-service.mjs` on a free port and checks: six wishes and “Still wanted, total” 365; `fail=2` — the third attempt answers; `fail=5` — exactly three requests and no data; `hang=1` — a timeout; `invalid=1` and a stopped service — the bundled records; a cancel stops everything at once. `npx expo export --platform android` — for us `Android Bundled 1994ms index.ts (851 modules)`.
+
+    **8. On the declared target.** `node tools/mock-service.mjs` (for a phone on Wi-Fi with `--host 0.0.0.0`), `TARGET` in `src/devConfig.ts`, `npm start`, “Records from the service”. Expected: six wishes and “Still wanted, total: UAH 365”, and in the service's log a line `[mock] GET /records/wishlist?lang=en → 200 from …` with the device's address. Stop the service and open the screen again — the explanation about the missing connection and the bundled wishes (six of them too for us). `REHEARSAL = "fail=5&key=r1"` — three `503` lines in the log, no total and “Load again”. `REHEARSAL = "hang=1"` and back to the list before the timeout ends — the request is cancelled (only one `no answer (hang)` line in the log). Put `REHEARSAL = ""` back. We have not seen these screens.
+
+    **9. Evidence and commit.** In `EVIDENCE.md`, a section “RN-06”: the lines of steps 2 and 7, what you saw on the target and the service's log lines, or a “not performed” record (what, the target, why, what it takes to come back). `REHEARSAL` in the commit is empty. `git add -A`, `git commit -m "Load records from the mock service with a timeout, bounded retry, cancellation and offline fallback"` — for us `13 files changed`.
+
+    **Self-check:** a host is only in `src/devConfig.ts`; at most three attempts; every request has a timeout; losing the focus cancels the request; the total is computed only from data that loaded; the service's answer goes through the contract; the service's records do not get into the device storage.
+
+    **If something goes wrong:** on the Android emulator `localhost` leads into the emulator itself — `10.0.2.2` is needed. A phone on Wi-Fi does not reach the service — the service was started without `--host 0.0.0.0` or `LAN_ADDRESS` holds the wrong address. The screen “hangs” on loading — the request has no timeout. After going back to the list the service still gets attempts — the focus effect's cleanup does not call `abort()`.
+
+    The step's reference is `Download: RN-06 — Records from a service: address, timeout, retries, offline` after the export (without `assets/*.png`, `LICENSE`, `package-lock.json` and `node_modules/` — see step RN-01). The commands were run on macOS only; they were not run on Linux or Windows (Git Bash).
+purpose:
+  uk: "Це крок твого проєкту: навчальний сервіс, адресу для емулятора чи пристрою, тайм-аут, обмежені повтори, скасування й офлайн-стан із цього розділу ти застосовуєш до власного застосунку. Платформа цей крок не перевіряє: доказ — вивід команд, тести проти сервісу, `EVIDENCE.md` і commit."
+  en: "This is a step of your project: you apply this unit's mock service, the address for an emulator or a device, the timeout, bounded retries, cancellation and the offline state to your own app. The platform does not check this step: the evidence is the command output, the tests against the service, `EVIDENCE.md` and the commit."
+objectives:
+  - uk: "Завантажувати записи з навчального сервісу за адресою, що залежить лише від заявленої цілі, з тайм-аутом, щонайбільше трьома спробами й скасуванням при втраті фокуса."
+    en: "Load records from the mock service at an address that depends only on the declared target, with a timeout, at most three attempts and a cancel when the focus is lost."
+  - uk: "Без з’єднання показувати вбудовані записи, при відмові сервісу — жодних даних і повтор, а похідне значення рахувати лише з даних, що справді завантажилися."
+    en: "Without a connection show the bundled records, when the service fails show no data and a retry, and compute the derived value only from data that actually loaded."
+transfer:
+  uk: "Цей крок виконується в редакторі, терміналі й на заявленій нативній цілі: що зробити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor, a terminal and on the declared native target: what to do, the expected output and the self-check list are above and on the step's page in your project."
