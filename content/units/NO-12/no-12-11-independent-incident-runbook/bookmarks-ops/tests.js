@@ -15,7 +15,7 @@ const bookmark = (id, extra = {}) => ({ id, title: L.docs, url: 'https://example
 test('loadConfig: defaults and a frozen result', () => {
   guard('loadConfig');
   const config = loadConfig({ DATA_DIR: DATA });
-  expect({ ...config }, 'the config of { DATA_DIR } alone').toEqual({ port: 7340, host: '127.0.0.1', dataDir: DATA, deadlineMs: 5000 });
+  expect({ ...config }, 'the config of { DATA_DIR } alone').toEqual({ port: 7374, host: '127.0.0.1', dataDir: DATA, deadlineMs: 5000 });
   expect(Object.isFrozen(config), 'Object.isFrozen(config)').toBe(true);
 });
 
@@ -30,7 +30,7 @@ test('loadConfig: process.env is not read', () => {
   const saved = process.env.PORT;
   process.env.PORT = '1234';
   try {
-    expect(loadConfig({ DATA_DIR: DATA }).port, 'port while process.env.PORT is 1234').toBe(7340);
+    expect(loadConfig({ DATA_DIR: DATA }).port, 'port while process.env.PORT is 1234').toBe(7374);
   } finally {
     if (saved === undefined) delete process.env.PORT;
     else process.env.PORT = saved;

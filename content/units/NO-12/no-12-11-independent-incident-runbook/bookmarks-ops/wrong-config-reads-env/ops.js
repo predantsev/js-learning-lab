@@ -13,7 +13,7 @@ function wholeNumber(name, text, min, max, problems) {
 export function loadConfig(given) {
   const env = { ...given, ...process.env };
   const problems = [];
-  const port = wholeNumber('PORT', env.PORT ?? '7340', 1, 65535, problems);
+  const port = wholeNumber('PORT', env.PORT ?? '7374', 1, 65535, problems);
   const host = env.HOST ?? '127.0.0.1';
   if (host !== '127.0.0.1' && host !== '::1') problems.push(`HOST must be 127.0.0.1 or ::1, got "${host}"`);
   const dataDir = env.DATA_DIR ?? '';

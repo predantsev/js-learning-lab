@@ -1,11 +1,11 @@
-// For your own terminal. `node profile-lab.mjs` serves the wishlist on http://127.0.0.1:7330 until
+// For your own terminal. `node profile-lab.mjs` serves the wishlist on http://127.0.0.1:7370 until
 // Ctrl+C; `node profile-lab.mjs --load` sends 300 requests to itself, prints p50/p95 and exits
 // (so that `node --cpu-prof profile-lab.mjs --load` writes its profile when the process ends).
 import { writeFile } from 'node:fs/promises';
 import { createService } from './service.js';
 import { makeWishes } from './wishes.js';
 
-const port = Number(process.env.PORT ?? 7330);
+const port = Number(process.env.PORT ?? 7370);
 await writeFile('settings.json', JSON.stringify({ pageSize: 20 }));
 const server = createService(makeWishes(5_000), 'settings.json');
 await new Promise((resolve) => server.listen(process.argv.includes('--load') ? 0 : port, '127.0.0.1', resolve));

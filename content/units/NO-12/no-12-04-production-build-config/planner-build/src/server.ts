@@ -19,7 +19,7 @@ export async function start(): Promise<http.Server> {
       response.end(JSON.stringify({ error: 'internal error' }));
     }
   });
-  const port = Number(process.env.PORT ?? 7330);
+  const port = Number(process.env.PORT ?? 7372);
   await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
   return server;
 }

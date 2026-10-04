@@ -1,5 +1,5 @@
 // A look at version 1.4.0 in the sandbox: the app with a temp data folder, its health routes before
-// and during a shutdown, and /metrics after a few requests. server.ts (signals, listen on 7330) and
+// and during a shutdown, and /metrics after a few requests. server.ts (signals, listen on 7372) and
 // upgrade-lab-1.4.mjs run only in your terminal: the sandbox does not start git or keep a port open.
 import { createApp } from './src/app.ts';
 import { openStore } from './src/store.ts';

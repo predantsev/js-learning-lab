@@ -14,7 +14,7 @@ const store = {
   async flush() {},
 };
 try {
-  const config = loadConfig({ DATA_DIR: '/srv/bookmarks', PORT: '7340' });
+  const config = loadConfig({ DATA_DIR: '/srv/bookmarks', PORT: '7374' });
   console.log('config', config);
   const { url } = await startService({ ...config, port: 0 }, { store, exit: (code) => console.log(`exit(${code})`), log: (line) => console.log('log', line) });
   console.log('/readyz', (await fetch(`${url}/readyz`)).status);

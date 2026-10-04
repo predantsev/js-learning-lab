@@ -21,7 +21,7 @@ test('reads every value from the env object it is given', () => {
 
 test('uses the defaults for PORT, HOST, NODE_ENV and LOG_LEVEL', () => {
   guard();
-  expect({ ...loadConfig({ DATA_DIR: DATA }) }, 'the config of { DATA_DIR } alone').toEqual({ port: 7330, host: '127.0.0.1', dataDir: DATA, nodeEnv: 'development', logLevel: 'info' });
+  expect({ ...loadConfig({ DATA_DIR: DATA }) }, 'the config of { DATA_DIR } alone').toEqual({ port: 7372, host: '127.0.0.1', dataDir: DATA, nodeEnv: 'development', logLevel: 'info' });
 });
 
 test('returns a frozen object', () => {
@@ -69,7 +69,7 @@ test('process.env is not read', () => {
   process.env.NODE_ENV = 'production';
   try {
     const config = loadConfig({ DATA_DIR: DATA });
-    expect([config.port, config.nodeEnv], '[port, nodeEnv] while process.env says 1234 and production').toEqual([7330, 'development']);
+    expect([config.port, config.nodeEnv], '[port, nodeEnv] while process.env says 1234 and production').toEqual([7372, 'development']);
   } finally {
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];

@@ -5,7 +5,7 @@ import { schemaErrors } from './contract.js';
 import { readBookmarks, summaryOf } from './store.js';
 
 const RULES = [
-  ['port', 'PORT', '7340', (t) => (/^\d+$/.test(t) && +t >= 1 && +t <= 65535 ? +t : undefined)],
+  ['port', 'PORT', '7374', (t) => (/^\d+$/.test(t) && +t >= 1 && +t <= 65535 ? +t : undefined)],
   ['host', 'HOST', '127.0.0.1', (t) => (['127.0.0.1', '::1'].includes(t) ? t : undefined)],
   ['dataDir', 'DATA_DIR', '', (t) => (path.isAbsolute(t) ? t : undefined)],
   ['deadlineMs', 'DEADLINE_MS', '5000', (t) => (/^\d+$/.test(t) && +t >= 100 && +t <= 30000 ? +t : undefined)],
