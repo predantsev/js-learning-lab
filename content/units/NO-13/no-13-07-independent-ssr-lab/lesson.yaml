@@ -1,0 +1,346 @@
+id: no-13-07-independent-ssr-lab
+unit: NO-13
+title:
+  uk: "Самостійно: SSR-лабораторна зі справжніми запитами"
+  en: "Independent: SSR lab with real requests"
+kind: assessment
+minutes: 35
+contentVersion: 1
+objectives:
+  - uk: "Без підказок і без фреймворку збудувати SSR-маршрут на локальному сервері Node, який рендерить синтетичну сторінку, гідратується в браузері й проходить тести порівняння серверного й клієнтського рендеру."
+    en: "Build, without hints and without a framework, an SSR route on the local Node server that renders a synthetic page, hydrates it in the browser and passes server/client render-comparison tests."
+  - uk: "Пояснити в короткій записці, які частини результату змінили б React Server Components і чого вони вимагали б."
+    en: "Explain in a short note which parts of the result an RSC setup would change and what it would require."
+purpose:
+  uk: "Перевірити, що ти самостійно поєднуєш усі ідеї розділу — рендер на сервері, безпечні початкові дані, межу секретів, гідратацію без розбіжностей і обробку помилок — спершу під перевірками платформи, а потім зі справжніми `react-dom/server` і браузером на своєму комп’ютері."
+  en: "To check that you combine every idea of the unit on your own — server rendering, safe initial data, the secret boundary, mismatch-free hydration and error handling — first under the platform’s checks, then with real `react-dom/server` and a browser on your computer."
+prerequisites: [no-13-06-debug-hydration-mismatch]
+subskills:
+  - { family: B-11, skill: "server rendering/static output", depth: assess }
+  - { family: B-11, skill: "RSC integration constraints literacy", depth: assess }
+glossary: []
+selfCheck: [reading-ssr]
+
+blocks:
+  - id: how-it-works
+    kind: explanation
+    title:
+      uk: "Як влаштована лабораторна"
+      en: "How the lab works"
+    body:
+      uk: |
+        Сторінка списку читання: кнопки фільтра («усі», «читаю», «прочитано») і книжки, що відповідають фільтру. Компонент `ReadingList` уже є; решту пишеш ти.
+
+        Дві частини:
+
+        1. **На платформі.** Сервер і клієнтський рендер у справжньому Node.js з навчальною заміною React, як у всьому розділі. Перевірки надсилають справжні HTTP-запити.
+        2. **На твоєму комп’ютері.** Те саме зі справжніми `react-dom/server` і `hydrateRoot`, власними тестами на `node:test` і записка про RSC.
+
+        Підказок немає: усе потрібне — в уроках цього розділу.
+      en: |
+        A reading-list page: filter buttons (“all”, “reading”, “done”) and the books that match the filter. The `ReadingList` component already exists; you write the rest.
+
+        Two parts:
+
+        1. **On the platform.** The server and the client render in real Node.js with the teaching stand-in for React, as in the whole unit. The checks send real HTTP requests.
+        2. **On your computer.** The same with real `react-dom/server` and `hydrateRoot`, your own `node:test` tests and a note about RSC.
+
+        There are no hints: everything you need is in this unit’s lessons.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай перед стартом"
+      en: "Recall before you start"
+    items:
+      - id: glue-into-html
+        from: js-16-07-xss-safe-sinks
+        prompt:
+          uk: "Сервер вставляє в HTML значення заголовка запиту: `` `<code>${req.headers[\"x-request-id\"]}</code>` ``. Чому це небезпечно і що робити?"
+          en: "A server inserts a request header’s value into HTML: `` `<code>${req.headers[\"x-request-id\"]}</code>` ``. Why is that dangerous, and what should it do?"
+        answer:
+          type: choice
+          options:
+            - id: escape
+              text:
+                uk: "Заголовок — недовірений текст: у ньому може бути розмітка. Його треба екранувати для HTML або приймати лише у відомому форматі"
+                en: "A header is untrusted text: it may contain markup. It has to be escaped for HTML or accepted only in a known format"
+            - id: header-safe
+              text:
+                uk: "Нічого небезпечного: заголовки надсилає браузер, а не людина"
+                en: "Nothing dangerous: headers are sent by the browser, not by a person"
+              why:
+                uk: "Заголовки може задати будь-який клієнт — `fetch`, `curl`, чужий скрипт. Усе, що прийшло із запиту, — недовірений текст."
+                en: "Any client can set headers — `fetch`, `curl`, someone else’s script. Everything that came with a request is untrusted text."
+            - id: angle-only
+              text:
+                uk: "Досить прибрати з нього `<` і `>`"
+                en: "Removing `<` and `>` from it is enough"
+              why:
+                uk: "У JS-16 ти бачив, що в атрибуті лапка виходить із значення й без жодної кутової дужки. Екрануй усі спеціальні символи (`&`, `<`, `>`, `\"`, `'`) або перевіряй формат."
+                en: "In JS-16 you saw that inside an attribute a quote breaks out of the value without a single angle bracket. Escape every special character (`&`, `<`, `>`, `\"`, `'`) or check the format."
+          correct: [escape]
+        explanation:
+          uk: "Ідентифікатор запиту на сторінці 500 — теж вивід у HTML. Тому сторінки 500 у цьому розділі екранують його, а розмітка React і безпечний JSON уже закодовані для свого місця."
+          en: "The request id on a 500 page is output into HTML too. That is why this unit’s 500 pages escape it, while React’s markup and the safe JSON are already encoded for their place."
+      - id: same-props
+        from: no-13-02-hydration-browser
+        prompt:
+          uk: "Клієнтська точка входу гідратує список із фільтром `\"reading\"`, бо «люди здебільшого хочуть бачити, що читають зараз», а сервер рендерив із `\"all\"`. Що станеться?"
+          en: "A client entry hydrates the list with the filter `\"reading\"`, because “people mostly want to see what they are reading now”, while the server rendered with `\"all\"`. What happens?"
+        answer:
+          type: choice
+          options:
+            - id: mismatch
+              text:
+                uk: "Розбіжність гідратації: клієнт дає іншу розмітку, ніж сервер"
+                en: "A hydration mismatch: the client produces different markup from the server"
+            - id: fine
+              text:
+                uk: "Нічого поганого: React просто покаже клієнтський фільтр"
+                en: "Nothing bad: React simply shows the client’s filter"
+              why:
+                uk: "Гідратація розраховує, що перший рендер клієнта дає ту саму розмітку. Інший фільтр — інші кнопки й інший список, отже, розбіжність і повторний рендер."
+                en: "Hydration relies on the client’s first render giving the same markup. A different filter means different buttons and a different list, so a mismatch and a re-render."
+          correct: [mismatch]
+        explanation:
+          uk: "Початковий стан — частина пропсів, з якими рендерив сервер, тож клієнт бере його з даних сторінки. Змінити фільтр можна вже після гідратації — натисканням кнопки."
+          en: "The initial state is part of the props the server rendered with, so the client takes it from the page’s data. The filter can change after hydration — with a button press."
+
+  - id: reading-ssr
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: isolated-node
+    dir: reading-ssr
+    entry: index.js
+    editable: [app.js, client.js]
+    capabilities: { network: loopback }
+    strings:
+      all: { uk: "Усі", en: "All" }
+      reading: { uk: "Читаю", en: "Reading" }
+      done: { uk: "Прочитано", en: "Done" }
+      filterLabel: { uk: "Фільтр", en: "Filter" }
+      book1: { uk: "Синтетичний роман", en: "A synthetic novel" }
+      book2: { uk: "Ще одна вигадана книжка", en: "Another made-up book" }
+      book4: { uk: "Довідник для прикладу", en: "A sample handbook" }
+      author1: { uk: "А. Авторка", en: "A. Author" }
+      author2: { uk: "Б. Письменник", en: "B. Writer" }
+      author3: { uk: "В. Укладач", en: "C. Editor" }
+      author4: { uk: "Г. Редакторка", en: "D. Compiler" }
+      note: { uk: "позичити сусідці", en: "lend to the neighbour" }
+      lang: { uk: "uk", en: "en" }
+      pageTitle: { uk: "Список читання", en: "Reading list" }
+      errorTitle: { uk: "Щось пішло не так", en: "Something went wrong" }
+      errorText: { uk: "Ідентифікатор запиту:", en: "Request id:" }
+      clientError: { uk: "клієнт отримав помилку", en: "the client got an error" }
+    title:
+      uk: "SSR-маршрут списку читання"
+      en: "The reading-list SSR route"
+    instructions:
+      uk: |
+        Напиши `app.js` і `client.js`.
+
+        **`client.js`** експортує `clientElement(data)`: елемент `ReadingList`, який клієнтська точка входу гідратувала б, — із пропсами `books` і `filter` з даних сторінки. Цей модуль не імпортує нічого серверного.
+
+        **`app.js`** експортує `createApp({ loadBooks, log })`, що повертає сервер `node:http`:
+
+        - `GET /` відповідає 200, `text/html` і повним документом: `<!doctype html>`, `<meta charset="utf-8">`, `<div id="root">…</div>` з рендером `ReadingList`, одразу за ним `<script id="initial-data" type="application/json">…</script>`, а також `<script type="module" src="/client.js"></script>`;
+        - початкові дані — рівно `{ books, filter: "all" }`, де кожна книжка має лише `id`, `title`, `author`, `status`; жодних налаштувань із `config.js`;
+        - JSON у сторінці не містить жодного `<`, `>`, `&`, U+2028 чи U+2029, а `JSON.parse` повертає ті самі дані;
+        - `#root` — рендер `ReadingList` саме із цими даними, тож клієнтський рендер із даних сторінки з ним збігається;
+        - якщо завантаження чи рендер кидає помилку — відповідь 500 з безпечною сторінкою, на якій є ідентифікатор запиту (з `x-request-id` або новий), без подробиць помилки й без розмітки із запиту; виклик `log` з `requestId`; наступні запити обслуговуються як звичайно;
+        - будь-яка інша адреса чи метод — 404.
+
+        `ReadingList.js`, `books.js` і `config.js` змінювати не треба. **Запустити** надсилає `/`, `/missing` і ще два запити до `/`, з яких перший має зіпсовану книжку. **Перевірити** робить справжні запити з іншими книжками, зокрема з назвою, що містить `</script>`, `&` і роздільник рядків.
+      en: |
+        Write `app.js` and `client.js`.
+
+        **`client.js`** exports `clientElement(data)`: the `ReadingList` element a client entry would hydrate — with the `books` and `filter` props from the page’s data. This module imports nothing server-only.
+
+        **`app.js`** exports `createApp({ loadBooks, log })`, which returns a `node:http` server:
+
+        - `GET /` answers 200, `text/html` and a complete document: `<!doctype html>`, `<meta charset="utf-8">`, `<div id="root">…</div>` with the `ReadingList` render, followed directly by `<script id="initial-data" type="application/json">…</script>`, plus `<script type="module" src="/client.js"></script>`;
+        - the initial data is exactly `{ books, filter: "all" }`, where every book has only `id`, `title`, `author`, `status`; no settings from `config.js`;
+        - the JSON in the page contains no `<`, `>`, `&`, U+2028 or U+2029, and `JSON.parse` returns the same data;
+        - `#root` is the `ReadingList` render of exactly that data, so the client render from the page’s data matches it;
+        - if loading or rendering throws — an answer 500 with a safe page showing the request id (from `x-request-id`, or a new one), with no error details and no markup taken from the request; a `log` call with `requestId`; the next requests are served as usual;
+        - any other address or method — 404.
+
+        You do not need to change `ReadingList.js`, `books.js` or `config.js`. **Run** sends `/`, `/missing` and two more requests to `/`, the first of which has a damaged book. **Check** makes real requests with other books, including a title that contains `</script>`, `&` and a line separator.
+    testTitles:
+      "GET / answers a UTF-8 HTML document":
+        uk: "`GET /` відповідає HTML-документом у UTF-8"
+        en: "`GET /` answers a UTF-8 HTML document"
+      "#root holds the server render of the public books":
+        uk: "`#root` містить серверний рендер публічних книжок"
+        en: "`#root` holds the server render of the public books"
+      "the initial data holds exactly the public books and the filter":
+        uk: "Початкові дані — рівно публічні книжки й фільтр"
+        en: "The initial data holds exactly the public books and the filter"
+      "the initial data cannot close its script":
+        uk: "Початкові дані не можуть закрити свій `<script>`"
+        en: "The initial data cannot close its `<script>`"
+      "no server setting reaches the page":
+        uk: "Жодне серверне налаштування не потрапляє в сторінку"
+        en: "No server setting reaches the page"
+      "the client render from the page data matches #root":
+        uk: "Клієнтський рендер із даних сторінки збігається з `#root`"
+        en: "The client render from the page data matches `#root`"
+      "the page loads /client.js as a module":
+        uk: "Сторінка завантажує `/client.js` як модуль"
+        en: "The page loads `/client.js` as a module"
+      "a render error answers a safe 500 and is logged with the request id":
+        uk: "Помилка рендерингу дає безпечну відповідь 500 і запис у журналі з ідентифікатором"
+        en: "A render error gives a safe 500 and a log entry with the request id"
+      "a request id from the request is never echoed as markup":
+        uk: "Ідентифікатор із запиту ніколи не повертається як розмітка"
+        en: "A request id from the request is never echoed as markup"
+      "the server keeps answering after a render error":
+        uk: "Після помилки рендерингу сервер відповідає далі"
+        en: "The server keeps answering after a render error"
+      "another address answers 404":
+        uk: "Інша адреса отримує 404"
+        en: "Another address gets 404"
+    solutionNote:
+      uk: "Одна функція (`clientElement`) будує елемент і для серверного рендеру, і для гідратації — тож розмітка не може розійтися. Дані проходять через allowlist і HTML-безпечний JSON, налаштування лишаються в `config.js`, а сторінка 500 екранує ідентифікатор із запиту (або приймає лише ідентифікатор відомого формату). `client.js` не імпортує `node:http` чи `config.js`, тож у справжньому бандлі їх не буде."
+      en: "One function (`clientElement`) builds the element for both the server render and hydration — so the markup cannot diverge. The data goes through an allowlist and HTML-safe JSON, the settings stay in `config.js`, and the 500 page escapes the id from the request (or accepts only an id of a known format). `client.js` imports neither `node:http` nor `config.js`, so a real bundle will not contain them."
+    feedback:
+      - when: { test: "GET / answers a UTF-8 HTML document" }
+        message:
+          uk: "Ця перевірка чекає на `GET /` статус 200, `content-type`, що починається з `text/html`, текст, що починається з `<!doctype html>`, і `<meta charset=\"utf-8\">`. Якщо всі перевірки падають разом, перша помилка в консолі показує причину."
+          en: "This check expects status 200 for `GET /`, a `content-type` starting with `text/html`, text starting with `<!doctype html>` and `<meta charset=\"utf-8\">`. If every check fails at once, the first error in the console shows why."
+      - when: { test: "#root holds the server render of the public books" }
+        message:
+          uk: "Ця перевірка шукає `<div id=\"root\">…</div>`, за яким іде `<script`, і чекає всередині рендер `ReadingList` з публічними полями книжок і фільтром `\"all\"`."
+          en: "This check looks for `<div id=\"root\">…</div>` followed by `<script` and expects inside it the `ReadingList` render with the books’ public fields and the filter `\"all\"`."
+      - when: { test: "the initial data holds exactly the public books and the filter" }
+        message:
+          uk: "Розібраний `#initial-data` має дорівнювати `{ books, filter: \"all\" }`, де в книжок лише `id`, `title`, `author`, `status` — без `ownerNote` і без інших полів."
+          en: "The parsed `#initial-data` must equal `{ books, filter: \"all\" }`, where the books have only `id`, `title`, `author`, `status` — no `ownerNote` and no other fields."
+      - when: { test: "the initial data cannot close its script" }
+        message:
+          uk: "Текст `#initial-data` не має містити сирих `<`, `>`, `&`, U+2028 чи U+2029 — лише їхні екранування JSON."
+          en: "The `#initial-data` text must contain no raw `<`, `>`, `&`, U+2028 or U+2029 — only their JSON escapes."
+      - when: { test: "no server setting reaches the page" }
+        message:
+          uk: "Ця перевірка шукає в сторінці значення `apiToken` і слово `dataDir`. Жодного з них там бути не може."
+          en: "This check searches the page for the `apiToken` value and the word `dataDir`. Neither may be there."
+      - when: { test: "the client render from the page data matches #root" }
+        message:
+          uk: "Ця перевірка розбирає дані сторінки, викликає `clientElement` з `client.js` і чекає елемент `ReadingList`, рендер якого рівно дорівнює `#root`."
+          en: "This check parses the page’s data, calls `clientElement` from `client.js` and expects a `ReadingList` element whose render equals `#root` exactly."
+      - when: { test: "the page loads /client.js as a module" }
+        message:
+          uk: "Ця перевірка шукає тег `<script>` з `src=\"/client.js\"` і чекає в ньому `type=\"module\"`."
+          en: "This check looks for a `<script>` tag with `src=\"/client.js\"` and expects `type=\"module\"` on it."
+      - when: { test: "a render error answers a safe 500 and is logged with the request id" }
+        message:
+          uk: "Для книжки без назви ця перевірка чекає 500, ідентифікатор `req-lab-5` на сторінці, жодних подробиць помилки (`TypeError`, `trim`, `null`) і запис у `log` з `requestId: \"req-lab-5\"`. Якщо сервер падає замість відповіді, помилку не перехоплено."
+          en: "For a book with no title this check expects 500, the id `req-lab-5` on the page, no error details (`TypeError`, `trim`, `null`) and a `log` entry with `requestId: \"req-lab-5\"`. If the server crashes instead of answering, the error was not caught."
+      - when: { test: "a request id from the request is never echoed as markup" }
+        message:
+          uk: "Ця перевірка надсилає `x-request-id: <img src=x onerror=alert(3)>` для зіпсованої книжки й чекає, що на сторінці 500 немає тегу `<img`. Ідентифікатор із запиту — недовірений текст."
+          en: "This check sends `x-request-id: <img src=x onerror=alert(3)>` for a damaged book and expects no `<img` tag on the 500 page. An id from the request is untrusted text."
+      - when: { test: "the server keeps answering after a render error" }
+        message:
+          uk: "Перший запит цієї перевірки ламає рендер і має отримати 500, другий — звичайний і має отримати 200."
+          en: "This check’s first request breaks the render and must get 500; the second is ordinary and must get 200."
+      - when: { test: "another address answers 404" }
+        message:
+          uk: "Ця перевірка надсилає `GET /books.json` і чекає статус 404."
+          en: "This check sends `GET /books.json` and expects status 404."
+
+  - id: lab-reading
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Справжня SSR-лабораторна: гідратація, тести, записка про RSC"
+      en: "The real SSR lab: hydration, tests, an RSC note"
+    intro:
+      uk: |
+        Тепер те саме — справжнім React у лабораторії `~/js-course/ssr-lab` (пакети react, react-dom і esbuild уже там; якщо лабораторії немає, створи її, як у локальному завданні уроку «Гідратація в браузері»). Працюй у новій теці `reading`. Підказок і готового коду немає.
+
+        **Що має вийти:**
+
+        - `reading/ReadingList.js` — компонент із вправи, де `./mini-react.js` замінено на `react`, а також твої `reading/app.js` і `reading/client.js` (`renderToString` — з `react-dom/server`);
+        - `reading/entry-client.js` — клієнтська точка входу: читає дані з `#initial-data` і викликає `hydrateRoot` з `clientElement(data)` та обробником `onRecoverableError`;
+        - сервер на 127.0.0.1 (наприклад, порт 4323), що віддає `GET /` з `createApp` і зібраний клієнтський файл на `GET /client.js`;
+        - `reading/ssr.test.js` на `node:test`: щонайменше один тест, який запускає сервер на порту `0`, бере сторінку й порівнює `#root` з `renderToString(clientElement(data))`, і один, що шукає в сторінці значення токена й приватне поле;
+        - `reading/RSC.md` — 5–8 речень: які частини сторінки могли б стати серверними компонентами, які пропси завадили б цьому (назви їх), що для цього знадобилося б (бандлер, середовище й протокол RSC, версія React) і що це дало б.
+
+        **Як перевіряли еталонне рішення.** Під час підготовки уроку еталонну версію виконано на macOS з Node.js v25.2.1, react 19.3.0, react-dom 19.3.0, esbuild 0.28.2 і в Chrome 154: `node --test reading/ssr.test.js` дав `ℹ pass 2` і `ℹ fail 0`; у зібраному `reading/public/client.js` не знайшлося ні значення токена, ні `node:http`; після гідратації консоль показала `hydrated` без помилок, а кнопка фільтра «прочитано» лишила в списку одну книжку з двох. Зверни увагу: на Node.js v25.2.1 команда `node --test reading/` (тека замість файлу) завершилася помилкою — передавай шлях до файлу тестів. На Node.js 22, Windows і Linux не перевірено.
+      en: |
+        Now the same with real React, in the `~/js-course/ssr-lab` lab (react, react-dom and esbuild are already there; if you have no lab, create it as in the local task of the lesson “Hydration in the browser”). Work in a new folder, `reading`. There are no hints and no ready-made code.
+
+        **What you should end up with:**
+
+        - `reading/ReadingList.js` — the component from the exercise with `./mini-react.js` replaced by `react`, plus your `reading/app.js` and `reading/client.js` (`renderToString` comes from `react-dom/server`);
+        - `reading/entry-client.js` — the client entry: it reads the data from `#initial-data` and calls `hydrateRoot` with `clientElement(data)` and an `onRecoverableError` handler;
+        - a server on 127.0.0.1 (for example port 4323) that serves `GET /` from `createApp` and the built client file at `GET /client.js`;
+        - `reading/ssr.test.js` with `node:test`: at least one test that starts the server on port `0`, fetches the page and compares `#root` with `renderToString(clientElement(data))`, and one that searches the page for the token’s value and a private field;
+        - `reading/RSC.md` — 5–8 sentences: which parts of the page could become server components, which props would stand in the way (name them), what that would take (a bundler, an RSC environment and protocol, a React version) and what it would gain.
+
+        **How the reference solution was checked.** While preparing the lesson a reference version was run on macOS with Node.js v25.2.1, react 19.3.0, react-dom 19.3.0, esbuild 0.28.2 and in Chrome 154: `node --test reading/ssr.test.js` gave `ℹ pass 2` and `ℹ fail 0`; the built `reading/public/client.js` contained neither the token’s value nor `node:http`; after hydration the console showed `hydrated` with no errors, and the “done” filter button left one of the two books in the list. Note: on Node.js v25.2.1 the command `node --test reading/` (a folder instead of a file) ended with an error — pass the path of the test file. Not checked on Node.js 22, Windows or Linux.
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "Еталон виконано на v25.2.1.", en: "The reference was run on v25.2.1." } }
+      - { name: "react, react-dom", version: "19.3.0", note: { uk: "Установлено в лабораторії.", en: "Installed in the lab." } }
+      - { name: "esbuild", version: "0.28.2", note: { uk: "Установлено в лабораторії.", en: "Installed in the lab." } }
+    steps:
+      - text:
+          uk: "Збери клієнтську точку входу й переконайся, що в бандлі немає нічого серверного (шукаємо значення, а не слова)."
+          en: "Build the client entry and make sure the bundle holds nothing server-only (we search for values, not words)."
+        command: |
+          cd ~/js-course/ssr-lab
+          npx esbuild reading/entry-client.js --bundle --format=esm --outfile=reading/public/client.js
+          grep -c "demo-TOKEN\|node:http" reading/public/client.js
+        expect:
+          uk: "`grep -c` друкує `0`. Якщо esbuild пише, що `node:http` чи `node:crypto` «wasn't found on the file system», клієнтський код імпортує серверний модуль."
+          en: "`grep -c` prints `0`. If esbuild says that `node:http` or `node:crypto` “wasn't found on the file system”, client code imports a server module."
+      - text:
+          uk: "Запусти свої тести."
+          en: "Run your tests."
+        command: "node --test reading/ssr.test.js"
+        expect:
+          uk: "`ℹ fail 0` і щонайменше два тести в `ℹ pass`."
+          en: "`ℹ fail 0` and at least two tests in `ℹ pass`."
+      - text:
+          uk: "Запусти сервер, відкрий сторінку з консоллю, перевір фільтр, потім зупини сервер (Ctrl+C)."
+          en: "Start the server, open the page with the console, try the filter, then stop the server (Ctrl+C)."
+        expect:
+          uk: "Список видно відразу; у консолі `hydrated` без помилки гідратації; кнопки фільтра змінюють список."
+          en: "The list is visible at once; the console shows `hydrated` with no hydration error; the filter buttons change the list."
+      - text:
+          uk: "Навмисно внеси розбіжність: у даних, які сервер кладе в сторінку, тимчасово заміни фільтр на `\"done\"`, а рендер лиши з `\"all\"`. Запусти тести й переконайся, що твій тест порівняння впав. Поверни як було. (Зміна в `clientElement` тут не годиться: якщо сервер рендерить через ту саму функцію, вона змінює обидва боки однаково — саме тому це добрий дизайн.)"
+          en: "Inject a mismatch on purpose: in the data the server puts into the page, temporarily change the filter to `\"done\"` while the render keeps `\"all\"`. Run the tests and make sure your comparison test fails. Put it back. (A change in `clientElement` does not work here: if the server renders through the same function, it changes both sides alike — which is exactly why that is a good design.)"
+        command: "node --test reading/ssr.test.js"
+        expect:
+          uk: "З розбіжністю — `ℹ fail 1` (так було в еталоні); після повернення — знову `ℹ fail 0`."
+          en: "With the mismatch — `ℹ fail 1` (as in the reference); after you put it back — `ℹ fail 0` again."
+    verify:
+      - id: bundle-clean
+        text:
+          uk: "`grep -c` по `reading/public/client.js` надрукував `0`."
+          en: "`grep -c` on `reading/public/client.js` printed `0`."
+      - id: tests-catch
+        text:
+          uk: "Мої тести проходять і падають, коли клієнт рендерить інакше, ніж сервер."
+          en: "My tests pass, and fail when the client renders differently from the server."
+      - id: hydrated
+        text:
+          uk: "Сторінка гідратується без помилки, і фільтр працює."
+          en: "The page hydrates with no error, and the filter works."
+      - id: rsc-note
+        text:
+          uk: "`reading/RSC.md` називає конкретні пропси, що завадили б RSC, і вимоги, яких бракує моєму серверу."
+          en: "`reading/RSC.md` names concrete props that would stand in the way of RSC and the requirements my server lacks."
+    troubleshooting:
+      - problem:
+          uk: "`node --test reading/` завершується помилкою, хоча тести правильні."
+          en: "`node --test reading/` ends with an error although the tests are correct."
+        fix:
+          uk: "На Node.js v25.2.1 це виміряно: тека як аргумент не працює. Передай шлях до файлу: `node --test reading/ssr.test.js`."
+          en: "Measured on Node.js v25.2.1: a folder as the argument does not work. Pass the path of the file: `node --test reading/ssr.test.js`."
+    recovery:
+      uk: "Усе в теці `reading`: якщо щось зламалося, почни її заново. Решта лабораторії й проєкт не змінюються."
+      en: "Everything is in the `reading` folder: if something breaks, start it again. The rest of the lab and the project do not change."

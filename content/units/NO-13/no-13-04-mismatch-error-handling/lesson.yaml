@@ -1,0 +1,443 @@
+id: no-13-04-mismatch-error-handling
+unit: NO-13
+title:
+  uk: "Невідповідності й обробка помилок"
+  en: "Mismatch and error handling"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Класифікувати причини розбіжностей гідратації (час, локаль, випадкові ідентифікатори, браузерні API, різні дані) й усувати кожну в її джерелі."
+    en: "Classify hydration-mismatch causes (time, locale, random ids, browser-only APIs, different data) and remove each one at its source."
+  - uk: "Обробити помилку серверного рендерингу безпечною сторінкою 500, а розбіжність на клієнті — через `onRecoverableError` і межу помилок, і записати обидві в журнал з ідентифікатором запиту."
+    en: "Handle a server render error with a safe 500 fallback page and a client-side mismatch through onRecoverableError and an error boundary, logging both with the request id."
+prerequisites: [no-13-03-data-secret-boundary, re-05-07-error-boundaries-limits]
+subskills:
+  - { family: B-11, skill: "mismatch/error handling", depth: intro }
+glossary: [recoverable-error]
+selfCheck: [predict-crash, safe-route]
+
+blocks:
+  - id: causes-at-source
+    kind: explanation
+    title:
+      uk: "Кожна розбіжність має джерело"
+      en: "Every mismatch has a source"
+    body:
+      uk: |
+        У RE-11 ти бачив, звідки беруться розбіжності гідратації. Тепер сервер твій, тож і виправлення — у тебе:
+
+        | Причина в рендері | Виправлення в джерелі |
+        |---|---|
+        | час: `new Date()`, `Date.now()` | сервер обчислює «сьогодні» один раз і кладе в дані |
+        | локаль: `toLocaleString()` без аргументів | явна локаль — або сервер форматує й передає готовий текст |
+        | випадкові ідентифікатори: `Math.random()` | ідентифікатор із даних (`task.id`) або `useId` React |
+        | браузерні API: `window`, `localStorage` | перший рендер без них; браузерне значення — в ефекті після гідратації |
+        | різні дані | клієнт бере рівно ті дані, що лежать у `#initial-data` |
+
+        Явна локаль не завжди рятує. Під час підготовки уроку `(1855.9).toLocaleString("uk-UA", { style: "currency", currency: "UAH" })` дало в Node.js v25.2.1 `1 855,90 ₴`, а в Chrome 154 — `1 855,90 грн`: у них різні версії даних локалей. Коли текст мусить збігтися до символу, його форматують **один раз** — на сервері — і передають у даних.
+
+        А `suppressHydrationWarning`? Він вимикає повідомлення лише для тексту **одного** елемента, а розбіжність лишається. Документація React (react.dev, сторінка `hydrateRoot`) описує його як аварійний вихід для неминучих випадків на кшталт часової мітки, а не як ліки.
+      en: |
+        In RE-11 you saw where hydration mismatches come from. Now the server is yours, so the fix is yours too:
+
+        | Cause in render | Fix at the source |
+        |---|---|
+        | time: `new Date()`, `Date.now()` | the server computes “today” once and puts it into the data |
+        | locale: `toLocaleString()` with no arguments | an explicit locale — or the server formats and passes the finished text |
+        | random ids: `Math.random()` | an id from the data (`task.id`) or React’s `useId` |
+        | browser APIs: `window`, `localStorage` | the first render without them; the browser value in an effect after hydration |
+        | different data | the client takes exactly the data in `#initial-data` |
+
+        An explicit locale does not always save you. While preparing the lesson, `(1855.9).toLocaleString("uk-UA", { style: "currency", currency: "UAH" })` gave `1 855,90 ₴` in Node.js v25.2.1 and `1 855,90 грн` in Chrome 154: they carry different versions of locale data. When text has to match to the character, it is formatted **once** — on the server — and passed in the data.
+
+        And `suppressHydrationWarning`? It silences the message for the text of **one** element only, and the mismatch stays. The React documentation (react.dev, the `hydrateRoot` page) describes it as an escape hatch for unavoidable cases such as a timestamp, not as a cure.
+
+  - id: errors-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Дві помилки: на сервері й під час гідратації"
+      en: "Two errors: on the server and during hydration"
+    textEquivalent:
+      uk: "Перший запит: компонент кидає помилку під час renderToString. Маршрут перехоплює її в try/catch, пише в журнал рівень error, ідентифікатор запиту й повідомлення і відповідає статусом 500 з безпечною сторінкою, на якій є лише ідентифікатор запиту. Процес живе далі. Другий запит: сервер рендерить суму, відформатовану в локалі сервера, і кладе ідентифікатор запиту в початкові дані. Браузер гідратує, але форматує суму в іншій локалі. React бачить інший текст, викликає onRecoverableError з помилкою та componentStack і рендерить це піддерево заново на клієнті. Клієнт надсилає звіт із тим самим ідентифікатором запиту, і обидва записи в журналі можна зіставити."
+      en: "First request: a component throws during renderToString. The route catches it in try/catch, logs the level error, the request id and the message, and answers status 500 with a safe page that shows only the request id. The process lives on. Second request: the server renders a total formatted in the server’s locale and puts the request id into the initial data. The browser hydrates but formats the total in another locale. React sees different text, calls onRecoverableError with the error and the componentStack and renders that subtree again on the client. The client sends a report with the same request id, and both log entries can be matched up."
+    spec:
+      actors:
+        - { id: server, label: "node:http" }
+        - { id: browser, label: { uk: "Браузер", en: "Browser" } }
+        - { id: log, label: { uk: "Журнал", en: "Log" } }
+      intro:
+        uk: "Сервер, браузер і журнал помилок. Два запити, дві різні помилки."
+        en: "The server, the browser and the error log. Two requests, two different errors."
+      messages:
+        - from: server
+          to: server
+          kind: note
+          label: { uk: "renderToString кидає", en: "renderToString throws" }
+          caption:
+            uk: "Компонент кидає `TypeError` під час рендерингу. Без `try/catch` це зупинило б **увесь** процес."
+            en: "A component throws a `TypeError` while rendering. Without `try/catch` this would stop the **whole** process."
+        - from: server
+          to: log
+          label: "{ level: error, requestId, message }"
+          caption:
+            uk: "Маршрут перехоплює помилку й пише в журнал повідомлення з ідентифікатором запиту — стек лишається тут, на сервері."
+            en: "The route catches the error and logs the message with the request id — the stack stays here, on the server."
+        - from: server
+          to: browser
+          kind: return
+          label: "500 + fallback"
+          note: { uk: "лише requestId", en: "requestId only" }
+          caption:
+            uk: "Людина отримує безпечну сторінку з ідентифікатором, за яким підтримка знайде запис у журналі. Наступні запити сервер обслуговує як звичайно."
+            en: "The person gets a safe page with an id that support can look up in the log. The server serves the next requests as usual."
+        - from: server
+          to: browser
+          kind: return
+          label: "200 + #initial-data"
+          note: { uk: "UAH 1,855.90 · requestId", en: "UAH 1,855.90 · requestId" }
+          caption:
+            uk: "Новий запит: сума відформатована в локалі сервера, а ідентифікатор запиту лежить у початкових даних."
+            en: "A new request: the total is formatted in the server’s locale, and the request id sits in the initial data."
+        - from: browser
+          to: browser
+          kind: note
+          label: "onRecoverableError"
+          caption:
+            uk: "Браузер форматує інакше. React бачить інший текст, викликає `onRecoverableError` і рендерить піддерево заново на клієнті. Межа помилок цього не бачить."
+            en: "The browser formats differently. React sees different text, calls `onRecoverableError` and renders the subtree again on the client. The error boundary does not see it."
+        - from: browser
+          to: log
+          kind: async
+          label: "{ kind: hydration, requestId, componentStack }"
+          caption:
+            uk: "Клієнт надсилає звіт із тим самим ідентифікатором запиту — і в журналі видно, яка саме відповідь сервера розійшлася з браузером."
+            en: "The client sends a report with the same request id — and the log shows exactly which server answer diverged from the browser."
+
+  - id: predict-crash
+    kind: prediction
+    prompt:
+      uk: "Обробник `node:http` викликає `renderToString` без `try/catch`, і для одного запису компонент кидає `TypeError`. Що побачить людина, яка надіслала цей запит, і що буде з наступними запитами?"
+      en: "A `node:http` handler calls `renderToString` without `try/catch`, and for one record the component throws a `TypeError`. What does the person who sent this request see, and what happens to the next requests?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: process-dies
+          text:
+            uk: "З’єднання обривається без відповіді, а процес сервера завершується — наступні запити отримують відмову в з’єднанні"
+            en: "The connection drops with no answer, and the server process exits — the next requests get a refused connection"
+        - id: auto-500
+          text:
+            uk: "Node.js відповідає статусом 500, а сервер працює далі"
+            en: "Node.js answers status 500, and the server keeps running"
+          why:
+            uk: "`node:http` не перетворює помилки на відповіді — це роблять фреймворки на кшталт Express. Тут помилка не перехоплена ніде, і Node.js завершує процес."
+            en: "`node:http` does not turn errors into answers — frameworks such as Express do that. Here the error is caught nowhere, and Node.js ends the process."
+        - id: hangs
+          text:
+            uk: "Цей запит висить до тайм-ауту, а інші обслуговуються"
+            en: "This request hangs until a timeout, and the others are served"
+          why:
+            uk: "Так було б, якби обробник просто не викликав `res.end()`. Неперехоплена помилка — інше: вона завершує весь процес, а з ним і всі з’єднання."
+            en: "That would happen if the handler simply never called `res.end()`. An uncaught error is different: it ends the whole process, and every connection with it."
+        - id: partial-page
+          text:
+            uk: "Людина бачить сторінку без списку, бо React пропускає компонент, що впав"
+            en: "The person sees the page without the list, because React skips the component that failed"
+          why:
+            uk: "`renderToString` не пропускає компонентів: помилка в рендері виходить із нього назовні, у твій обробник."
+            en: "`renderToString` does not skip components: an error in rendering comes out of it, into your handler."
+      correct: [process-dies]
+    explanation:
+      uk: "Під час підготовки уроку це виміряно на Node.js v25.2.1: процес сервера завершився з кодом 1, `fetch` того запиту відхилився з `fetch failed` (причина — `other side closed`), а наступний — з `ECONNREFUSED`. Одна зламана назва в даних поклала сервер для всіх."
+      en: "This was measured on Node.js v25.2.1 while preparing the lesson: the server process exited with code 1, the `fetch` of that request rejected with `fetch failed` (cause: `other side closed`), and the next one with `ECONNREFUSED`. One broken name in the data took the server down for everyone."
+
+  - id: route-errors
+    kind: example
+    runtime: isolated-node
+    dir: route-errors
+    entry: index.js
+    expectError: true
+    capabilities: { network: loopback }
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+    title:
+      uk: "Маршрут, який падає, і маршрут, який відповідає 500"
+      en: "A route that crashes and a route that answers 500"
+    body:
+      uk: |
+        Сервер рендерить список звичок. Перший запит, `/broken`, читає звичку, яку пошкоджений імпорт зберіг без `completions`, — рендер кидає `TypeError`. Другий запит, `/`, — звичайний.
+
+        Зараз `CATCH_ERRORS = false`. Натисни **Запустити** й подивись, чи дійде справа до другого запиту.
+      en: |
+        The server renders a habit list. The first request, `/broken`, reads a habit that a damaged import saved without `completions` — the render throws a `TypeError`. The second request, `/`, is an ordinary one.
+
+        Right now `CATCH_ERRORS = false`. Press **Run** and see whether the second request ever happens.
+    tryIt:
+      uk: |
+        1. Програма завершується з `TypeError` ще на першому запиті: процес зупинено, другого запиту немає.
+        2. Заміни `false` на `true` у рядку `const CATCH_ERRORS`. Запусти: `/broken` отримує 500, а `/` — 200. Сервер вижив.
+        3. Тепер подивись на цю відповідь 500 очима людини й підтримки: текст `Internal error` англійською, ні ідентифікатора, ні способу знайти цей запит серед тисяч рядків журналу — а `console.error(error)` друкує весь стек, не кажучи, до якого запиту він належить. Це й виправляє вправа уроку.
+      en: |
+        1. The program ends with a `TypeError` on the very first request: the process is stopped, and there is no second request.
+        2. Replace `false` with `true` in the line `const CATCH_ERRORS`. Run: `/broken` gets 500, and `/` gets 200. The server survived.
+        3. Now look at that 500 answer through the eyes of the person and of support: the text `Internal error`, no id, no way to find this request among thousands of log lines — and `console.error(error)` prints the whole stack without saying which request it belongs to. That is what this lesson’s exercise fixes.
+
+  - id: recoverable
+    kind: explanation
+    title:
+      uk: "Помилки на клієнті: onRecoverableError і межа помилок"
+      en: "Errors on the client: onRecoverableError and the error boundary"
+    body:
+      uk: |
+        Розбіжність у тексті — [[recoverable-error|відновлювана помилка]]: React 19 викидає серверний HTML найближчої межі, рендерить це піддерево на клієнті й працює далі. Сторінка виглядає правильно, але людина на мить бачить серверний варіант, а браузер робить зайву роботу. Тому розбіжність — не косметика: це симптом, який треба знайти.
+
+        Щоб його не втратити, передай третім аргументом `hydrateRoot` обробник:
+
+        ```js
+        hydrateRoot(root, element, {
+          onRecoverableError(error, errorInfo) {
+            sendReport({ requestId, message: error.message, componentStack: errorInfo.componentStack });
+          },
+        });
+        ```
+
+        `errorInfo.componentStack` — ланцюжок компонентів від вузла, що розійшовся, догори: за ним видно, **де** шукати. `requestId` клієнт бере з початкових даних — тим самим ідентифікатором сервер підписав свою відповідь.
+
+        [[error-boundary|Межа помилок]] такого не бачить: вона ловить лише помилки, які кидає рендер. Розбіжність React виправляє сам і повідомляє лише через `onRecoverableError`.
+      en: |
+        A text mismatch is a [[recoverable-error]]: React 19 throws away the server HTML of the nearest boundary, renders that subtree on the client and carries on. The page looks right, but the person briefly sees the server version, and the browser does extra work. So a mismatch is not cosmetic: it is a symptom to track down.
+
+        To not lose it, pass a handler as the third argument of `hydrateRoot`:
+
+        ```js
+        hydrateRoot(root, element, {
+          onRecoverableError(error, errorInfo) {
+            sendReport({ requestId, message: error.message, componentStack: errorInfo.componentStack });
+          },
+        });
+        ```
+
+        `errorInfo.componentStack` is the chain of components from the diverging node upwards: it shows **where** to look. The client takes `requestId` from the initial data — the same id the server signed its answer with.
+
+        An [[error-boundary]] does not see this: it catches only errors that rendering throws. React fixes a mismatch by itself and reports it only through `onRecoverableError`.
+
+  - id: predict-boundary
+    kind: prediction
+    prompt:
+      uk: "Сервер відформатував суму в локалі `en-US`, а браузер — в `uk-UA`. Компонент суми загорнуто в межу помилок, а `hydrateRoot` отримав `onRecoverableError`. Що станеться?"
+      en: "The server formatted a total in the `en-US` locale, and the browser in `uk-UA`. The total component is wrapped in an error boundary, and `hydrateRoot` got `onRecoverableError`. What happens?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: recoverable-rerender
+          text:
+            uk: "Викликається `onRecoverableError`, React рендерить суму заново на клієнті, межа помилок нічого не ловить, і на сторінці — формат `uk-UA`"
+            en: "`onRecoverableError` is called, React renders the total again on the client, the error boundary catches nothing, and the page shows the `uk-UA` format"
+        - id: boundary-fallback
+          text:
+            uk: "Межа помилок показує свій запасний вміст замість суми"
+            en: "The error boundary shows its fallback instead of the total"
+          why:
+            uk: "Межа ловить помилки, які кидає рендер. Розбіжність гідратації React обробляє сам — рендером на клієнті — і повідомляє лише через `onRecoverableError`."
+            en: "A boundary catches errors that rendering throws. React handles a hydration mismatch by itself — with a client render — and reports it only through `onRecoverableError`."
+        - id: cosmetic
+          text:
+            uk: "Лише попередження в консолі; на сторінці лишається серверний формат"
+            en: "Only a console warning; the server format stays on the page"
+          why:
+            uk: "Так React поводиться з різними **атрибутами**. Різний **текст** — помилка: серверний вузол викинуто й замінено новим."
+            en: "That is how React treats different **attributes**. Different **text** is an error: the server node is thrown away and replaced with a new one."
+      correct: [recoverable-rerender]
+    explanation:
+      uk: "Так поводиться React 19.3 у Chrome — перевір у прикладі нижче: `onRecoverableError` отримує помилку «Hydration failed because the server rendered text didn't match the client», `componentStack` починається з `strong`, а вузол `<strong>` — уже новий."
+      en: "This is how React 19.3 behaves in Chrome — check it in the example: `onRecoverableError` gets the error “Hydration failed because the server rendered text didn't match the client”, the `componentStack` starts at `strong`, and the `<strong>` node is a new one."
+
+  - id: locale-mismatch
+    kind: example
+    runtime: browser-react
+    dir: locale-mismatch
+    entry: index.html
+    strings:
+      lang: { uk: "uk", en: "en" }
+      pageTitle: { uk: "Витрати", en: "Expenses" }
+      totalLabel: { uk: "Разом", en: "Total" }
+      boundaryCaught: { uk: "межа помилок перехопила", en: "the error boundary caught" }
+      fallback: { uk: "Не вдалося показати суму.", en: "The total could not be shown." }
+      serverShows: { uk: "серверний HTML показує", en: "the server HTML shows" }
+      nowShows: { uk: "тепер на сторінці", en: "now on the page" }
+      sameNode: { uk: "той самий вузол <strong>", en: "the same <strong> node" }
+    title:
+      uk: "Справжня розбіжність через локаль"
+      en: "A real mismatch from a locale"
+    body:
+      uk: |
+        Розмітку в `index.html` згенерував `react-dom/server` 19.3.0 на Node.js v25.2.1 з локаллю `en-US`. `main.jsx` гідратує ту саму суму, але з локаллю браузера `uk-UA`, усередині межі помилок `Boundary`, і передає `onRecoverableError`.
+
+        Натисни **Запустити** й прочитай консоль: хто дізнався про розбіжність, а хто — ні.
+      en: |
+        The markup in `index.html` was generated by `react-dom/server` 19.3.0 on Node.js v25.2.1 with the locale `en-US`. `main.jsx` hydrates the same total but with the browser locale `uk-UA`, inside the error boundary `Boundary`, and passes `onRecoverableError`.
+
+        Press **Run** and read the console: who learned about the mismatch, and who did not.
+    tryIt:
+      uk: |
+        1. `onRecoverableError` друкує перший рядок помилки й ланцюжок `strong ← p ← ExpenseTotal ← Boundary`; рядка від межі помилок немає, на сторінці — `uk-UA`, а вузол `<strong>` новий (`false`).
+        2. Заміни `"uk-UA"` на `"en-US"` у рядку `const browserLocale`. Запусти: повідомлення немає, текст той самий, вузол той самий (`true`).
+      en: |
+        1. `onRecoverableError` prints the first line of the error and the chain `strong ← p ← ExpenseTotal ← Boundary`; there is no line from the error boundary, the page shows `uk-UA`, and the `<strong>` node is new (`false`).
+        2. Replace `"uk-UA"` with `"en-US"` in the line `const browserLocale`. Run: no message, the same text, the same node (`true`).
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: що ловить межа помилок"
+      en: "Recall: what an error boundary catches"
+    items:
+      - id: boundary-misses
+        from: re-05-07-error-boundaries-limits
+        prompt:
+          uk: "Яку із цих помилок межа помилок React **перехопить**?"
+          en: "Which of these errors will a React error boundary **catch**?"
+        answer:
+          type: choice
+          options:
+            - id: render-throw
+              text:
+                uk: "Дочірній компонент кидає помилку під час рендеру"
+                en: "A child component throws while rendering"
+            - id: handler-throw
+              text:
+                uk: "Обробник `onClick` кнопки кидає помилку"
+                en: "A button’s `onClick` handler throws"
+              why:
+                uk: "Обробники подій виконуються поза рендером. Таку помилку перехоплюють `try/catch` в самому обробнику."
+                en: "Event handlers run outside rendering. Such an error is caught with `try/catch` in the handler itself."
+            - id: async-throw
+              text:
+                uk: "Проміс, відхилений у `setTimeout` після рендеру"
+                en: "A promise rejected in a `setTimeout` after the render"
+              why:
+                uk: "Асинхронний код виконується вже після рендеру, тож межа його не бачить."
+                en: "Asynchronous code runs after the render, so the boundary does not see it."
+          correct: [render-throw]
+        explanation:
+          uk: "Межа ловить лише помилки рендеру своїх дочірніх компонентів. Обробники, асинхронний код і — як у цьому уроці — розбіжності гідратації їй не видно."
+          en: "A boundary catches only errors in the rendering of its children. Handlers, asynchronous code and — as in this lesson — hydration mismatches are invisible to it."
+
+  - id: safe-route
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: safe-route
+    entry: index.js
+    editable: [route.js]
+    capabilities: { network: loopback }
+    strings:
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      imported: { uk: "Імпортована справа", en: "Imported task" }
+      noDate: { uk: "без терміну", en: "no due date" }
+      lang: { uk: "uk", en: "en" }
+      pageTitle: { uk: "Справи", en: "Tasks" }
+      errorTitle: { uk: "Щось пішло не так", en: "Something went wrong" }
+      errorText: { uk: "Ми вже знаємо про це. Ідентифікатор запиту:", en: "We already know about it. Request id:" }
+      clientError: { uk: "клієнт отримав помилку", en: "the client got an error" }
+      mismatchMessage: { uk: "Hydration failed because the server rendered text didn't match the client.", en: "Hydration failed because the server rendered text didn't match the client." }
+    title:
+      uk: "Маршрут, який не падає, і звіт про розбіжність"
+      en: "A route that does not crash, and a mismatch report"
+    instructions:
+      uk: |
+        Допиши `route.js`. `createRenderRoute({ loadTasks, log })` повертає обробник `node:http`, який:
+
+        - визначає ідентифікатор запиту: значення заголовка `x-request-id`, якщо воно є, інакше — `randomUUID()`; цей ідентифікатор іде в заголовок `x-request-id` **кожної** відповіді;
+        - якщо `renderPage(loadTasks())` вдався — відповідає 200, `content-type: text/html; charset=utf-8` і сторінкою;
+        - якщо він кинув помилку — один раз викликає `log({ level: 'error', requestId, message })` з повідомленням помилки й відповідає 500, `text/html` і `fallbackPage(requestId)`. Жодних подробиць помилки в цій відповіді;
+        - після невдалого запиту сервер обслуговує наступні як звичайно.
+
+        `reportRecoverable(log, requestId)` повертає функцію для `onRecoverableError`: для кожної розбіжності вона викликає `log` з об’єктом, у якому є `requestId`, `message` помилки й `componentStack` з другого аргументу.
+
+        `pages.js` готовий. Драйвер `index.js` надсилає три запити, другий із яких отримує пошкоджені дані (`dueDate` — число), а потім імітує звіт клієнта. **Перевірити** запускає твій обробник з іншими даними й заголовками й перевіряє відповіді та журнал.
+      en: |
+        Finish `route.js`. `createRenderRoute({ loadTasks, log })` returns a `node:http` handler that:
+
+        - determines the request id: the value of the `x-request-id` header if there is one, otherwise `randomUUID()`; this id goes into the `x-request-id` header of **every** answer;
+        - if `renderPage(loadTasks())` succeeds — answers 200, `content-type: text/html; charset=utf-8` and the page;
+        - if it throws — calls `log({ level: 'error', requestId, message })` once with the error’s message and answers 500, `text/html` and `fallbackPage(requestId)`. No details of the error in that answer;
+        - after a failed request the server serves the next ones as usual.
+
+        `reportRecoverable(log, requestId)` returns a function for `onRecoverableError`: for each mismatch it calls `log` with an object holding `requestId`, the error’s `message` and the `componentStack` from the second argument.
+
+        `pages.js` is ready. The driver `index.js` sends three requests, the second of which gets damaged data (`dueDate` is a number), and then imitates the client’s report. **Check** runs your handler with other data and headers and checks the answers and the log.
+    testTitles:
+      "a good request answers 200 with the rendered page":
+        uk: "Звичайний запит отримує 200 і відрендерену сторінку"
+        en: "A good request gets 200 and the rendered page"
+      "a render error answers 500 with the fallback page and the request id":
+        uk: "Помилка рендерингу дає 500, сторінку `fallbackPage` і ідентифікатор запиту"
+        en: "A render error gives 500, the `fallbackPage` page and the request id"
+      "the 500 page shows no error details":
+        uk: "Сторінка 500 не показує подробиць помилки"
+        en: "The 500 page shows no error details"
+      "the error is logged once with the request id and the message":
+        uk: "Помилку записано в журнал один раз з ідентифікатором запиту й повідомленням"
+        en: "The error is logged once with the request id and the message"
+      "an incoming x-request-id is kept":
+        uk: "Вхідний `x-request-id` зберігається"
+        en: "An incoming `x-request-id` is kept"
+      "the server keeps answering after a failed request":
+        uk: "Після невдалого запиту сервер відповідає далі"
+        en: "The server keeps answering after a failed request"
+      "reportRecoverable logs the mismatch with its component stack":
+        uk: "`reportRecoverable` записує розбіжність разом із `componentStack`"
+        en: "`reportRecoverable` logs the mismatch with its `componentStack`"
+    hints:
+      nudge:
+        uk: "Яка частина обробника може кинути помилку? Саме її треба загорнути — і вирішити, що відповісти в кожному з двох випадків."
+        en: "Which part of the handler can throw? That is the part to wrap — and then decide what to answer in each of the two cases."
+      explanation:
+        uk: "`try { … } catch (error) { … }` перехоплює помилку, кинуту всередині `try`, — як у прикладі з `CATCH_ERRORS`. Заголовки запиту лежать у `req.headers` з назвами малими літерами. Відповідь з потрібними заголовками дає `res.writeHead(статус, { … })`, а тіло — `res.end(текст)`. Стек і повідомлення помилки йдуть лише в `log`: людина отримує ідентифікатор, за яким їх можна знайти. Для `reportRecoverable` поверни функцію з двома параметрами — як обробник, що його React викликає з `(error, errorInfo)`."
+        en: "`try { … } catch (error) { … }` catches an error thrown inside `try` — as in the example with `CATCH_ERRORS`. Request headers are in `req.headers`, with lowercase names. `res.writeHead(status, { … })` gives an answer with the right headers, and `res.end(text)` the body. The stack and the message go only to `log`: the person gets an id that finds them. For `reportRecoverable`, return a function with two parameters — like the handler React calls with `(error, errorInfo)`."
+    solutionNote:
+      uk: "`try/catch` охоплює саме те, що може кинути: завантаження даних і рендер. Обидві гілки відповідають із тим самим `x-request-id`, тож запис у журналі, сторінку 500 і звіт клієнта можна зіставити. Подробиці помилки лишаються в журналі, а людина бачить лише ідентифікатор."
+      en: "`try/catch` covers exactly what can throw: loading the data and rendering. Both branches answer with the same `x-request-id`, so the log entry, the 500 page and the client’s report can be matched up. The error’s details stay in the log, and the person sees only the id."
+    feedback:
+      - when: { test: "a good request answers 200 with the rendered page" }
+        message:
+          uk: "Для звичайних даних ця перевірка чекає статус 200, `content-type`, що починається з `text/html`, і сторінку з `<div id=\"root\"><ul><li>…`. Якщо всі перевірки падають разом, перша помилка в консолі показує причину."
+          en: "For ordinary data this check expects status 200, a `content-type` starting with `text/html` and the page with `<div id=\"root\"><ul><li>…`. If every check fails at once, the first error in the console shows why."
+      - when: { test: "a render error answers 500 with the fallback page and the request id" }
+        message:
+          uk: "Коли рендер кидає, ця перевірка чекає статус 500, `text/html`, текст `fallbackPage(requestId)` і непорожній заголовок `x-request-id` з тим самим ідентифікатором, що на сторінці. Якщо сервер замість відповіді падає, помилку ніхто не перехопив — загорни рендер у `try/catch`."
+          en: "When the render throws, this check expects status 500, `text/html`, the text of `fallbackPage(requestId)` and a non-empty `x-request-id` header with the same id as on the page. If the server crashes instead of answering, nothing caught the error — wrap the render in `try/catch`."
+      - when: { test: "the 500 page shows no error details" }
+        message:
+          uk: "Ця перевірка шукає у відповіді 500 повідомлення чи стек помилки (`TypeError`, `slice`, рядки `at …`). Їх не має бути: вони йдуть лише в `log`."
+          en: "This check looks for the error’s message or stack in the 500 answer (`TypeError`, `slice`, `at …` lines). There must be none: they go only to `log`."
+      - when: { test: "the error is logged once with the request id and the message" }
+        message:
+          uk: "Ця перевірка надсилає запит із `x-request-id: req-check-500` і чекає рівно один виклик `log` з `level: 'error'`, `requestId: 'req-check-500'` і `message` помилки рендерингу. `console.error` у журнал `log` не потрапляє."
+          en: "This check sends a request with `x-request-id: req-check-500` and expects exactly one `log` call with `level: 'error'`, `requestId: 'req-check-500'` and the render error’s `message`. `console.error` does not reach the `log` journal."
+      - when: { test: "an incoming x-request-id is kept" }
+        message:
+          uk: "Ця перевірка надсилає `x-request-id: req-check-42` і чекає те саме значення в заголовку `x-request-id` відповіді. Новий `randomUUID()` потрібен лише тоді, коли заголовка немає."
+          en: "This check sends `x-request-id: req-check-42` and expects the same value in the answer’s `x-request-id` header. A new `randomUUID()` is needed only when the header is missing."
+      - when: { test: "the server keeps answering after a failed request" }
+        message:
+          uk: "Ця перевірка надсилає запит, рендер якого падає, і одразу ще один зі звичайними даними: перший має отримати 500, другий — 200."
+          en: "This check sends a request whose render fails and right after it one with ordinary data: the first must get 500, the second 200."
+      - when: { test: "reportRecoverable logs the mismatch with its component stack" }
+        message:
+          uk: "Ця перевірка викликає функцію з `reportRecoverable(log, \"req-check-7\")` з помилкою та `{ componentStack }` і чекає один виклик `log` з `requestId`, `message` помилки й тим самим `componentStack`."
+          en: "This check calls the function from `reportRecoverable(log, \"req-check-7\")` with an error and `{ componentStack }` and expects one `log` call with `requestId`, the error’s `message` and that same `componentStack`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-13
+    body:
+      uk: "Крок проєкту цього розділу ще не написаний. За планом курсу в ньому маршрут `GET /` твого сервера відповідатиме на помилку рендерингу безпечною сторінкою 500 з ідентифікатором запиту, а клієнтська точка входу передаватиме в `hydrateRoot` обробник `onRecoverableError`. Крок навмисно внесе розбіжність твого домену — дата, годинник чи локаль, — і ти знайдеш її за цим звітом."
+      en: "The project step of this unit is not written yet. According to the course plan, in it your server’s `GET /` route answers a render error with a safe 500 page carrying the request id, and the client entry passes an `onRecoverableError` handler to `hydrateRoot`. The step deliberately injects your domain’s mismatch — a date, the clock or a locale — and you find it through that report."

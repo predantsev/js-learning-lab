@@ -1,0 +1,582 @@
+id: no-13-06-debug-hydration-mismatch
+unit: NO-13
+title:
+  uk: "Налагодження: справжня невідповідність гідратації та витік секрету"
+  en: "Debug: a real hydration mismatch and a leaked secret"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Відтворити справжню розбіжність гідратації із серверного запиту й простежити її до рядка, який на клієнті рендерить інакше."
+    en: "Reproduce a real hydration mismatch from a server request and trace it to the line that renders differently on the client."
+  - uk: "Знайти секрет, що просочився в серіалізовані початкові дані, і прибрати його, не зламавши гідратацію."
+    en: "Find a secret leaking into the serialized initial data and remove it without breaking hydration."
+  - uk: "Виправити маршрут, який через помилку рендерингу кладе весь сервер замість того, щоб віддати безпечну сторінку."
+    en: "Repair a route that crashes the server on a render error instead of returning a fallback."
+prerequisites: [no-13-05-rsc-constraints]
+subskills:
+  - { family: B-11, skill: "hydration", depth: assess }
+  - { family: B-11, skill: "server/client data/secret boundary", depth: assess }
+  - { family: B-11, skill: "mismatch/error handling", depth: assess }
+glossary: []
+selfCheck: [predict-defects, repair]
+
+blocks:
+  - id: three-records
+    kind: explanation
+    title:
+      uk: "Сторінка виглядає правильно — і все одно зламана"
+      en: "The page looks right — and is still broken"
+    body:
+      uk: |
+        Розбіжність гідратації в тексті React виправляє сам: за мить сторінка показує клієнтський варіант. Витік секрету не видно на екрані взагалі. А маршрут без `try/catch` працює, доки не трапиться перший зіпсований запис. Тому «на вигляд усе гаразд» нічого не доводить — дивись на записи, а не на екран:
+
+        1. **Сторінка як прийшла із сервера.** Розмітку з `#root` порівняй із тим, що клієнт рендерить із даних `#initial-data`. Перший символ, де рядки розходяться, і є місцем розбіжності; у браузері те саме показує помилка React: рядок із `+` — клієнт, із `-` — сервер.
+        2. **Початкові дані.** Шукай у них **значення** серверних налаштувань (сам токен), а не слово «token», і перевір, які поля мають записи.
+        3. **Маршрут.** Надішли запит із даними, які ламають рендер, і ще один після нього. Другий має отримати відповідь.
+
+        Виправлення — у джерелі: «сьогодні» клієнт бере з даних сервера, дані йдуть через allowlist, рендер загорнуто в `try/catch` з безпечною сторінкою 500.
+      en: |
+        React fixes a text mismatch by itself: a moment later the page shows the client version. A leaked secret is not visible on screen at all. And a route without `try/catch` works until the first damaged record. So “it looks fine” proves nothing — look at the records, not at the screen:
+
+        1. **The page as it came from the server.** Compare the markup in `#root` with what the client renders from the `#initial-data` data. The first character where the strings differ is the place of the mismatch; in the browser React’s error shows the same: the line with `+` is the client, the line with `-` is the server.
+        2. **The initial data.** Search it for the **values** of server settings (the token itself), not for the word “token”, and check which fields the records have.
+        3. **The route.** Send a request with data that breaks the render, and one more after it. The second must get an answer.
+
+        The fixes are at the source: the client takes “today” from the server’s data, the data goes through an allowlist, the render is wrapped in `try/catch` with a safe 500 page.
+
+  - id: seeded-replay
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Засіяна помилка крок за кроком"
+      en: "The seeded failure step by step"
+    textEquivalent:
+      uk: "Сервер рендерить справу з терміном 2026-03-02 для свого дня 2026-03-01 і пише «згодом». У початкові дані він кладе справи, свій день — і весь об’єкт налаштувань разом із токеном. Браузер малює «згодом». Клієнтська точка входу бере день зі свого годинника, тож для неї справа прострочена, і вона рендерить «прострочено». React знаходить розбіжність у цьому вузлі, повідомляє про неї (рядок + — клієнт, рядок - — сервер) і рендерить список заново. Тим часом у коді сторінки, в блоці initial-data, лежить токен — його бачить будь-хто."
+      en: "The server renders a task due 2026-03-02 for its own day 2026-03-01 and writes “upcoming”. Into the initial data it puts the tasks, its day — and the whole settings object, token included. The browser paints “upcoming”. The client entry takes the day from its own clock, so for it the task is overdue, and it renders “overdue”. React finds the mismatch at that node, reports it (the + line is the client, the - line is the server) and renders the list again. Meanwhile the page source holds the token in the initial-data block — anyone can see it."
+    spec:
+      actors:
+        - { id: server, label: "node:http" }
+        - { id: browser, label: { uk: "Браузер", en: "Browser" } }
+        - { id: client, label: "client.js" }
+      intro:
+        uk: "Сервер, браузер і клієнтська точка входу засіяної сторінки справ."
+        en: "The server, the browser and the client entry of the seeded task page."
+      messages:
+        - from: server
+          to: server
+          kind: note
+          label: { uk: "today = 2026-03-01", en: "today = 2026-03-01" }
+          caption:
+            uk: "Сервер рендерить зі своїм днем: справа на 2026-03-02 — «згодом»."
+            en: "The server renders with its own day: the task due 2026-03-02 is “upcoming”."
+        - from: server
+          to: browser
+          kind: return
+          label: "200 + #initial-data"
+          note: { uk: "{ tasks, today, config } ← токен!", en: "{ tasks, today, config } ← token!" }
+          caption:
+            uk: "У дані потрапили справи, день — і весь `config` із токеном. На екрані його не видно, у коді сторінки — видно."
+            en: "The data got the tasks, the day — and the whole `config` with the token. It is invisible on screen, but visible in the page source."
+        - from: client
+          to: client
+          kind: note
+          label: "new Date()"
+          caption:
+            uk: "Клієнт рахує «сьогодні» зі свого годинника — і для нього справа вже прострочена."
+            en: "The client computes “today” from its own clock — and for it the task is already overdue."
+        - from: client
+          to: browser
+          label: "hydrateRoot"
+          caption:
+            uk: "React порівнює: у першому вузлі `<li>` клієнт дає «прострочено», сервер дав «згодом». Помилка: `+` прострочено, `-` згодом."
+            en: "React compares: in the first `<li>` node the client gives “overdue”, the server gave “upcoming”. The error: `+` overdue, `-` upcoming."
+        - from: browser
+          to: browser
+          kind: note
+          label: { uk: "список рендериться заново", en: "list rendered again" }
+          caption:
+            uk: "React рендерить список на клієнті заново. На вигляд усе гаразд — але мітка вже не та, що надіслав сервер."
+            en: "React renders the list again on the client. It looks fine — but the label is no longer what the server sent."
+
+  - id: predict-defects
+    kind: prediction
+    prompt:
+      uk: "У засіяному сервері справ є чотири підозрілі рядки. Який із них спричиняє **розбіжність гідратації**?"
+      en: "The seeded task server has four suspicious lines. Which one causes the **hydration mismatch**?"
+    code: |
+      // A — server.js
+      const data = { tasks, today, config };
+      // B — client.js
+      const today = new Date().toISOString().slice(0, 10);
+      // C — server.js
+      const requestId = req.headers["x-request-id"] || randomUUID();
+      // D — TaskList.js
+      h("li", { key: task.id }, task.title.trim(), " — ", dueLabel(task.dueDate, today))
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: b
+          text: { uk: "B — клієнт рахує «сьогодні» сам", en: "B — the client computes “today” itself" }
+        - id: a
+          text: { uk: "A — увесь `config` у даних", en: "A — the whole `config` in the data" }
+          why:
+            uk: "Це **витік**: токен потрапляє в сторінку. Але рендеру `config` не змінює — розмітка від цього не розходиться."
+            en: "That is a **leak**: the token gets into the page. But `config` does not change the render — the markup does not diverge because of it."
+        - id: c
+          text: { uk: "C — випадковий ідентифікатор запиту", en: "C — a random request id" }
+          why:
+            uk: "Випадкове значення спричинило б розбіжність, якби потрапило в **розмітку**. Ідентифікатор запиту йде лише в заголовок і журнал."
+            en: "A random value would cause a mismatch if it got into the **markup**. The request id goes only into a header and the log."
+        - id: d
+          text: { uk: "D — `task.title.trim()`", en: "D — `task.title.trim()`" }
+          why:
+            uk: "`trim()` дає той самий результат на сервері й у браузері. Цей рядок небезпечний іншим: запис без назви (`null`) кидає `TypeError` — і без `try/catch` кладе сервер."
+            en: "`trim()` gives the same result on the server and in the browser. This line is dangerous in another way: a record with no title (`null`) throws a `TypeError` — and without `try/catch` takes the server down."
+      correct: [b]
+    explanation:
+      uk: "Розбіжність дає те, що змінює **розмітку** по-різному на двох боках: B. A — витік секрету, D — причина падіння маршруту на зіпсованому записі, C — безпечний. У вправі цього уроку тобі треба виправити всі три дефекти."
+      en: "A mismatch comes from what changes the **markup** differently on the two sides: B. A is a secret leak, D is why the route crashes on a damaged record, C is harmless. In this lesson’s exercise you fix all three defects."
+
+  - id: seeded-page
+    kind: example
+    runtime: isolated-node
+    dir: seeded-page
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      noMismatch: { uk: "Розмітка сервера й клієнта однакова.", en: "The server and client markup are the same." }
+      mismatchAt: { uk: "Розбіжність із символу", en: "Mismatch from character" }
+      inPage: { uk: "у коді сторінки", en: "in the page source" }
+    title:
+      uk: "Діагностика засіяної сторінки звичок"
+      en: "Diagnosing a seeded habit page"
+    body:
+      uk: |
+        `app.js` — засіяний застосунок звичок: сервер рендерить серії для свого дня, а `clientRender` — так, як рендерить клієнт. `index.js` робить перші два кроки діагностики: запитує сторінку із сервера на 127.0.0.1, порівнює `#root` із клієнтським рендером із даних сторінки й шукає в коді сторінки значення токена.
+
+        Натисни **Запустити**, а потім знайди в `app.js` рядки, що відповідають двом знахідкам.
+      en: |
+        `app.js` is a seeded habit app: the server renders streaks for its own day, and `clientRender` renders the way the client does. `index.js` does the first two steps of the diagnosis: it requests the page from the server on 127.0.0.1, compares `#root` with the client’s render from the page’s data and searches the page source for the token’s value.
+
+        Press **Run**, then find the lines in `app.js` that match the two findings.
+    tryIt:
+      uk: |
+        1. Вивід показує розбіжність у серії першої звички (сервер `3`, клієнт `0` — у дні, коли запускаєш, звички не виконано) і `syncToken … true`.
+        2. У `clientRender` заміни день із `Date.now()` на `data.today`. Запусти: розбіжності немає.
+        3. У `createSeededServer` заміни `settings` у `JSON.stringify(…)` на `locale: settings.locale`. Запусти: `syncToken … false`, а гідратація не постраждала — клієнт не використовує токена.
+      en: |
+        1. The output shows a mismatch in the first habit’s streak (server `3`, client `0` — on the day you run it the habit is not done) and `syncToken … true`.
+        2. In `clientRender` replace the day from `Date.now()` with `data.today`. Run: no mismatch.
+        3. In `createSeededServer` replace `settings` inside `JSON.stringify(…)` with `locale: settings.locale`. Run: `syncToken … false`, and hydration did not suffer — the client does not use the token.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: як читати помилку гідратації"
+      en: "Recall: how to read a hydration error"
+    items:
+      - id: plus-minus
+        from: re-11-06-debug-hydration-trace
+        prompt:
+          uk: "У development-збірці React під назвою елемента в помилці гідратації є два рядки — з `+` і з `-`. Що означає кожен?"
+          en: "In React’s development build, under the element’s name in a hydration error, there are two lines — one with `+` and one with `-`. What does each mean?"
+        answer:
+          type: choice
+          options:
+            - id: plus-client
+              text:
+                uk: "`+` — те, що дав клієнт, `-` — те, що прийшло із сервера"
+                en: "`+` is what the client produced, `-` is what came from the server"
+            - id: plus-server
+              text:
+                uk: "`+` — те, що прийшло із сервера, `-` — те, що дав клієнт"
+                en: "`+` is what came from the server, `-` is what the client produced"
+              why:
+                uk: "Навпаки: `+` — новий, клієнтський варіант, який React поставить на сторінку; `-` — серверний, який він прибере."
+                en: "The other way round: `+` is the new, client version React puts on the page; `-` is the server version it removes."
+            - id: before-after
+              text:
+                uk: "`+` — текст після кліку, `-` — до кліку"
+                en: "`+` is the text after a click, `-` before it"
+              why:
+                uk: "Гідратація відбувається до будь-яких кліків: вона порівнює перший рендер клієнта із серверним HTML."
+                en: "Hydration happens before any click: it compares the client’s first render with the server HTML."
+          correct: [plus-client]
+        explanation:
+          uk: "Під час підготовки цього уроку засіяна сторінка справ дала в Chrome рядки `+ прострочено` і `- згодом`: клієнт порахував іншу мітку, ніж сервер. Знайди перший вузол, де вони розходяться, — і питай, що в його рендері різне на двох боках."
+          en: "While preparing this lesson the seeded task page gave the lines `+ overdue` and `- upcoming` in Chrome: the client computed a different label from the server. Find the first node where they differ — and ask what in its render differs between the two sides."
+
+  - id: repair
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: repair
+    entry: index.js
+    editable: [server.js, client.js]
+    capabilities: { network: loopback }
+    strings:
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+      note: { uk: "дзвонили двічі", en: "called twice" }
+      noDate: { uk: "без терміну", en: "no due date" }
+      overdue: { uk: "прострочено", en: "overdue" }
+      dueToday: { uk: "на сьогодні", en: "due today" }
+      upcoming: { uk: "згодом", en: "upcoming" }
+      lang: { uk: "uk", en: "en" }
+      pageTitle: { uk: "Справи", en: "Tasks" }
+      errorTitle: { uk: "Щось пішло не так", en: "Something went wrong" }
+      errorText: { uk: "Ідентифікатор запиту:", en: "Request id:" }
+      sameMarkup: { uk: "розмітка сервера й клієнта однакова", en: "server and client markup are the same" }
+      server: { uk: "сервер", en: "server" }
+      client: { uk: "клієнт", en: "client" }
+      tokenInPage: { uk: "apiToken у сторінці", en: "apiToken in the page" }
+      taskFields: { uk: "поля справи в даних", en: "task fields in the data" }
+      clientError: { uk: "клієнт отримав помилку", en: "the client got an error" }
+    title:
+      uk: "Полагодь засіяну сторінку справ"
+      en: "Repair the seeded task page"
+    instructions:
+      uk: |
+        Сторінка справ має три засіяні дефекти. Знайди й виправ їх у `server.js` і `client.js`:
+
+        - розмітка, яку клієнт рендерить із даних сторінки, мусить збігатися з `#root` від сервера;
+        - у сторінці не має бути жодного серверного налаштування (`apiToken`, `dataDir`), а кожна справа в `#initial-data` має рівно поля `id`, `title`, `dueDate`, `done`;
+        - коли рендер кидає помилку, маршрут відповідає 500 зі сторінкою `fallbackPage(requestId)` і записує в `log` об’єкт із `requestId`, а наступні запити обслуговує як звичайно.
+
+        `TaskList.js`, `config.js`, `html.js` і `tasks.js` правильні, їх не змінюй. Клієнтові потрібна локаль (`config.locale`) — її можна передати окремим полем. **Запустити** робить діагностику: порівнює розмітку, шукає токен, показує поля справи й надсилає ще два запити, перший із яких має зіпсований запис. **Перевірити** робить те саме з іншими справами.
+      en: |
+        The task page has three seeded defects. Find and fix them in `server.js` and `client.js`:
+
+        - the markup the client renders from the page’s data must match the server’s `#root`;
+        - the page must hold no server setting (`apiToken`, `dataDir`), and every task in `#initial-data` must have exactly the fields `id`, `title`, `dueDate`, `done`;
+        - when the render throws, the route answers 500 with the `fallbackPage(requestId)` page and logs an object with `requestId` to `log`, and serves the next requests as usual.
+
+        `TaskList.js`, `config.js`, `html.js` and `tasks.js` are correct; do not change them. The client needs the locale (`config.locale`) — you may pass it as a separate field. **Run** does the diagnosis: it compares the markup, searches for the token, shows a task’s fields and sends two more requests, the first of which has a damaged record. **Check** does the same with other tasks.
+    testTitles:
+      "the page answers 200 with the list":
+        uk: "Сторінка відповідає 200 зі списком"
+        en: "The page answers 200 with the list"
+      "the client render matches the server markup":
+        uk: "Клієнтський рендер збігається із серверною розміткою"
+        en: "The client render matches the server markup"
+      "the page holds no server setting":
+        uk: "У сторінці немає серверних налаштувань"
+        en: "The page holds no server setting"
+      "the initial data holds only public task fields":
+        uk: "Початкові дані мають лише публічні поля справ"
+        en: "The initial data holds only public task fields"
+      "a render error answers 500 with the fallback page":
+        uk: "Помилка рендерингу дає 500 і сторінку `fallbackPage` з ідентифікатором у журналі"
+        en: "A render error gives 500 and the `fallbackPage` page, with the id in the log"
+      "the server keeps answering after a render error":
+        uk: "Після помилки рендерингу сервер відповідає далі"
+        en: "The server keeps answering after a render error"
+    hints:
+      nudge:
+        uk: "Почни з **Запустити** й прочитай діагностику: кожен рядок указує на один дефект. Який рядок коду дає те, що в ній розходиться?"
+        en: "Start with **Run** and read the diagnosis: each line points at one defect. Which line of code produces what diverges in it?"
+      explanation:
+        uk: "Розбіжність виникає, коли клієнт отримує для рендеру інше значення, ніж сервер; усе, із чим рендерив сервер, уже лежить у даних сторінки. Витік — це об’єкт, переданий у дані цілком: склади новий об’єкт лише з потрібних полів, як у вправі про витрати. Падіння — це помилка, яку не перехопив ніхто: блок, що може кинути, загортають у `try/catch`, як у вправі з маршрутом справ."
+        en: "A mismatch appears when the client gets a different value for its render than the server; everything the server rendered with is already in the page’s data. A leak is an object passed into the data whole: build a new object with only the needed fields, as in the expenses exercise. A crash is an error nobody caught: the block that can throw goes into `try/catch`, as in the task-route exercise."
+    solutionNote:
+      uk: "Клієнт бере `today` з даних — і рендерить те саме, що сервер. Сервер кладе в дані справи через allowlist і окреме поле `locale` замість усього `config`, тож токен і шлях лишаються на сервері, а гідратації вони й не потрібні. Рендер і збирання сторінки загорнуто в `try/catch`: зіпсований запис дає 500 з ідентифікатором у журналі, а не зупинку процесу."
+      en: "The client takes `today` from the data — and renders the same thing as the server. The server puts the tasks into the data through an allowlist, plus a separate `locale` field instead of the whole `config`, so the token and the path stay on the server, and hydration does not need them anyway. Rendering and building the page are wrapped in `try/catch`: a damaged record gives a 500 with the id in the log, not a stopped process."
+    feedback:
+      - when: { test: "the page answers 200 with the list" }
+        message:
+          uk: "Для звичайних справ ця перевірка чекає статус 200 і назву справи в тілі. Якщо всі перевірки падають разом, перша помилка в консолі показує причину."
+          en: "For ordinary tasks this check expects status 200 and the task’s title in the body. If every check fails at once, the first error in the console shows why."
+      - when: { test: "the client render matches the server markup" }
+        message:
+          uk: "Ця перевірка рендерить `clientElement(data)` з даних сторінки й порівнює з `#root`. Сервер рендерив зі своїм `today`; клієнт мусить узяти те саме значення з даних, а не зі свого годинника."
+          en: "This check renders `clientElement(data)` from the page’s data and compares it with `#root`. The server rendered with its own `today`; the client must take that same value from the data, not from its own clock."
+      - when: { test: "the page holds no server setting" }
+        message:
+          uk: "Ця перевірка шукає в сторінці значення `apiToken` і слово `dataDir`. Обидва з’являються, коли в дані потрапляє весь `config`; передай лише те, що потрібно клієнтові."
+          en: "This check searches the page for the `apiToken` value and the word `dataDir`. Both appear when the whole `config` gets into the data; pass only what the client needs."
+      - when: { test: "the initial data holds only public task fields" }
+        message:
+          uk: "Кожна справа в `#initial-data` має містити рівно `id`, `title`, `dueDate`, `done`. Поле `internalNote` компонент не показує, але в даних його видно кожному."
+          en: "Every task in `#initial-data` must hold exactly `id`, `title`, `dueDate`, `done`. The component never shows `internalNote`, but in the data everyone can see it."
+      - when: { test: "a render error answers 500 with the fallback page" }
+        message:
+          uk: "Ця перевірка надсилає `x-request-id: req-check-9` для справи без назви й чекає 500, текст `fallbackPage` із цим ідентифікатором і запис у `log` з `requestId: \"req-check-9\"`. Якщо сервер замість відповіді падає, помилку рендерингу ніхто не перехопив."
+          en: "This check sends `x-request-id: req-check-9` for a task with no title and expects 500, the `fallbackPage` text with that id and a `log` entry with `requestId: \"req-check-9\"`. If the server crashes instead of answering, nobody caught the render error."
+      - when: { test: "the server keeps answering after a render error" }
+        message:
+          uk: "Перший запит цієї перевірки ламає рендер і має отримати 500, другий — звичайний і має отримати 200."
+          en: "This check’s first request breaks the render and must get 500; the second is ordinary and must get 200."
+
+  - id: lab-mismatch
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Лабораторія: помилка гідратації в справжній консолі"
+      en: "Lab: a hydration error in the real console"
+    intro:
+      uk: |
+        Ця засіяна сторінка справ живе в теці `debug` всередині лабораторії `~/js-course/ssr-lab` і бере звідти пакети та `html-json.js`. Якщо лабораторії чи `html-json.js` ще немає, спершу пройди локальні завдання уроків «Гідратація в браузері» й «Межа даних і секретів».
+
+        Сервер рендерить із фіксованим днем проєкту `2026-03-01` (у доменах курсу «сьогодні» завжди передають параметром), а клієнт бере день зі свого годинника. Під час підготовки уроку все виконано на macOS з Node.js v25.2.1, react 19.3.0, esbuild 0.28.2 і в Chrome; вивід нижче справжній. На Node.js 22, Windows і Linux не перевірено.
+
+        **Крок 1 — `debug/TaskList.js`:**
+
+        ```js
+        // Due labels depend on the `today` prop ('YYYY-MM-DD').
+        import { createElement as h } from 'react';
+
+        function dueLabel(dueDate, today) {
+          if (dueDate === null) return 'без терміну';
+          if (dueDate < today) return 'прострочено';
+          if (dueDate === today) return 'на сьогодні';
+          return 'згодом';
+        }
+
+        export function TaskList({ tasks, today }) {
+          return h('ul', null,
+            tasks.map((task) => h('li', { key: task.id }, task.title, ' — ', dueLabel(task.dueDate, today))));
+        }
+        ```
+
+        **Крок 2 — `debug/client.js`** (засіяний):
+
+        ```js
+        // The seeded client entry: it works out "today" on its own.
+        import { createElement as h } from 'react';
+        import { hydrateRoot } from 'react-dom/client';
+        import { TaskList } from './TaskList.js';
+
+        const data = JSON.parse(document.getElementById('initial-data').textContent);
+        const today = new Date().toISOString().slice(0, 10);
+        hydrateRoot(document.getElementById('root'), h(TaskList, { tasks: data.tasks, today }));
+        console.log('hydrated');
+        ```
+
+        **Крок 3 — `debug/server.js`:**
+
+        ```js
+        // The seeded server: renders with the project's fixed demo day and passes it in the data.
+        import http from 'node:http';
+        import { readFile } from 'node:fs/promises';
+        import { createElement as h } from 'react';
+        import { renderToString } from 'react-dom/server';
+        import { TaskList } from './TaskList.js';
+        import { serializeForHtml } from '../html-json.js';
+
+        const TODAY = '2026-03-01';
+        const tasks = [
+          { id: 't-01', title: 'Полити квіти', dueDate: '2026-03-02' },
+          { id: 't-02', title: 'Здати книжки в бібліотеку', dueDate: '2026-03-01' },
+        ];
+
+        const server = http.createServer(async (req, res) => {
+          if (req.method === 'GET' && req.url === '/') {
+            const data = { tasks, today: TODAY };
+            const markup = renderToString(h(TaskList, data));
+            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+            res.end(`<!doctype html>
+        <html lang="uk">
+        <head><meta charset="utf-8"><title>Справи</title></head>
+        <body>
+        <div id="root">${markup}</div>
+        <script id="initial-data" type="application/json">${serializeForHtml(data)}</script>
+        <script type="module" src="/client.js"></script>
+        </body>
+        </html>`);
+            return;
+          }
+          if (req.method === 'GET' && req.url === '/client.js') {
+            res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+            res.end(await readFile(new URL('./public/client.js', import.meta.url)));
+            return;
+          }
+          res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+          res.end('not found');
+        });
+
+        server.listen(4322, '127.0.0.1', () => console.log('Debug lab: http://127.0.0.1:4322/'));
+        ```
+
+        **Крок 5 — помилка в консолі** (скорочено; дата у `today` — день, коли ти запускаєш):
+
+        ```text
+        Hydration failed because the server rendered text didn't match the client. As a result this tree will be regenerated on the client. This can happen if a SSR-ed Client Component used:
+        …
+          <TaskList tasks={[...]} today="2026-10-04">
+            <ul>
+              <li>
+        +       прострочено
+        -       згодом
+              ...
+        ```
+      en: |
+        This seeded task page lives in the `debug` folder inside the `~/js-course/ssr-lab` lab and takes the packages and `html-json.js` from there. If you do not have the lab or `html-json.js` yet, first do the local tasks of the lessons “Hydration in the browser” and “Data and secret boundary”.
+
+        The server renders with the project’s fixed day `2026-03-01` (in the course domains “today” is always passed in as a parameter), while the client takes the day from its own clock. While preparing the lesson everything was run on macOS with Node.js v25.2.1, react 19.3.0, esbuild 0.28.2 and in Chrome; the output below is real. Not checked on Node.js 22, Windows or Linux.
+
+        **Step 1 — `debug/TaskList.js`:**
+
+        ```js
+        // Due labels depend on the `today` prop ('YYYY-MM-DD').
+        import { createElement as h } from 'react';
+
+        function dueLabel(dueDate, today) {
+          if (dueDate === null) return 'no due date';
+          if (dueDate < today) return 'overdue';
+          if (dueDate === today) return 'due today';
+          return 'upcoming';
+        }
+
+        export function TaskList({ tasks, today }) {
+          return h('ul', null,
+            tasks.map((task) => h('li', { key: task.id }, task.title, ' — ', dueLabel(task.dueDate, today))));
+        }
+        ```
+
+        **Step 2 — `debug/client.js`** (seeded):
+
+        ```js
+        // The seeded client entry: it works out "today" on its own.
+        import { createElement as h } from 'react';
+        import { hydrateRoot } from 'react-dom/client';
+        import { TaskList } from './TaskList.js';
+
+        const data = JSON.parse(document.getElementById('initial-data').textContent);
+        const today = new Date().toISOString().slice(0, 10);
+        hydrateRoot(document.getElementById('root'), h(TaskList, { tasks: data.tasks, today }));
+        console.log('hydrated');
+        ```
+
+        **Step 3 — `debug/server.js`:**
+
+        ```js
+        // The seeded server: renders with the project's fixed demo day and passes it in the data.
+        import http from 'node:http';
+        import { readFile } from 'node:fs/promises';
+        import { createElement as h } from 'react';
+        import { renderToString } from 'react-dom/server';
+        import { TaskList } from './TaskList.js';
+        import { serializeForHtml } from '../html-json.js';
+
+        const TODAY = '2026-03-01';
+        const tasks = [
+          { id: 't-01', title: 'Water the plants', dueDate: '2026-03-02' },
+          { id: 't-02', title: 'Return library books', dueDate: '2026-03-01' },
+        ];
+
+        const server = http.createServer(async (req, res) => {
+          if (req.method === 'GET' && req.url === '/') {
+            const data = { tasks, today: TODAY };
+            const markup = renderToString(h(TaskList, data));
+            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+            res.end(`<!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><title>Tasks</title></head>
+        <body>
+        <div id="root">${markup}</div>
+        <script id="initial-data" type="application/json">${serializeForHtml(data)}</script>
+        <script type="module" src="/client.js"></script>
+        </body>
+        </html>`);
+            return;
+          }
+          if (req.method === 'GET' && req.url === '/client.js') {
+            res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+            res.end(await readFile(new URL('./public/client.js', import.meta.url)));
+            return;
+          }
+          res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
+          res.end('not found');
+        });
+
+        server.listen(4322, '127.0.0.1', () => console.log('Debug lab: http://127.0.0.1:4322/'));
+        ```
+
+        **Step 5 — the error in the console** (shortened; the date in `today` is the day you run it):
+
+        ```text
+        Hydration failed because the server rendered text didn't match the client. As a result this tree will be regenerated on the client. This can happen if a SSR-ed Client Component used:
+        …
+          <TaskList tasks={[...]} today="2026-10-04">
+            <ul>
+              <li>
+        +       overdue
+        -       upcoming
+              ...
+        ```
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "Урок виконано на v25.2.1.", en: "The lesson was run on v25.2.1." } }
+      - { name: "Chrome", version: { uk: "будь-який сучасний", en: "any current version" }, note: { uk: "Виміряно в Chrome 154.", en: "Measured in Chrome 154." } }
+    steps:
+      - text:
+          uk: "Створи теку `debug` і в ній `TaskList.js`, `client.js` і `server.js` з кроків 1–3 вступу."
+          en: "Create the `debug` folder and in it `TaskList.js`, `client.js` and `server.js` from steps 1–3 of the introduction."
+        command: |
+          cd ~/js-course/ssr-lab
+          mkdir -p debug
+      - text:
+          uk: "Збери клієнт засіяної сторінки й запусти її сервер."
+          en: "Build the seeded page’s client and start its server."
+        command: |
+          npx esbuild debug/client.js --bundle --format=esm --outfile=debug/public/client.js
+          node debug/server.js
+        expect:
+          uk: "esbuild пише `debug/public/client.js  1.1mb ⚠️`, а сервер — `Debug lab: http://127.0.0.1:4322/`."
+          en: "esbuild prints `debug/public/client.js  1.1mb ⚠️`, and the server prints `Debug lab: http://127.0.0.1:4322/`."
+      - text:
+          uk: "Відкрий консоль браузера, потім адресу http://127.0.0.1:4322/. Подивись на сторінку: вона виглядає правильно."
+          en: "Open the browser console, then the address http://127.0.0.1:4322/. Look at the page: it looks right."
+      - text:
+          uk: "Прочитай помилку в консолі (крок 5 вступу): під `<li>` рядок `+` — клієнт, `-` — сервер; у `<TaskList … today=…>` видно, з яким днем рендерив клієнт. Знайди рядок у `debug/client.js`, що дав цей день."
+          en: "Read the error in the console (step 5 of the introduction): under `<li>` the `+` line is the client, the `-` line is the server; `<TaskList … today=…>` shows which day the client rendered with. Find the line in `debug/client.js` that produced that day."
+      - text:
+          uk: "Зупини сервер (Ctrl+C). У `debug/client.js` заміни рядок `const today = new Date().toISOString().slice(0, 10);` на `const today = data.today;`, збери клієнт знову й запусти сервер."
+          en: "Stop the server (Ctrl+C). In `debug/client.js` replace the line `const today = new Date().toISOString().slice(0, 10);` with `const today = data.today;`, build the client again and start the server."
+        command: |
+          npx esbuild debug/client.js --bundle --format=esm --outfile=debug/public/client.js
+          node debug/server.js
+      - text:
+          uk: "Перезавантаж сторінку з відкритою консоллю, потім зупини сервер (Ctrl+C)."
+          en: "Reload the page with the console open, then stop the server (Ctrl+C)."
+        expect:
+          uk: "У консолі лише `hydrated` і рядок про 404 для `/favicon.ico`; помилки гідратації немає."
+          en: "The console shows only `hydrated` and the 404 line for `/favicon.ico`; there is no hydration error."
+    verify:
+      - id: saw-error
+        text:
+          uk: "Я бачив помилку гідратації з рядками `+` і `-` під `<li>` і знайшов рядок, що її спричинив."
+          en: "I saw the hydration error with the `+` and `-` lines under `<li>` and found the line that caused it."
+      - id: error-gone
+        text:
+          uk: "Після виправлення сторінка гідратується без помилки."
+          en: "After the fix the page hydrates with no error."
+    troubleshooting:
+      - problem:
+          uk: "`node debug/server.js` пише `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '…/ssr-lab/html-json.js' imported from …/ssr-lab/debug/server.js`."
+          en: "`node debug/server.js` prints `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '…/ssr-lab/html-json.js' imported from …/ssr-lab/debug/server.js`."
+        fix:
+          uk: "У лабораторії ще немає `html-json.js`: створи його, як у кроці 8 локального завдання уроку «Межа даних і секретів». Сервер шукає його на рівень вище від `debug`. Текст помилки взято з Node.js v25.2.1."
+          en: "The lab has no `html-json.js` yet: create it as in step 8 of the local task of the lesson “Data and secret boundary”. The server looks for it one level above `debug`. The error text is from Node.js v25.2.1."
+      - problem:
+          uk: "Помилки гідратації немає й до виправлення."
+          en: "There is no hydration error even before the fix."
+        fix:
+          uk: "Мітки збігаються лише тоді, коли годинник твого комп’ютера показує 2026-03-01. Перевір, що в `debug/client.js` ще стоїть засіяний рядок і що клієнт перезібрано (`npx esbuild …`) після останньої зміни."
+          en: "The labels match only when your computer’s clock shows 2026-03-01. Check that `debug/client.js` still has the seeded line and that the client was rebuilt (`npx esbuild …`) after the last change."
+    recovery:
+      uk: "Тека `debug` окрема: якщо щось зламалося, видали її й створи знову з кроків вступу. Решта лабораторії й проєкт не змінюються."
+      en: "The `debug` folder is separate: if something breaks, delete it and create it again from the introduction’s steps. The rest of the lab and the project do not change."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-13
+    body:
+      uk: "Крок проєкту цього розділу ще не написаний. За планом курсу в ньому ти навмисно внесеш розбіжність свого домену — день, годинник чи локаль на клієнті — знайдеш її за помилкою в консолі й різницею HTML і виправиш у джерелі тим самим порядком: сторінка із сервера, початкові дані, маршрут."
+      en: "The project step of this unit is not written yet. According to the course plan, in it you deliberately inject your domain’s mismatch — a day, the clock or a locale on the client — find it from the console error and the HTML difference, and fix it at the source in the same order: the page from the server, the initial data, the route."
