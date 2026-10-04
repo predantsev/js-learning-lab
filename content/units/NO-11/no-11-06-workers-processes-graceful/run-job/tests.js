@@ -37,10 +37,12 @@ async function inputFile(name, count) {
   return file;
 }
 
-function job(inputPath, saveMs = 0) {
+// abortAt: { controller, batch } aborts the controller while that batch is being saved.
+function job(inputPath, saveMs = 0, abortAt = null) {
   const job = { inputPath, batches: 0, progress: 0 };
   job.saveBatch = () => {
     job.batches += 1;
+    if (abortAt && job.batches === abortAt.batch) abortAt.controller.abort();
     return new Promise((resolve) => setTimeout(resolve, saveMs));
   };
   job.onProgress = () => (job.progress += 1);
@@ -52,18 +54,20 @@ const timers = () => activeResources().filter((name) => name === 'Timeout').leng
 async function scenarios() {
   const ok = job(await inputFile('ok.jsonl', 300));
   const big = job(await inputFile('big.jsonl', 2000));
-  const slow = job(await inputFile('slow.jsonl', 2000), 5);
+  const controller = new AbortController();
+  const slow = job(await inputFile('slow.jsonl', 2000), 5, { controller, batch: 3 });
   return [
     ['success', () => runJob(ok, { maxRecords: 5000 })],
     ['RangeError', () => runJob(big, { maxRecords: 250 })],
-    ['abort', () => runJob(slow, { maxRecords: 5000, signal: AbortSignal.timeout(30) })],
+    ['abort', () => runJob(slow, { maxRecords: 5000, signal: controller.signal })],
   ];
 }
 
 test('resolves with the record count and the sum of amountMinor', async () => {
   expect(typeof runJob, 'type of runJob').toBe('function');
-  const result = await runJob(job(await inputFile('sum.jsonl', 1000)), { maxRecords: 5000 });
-  expect(result, 'the result for 1000 records of amountMinor 7').toEqual({ count: 1000, total: 7000 });
+  const outcome = await watchOpen(async () => runJob(job(await inputFile('sum.jsonl', 1000)), { maxRecords: 5000 }));
+  if (outcome.error) throw outcome.error;
+  expect(outcome.value, 'the result for 1000 records of amountMinor 7').toEqual({ count: 1000, total: 7000 });
 });
 
 test('a job over maxRecords rejects with a RangeError and stops reading', async () => {
@@ -76,15 +80,15 @@ test('a job over maxRecords rejects with a RangeError and stops reading', async 
 
 test('an abort rejects with AbortError and saves no more batches', async () => {
   expect(typeof runJob, 'type of runJob').toBe('function');
-  const slow = job(await inputFile('abort.jsonl', 2000), 5);
   const controller = new AbortController();
-  setTimeout(() => controller.abort(), 30);
+  // The signal is aborted while the 3rd of 20 batches is being saved.
+  const slow = job(await inputFile('abort.jsonl', 2000), 5, { controller, batch: 3 });
   const { error } = await watchOpen(() => runJob(slow, { maxRecords: 5000, signal: controller.signal }));
   expect(error?.name, 'the name of the rejection').toBe('AbortError');
   const savedAtAbort = slow.batches;
   await sleep(60);
   expect(slow.batches, 'batches saved after the rejection').toBe(savedAtAbort);
-  expect(savedAtAbort, 'batches saved of 20 (each takes 5 ms, aborted at 30 ms)').toBeLessThan(15);
+  expect(savedAtAbort, 'batches saved of 20 (aborted while the 3rd was being saved)').toBeLessThanOrEqual(4);
 });
 
 test('every FileHandle it opened is closed — after success, RangeError and abort', async () => {
@@ -101,7 +105,7 @@ test('no interval or timer is left — after success, RangeError and abort', asy
   for (const [label, run] of await scenarios()) {
     const before = timers();
     await watchOpen(run);
-    await sleep(40); // the abort timer of the scenario has fired by now
+    await sleep(40); // a closed timer disappears from activeResources() a turn later
     expect(timers() - before, `timers left holding the process after ${label}`).toBeLessThanOrEqual(0);
   }
 });

@@ -47,6 +47,14 @@ test('never lets more than the buffer limit pile up in a slow writer', async () 
   expect(writer.peak, 'most bytes ever waiting in a writer with a 1024-byte limit').toBeLessThan(1024 + 200);
 });
 
+test('writes the records of a generator too, not only of an array', async () => {
+  expect(typeof writeJsonLines, 'type of writeJsonLines').toBe('function');
+  const writer = slowWriter();
+  await writeJsonLines(wishes(2000), writer);
+  await waitFor(() => writer.writableLength === 0);
+  expect(writer.received.join('').split('\n').length - 1, 'number of lines written for a generator of 2000 records').toBe(2000);
+});
+
 test('resolves only after the writer has finished', async () => {
   expect(typeof writeJsonLines, 'type of writeJsonLines').toBe('function');
   const writer = slowWriter();

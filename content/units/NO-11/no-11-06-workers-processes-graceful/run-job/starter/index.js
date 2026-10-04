@@ -1,7 +1,20 @@
 // Three runs of runJob over 2000 synthetic expenses: complete, over a 500-record budget, and
-// aborted after 30 ms. After each it prints the outcome and how many timers still hold the process.
-import { writeFile } from 'node:fs/promises';
+// aborted after 30 ms. After each it prints the outcome, how many timers still hold the process and
+// how many FileHandles are still open. open() is wrapped (syncBuiltinESMExports updates the named
+// import in app.js) so that every FileHandle stays referenced: a leaked one is counted here instead
+// of being closed later by the garbage collector, which Node.js 25 turns into a crash.
+import fsp, { writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { runJob } from './app.js';
+
+const opened = [];
+const realOpen = fsp.open;
+fsp.open = async (...args) => {
+  const handle = await realOpen(...args);
+  opened.push(handle);
+  return handle;
+};
+syncBuiltinESMExports();
 
 let lines = '';
 for (let i = 1; i <= 2000; i++) lines += `${JSON.stringify({ id: `e-${i}`, title: `%%expense%% ${i}`, amountMinor: 100 })}\n`;
@@ -22,7 +35,8 @@ async function show(label, options) {
   }
   await new Promise((resolve) => setTimeout(resolve, 50));
   const timers = process.getActiveResourcesInfo().filter((name) => name === 'Timeout').length;
-  console.log(`  %%timersLeft%%: ${timers}`);
+  const handles = opened.filter((handle) => handle.fd !== -1).length;
+  console.log(`  %%timersLeft%%: ${timers}, %%handlesLeft%%: ${handles}`);
 }
 
 await show('%%complete%%', { maxRecords: 5000 });
