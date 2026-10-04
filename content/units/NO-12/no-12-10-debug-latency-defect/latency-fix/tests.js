@@ -26,41 +26,76 @@ test('the ranks are still right', async () => {
   expect(answer.json.map((e) => [e.id, e.rank]), '[id, rank] of GET ?category=food&limit=3').toEqual(expected);
 });
 
-test('p95 on 20,000 records is under 20 ms', async () => {
+// Counts how many times one request sorts the whole list (toSorted or sort on an array of all the
+// expenses). Work is counted instead of timed, so the check does not depend on the computer's speed.
+test('one request sorts all the expenses at most once', async () => {
   guard();
-  const answers = [];
-  const server = createService(makeExpenses(20_000), { log: () => {} });
+  const records = 2_000;
+  const server = createService(makeExpenses(records), { log: () => {} });
   const base = await listen(server);
-  for (let i = 0; i < 23; i++) {
+  await request(`${base}/expenses?category=home&limit=20`); // a warm-up request, not counted
+  const { toSorted, sort } = Array.prototype;
+  let fullSorts = 0;
+  Array.prototype.toSorted = function (...args) { if (this.length >= records) fullSorts++; return toSorted.apply(this, args); };
+  Array.prototype.sort = function (...args) { if (this.length >= records) fullSorts++; return sort.apply(this, args); };
+  try {
+    await request(`${base}/expenses?category=home&limit=20`);
+  } finally {
+    Array.prototype.toSorted = toSorted;
+    Array.prototype.sort = sort;
+  }
+  expect(fullSorts, `sorts of all ${records} expenses during one request with limit=20`).toBeLessThanOrEqual(1);
+});
+
+// The perf-check checks pass a budget that lies between the p95 of the original service and the
+// p95 of your service, both measured here on this computer: a slow or a fast machine moves both.
+let calibration;
+async function p95Of(create) {
+  const server = create(makeExpenses(20_000), { log: () => {} });
+  const base = await listen(server);
+  const durations = [];
+  for (let i = 0; i < 13; i++) {
     const started = performance.now();
     await request(`${base}/expenses?category=home&limit=20`);
-    if (i >= 3) answers.push(performance.now() - started);
+    if (i >= 3) durations.push(performance.now() - started);
   }
-  const sorted = answers.toSorted((a, b) => a - b);
-  expect(sorted[Math.ceil(0.95 * sorted.length) - 1], 'p95 in ms of 20 requests').toBeLessThan(20);
-}, { timeoutMs: 8000 });
+  const sorted = durations.toSorted((a, b) => a - b);
+  return sorted[Math.ceil(0.95 * sorted.length) - 1];
+}
+async function budget() {
+  calibration ??= (async () => {
+    const slow = await p95Of(original);
+    const fast = await p95Of(createService);
+    // Between the two speeds; when your service is not clearly faster yet, half of the original's p95.
+    const between = fast < slow / 2 ? Math.sqrt(slow * fast) : slow / 2;
+    return { slow, fast, budgetMs: Math.round(between * 10) / 10 };
+  })();
+  return calibration;
+}
 
 test('your perf check fails on the original service', async () => {
   guard();
+  const { slow, fast, budgetMs } = await budget();
   let failed = false;
   try {
-    await checkLatency(original);
+    await checkLatency(original, { budgetMs });
   } catch {
     failed = true;
   }
-  expect(failed, 'checkLatency(original) threw').toBe(true);
+  expect(failed, `checkLatency(original, { budgetMs: ${budgetMs} }) threw (measured here: original ${slow.toFixed(1)} ms, yours ${fast.toFixed(1)} ms)`).toBe(true);
 }, { timeoutMs: 8000 });
 
 test('your perf check passes on your fixed service', async () => {
   guard();
+  const { slow, fast, budgetMs } = await budget();
   let result;
   try {
-    result = await checkLatency(createService);
+    result = await checkLatency(createService, { budgetMs });
   } catch (error) {
     result = `threw: ${error.message}`;
   }
-  expect(typeof result, `what checkLatency(createService) returned (${result})`).toBe('number');
-  expect(result, 'the p95 it returned').toBeLessThan(20);
+  expect(typeof result, `what checkLatency(createService, { budgetMs: ${budgetMs} }) returned (${result}; measured here: original ${slow.toFixed(1)} ms, yours ${fast.toFixed(1)} ms)`).toBe('number');
+  expect(result, 'the p95 it returned').toBeLessThan(budgetMs);
 }, { timeoutMs: 8000 });
 
 test('the log line leaks no payer address', async () => {
