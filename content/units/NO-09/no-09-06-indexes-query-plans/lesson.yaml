@@ -1,0 +1,321 @@
+id: no-09-06-indexes-query-plans
+unit: NO-09
+title:
+  uk: "Індекси та плани запитів"
+  en: "Indexes and query plans"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Читати вивід `EXPLAIN QUERY PLAN` і відрізняти повний перегляд таблиці від пошуку за індексом для даного запиту."
+    en: "Read `EXPLAIN QUERY PLAN` output and tell a full table scan from an index search for a given query."
+  - uk: "Додати індекс, що перетворює частий пошук на `SEARCH`, виміряти ефект на згенерованій таблиці зі 100 000 рядків і назвати ціну, яку індекс додає записам і місцю на диску."
+    en: "Add an index that turns a frequent lookup into a `SEARCH`, measure the effect on a generated 100 000-row table, and name the cost it adds to writes and storage."
+prerequisites: [no-09-05-transactions-isolation]
+subskills:
+  - { family: B-04, skill: "indexes/query plans", depth: intro }
+glossary: [database-index, query-plan, full-table-scan, composite-index]
+selfCheck: [predict-plans, open-loans-index]
+
+blocks:
+  - id: scan-or-search
+    kind: explanation
+    title:
+      uk: "SCAN чи SEARCH"
+      en: "SCAN or SEARCH"
+    body:
+      uk: |
+        Щоб знайти видачі учасника 7, базі без підказок лишається одне — переглянути **кожен** рядок `loans` і перевірити `memberId`. Це [[full-table-scan|повний перегляд таблиці]], той самий лінійний пошук, що й `find` у масиві: удвічі більше рядків — удвічі довше.
+
+        [[database-index|Індекс]] — це окрема впорядкована структура (у SQLite — B-tree): значення `memberId` по порядку, і при кожному — де лежать його рядки. За ним база одразу переходить до потрібних рядків, як ти шукаєш слово в словнику, не гортаючи його від першої сторінки.
+
+        Чи знайшла база індекс, показує [[query-plan|план запиту]]:
+
+        ```sql
+        EXPLAIN QUERY PLAN SELECT * FROM loans WHERE memberId = 7;
+        -- SCAN loans                                      без індексу
+        -- SEARCH loans USING INDEX loans_member (memberId=?)   з індексом
+        ```
+
+        `SCAN` — перегляд усієї таблиці, `SEARCH` — перехід за індексом. `COVERING INDEX` означає, що всі потрібні стовпці є в самому індексі й таблицю навіть не відкривають. Точний текст рядків плану — з SQLite 3.53.1 у Node 25; сенс слів описано в [документації SQLite](https://www.sqlite.org/eqp.html).
+      en: |
+        To find the loans of member 7, a database with no hints has one option — look at **every** row of `loans` and check `memberId`. That is a [[full-table-scan]], the same linear search as `find` on an array: twice the rows, twice the time.
+
+        A [[database-index]] is a separate ordered structure (a B-tree in SQLite): the values of `memberId` in order, and next to each one where its rows are. With it the database jumps straight to the right rows, the way you look a word up in a dictionary without leafing from the first page.
+
+        Whether the database found an index is shown by the [[query-plan]]:
+
+        ```sql
+        EXPLAIN QUERY PLAN SELECT * FROM loans WHERE memberId = 7;
+        -- SCAN loans                                      without an index
+        -- SEARCH loans USING INDEX loans_member (memberId=?)   with an index
+        ```
+
+        `SCAN` is a pass over the whole table, `SEARCH` a jump through an index. `COVERING INDEX` means every column needed is in the index itself, and the table is not even opened. The exact text of the plan lines is from SQLite 3.53.1 in Node 25; the meaning of the words is described in the [SQLite documentation](https://www.sqlite.org/eqp.html).
+
+  - id: index-picture
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Той самий запит: перегляд і пошук"
+      en: "The same query: scan and search"
+    textEquivalent:
+      uk: "Запит шукає видачі учасника 7. Без індексу план — SCAN loans: база проходить усі 100 000 рядків таблиці loans від першого до останнього й перевіряє memberId у кожному; у вимірюванні 200 таких пошуків тривали близько 300 мс. Після CREATE INDEX loans_member ON loans (memberId) план — SEARCH loans USING INDEX loans_member (memberId=?): база спускається деревом індексу до значення 7 і читає лише його рядки; 200 пошуків — менше за 1 мс. Ціна: кожна вставка тепер оновлює й індекс, а сам індекс займає місце."
+      en: "The query looks for the loans of member 7. Without an index the plan is SCAN loans: the database walks through all 100 000 rows of loans from the first to the last and checks memberId in each; in the measurement 200 such lookups took about 300 ms. After CREATE INDEX loans_member ON loans (memberId) the plan is SEARCH loans USING INDEX loans_member (memberId=?): the database goes down the index tree to the value 7 and reads only its rows; 200 lookups take under 1 ms. The cost: every insert now updates the index too, and the index itself takes space."
+    spec:
+      layout: grid
+      nodes:
+        - { id: query, label: "WHERE memberId = 7", col: 0, row: 0, shape: pill, w: 150 }
+        - { id: table, label: { uk: "loans: 100 000 рядків", en: "loans: 100 000 rows" }, col: 0, row: 1, shape: cylinder, w: 150 }
+        - { id: index, label: "loans_member (memberId)", col: 1, row: 0, w: 176 }
+        - { id: rows, label: { uk: "рядки учасника 7", en: "rows of member 7" }, col: 1, row: 1, shape: round, w: 176 }
+      edges:
+        - { id: scan, from: query, to: table, label: "SCAN" }
+        - { id: search, from: query, to: index, label: "SEARCH" }
+        - { id: jump, from: index, to: rows }
+      hidden: [index, rows]
+      steps:
+        - caption:
+            uk: "Запит шукає видачі учасника 7 у таблиці зі 100 000 рядків."
+            en: "The query looks for the loans of member 7 in a table of 100 000 rows."
+          dim: [table]
+        - caption:
+            uk: "Без індексу план — `SCAN loans`: перевірити кожен рядок. У прикладі «100 000 видач до й після індексу» 200 таких пошуків тривали близько 300 мс."
+            en: "Without an index the plan is `SCAN loans`: check every row. In the example “100 000 loans before and after an index” 200 such lookups took about 300 ms."
+          highlight: [query, table, scan]
+          annotate:
+            - { id: table, text: { uk: "перевірено 100 000 рядків", en: "100 000 rows checked" } }
+        - caption:
+            uk: "`CREATE INDEX loans_member ON loans (memberId)` будує впорядковане дерево значень `memberId`. План — `SEARCH … USING INDEX`."
+            en: "`CREATE INDEX loans_member ON loans (memberId)` builds an ordered tree of `memberId` values. The plan is `SEARCH … USING INDEX`."
+          show: [index, rows]
+          highlight: [query, index, search]
+          dim: [table, scan]
+        - caption:
+            uk: "Дерево веде просто до рядків учасника 7: 200 пошуків — менше за 1 мс. Ціна — кожна вставка тепер оновлює ще й індекс, а він займає місце."
+            en: "The tree leads straight to member 7’s rows: 200 lookups take under 1 ms. The cost: every insert now updates the index too, and it takes space."
+          highlight: [index, rows, jump]
+          dim: [table, scan]
+          annotate:
+            - { id: rows, text: { uk: "прочитано лише їх", en: "only these are read" } }
+
+  - id: predict-plans
+    kind: prediction
+    prompt:
+      uk: "У `books` є індекс `books_title` на `title`. До `loans` додали `CREATE INDEX loans_member ON loans (memberId)`. Плани яких запитів почнуться з `SEARCH`?"
+      en: "`books` has the index `books_title` on `title`. `loans` got `CREATE INDEX loans_member ON loans (memberId)`. The plans of which queries start with `SEARCH`?"
+    code: |
+      SELECT * FROM loans WHERE memberId = 7;            -- A
+      SELECT * FROM loans WHERE bookId = 7;              -- B
+      SELECT * FROM books WHERE lower(title) = 'x';      -- C
+      SELECT * FROM books WHERE title = 'x';             -- D
+    lang: sql
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: a
+          text: { uk: "A", en: "A" }
+        - id: b
+          text: { uk: "B", en: "B" }
+          why:
+            uk: "Індекс `loans_member` впорядковує лише `memberId`. Для `bookId` у ньому немає порядку — лишається `SCAN loans`."
+            en: "The index `loans_member` orders only `memberId`. It has no order for `bookId` — so it stays `SCAN loans`."
+        - id: c
+          text: { uk: "C", en: "C" }
+          why:
+            uk: "Індекс зберігає `title`, а не `lower(title)`. Щоб знайти рядки, де `lower(title)` дорівнює `'x'`, треба обчислити `lower` для кожного рядка — це `SCAN`, хоч на стовпці й є індекс."
+            en: "The index stores `title`, not `lower(title)`. To find rows where `lower(title)` equals `'x'`, `lower` has to be computed for every row — that is a `SCAN`, even though the column has an index."
+        - id: d
+          text: { uk: "D", en: "D" }
+      correct: [a, d]
+    explanation:
+      uk: "A і D порівнюють проіндексований стовпець як є — `SEARCH`. B питає про стовпець без індексу, C загортає стовпець у функцію — обидва `SCAN`. Індекс на стовпці не означає, що його використає кожен запит, де цей стовпець згадано. Приклад «100 000 видач до й після індексу» друкує плани всіх чотирьох запитів."
+      en: "A and D compare an indexed column as it is — `SEARCH`. B asks about a column with no index, C wraps the column in a function — both `SCAN`. An index on a column does not mean every query that mentions the column uses it. The example “100 000 loans before and after an index” prints the plans of all four queries."
+
+  - id: index-timing
+    kind: example
+    runtime: isolated-node
+    dir: index-timing
+    entry: index.js
+    strings:
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+      garden: { uk: "Сад на даху", en: "A garden on the roof" }
+      stars: { uk: "Карта зоряного неба", en: "A map of the night sky" }
+    title:
+      uk: "100 000 видач до й після індексу"
+      en: "100 000 loans before and after an index"
+    body:
+      uk: |
+        Натисни **Запустити**. Програма генерує 100 000 синтетичних видач (щоразу однакових), друкує плани чотирьох запитів із питання, вимірює 200 пошуків за `memberId` і 10 000 вставок — до і після `CREATE INDEX`.
+
+        Час залежить від твого комп’ютера й змінюється між запусками. В одному вимірюванні на Node 25 пошуки тривали 317 мс без індексу й 0,3 мс з ним, а 10 000 вставок — 8 мс і 11 мс. Порівнюй числа між собою, а не із цими.
+      en: |
+        Press **Run**. The program generates 100 000 synthetic loans (the same ones every time), prints the plans of the four queries from the question, and measures 200 lookups by `memberId` and 10 000 inserts — before and after `CREATE INDEX`.
+
+        The times depend on your computer and change between runs. In one measurement on Node 25 the lookups took 317 ms without the index and 0.3 ms with it, and 10 000 inserts 8 ms and 11 ms. Compare the numbers with each other, not with these.
+    tryIt:
+      uk: "Зміни запит `B` на `SELECT * FROM loans WHERE memberId + 0 = 7` і запусти: навіть після індексу план — `SCAN loans`, бо порівнюється вже не стовпець, а вираз. Потім додай під `CREATE INDEX loans_member …` рядок `db.exec('CREATE INDEX loans_book ON loans (bookId)');` і поверни `B` до `bookId = 7`: тепер і `B` — `SEARCH`. Порівняй два рядки `10 000 inserts`: кожна вставка тепер оновлює два індекси. В одному нашому вимірюванні на Node 25 це було близько 8 мс без індексів і 17 мс із двома; твої числа будуть іншими."
+      en: "Change query `B` to `SELECT * FROM loans WHERE memberId + 0 = 7` and run: even after the index the plan is `SCAN loans`, because what is compared is no longer the column but an expression. Then add the line `db.exec('CREATE INDEX loans_book ON loans (bookId)');` under `CREATE INDEX loans_member …` and change `B` back to `bookId = 7`: now `B` is a `SEARCH` too. Compare the two `10 000 inserts` lines: every insert now updates two indexes. In one of our measurements on Node 25 that was about 8 ms without indexes and 17 ms with two; your numbers will differ."
+
+  - id: composite
+    kind: explanation
+    title:
+      uk: "Складений індекс і ціна індексів"
+      en: "A composite index and the cost of indexes"
+    body:
+      uk: |
+        [[composite-index|Складений індекс]] впорядковує рядки за кількома стовпцями по черзі, як телефонна книга — за прізвищем, а всередині прізвища за ім’ям. Індекс `(memberId, loanedOn)` тримає видачі кожного учасника вже відсортованими за датою. Тож запит «видачі учасника 7, найновіші першими» знаходить їх і **не сортує окремо**.
+
+        Порядок стовпців важливий: `(loanedOn, memberId)` упорядковує спершу за датою, і видачі одного учасника розкидано по всьому індексу. А три окремі індекси на кожен стовпець не складаються в один — база зазвичай бере один із них, і в плані з’являється `USE TEMP B-TREE FOR ORDER BY`: результат сортують окремо.
+
+        «Індекс на кожен стовпець — і все літатиме» не працює ще й тому, що кожен індекс — це ціна: кожна вставка, зміна й видалення оновлюють **усі** індекси таблиці, і кожен займає місце. Індекс додають під конкретний частий запит і перевіряють планом.
+      en: |
+        A [[composite-index]] orders the rows by several columns in turn, like a phone book — by surname, and within a surname by first name. The index `(memberId, loanedOn)` keeps each member’s loans already sorted by date. So the query “member 7’s loans, newest first” finds them and **does not sort them separately**.
+
+        The order of the columns matters: `(loanedOn, memberId)` orders by date first, and one member’s loans are spread all over the index. And three separate indexes, one per column, do not add up to one — the database usually takes one of them, and the plan shows `USE TEMP B-TREE FOR ORDER BY`: the result is sorted separately.
+
+        “An index on every column and everything flies” fails for another reason too: every index has a cost — every insert, update and delete updates **all** of the table’s indexes, and each one takes space. An index is added for a specific frequent query and checked with the plan.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: індекс за id у JavaScript"
+      en: "Recall: an index by id in JavaScript"
+    items:
+      - id: map-index
+        from: js-12-12-dedup-indexing
+        prompt:
+          uk: "Програма багато разів шукає справу за `id` у масиві з 10 000 справ. Що змінить один раз побудований `Map`?"
+          en: "A program looks a task up by `id` many times in an array of 10 000 tasks. What does a `Map` built once change?"
+        code: |
+          const tasks = [{ id: "t-01", title: "…" } /* … 10 000 tasks */];
+          const byId = new Map(tasks.map((task) => [task.id, task]));
+          const task = byId.get("t-07");
+        runnable: false
+        answer:
+          type: choice
+          options:
+            - id: direct
+              text: { uk: "`get` знаходить справу одразу, без перегляду масиву; ціна — пам’ять і перебудова `Map` після змін", en: "`get` finds the task at once, without walking the array; the cost is memory and rebuilding the `Map` after changes" }
+            - id: same
+              text: { uk: "Нічого: `Map` усередині теж перебирає записи по черзі", en: "Nothing: inside, a `Map` also walks the entries one by one" }
+              why:
+                uk: "`Map` за ключем переходить до значення без перебору всіх записів — саме тому його будують як індекс."
+                en: "A `Map` goes from a key to its value without walking all the entries — that is exactly why it is built as an index."
+            - id: free
+              text: { uk: "Пошук стає миттєвим, і більше нічого не змінюється", en: "Lookups become instant, and nothing else changes" }
+              why:
+                uk: "Індекс не безплатний: `Map` займає пам’ять і застаріває, якщо масив змінили, а його — ні."
+                en: "An index is not free: the `Map` takes memory and goes stale if the array changes and the `Map` does not."
+          correct: [direct]
+        explanation:
+          uk: "`Map` за `id` — той самий індекс, що й `CREATE INDEX`: окрема структура для швидкого пошуку, за яку платять пам’яттю й оновленням під час кожної зміни. База лише оновлює свої індекси сама."
+          en: "A `Map` by `id` is the same kind of index as `CREATE INDEX`: a separate structure for fast lookups, paid for with memory and an update on every change. A database merely updates its indexes itself."
+
+  - id: open-loans-index
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: open-loans-index
+    entry: index.js
+    editable: [app.js]
+    title:
+      uk: "Індекс для «моїх відкритих видач»"
+      en: "An index for “my open loans”"
+    instructions:
+      uk: |
+        Сторінка учасника показує його відкриті видачі, найновіші першими. Запит у `data.js`:
+
+        ```sql
+        SELECT id, bookId, loanedOn FROM loans
+        WHERE memberId = ? AND returnedOn IS NULL
+        ORDER BY loanedOn DESC
+        ```
+
+        Запиши в `indexSql` (у `app.js`) інструкцію `CREATE INDEX`, після якої:
+
+        - план шукає в `loans` через індекс (`SEARCH loans USING … INDEX`);
+        - у плані немає окремого сортування (`TEMP B-TREE`);
+        - додано рівно один індекс, і в ньому щонайменше два стовпці;
+        - запит повертає ті самі рядки, що й без індексу.
+
+        Перевірки виконують `indexSql` на 20 000 згенерованих видач і читають `EXPLAIN QUERY PLAN`. `index.js` друкує план і час для 100 000 видач до й після твого індексу.
+      en: |
+        A member’s page shows their open loans, newest first. The query in `data.js`:
+
+        ```sql
+        SELECT id, bookId, loanedOn FROM loans
+        WHERE memberId = ? AND returnedOn IS NULL
+        ORDER BY loanedOn DESC
+        ```
+
+        Write a `CREATE INDEX` statement in `indexSql` (in `app.js`) after which:
+
+        - the plan searches `loans` through an index (`SEARCH loans USING … INDEX`);
+        - the plan has no separate sort (`TEMP B-TREE`);
+        - exactly one index is added, with at least two columns;
+        - the query returns the same rows as without the index.
+
+        The checks run `indexSql` on 20 000 generated loans and read `EXPLAIN QUERY PLAN`. `index.js` prints the plan and the time for 100 000 loans before and after your index.
+    testTitles:
+      "the plan searches loans through an index":
+        uk: "План шукає в `loans` через індекс"
+        en: "The plan searches `loans` through an index"
+      "the plan needs no extra sort":
+        uk: "План не потребує окремого сортування"
+        en: "The plan needs no extra sort"
+      "it adds exactly one index, on two or more columns":
+        uk: "Додано рівно один індекс, на двох чи більше стовпцях"
+        en: "Exactly one index is added, on two or more columns"
+      "the query returns the same rows with the index":
+        uk: "З індексом запит повертає ті самі рядки"
+        en: "The query returns the same rows with the index"
+    hints:
+      nudge:
+        uk: "За яким стовпцем запит шукає, а за яким — сортує? Індекс може тримати обидва, але порядок стовпців у ньому важливий."
+        en: "Which column does the query search by, and which does it sort by? An index can hold both, but the order of its columns matters."
+      explanation:
+        uk: |
+          Складений індекс спершу групує за першим стовпцем, а всередині групи впорядковує за наступним. Для запиту «витрати категорії, найбільші першими» — `WHERE categoryId = ? ORDER BY amount DESC` — підходить:
+
+          ```sql
+          CREATE INDEX expenses_category_amount ON expenses (categoryId, amount);
+          ```
+
+          Індекс можна читати й у зворотному порядку, тож окремий `DESC` у ньому не обов’язковий. Стовпець із рівністю йде першим; стовпець сортування — після нього.
+        en: |
+          A composite index groups by its first column and, within each group, orders by the next one. For the query “a category’s expenses, largest first” — `WHERE categoryId = ? ORDER BY amount DESC` — this fits:
+
+          ```sql
+          CREATE INDEX expenses_category_amount ON expenses (categoryId, amount);
+          ```
+
+          An index can be read backwards too, so a separate `DESC` in it is not required. The column compared with `=` comes first; the sort column after it.
+    solutionNote:
+      uk: "`(memberId, loanedOn)` веде просто до видач учасника, уже впорядкованих за датою; база читає їх у зворотному порядку для `DESC`, а `returnedOn IS NULL` перевіряє на знайдених рядках. `(memberId, returnedOn, loanedOn)` теж працює: `IS NULL` діє як рівність. Частковий індекс `… (memberId, loanedOn) WHERE returnedOn IS NULL` зберігає лише відкриті видачі й займає менше місця — теж правильний. Видачі з однаковою датою можуть іти з індексом в іншому порядку, ніж без нього: `ORDER BY` називає лише дату. Якщо порядок має бути сталим, додай другий ключ: `ORDER BY loanedOn DESC, id DESC`."
+      en: "`(memberId, loanedOn)` leads straight to the member’s loans already ordered by date; the database reads them backwards for `DESC` and tests `returnedOn IS NULL` on the rows found. `(memberId, returnedOn, loanedOn)` works too: `IS NULL` acts as an equality. A partial index `… (memberId, loanedOn) WHERE returnedOn IS NULL` stores only open loans and takes less space — correct as well. Loans with the same date may come in another order with the index than without it: `ORDER BY` names only the date. If the order must be stable, add a second key: `ORDER BY loanedOn DESC, id DESC`."
+    feedback:
+      - when: { test: "the plan searches loans through an index" }
+        message:
+          uk: "Ця перевірка очікує в плані рядок, що починається з `SEARCH loans USING INDEX` (чи `COVERING INDEX`). `SCAN loans` означає, що індекс не допомагає знайти рядки учасника: перевір, який стовпець у ньому перший. Якщо всі перевірки не проходять разом, прочитай першу помилку в консолі після **Запустити**."
+          en: "This check expects a plan line starting with `SEARCH loans USING INDEX` (or `COVERING INDEX`). `SCAN loans` means the index does not help find the member’s rows: check which column comes first in it. If every check fails at once, read the first error in the console after **Run**."
+      - when: { test: "the plan needs no extra sort" }
+        message:
+          uk: "Ця перевірка очікує план без `USE TEMP B-TREE FOR ORDER BY`. Такий рядок означає, що знайдені рядки сортують окремо: дата має бути в тому самому індексі, одразу після стовпця пошуку."
+          en: "This check expects a plan without `USE TEMP B-TREE FOR ORDER BY`. That line means the rows found are sorted separately: the date has to be in the same index, right after the search column."
+      - when: { test: "it adds exactly one index, on two or more columns" }
+        message:
+          uk: "Ця перевірка очікує, що `indexSql` створює рівно один індекс на `loans`, і в ньому щонайменше два стовпці. Кілька одностовпцевих індексів не складаються в один складений."
+          en: "This check expects `indexSql` to create exactly one index on `loans`, with at least two columns. Several single-column indexes do not add up to one composite index."
+      - when: { test: "the query returns the same rows with the index" }
+        message:
+          uk: "Ця перевірка порівнює відкриті видачі учасника 17 без індексу й з ним і очікує той самий набір рядків, а дати — від найновішої. Індекс не має змінювати результат — лише шлях до нього; частковий індекс має містити всі рядки, які шукає запит."
+          en: "This check compares member 17’s open loans without and with the index and expects the same set of rows, with the dates from newest to oldest. An index must not change the result — only the way to it; a partial index must hold every row the query looks for."
+
+  - id: to-project
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-09 немає. Але подумай, який запит твій сервер робитиме найчастіше — список за статусом, справи на дату, витрати за категорією. Якщо в NO-05 за планом курсу обереш SQLite, індекс додаватимеш саме під такий запит і перевірятимеш його через `EXPLAIN QUERY PLAN`, а не «про всяк випадок» на кожен стовпець."
+      en: "Your project does not change in this unit: NO-09 has no project step. But think about which query your server will run most often — the list by status, the tasks for a date, the expenses per category. If you choose SQLite in NO-05, as the course plan offers, you will add an index for exactly such a query and check it with `EXPLAIN QUERY PLAN`, not on every column “just in case”."

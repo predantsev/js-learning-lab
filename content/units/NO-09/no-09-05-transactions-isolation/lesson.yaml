@@ -1,0 +1,376 @@
+id: no-09-05-transactions-isolation
+unit: NO-09
+title:
+  uk: "Транзакції та ізоляція (оглядово)"
+  en: "Transactions and isolation (awareness)"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Загорнути зміну з кількох інструкцій (нова видача й зменшення вільних примірників) у `BEGIN` і `COMMIT` та відкотити її, коли будь-який крок не вдався."
+    en: "Wrap a multi-statement change (create a loan and decrement available copies) in `BEGIN` and `COMMIT`, and roll it back when any step fails."
+  - uk: "Передбачити, що бачить друге з’єднання під час відкритої транзакції запису, і назвати на рівні огляду аномалії, від яких захищають рівні ізоляції."
+    en: "Predict what a second connection sees during an open write transaction, and name, at awareness level, the anomalies isolation levels prevent."
+prerequisites: [no-09-04-parameterized-queries]
+subskills:
+  - { family: B-04, skill: "transactions/isolation awareness", depth: intro }
+glossary: [database-transaction, transaction-rollback, isolation-level]
+selfCheck: [predict-half-done, transfer-loan]
+
+blocks:
+  - id: half-done
+    kind: explanation
+    title:
+      uk: "Дві інструкції — дві окремі зміни"
+      en: "Two statements — two separate changes"
+    body:
+      uk: |
+        Видати книжку — це дві інструкції:
+
+        ```sql
+        INSERT INTO loans (memberId, bookId, loanedOn) VALUES (3, 2, '2026-03-12');
+        UPDATE books SET available = available - 1 WHERE id = 2;
+        ```
+
+        Без явної транзакції SQLite зберігає **кожну інструкцію окремо**, щойно вона виконалася. Якщо друга впаде — скажімо, `CHECK (available >= 0)` не дасть зменшити нуль, — перша вже збережена: у базі видача книжки, якої немає на полиці. Це не «половина роботи, теж непогано», це неправдиві дані.
+
+        І для цього не потрібні тисячі користувачів. Досить однієї людини й однієї помилки посередині.
+      en: |
+        Lending a book is two statements:
+
+        ```sql
+        INSERT INTO loans (memberId, bookId, loanedOn) VALUES (3, 2, '2026-03-12');
+        UPDATE books SET available = available - 1 WHERE id = 2;
+        ```
+
+        Without an explicit transaction SQLite saves **each statement on its own** as soon as it has run. If the second fails — say, `CHECK (available >= 0)` refuses to decrement zero — the first is already saved: the database holds a loan of a book that is not on the shelf. That is not “half the work, fine too”, it is false data.
+
+        And it takes no thousands of users. One person and one error half-way are enough.
+
+  - id: predict-half-done
+    kind: prediction
+    prompt:
+      uk: "У базі 3 видачі, у книжки 2 вільних примірників `0`. `borrowBook(db, 3, 2)` спершу вставляє видачу (`INSERT`), потім зменшує вільні примірники (`UPDATE`); друге падає на `CHECK (available >= 0)`. Скільки видач буде після невдалої спроби — без транзакції та з `BEGIN … ROLLBACK`?"
+      en: "The database holds 3 loans, and book 2 has `0` available copies. `borrowBook(db, 3, 2)` first inserts a loan (`INSERT`), then decrements the available copies (`UPDATE`); the second fails on `CHECK (available >= 0)`. How many loans are there after the failed attempt — without a transaction and with `BEGIN … ROLLBACK`?"
+    code: |
+      function borrowInTransaction(db, memberId, bookId) {
+        db.exec('BEGIN');
+        try {
+          borrowBook(db, memberId, bookId);
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      }
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: four-three
+          text: { uk: "Без транзакції — 4, з транзакцією — 3", en: "Without a transaction 4, with a transaction 3" }
+        - id: three-three
+          text: { uk: "В обох випадках 3: помилка скасовує інструкцію", en: "3 in both cases: an error cancels the statement" }
+          why:
+            uk: "Помилка скасовує лише ту інструкцію, що впала, — `UPDATE`. `INSERT` виконався раніше й без транзакції вже збережений."
+            en: "An error cancels only the statement that failed — the `UPDATE`. The `INSERT` ran earlier and, without a transaction, is already saved."
+        - id: four-four
+          text: { uk: "В обох випадках 4: вставку вже зроблено", en: "4 in both cases: the insert has already happened" }
+          why:
+            uk: "У транзакції вставку зроблено, але не збережено остаточно. `ROLLBACK` скасовує все від `BEGIN`, тож видач знову 3."
+            en: "Inside a transaction the insert happened but was not saved for good. `ROLLBACK` undoes everything since `BEGIN`, so there are 3 loans again."
+        - id: three-four
+          text: { uk: "Без транзакції — 3, з транзакцією — 4", en: "Without a transaction 3, with a transaction 4" }
+          why:
+            uk: "Навпаки: саме без транзакції нічого не скасовує вже виконаний `INSERT`."
+            en: "The other way round: it is without a transaction that nothing undoes the `INSERT` that already ran."
+      correct: [four-three]
+    explanation:
+      uk: "Без транзакції `INSERT` збережено, `UPDATE` — ні: 4 видачі й 0 примірників, тобто зайва видача. З транзакцією `ROLLBACK` повертає базу до стану на `BEGIN`: 3 видачі. Приклад «Невдала видача з транзакцією і без» друкує обидва результати."
+      en: "Without a transaction the `INSERT` is saved and the `UPDATE` is not: 4 loans and 0 copies — an extra loan. With a transaction `ROLLBACK` returns the database to its state at `BEGIN`: 3 loans. The example “A failed loan with and without a transaction” prints both results."
+
+  - id: begin-commit
+    kind: explanation
+    title:
+      uk: "BEGIN, COMMIT, ROLLBACK"
+      en: "BEGIN, COMMIT, ROLLBACK"
+    body:
+      uk: |
+        [[database-transaction|Транзакція]] об’єднує кілька інструкцій у «все або нічого»:
+
+        - `BEGIN` — починає транзакцію;
+        - `COMMIT` — зберігає всі зміни разом;
+        - `ROLLBACK` — [[transaction-rollback|відкочує]] всі зміни від `BEGIN`, ніби їх не було.
+
+        У коді це завжди одна форма: `BEGIN`, кроки в `try`, `COMMIT` у кінці `try`, а в `catch` — `ROLLBACK` і `throw error`, щоб той, хто викликав, дізнався про невдачу. Без `ROLLBACK` з’єднання лишиться всередині незавершеної транзакції, і наступний `BEGIN` упаде з `cannot start a transaction within a transaction`.
+
+        Ще одне: інструкція, що змінила **нуль** рядків, — не помилка для SQL. Якщо крок мав щось змінити, перевір `changes` і сам кинь помилку.
+
+        Це той самий принцип, що й атомарний запис файла в NO-02: читач бачить або старий стан, або новий, але ніколи не проміжний.
+      en: |
+        A [[database-transaction]] joins several statements into “all or nothing”:
+
+        - `BEGIN` starts the transaction;
+        - `COMMIT` saves all the changes together;
+        - `ROLLBACK` [[transaction-rollback|rolls back]] every change since `BEGIN`, as if none happened.
+
+        In code it is always one shape: `BEGIN`, the steps inside `try`, `COMMIT` at the end of `try`, and in `catch` — `ROLLBACK` and `throw error`, so the caller learns about the failure. Without `ROLLBACK` the connection stays inside an unfinished transaction, and the next `BEGIN` fails with `cannot start a transaction within a transaction`.
+
+        One more thing: a statement that changed **zero** rows is not an error for SQL. If a step had to change something, check `changes` and throw yourself.
+
+        It is the same principle as the atomic file write in NO-02: a reader sees either the old state or the new one, never one in between.
+
+  - id: isolation
+    kind: explanation
+    title:
+      uk: "Що бачать інші з’єднання (оглядово)"
+      en: "What other connections see (awareness)"
+    body:
+      uk: |
+        Поки транзакція відкрита, її зміни бачить лише її власне з’єднання. Що бачать інші, визначає [[isolation-level|рівень ізоляції]]. Слабша ізоляція допускає відомі аномалії:
+
+        | Аномалія | Що відбувається |
+        |---|---|
+        | dirty read | читач бачить зміни, які потім відкотили |
+        | non-repeatable read | той самий рядок, прочитаний двічі в одній транзакції, має різні значення |
+        | phantom read | той самий запит у транзакції вдруге повертає нові рядки |
+
+        SQLite виконує транзакції як **serializable** — так, ніби вони йшли по черзі: інше з’єднання бачить стан до `BEGIN` і не може писати, доки транзакція відкрита ([документація SQLite: isolation](https://www.sqlite.org/isolation.html)). PostgreSQL за замовчуванням працює на рівні **read committed**, де non-repeatable та phantom read можливі ([документація PostgreSQL: transaction isolation](https://www.postgresql.org/docs/current/transaction-iso.html)). Тож перш ніж покладатися на транзакцію в іншій базі, з’ясуй її рівень ізоляції.
+      en: |
+        While a transaction is open, only its own connection sees its changes. What the others see is set by the [[isolation-level]]. Weaker isolation allows well-known anomalies:
+
+        | Anomaly | What happens |
+        |---|---|
+        | dirty read | a reader sees changes that are later rolled back |
+        | non-repeatable read | the same row read twice in one transaction has different values |
+        | phantom read | the same query in a transaction returns new rows the second time |
+
+        SQLite runs transactions as **serializable** — as if they went one after another: another connection sees the state before `BEGIN` and cannot write while the transaction is open ([SQLite documentation: isolation](https://www.sqlite.org/isolation.html)). PostgreSQL works at **read committed** by default, where non-repeatable and phantom reads are possible ([PostgreSQL documentation: transaction isolation](https://www.postgresql.org/docs/current/transaction-iso.html)). So before relying on a transaction in another database, find out its isolation level.
+
+  - id: two-connections
+    kind: visual
+    visual: sequence
+    title:
+      uk: "З’єднання A відкочує, з’єднання B нічого не помічає"
+      en: "Connection A rolls back, connection B notices nothing"
+    textEquivalent:
+      uk: "З’єднання A починає транзакцію командою BEGIN і вставляє нову видачу. З’єднання B у цей час рахує видачі й отримує 3 — стан до BEGIN, без незбереженої вставки. A намагається зменшити вільні примірники книжки 2, база відповідає CHECK constraint failed. A виконує ROLLBACK, і вставку скасовано. B рахує видачі знову й отримує ті самі 3: проміжного стану B не бачив ніколи. Без транзакції вставка була б збережена одразу, і B побачив би 4 видачі, одна з яких — для книжки без вільних примірників."
+      en: "Connection A starts a transaction with BEGIN and inserts a new loan. Meanwhile connection B counts the loans and gets 3 — the state before BEGIN, without the unsaved insert. A tries to decrement the available copies of book 2, and the database answers CHECK constraint failed. A runs ROLLBACK, and the insert is undone. B counts the loans again and gets the same 3: B never saw the in-between state. Without a transaction the insert would have been saved at once, and B would have seen 4 loans, one of them for a book with no copy available."
+    spec:
+      actors:
+        - { id: a, label: { uk: "З’єднання A", en: "Connection A" } }
+        - { id: db, label: "library.db" }
+        - { id: b, label: { uk: "З’єднання B", en: "Connection B" } }
+      messages:
+        - from: a
+          to: db
+          label: "BEGIN; INSERT INTO loans …"
+          caption:
+            uk: "A починає транзакцію і вставляє видачу. Вставку зроблено, але ще не збережено."
+            en: "A starts a transaction and inserts a loan. The insert has happened but is not saved yet."
+        - from: b
+          to: db
+          label: "SELECT COUNT(*) FROM loans"
+          caption:
+            uk: "B у цей час рахує видачі…"
+            en: "Meanwhile B counts the loans…"
+        - from: db
+          to: b
+          label: "3"
+          kind: return
+          caption:
+            uk: "…і отримує 3: B бачить стан до `BEGIN`. Незбережену вставку A бачить лише сам A."
+            en: "…and gets 3: B sees the state before `BEGIN`. Only A itself sees A’s unsaved insert."
+        - from: a
+          to: db
+          label: "UPDATE books SET available = available - 1"
+          caption:
+            uk: "A зменшує вільні примірники книжки 2, а їх 0."
+            en: "A decrements the available copies of book 2, which are 0."
+        - from: db
+          to: a
+          label: "CHECK constraint failed"
+          kind: return
+          caption:
+            uk: "База відмовляє: `CHECK (available >= 0)`."
+            en: "The database refuses: `CHECK (available >= 0)`."
+        - from: a
+          to: db
+          label: "ROLLBACK"
+          caption:
+            uk: "A відкочує транзакцію: вставку скасовано, ніби її не було."
+            en: "A rolls the transaction back: the insert is undone as if it never happened."
+        - from: db
+          to: b
+          label: "3"
+          kind: return
+          caption:
+            uk: "B рахує знову — ті самі 3. Без транзакції тут було б 4, і одна з видач — на книжку, якої немає на полиці."
+            en: "B counts again — the same 3. Without a transaction there would be 4 here, one of them for a book that is not on the shelf."
+
+  - id: borrow-transaction
+    kind: example
+    runtime: isolated-node
+    dir: borrow-transaction
+    entry: index.js
+    strings:
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+      garden: { uk: "Сад на даху", en: "A garden on the roof" }
+      stars: { uk: "Карта зоряного неба", en: "A map of the night sky" }
+    title:
+      uk: "Невдала видача з транзакцією і без"
+      en: "A failed loan with and without a transaction"
+    body:
+      uk: "Натисни **Запустити**. Програма двічі пробує видати книжку 2, у якої 0 вільних примірників: без транзакції й через `borrowInTransaction`. Потім відкриває два з’єднання до одного файла `library.db` в теці вправи: A вставляє видачу в транзакції, а B тим часом читає й пробує писати."
+      en: "Press **Run**. The program tries twice to lend book 2, which has 0 available copies: without a transaction and through `borrowInTransaction`. Then it opens two connections to one file `library.db` in the exercise folder: A inserts a loan inside a transaction while B reads and tries to write."
+    tryIt:
+      uk: "Подивись на рядок `B tries to write`: поки A тримає транзакцію, B отримує `database is locked` — так SQLite не дає двом записам перемішатися. Потім зітри в `borrowInTransaction` рядок `db.exec('ROLLBACK');` і запусти: у частині «with a transaction» тепер `loans 4` — з’єднання так і лишилося всередині незавершеної транзакції й бачить власну вставку. Поверни рядок."
+      en: "Look at the `B tries to write` line: while A holds its transaction, B gets `database is locked` — that is how SQLite keeps two writes from mixing. Then erase the line `db.exec('ROLLBACK');` in `borrowInTransaction` and run: the “with a transaction” part now shows `loans 4` — the connection stayed inside the unfinished transaction and sees its own insert. Put the line back."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: атомарне оновлення файла"
+      en: "Recall: an atomic file update"
+    items:
+      - id: crash-before-rename
+        from: no-02-05-atomic-recoverable-updates
+        prompt:
+          uk: "`writeAtomic` записав і скинув на диск тимчасовий файл, але процес упав до `rename`. Що прочитає програма після перезапуску із цільового файла?"
+          en: "`writeAtomic` wrote and flushed the temp file, but the process died before the `rename`. What does the program read from the target after the restart?"
+        answer:
+          type: choice
+          options:
+            - id: old-complete
+              text: { uk: "Останню повну стару версію; тимчасовий файл прибере запуск", en: "The last complete old version; the start-up cleans the temp file away" }
+            - id: new
+              text: { uk: "Нову версію: її вже скинуто на диск", en: "The new version: it is already flushed to the disk" }
+              why:
+                uk: "Нові дані лежать у тимчасовому файлі. Цільовий файл змінюється лише в мить `rename` — а до неї справа не дійшла."
+                en: "The new data sits in the temp file. The target changes only at the moment of the `rename` — and that never happened."
+            - id: torn
+              text: { uk: "Половину старої й половину нової", en: "Half of the old one and half of the new one" }
+              why:
+                uk: "Саме від цього захищає тимчасовий файл: у цільовий ніхто не писав частинами."
+                en: "That is exactly what the temp file prevents: nobody wrote into the target piece by piece."
+          correct: [old-complete]
+        explanation:
+          uk: "До `rename` цільовий файл старий і цілий — це «відкат» без жодного слова `ROLLBACK`. Транзакція дає базі ту саму властивість для кількох інструкцій: або всі зміни разом, або жодної."
+          en: "Before the `rename` the target is old and whole — a “rollback” without the word `ROLLBACK`. A transaction gives the database the same property for several statements: all changes together, or none."
+
+  - id: transfer-loan
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: transfer-loan
+    entry: index.js
+    editable: [app.js]
+    strings:
+      marta: { uk: "Марта", en: "Marta" }
+      oleh: { uk: "Олег", en: "Oleh" }
+      borys: { uk: "Борис", en: "Borys" }
+      taras: { uk: "Тарас", en: "Taras" }
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+      garden: { uk: "Сад на даху", en: "A garden on the roof" }
+      stars: { uk: "Карта зоряного неба", en: "A map of the night sky" }
+    title:
+      uk: "Передати видачу іншому учасникові"
+      en: "Hand a loan over to another member"
+    instructions:
+      uk: |
+        Учасник може передати книжку, яку тримає, іншому учасникові. `transferLoan(db, { fromMember, toMember, bookId, today })` в `app.js` робить два кроки: закриває відкриту видачу `fromMember` цієї книжки (`returnedOn = today`) і відкриває нову видачу для `toMember` (`loanedOn = today`). Зроби з них одну транзакцію:
+
+        - вдала передача зберігає обидва кроки;
+        - якщо у `fromMember` немає відкритої видачі цієї книжки (перший крок змінив нуль рядків), функція кидає помилку, і таблиця не змінюється;
+        - якщо другий крок падає (такого `toMember` немає — зовнішній ключ), функція кидає помилку, а перша видача лишається відкритою;
+        - після будь-якої невдачі з’єднання може почати нову транзакцію.
+
+        `index.js` пробує три передачі й друкує видачі після кожної (`open` — відкрита).
+      en: |
+        A member may hand a book they hold over to another member. `transferLoan(db, { fromMember, toMember, bookId, today })` in `app.js` takes two steps: it closes `fromMember`’s open loan of that book (`returnedOn = today`) and opens a new loan for `toMember` (`loanedOn = today`). Make them one transaction:
+
+        - a successful transfer saves both steps;
+        - if `fromMember` has no open loan of that book (the first step changed zero rows), the function throws, and the table does not change;
+        - if the second step fails (there is no such `toMember` — the foreign key), the function throws, and the first loan stays open;
+        - after any failure the connection can start a new transaction.
+
+        `index.js` tries three transfers and prints the loans after each (`open` means not returned).
+    testTitles:
+      "moves an open loan to the other member":
+        uk: "Відкриту видачу передано іншому учасникові"
+        en: "Moves an open loan to the other member"
+      "with no open loan of that book it throws and changes nothing":
+        uk: "Без відкритої видачі цієї книжки кидає помилку й нічого не змінює"
+        en: "With no open loan of that book it throws and changes nothing"
+      "when the other member does not exist it throws and the first loan stays open":
+        uk: "Якщо іншого учасника немає, кидає помилку, а перша видача лишається відкритою"
+        en: "When the other member does not exist it throws and the first loan stays open"
+      "after a failure the connection can start a new transaction":
+        uk: "Після невдачі з’єднання може почати нову транзакцію"
+        en: "After a failure the connection can start a new transaction"
+    hints:
+      nudge:
+        uk: "Де в коді можна дізнатися, що перший крок не знайшов видачі? І що має статися з уже виконаним першим кроком, якщо впаде другий?"
+        en: "Where in the code can you learn that the first step found no loan? And what must happen to the first step, already run, if the second one fails?"
+      explanation:
+        uk: |
+          `run()` повертає `changes`; нуль означає «рядка, який треба змінити, немає» — кинь помилку сам. Транзакція має сталу форму, наприклад для оплати витрати з двох кроків:
+
+          ```js
+          db.exec('BEGIN');
+          try {
+            const paid = db.prepare('UPDATE expenses SET paidOn = ? WHERE id = ? AND paidOn IS NULL').run(day, id);
+            if (paid.changes === 0) throw new Error('nothing to pay');
+            db.prepare('INSERT INTO payments (expenseId, paidOn) VALUES (?, ?)').run(id, day);
+            db.exec('COMMIT');
+          } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
+          }
+          ```
+
+          Без `throw error` у `catch` дані будуть цілі, але той, хто викликав, вважатиме, що все вдалося.
+        en: |
+          `run()` returns `changes`; zero means “the row to change is not there” — throw yourself. A transaction has a fixed shape, for example for paying an expense in two steps:
+
+          ```js
+          db.exec('BEGIN');
+          try {
+            const paid = db.prepare('UPDATE expenses SET paidOn = ? WHERE id = ? AND paidOn IS NULL').run(day, id);
+            if (paid.changes === 0) throw new Error('nothing to pay');
+            db.prepare('INSERT INTO payments (expenseId, paidOn) VALUES (?, ?)').run(id, day);
+            db.exec('COMMIT');
+          } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
+          }
+          ```
+
+          Without `throw error` in `catch` the data stays whole, but the caller believes everything worked.
+    solutionNote:
+      uk: "Обидва кроки стоять між `BEGIN` і `COMMIT`; `changes !== 1` перетворює «нічого не змінено» на помилку, а `catch` відкочує транзакцію й передає помилку далі. Варіант з `BEGIN IMMEDIATE` (одразу бере блокування запису), попереднім `SELECT` відкритої видачі й `finally` теж правильний."
+      en: "Both steps sit between `BEGIN` and `COMMIT`; `changes !== 1` turns “nothing changed” into an error, and `catch` rolls the transaction back and passes the error on. A version with `BEGIN IMMEDIATE` (takes the write lock at once), a preceding `SELECT` of the open loan and `finally` is correct too."
+    feedback:
+      - when: { test: "moves an open loan to the other member" }
+        message:
+          uk: "Ця перевірка передає відкриту видачу 2 (учасник 1, книжка 2) учасникові 2 й очікує `returnedOn` `2026-03-12` у видачі 2 і рівно одну нову відкриту видачу книжки 2 — для учасника 2. Якщо всі перевірки не проходять разом, прочитай першу помилку в консолі після **Запустити**."
+          en: "This check hands open loan 2 (member 1, book 2) to member 2 and expects `returnedOn` `2026-03-12` on loan 2 and exactly one new open loan of book 2 — for member 2. If every check fails at once, read the first error in the console after **Run**."
+      - when: { test: "with no open loan of that book it throws and changes nothing" }
+        message:
+          uk: "Ця перевірка передає книжку 3 від учасника 3, який її вже повернув, й очікує помилку та незмінну таблицю. `UPDATE`, що змінив нуль рядків, — не помилка для SQL: перевір `changes` і кинь помилку сам."
+          en: "This check hands over book 3 from member 3, who has already returned it, and expects an error and an unchanged table. An `UPDATE` that changed zero rows is not an error for SQL: check `changes` and throw yourself."
+      - when: { test: "when the other member does not exist it throws and the first loan stays open" }
+        message:
+          uk: "Ця перевірка передає видачу учасникові 99, якого немає, й очікує помилку та незмінну таблицю. Без транзакції перша видача лишається закритою; а якщо помилку проковтнути в `catch`, той, хто викликав, її не побачить."
+          en: "This check hands a loan to member 99, who does not exist, and expects an error and an unchanged table. Without a transaction the first loan stays closed; and if `catch` swallows the error, the caller never sees it."
+      - when: { test: "after a failure the connection can start a new transaction" }
+        message:
+          uk: "Ця перевірка після невдалої передачі виконує `BEGIN` і `ROLLBACK` й очікує, що вони пройдуть. `cannot start a transaction within a transaction` означає, що на шляху помилки бракує `ROLLBACK`."
+          en: "After a failed transfer this check runs `BEGIN` and `ROLLBACK` and expects them to work. `cannot start a transaction within a transaction` means the error path lacks a `ROLLBACK`."
+
+  - id: to-project
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-09 немає. Але знайди у своєму сервері дії з двох і більше кроків запису — у NO-02 ти захищав їх атомарним записом файла. Якщо в NO-05 за планом курсу обереш SQLite, кожна така дія стане однією транзакцією з `ROLLBACK` на шляху помилки."
+      en: "Your project does not change in this unit: NO-09 has no project step. But find the actions in your server that take two or more writes — in NO-02 you protected them with an atomic file write. If you choose SQLite in NO-05, as the course plan offers, each such action becomes one transaction with a `ROLLBACK` on the error path."
