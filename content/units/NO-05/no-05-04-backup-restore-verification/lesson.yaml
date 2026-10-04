@@ -1,0 +1,341 @@
+id: no-05-04-backup-restore-verification
+unit: NO-05
+title:
+  uk: "Backup і restore, з перевіркою"
+  en: "Backup and restore, verified"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Робити узгоджений backup, поки сервер працює: копію останнього повного файла або знімок SQLite через backup API (`sqlite.backup()`, від Node 22.16) чи `VACUUM INTO`."
+    en: "Take a consistent backup while the server runs: a copy of the last complete file, or a SQLite snapshot with the backup API (`sqlite.backup()`, from Node 22.16) or `VACUUM INTO`."
+  - uk: "Перевіряти backup відновленням у тимчасове місце й порівнянням кількості, контрольної суми та інваріантів домену з джерелом."
+    en: "Verify a backup by restoring it into a scratch location and comparing counts, a checksum and domain invariants with the source."
+prerequisites: [no-05-03-migration-versioning]
+subskills:
+  - { family: B-05, skill: "backup/restore verification", depth: intro }
+glossary: [backup-verification, consistent-snapshot]
+selfCheck: [predict-backups, notes-backup]
+
+blocks:
+  - id: copy-is-not-backup
+    kind: explanation
+    title:
+      uk: "Файл backup — ще не backup"
+      en: "A backup file is not yet a backup"
+    body:
+      uk: |
+        Backup потрібен у найгірший день: сховище зіпсоване, і ти відновлюєш дані з копії. Якщо в цей день з’ясується, що копія теж зламана, backup не було ніколи.
+
+        Дві речі роблять копію справжнім backup:
+
+        1. **[[consistent-snapshot|Узгоджений знімок]].** Копія показує сховище в одну мить, а не половину старого й половину нового. JSON-файл, який завжди замінюють атомарним `rename` (NO-02), досить просто прочитати: читач отримує останню повну версію. Файл бази SQLite посеред транзакції копіювати не можна — документація SQLite попереджає, що така копія може містити частину старих і частину нових даних. Безпечні способи — backup API SQLite (у Node — `sqlite.backup()`, від Node 22.16) або SQL-команда `VACUUM INTO 'файл'` (у твоєму терміналі; у пісочниці курсу вона заборонена, бо може записати файл поза текою вправи).
+        2. **[[backup-verification|Перевірка відновленням]].** Відновити копію в тимчасове місце — ніколи поверх живого сховища — і порівняти з джерелом: кількість записів, контрольну суму, інваріанти домену.
+
+        Джерела: [How To Corrupt An SQLite Database File](https://www.sqlite.org/howtocorrupt.html), розділ «Backup or restore while a transaction is active»; [VACUUM INTO](https://www.sqlite.org/lang_vacuum.html#vacuuminto); [`sqlite.backup()` у Node.js 22](https://nodejs.org/docs/latest-v22.x/api/sqlite.html).
+      en: |
+        A backup is needed on the worst day: the store is damaged, and you restore the data from the copy. If on that day the copy turns out to be broken too, there never was a backup.
+
+        Two things make a copy a real backup:
+
+        1. **A [[consistent-snapshot]].** The copy shows the store at one moment, not half old and half new. A JSON file that is always replaced by an atomic `rename` (NO-02) can simply be read: the reader gets the last complete version. An SQLite database file must not be copied in the middle of a transaction — the SQLite documentation warns that such a copy can contain some old and some new content. The safe ways are SQLite’s backup API (in Node, `sqlite.backup()`, from Node 22.16) or the SQL command `VACUUM INTO 'file'` (in your own terminal; the course sandbox refuses it, because it could write a file outside the exercise folder).
+        2. **[[backup-verification|Verification by restore]].** Restore the copy into a scratch location — never over the live store — and compare it with the source: the record count, a checksum, the domain’s invariants.
+
+        Sources: [How To Corrupt An SQLite Database File](https://www.sqlite.org/howtocorrupt.html), section “Backup or restore while a transaction is active”; [VACUUM INTO](https://www.sqlite.org/lang_vacuum.html#vacuuminto); [`sqlite.backup()` in Node.js 22](https://nodejs.org/docs/latest-v22.x/api/sqlite.html).
+
+  - id: predict-backups
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Сервер витрат на SQLite працює. Спершу з другого з’єднання роблять знімок через `sqlite.backup()`. Потім сервер починає велику транзакцію, що змінює всі 2000 записів, і посеред неї хтось просто копіює файл `expenses.db`. Обидва backup відновлюють у тимчасовий файл і порівнюють із закоміченими даними до транзакції. Що вийде?"
+      en: "An expense server on SQLite is running. First a snapshot is taken from a second connection with `sqlite.backup()`. Then the server starts a big transaction that changes all 2000 records, and in the middle of it someone simply copies the file `expenses.db`. Both backups are restored into a scratch file and compared with the committed data from before the transaction. What is the result?"
+    answer:
+      type: choice
+      options:
+        - id: naive-broken
+          text:
+            uk: "Копія файла не проходить перевірки (`PRAGMA integrity_check` знаходить пошкодження), знімок `sqlite.backup()` проходить"
+            en: "The file copy fails the checks (`PRAGMA integrity_check` finds damage), the `sqlite.backup()` snapshot passes"
+        - id: both-fine
+          text:
+            uk: "Обидва проходять: файл існує, отже backup є"
+            en: "Both pass: the file exists, so there is a backup"
+          why:
+            uk: "Існування файла нічого не каже про його вміст. Посеред транзакції SQLite уже переписав частину сторінок `expenses.db`, а старі тримає в окремому файлі `-journal`, якого копія не має. Без перевірки відновленням цього не видно."
+            en: "A file existing says nothing about its content. In the middle of the transaction SQLite has already rewritten some pages of `expenses.db` and keeps the old ones in a separate `-journal` file, which the copy does not have. Without a verification by restore you cannot see that."
+        - id: copy-is-newer
+          text:
+            uk: "Копія файла проходить і навіть новіша, бо містить частину змін"
+            en: "The file copy passes and is even newer, because it holds some of the changes"
+          why:
+            uk: "Частина змін незавершеної транзакції — це не «новіша» версія, а суміш, якої ніколи не бачив жоден читач. Саме тому вона не узгоджена."
+            en: "Some of the changes of an unfinished transaction are not a “newer” version but a mix that no reader ever saw. That is exactly why it is not consistent."
+        - id: both-broken
+          text:
+            uk: "Обидва зламані: під час роботи сервера backup зробити неможливо"
+            en: "Both are broken: a backup cannot be taken while the server is running"
+          why:
+            uk: "Backup API створює узгоджену копію навіть живої бази — документація SQLite називає його серед безпечних способів, разом із `VACUUM INTO`. Зупиняти сервер не потрібно."
+            en: "The backup API makes a consistent copy even of a live database — the SQLite documentation lists it among the safe ways, together with `VACUUM INTO`. There is no need to stop the server."
+      correct: [naive-broken]
+    explanation:
+      uk: "Наступний приклад робить саме це. На Node 25.2.1 копія файла, зроблена посеред транзакції, не пройшла `PRAGMA integrity_check` (рядки таблиці «out of order»), а знімок відновився з тими самими 2000 записами й тією самою контрольною сумою. Код цього прогнозу не запускається окремо: він має сенс лише з базою на диску."
+      en: "The next example does exactly this. On Node 25.2.1 the file copy taken mid-transaction failed `PRAGMA integrity_check` (table rows “out of order”), while the snapshot restored with the same 2000 records and the same checksum. This prediction has no runnable code of its own: it only makes sense with a database on disk."
+
+  - id: backup-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Наївна копія і знімок"
+      en: "A naive copy and a snapshot"
+    textEquivalent:
+      uk: "Спершу друге з’єднання робить знімок через sqlite.backup(). Потім сервер відкриває транзакцію й починає переписувати записи в базі. Посеред неї хтось копіює файл бази — копія отримує частину нових сторінок і частину старих, а файл журналу зі старими сторінками не копіює. Сервер завершує транзакцію. Перевірка відновлює наївну копію в тимчасовий файл: integrity_check знаходить пошкодження. Знімок, зроблений через sqlite.backup() із закомічених даних до транзакції, відновлюється в тимчасовий файл, і кількість та контрольна сума збігаються з джерелом."
+      en: "First a second connection takes a snapshot with sqlite.backup(). Then the server opens a transaction and starts rewriting records in the database. In the middle of it someone copies the database file — the copy gets some new pages and some old ones and does not copy the journal file that holds the old pages. The server commits. The check restores the naive copy into a scratch file: integrity_check finds damage. The snapshot, taken with sqlite.backup() from the committed data before the transaction, restores into a scratch file, and the count and checksum match the source."
+    spec:
+      actors:
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+        - { id: db, label: "expenses.db" }
+        - { id: backup, label: { uk: "Backup і перевірка", en: "Backup and check" } }
+      messages:
+        - from: backup
+          to: db
+          label: "sqlite.backup(…, 'snapshot.db')"
+          caption:
+            uk: "Знімок через `sqlite.backup()` копіює закомічені дані — узгоджений стан бази в одну мить."
+            en: "The snapshot through `sqlite.backup()` copies the committed data — a consistent state of the database at one moment."
+        - from: server
+          to: db
+          label: "BEGIN; UPDATE …"
+          caption:
+            uk: "Сервер відкриває транзакцію й переписує записи. Частина змінених сторінок уже лягає у файл бази, а старі SQLite тримає в `expenses.db-journal`."
+            en: "The server opens a transaction and rewrites records. Some changed pages already land in the database file, while SQLite keeps the old ones in `expenses.db-journal`."
+        - from: backup
+          to: db
+          label: "copyFile('expenses.db')"
+          caption:
+            uk: "Посеред транзакції хтось просто копіює файл бази. Копія отримує суміш нових і старих сторінок — без журналу."
+            en: "In the middle of the transaction someone simply copies the database file. The copy gets a mix of new and old pages — without the journal."
+        - from: server
+          to: db
+          label: "COMMIT"
+          caption:
+            uk: "Сервер завершує транзакцію. Живій базі нічого не загрожує — зламана лише копія."
+            en: "The server commits. The live database is fine — only the copy is broken."
+        - from: backup
+          to: backup
+          kind: note
+          label: { uk: "відновити наївну копію", en: "restore the naive copy" }
+          note: { uk: "integrity_check: пошкоджено", en: "integrity_check: damaged" }
+          caption:
+            uk: "Перевірка відновлює наївну копію в тимчасовий файл: `integrity_check` знаходить пошкодження, записів менше, ніж було."
+            en: "The check restores the naive copy into a scratch file: `integrity_check` finds damage, and there are fewer records than there were."
+        - from: backup
+          to: backup
+          kind: note
+          label: { uk: "відновити знімок", en: "restore the snapshot" }
+          note: { uk: "2000 записів, сума збігається", en: "2000 records, checksum matches" }
+          caption:
+            uk: "Знімок відновлюється з тією самою кількістю й контрольною сумою, що й джерело. Лише такий backup можна назвати перевіреним."
+            en: "The snapshot restores with the same count and checksum as the source. Only such a backup can be called verified."
+
+  - id: two-backups
+    kind: example
+    runtime: isolated-node
+    dir: two-backups
+    entry: index.js
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      pass: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      source: { uk: "джерело", en: "source" }
+      verified: { uk: "перевірено", en: "verified" }
+      failed: { uk: "НЕ пройшов перевірку", en: "FAILED the check" }
+      noBackupApi: { uk: "sqlite.backup() з’явився в Node 22.16, тож знімка не буде; твій Node —", en: "sqlite.backup() arrived in Node 22.16, so there is no snapshot; your Node is" }
+    title:
+      uk: "Два backup під час запису"
+      en: "Two backups during a write"
+    body:
+      uk: |
+        Натисни **Запустити**. `index.js` створює базу з 2000 синтетичних витрат і записує її `facts` — кількість, суми за категоріями й скорочений sha256 усіх рядків. Потім робить два backup:
+
+        - `snapshot.db` — `sqlite.backup()` з другого з’єднання (якщо твій Node старіший за 22.16, цієї функції немає, і приклад скаже про це замість знімка);
+        - `naive-copy.db` — звичайне `copyFileSync`, поки інша транзакція змінює всі записи.
+
+        `verifyBackup` з `verify.js` відновлює кожен у тимчасовий файл `data/restore-….db`, запускає `PRAGMA integrity_check` і порівнює `facts` із джерелом.
+
+        Коментар на початку `index.js` пояснює, чим ця імітація відрізняється від справжнього сервера.
+      en: |
+        Press **Run**. `index.js` creates a database of 2000 synthetic expenses and records its `facts` — the count, the totals per category and a shortened sha256 of all rows. Then it takes two backups:
+
+        - `snapshot.db` — `sqlite.backup()` from a second connection (if your Node is older than 22.16, the function does not exist, and the example says so instead of taking the snapshot);
+        - `naive-copy.db` — a plain `copyFileSync` while another transaction changes every record.
+
+        `verifyBackup` from `verify.js` restores each one into a scratch file `data/restore-….db`, runs `PRAGMA integrity_check` and compares the `facts` with the source.
+
+        The comment at the top of `index.js` explains how this imitation differs from a real server.
+    tryIt:
+      uk: |
+        1. Перенеси рядок `copyFileSync('data/expenses.db', 'data/backups/naive-copy.db');` на один рядок нижче — після `db.exec('COMMIT');` — і запусти. Тепер копію зроблено, коли жодна транзакція не йде, і вона проходить перевірку за `integrity_check`, але не за `facts`: вона вже містить зміни з `+ 1`, тож суми не збігаються з `facts`, записаними до цієї транзакції. Порівнювати backup треба з тим станом, який він мав зберегти. Поверни рядок на місце.
+        2. У `verify.js` заміни `if (integrity[0] !== 'ok')` на `if (false)` — без перевірки цілісності — і запусти. Наївну копію все одно відхилено, тепер повідомленням `database disk image is malformed`, коли `facts` читає рядки за `id`. Але так щастить не завжди: під час підготовки уроку `SELECT count(*)` на такій самій копії спокійно повернув 1867 замість 2000 — без жодної помилки. Тому перевірок кілька. Поверни `integrity[0] !== 'ok'`.
+      en: |
+        1. Move the line `copyFileSync('data/expenses.db', 'data/backups/naive-copy.db');` one line down — after `db.exec('COMMIT');` — and run. Now the copy is taken when no transaction is running, and it passes `integrity_check` but not the `facts`: it already holds the `+ 1` changes, so the totals do not match the `facts` recorded before that transaction. A backup must be compared with the state it was meant to keep. Move the line back.
+        2. In `verify.js`, replace `if (integrity[0] !== 'ok')` with `if (false)` — no integrity check — and run. The naive copy is still refused, now with `database disk image is malformed` when `facts` reads the rows by `id`. But you are not always that lucky: while preparing this lesson, `SELECT count(*)` on a copy like this calmly returned 1867 instead of 2000 — without any error. That is why there are several checks. Put `integrity[0] !== 'ok'` back.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: заміна файла «все або нічого»"
+      en: "Recall: an all-or-nothing file replacement"
+    items:
+      - id: copy-during-rename
+        from: no-02-05-atomic-recoverable-updates
+        prompt:
+          uk: "Сервер зберігає `wishlist.json` лише через тимчасовий файл і `rename`. Скрипт backup у цей час читає `wishlist.json` повністю й записує прочитане в копію. Що може опинитися в копії?"
+          en: "A server saves `wishlist.json` only through a temp file and `rename`. Meanwhile a backup script reads `wishlist.json` in full and writes what it read into a copy. What can end up in the copy?"
+        answer:
+          type: choice
+          options:
+            - id: whole-version
+              text:
+                uk: "Або повна стара версія, або повна нова — залежно від того, чи встиг `rename`"
+                en: "Either the complete old version or the complete new one — depending on whether the `rename` happened yet"
+            - id: half
+              text:
+                uk: "Половина старої й половина нової версії"
+                en: "Half of the old version and half of the new one"
+              why:
+                uk: "Нова версія пишеться в інший файл, а `rename` на macOS і Linux замінює назву однією дією. Файл, який уже відкрив читач, не змінюється під ним, тож суміші не буває."
+                en: "The new version is written into another file, and on macOS and Linux `rename` replaces the name in one step. A file the reader has already opened does not change under it, so there is no mix."
+            - id: empty
+              text:
+                uk: "Порожній файл, якщо читання збіглося із записом"
+                en: "An empty file, if the read coincided with the write"
+              why:
+                uk: "Порожнім файл буває після `writeFile` на місці, яке спершу спорожнює ціль. Атомарний запис ніколи не спорожнює `wishlist.json`."
+                en: "A file is empty after an in-place `writeFile`, which first empties the target. An atomic write never empties `wishlist.json`."
+          correct: [whole-version]
+        explanation:
+          uk: "Атомарна заміна, яку ти вивчив у NO-02, робить простий backup JSON-файла узгодженим: будь-яке повне читання дає одну повну версію. Але це правда лише тоді, коли **кожен** запис іде через `rename`; база SQLite змінює свій файл на місці, тому для неї потрібен backup API або `VACUUM INTO`."
+          en: "The atomic replacement you learned in NO-02 makes a simple backup of a JSON file consistent: any full read gives one complete version. But that holds only when **every** write goes through `rename`; an SQLite database changes its file in place, so it needs the backup API or `VACUUM INTO`."
+
+  - id: notes-backup
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: notes-backup
+    entry: index.js
+    editable: [app.js]
+    strings:
+      shopping: { uk: "Покупки", en: "Shopping" }
+      ideas: { uk: "Ідеї на вихідні", en: "Weekend ideas" }
+      plan: { uk: "План на тиждень", en: "Plan for the week" }
+      changed: { uk: "Ідеї на свята", en: "Holiday ideas" }
+    title:
+      uk: "backupStore і verifyBackup"
+      en: "backupStore and verifyBackup"
+    instructions:
+      uk: |
+        Сховище нотаток — JSON-файл, який сервер завжди замінює атомарно. У `app.js` напиши дві функції.
+
+        `backupStore(file, backupPath)`:
+
+        - читає `file` **один раз** і записує прочитаний текст у `backupPath`;
+        - поруч записує маніфест `backupPath + '.manifest.json'` — JSON `{ count, sha256 }`: кількість записів і sha256 саме цього тексту (`sha256Of` з `checksum.js`);
+        - повертає той самий об’єкт `{ count, sha256 }`.
+
+        `verifyBackup(backupPath, scratchDir)`:
+
+        - відновлює backup **у `scratchDir`** (копія в `scratchDir/restored.json`), а не поруч із живим файлом, і більше нічого не змінює;
+        - повертає звіт `{ ok, count, sha256, problems }` і **ніколи не кидає**: `problems` — масив текстів, `ok` — `true`, лише коли він порожній;
+        - проблема — це: немає маніфесту; sha256 відновленого тексту не той, що в маніфесті; текст не розбирається як JSON або не проходить `parseStore` з `contract.js` (контракт з уроку про контракт схеми); кількість записів не та, що в маніфесті.
+      en: |
+        The notes store is a JSON file the server always replaces atomically. In `app.js`, write two functions.
+
+        `backupStore(file, backupPath)`:
+
+        - reads `file` **once** and writes the text it read into `backupPath`;
+        - next to it writes the manifest `backupPath + '.manifest.json'` — JSON `{ count, sha256 }`: the number of records and the sha256 of exactly that text (`sha256Of` from `checksum.js`);
+        - returns that same `{ count, sha256 }` object.
+
+        `verifyBackup(backupPath, scratchDir)`:
+
+        - restores the backup **into `scratchDir`** (a copy at `scratchDir/restored.json`), not next to the live file, and changes nothing else;
+        - returns the report `{ ok, count, sha256, problems }` and **never throws**: `problems` is an array of texts, and `ok` is `true` only when it is empty;
+        - a problem is: there is no manifest; the sha256 of the restored text differs from the manifest’s; the text does not parse as JSON or fails `parseStore` from `contract.js` (the contract from the schema contract lesson); the number of records differs from the manifest’s.
+    testTitles:
+      "backupStore copies the store and returns its count and sha256":
+        uk: "`backupStore` копіює сховище й повертає кількість і sha256"
+        en: "`backupStore` copies the store and returns its count and sha256"
+      "the manifest file holds the same count and sha256":
+        uk: "Файл маніфесту містить ті самі кількість і sha256"
+        en: "The manifest file holds the same count and sha256"
+      "verifyBackup passes a good backup":
+        uk: "`verifyBackup` пропускає правильний backup"
+        en: "`verifyBackup` passes a good backup"
+      "verifyBackup restores into the scratch folder and changes nothing else":
+        uk: "`verifyBackup` відновлює в тимчасову теку й нічого іншого не змінює"
+        en: "`verifyBackup` restores into the scratch folder and changes nothing else"
+      "a backup whose bytes changed is reported":
+        uk: "Backup, у якому змінилися байти, позначено"
+        en: "A backup whose bytes changed is reported"
+      "a backup that is not valid JSON is reported, not thrown":
+        uk: "Backup, що не є правильним JSON, позначено, а не кинуто"
+        en: "A backup that is not valid JSON is reported, not thrown"
+      "a backup that breaks the contract is reported":
+        uk: "Backup, що порушує контракт, позначено"
+        en: "A backup that breaks the contract is reported"
+      "a count that differs from the manifest is reported":
+        uk: "Кількість, що не збігається з маніфестом, позначено"
+        en: "A count that differs from the manifest is reported"
+      "a backup without a manifest is reported":
+        uk: "Backup без маніфесту позначено"
+        en: "A backup without a manifest is reported"
+    hints:
+      nudge:
+        uk: "`verifyBackup` — це список незалежних перевірок, кожна з яких додає текст до `problems`. Те, що може кинути (`readFile` маніфесту, `JSON.parse`, `parseStore`), загорни в окремі `try`."
+        en: "`verifyBackup` is a list of independent checks, each adding a text to `problems`. Wrap whatever can throw (`readFile` of the manifest, `JSON.parse`, `parseStore`) in separate `try` blocks."
+      explanation:
+        uk: "Для backup журналу подій це виглядало б так: `const text = await readFile(logFile, 'utf8')` — одне читання, і далі все рахуєш із `text`, а не читаєш файл удруге (між двома читаннями сервер міг його замінити). Відновлення — `copyFile(backupPath, path.join(scratch, 'restored.json'))`, потім `readFile` відновленої копії. Порівняння — `sha256Of(restoredText) !== manifest.sha256` → `problems.push('sha256 …')`. Кількість бери з того, що повернув `parseStore`."
+        en: "For a backup of an event log it would look like this: `const text = await readFile(logFile, 'utf8')` — one read, and from then on everything is computed from `text` instead of reading the file again (the server could have replaced it between two reads). The restore is `copyFile(backupPath, path.join(scratch, 'restored.json'))`, then `readFile` of the restored copy. The comparison is `sha256Of(restoredText) !== manifest.sha256` → `problems.push('sha256 …')`. Take the count from what `parseStore` returned."
+    solutionNote:
+      uk: "`backupStore` рахує маніфест із того самого тексту, який записує, тож маніфест завжди описує саме цю копію. `verifyBackup` відновлює в окрему теку й перевіряє відновлене: байти (sha256), форму (контракт) і кількість. Кожна перевірка додає проблему, а не кидає — у звіті видно все одразу, і перевірку можна запускати за розкладом. Варіант, що спершу збирає результати перевірок у масив пар і фільтрує невдалі, теж правильний."
+      en: "`backupStore` computes the manifest from the same text it writes, so the manifest always describes exactly this copy. `verifyBackup` restores into a separate folder and checks what was restored: the bytes (sha256), the shape (the contract) and the count. Each check adds a problem instead of throwing — the report shows everything at once, and the check can run on a schedule. A version that first collects check results as pairs and filters the failing ones is correct too."
+    feedback:
+      - when: { test: "the manifest file holds the same count and sha256" }
+        message:
+          uk: "Ця перевірка читає `backupPath + '.manifest.json'` і очікує JSON `{ count, sha256 }` з тими самими значеннями, що повернув `backupStore`."
+          en: "This check reads `backupPath + '.manifest.json'` and expects JSON `{ count, sha256 }` with the same values `backupStore` returned."
+      - when: { test: "verifyBackup restores into the scratch folder and changes nothing else" }
+        message:
+          uk: "Ця перевірка очікує файл `restored.json` у `scratchDir` і незмінні backup та маніфест. Відновлюй копіюванням у `scratchDir`, а не поверх наявних файлів."
+          en: "This check expects a file `restored.json` in `scratchDir` and an unchanged backup and manifest. Restore by copying into `scratchDir`, not over existing files."
+      - when: { test: "a backup whose bytes changed is reported" }
+        message:
+          uk: "Ця перевірка змінює одну назву в backup (JSON лишається правильним, кількість та сама) і очікує `ok: false`. Таку зміну ловить лише sha256 відновленого тексту."
+          en: "This check changes one title inside the backup (the JSON stays valid, the count is the same) and expects `ok: false`. Only the sha256 of the restored text catches such a change."
+      - when: { test: "a backup that is not valid JSON is reported, not thrown" }
+        message:
+          uk: "Ця перевірка обриває backup посередині й очікує звіт з `ok: false`, а не виняток. Загорни розбір у `try`/`catch` і додай проблему."
+          en: "This check cuts the backup in the middle and expects a report with `ok: false`, not an exception. Wrap the parsing in `try`/`catch` and add a problem."
+      - when: { test: "a backup that breaks the contract is reported" }
+        message:
+          uk: "Ця перевірка кладе в backup нотатку з `title` числом — і маніфест, що точно описує цей текст. Лише `parseStore` з `contract.js` помітить таку проблему."
+          en: "This check puts a note with a numeric `title` into the backup — with a manifest that exactly describes that text. Only `parseStore` from `contract.js` notices such a problem."
+      - when: { test: "a count that differs from the manifest is reported" }
+        message:
+          uk: "Ця перевірка дає маніфест із правильним sha256, але іншою кількістю й очікує `ok: false`. Порівняй кількість записів після `parseStore` з `manifest.count`."
+          en: "This check gives a manifest with the right sha256 but another count and expects `ok: false`. Compare the number of records after `parseStore` with `manifest.count`."
+      - when: { test: "a backup without a manifest is reported" }
+        message:
+          uk: "Ця перевірка видаляє маніфест і очікує звіт з `ok: false`, а не виняток `ENOENT`."
+          en: "This check deletes the manifest and expects a report with `ok: false`, not an `ENOENT` exception."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-05
+    body:
+      uk: "Крок проєкту цього розділу просить backup сховища твого домену й перевірку відновленням: для файла — копію останньої повної версії з маніфестом, для SQLite — `sqlite.backup()` (Node 22.16 і новіший) або `VACUUM INTO`. Перевіряй тим, що важливо саме твоєму домену: кількістю записів і тим підсумком, який твій застосунок показує людині."
+      en: "This unit’s project step asks for a backup of your domain’s store and a verification by restore: for a file, a copy of the last complete version with a manifest; for SQLite, `sqlite.backup()` (Node 22.16 or newer) or `VACUUM INTO`. Check what matters for your domain: the record count and the total your app shows to a person."
