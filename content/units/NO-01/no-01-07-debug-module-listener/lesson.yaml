@@ -1,0 +1,333 @@
+id: no-01-07-debug-module-listener
+unit: NO-01
+title:
+  uk: "Налагодження: зламаний імпорт і listener, що протікає"
+  en: "Debug: a broken import and a leaking listener"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Полагодити зламані імпорти, читаючи код помилки й specifier та застосовуючи правила пошуку модулів (розширення файлу, карта `exports`, іменований експорт CommonJS)."
+    en: "Repair broken imports by reading the error code and specifier and applying the resolution rules (file extension, `exports` map, CommonJS named export)."
+  - uk: "Знайти витік слухачів, вимірявши `listenerCount` після кількох перезавантажень, і виправити його так, щоб кількість лишалася сталою."
+    en: "Locate a listener leak by measuring `listenerCount` across repeated reloads and fix it so the count stays constant."
+prerequisites: [no-01-06-typescript-in-node]
+subskills:
+  - { family: B-01, skill: "ESM/CJS/package resolution", depth: assess }
+  - { family: B-01, skill: "events/EventEmitter error lifecycle", depth: assess }
+glossary: []
+selfCheck: [predict-failing-imports, habit-tracker]
+
+blocks:
+  - id: debug-plan
+    kind: explanation
+    title:
+      uk: "Як читати збої модулів і витоки"
+      en: "How to read module failures and leaks"
+    body:
+      uk: |
+        Трекер звичок у цьому уроці має три вади — дві в імпортах і одну в слухачах. Порядок роботи:
+
+        1. **Збій завантаження.** Програма не виконала жодного рядка: Node спершу збирає весь граф модулів. Прочитай код помилки і specifier: `ERR_MODULE_NOT_FOUND` з підказкою `Did you mean …` — бракує розширення; `does not provide an export named` для файлу `.cjs` — іменований імпорт із CommonJS; `ERR_PACKAGE_PATH_NOT_EXPORTED` — шляху немає в `exports`. Помилки йдуть по одній: виправив першу — побачиш наступну.
+        2. **Витік слухачів.** Програма працює, результат правильний, але кожен повторний виклик додає слухача. Вимірюй: `listenerCount(name)` після 1, 5, 11 викликів. Стала кількість — добре, зростаюча — витік. [[max-listeners-warning|`MaxListenersExceededWarning`]] з’являється лише після 10-го — вимірювання помітить витік раніше.
+      en: |
+        The habit tracker in this lesson has three defects — two in the imports and one in the listeners. The order of work:
+
+        1. **A load failure.** The program ran not a single line: Node first puts together the whole module graph. Read the error code and the specifier: `ERR_MODULE_NOT_FOUND` with the hint `Did you mean …` — a missing extension; `does not provide an export named` for a `.cjs` file — a named import from CommonJS; `ERR_PACKAGE_PATH_NOT_EXPORTED` — the path is not in `exports`. The errors come one at a time: fix the first and you will see the next.
+        2. **A listener leak.** The program works and the result is right, but every repeated call adds a listener. Measure: `listenerCount(name)` after 1, 5, 11 calls. A constant count is fine, a growing one is a leak. [[max-listeners-warning|`MaxListenersExceededWarning`]] appears only after the 10th — measuring notices the leak earlier.
+
+  - id: predict-failing-imports
+    kind: prediction
+    prompt:
+      uk: "Модуль `tracker.js` (ES-модуль) починається так. Файл `domain/streak.js` існує, а `fixtures.cjs` закінчується рядком коду `module.exports = api;`. Які імпорти не дадуть програмі завантажитися? Обери всі."
+      en: "The module `tracker.js` (an ES module) starts like this. The file `domain/streak.js` exists, and `fixtures.cjs` ends with the line of code `module.exports = api;`. Which imports keep the program from loading? Choose all."
+    code: |
+      import { format } from "node:util";
+      import { currentStreak } from "./domain/streak";
+      import { loadHabits } from "./fixtures.cjs";
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: builtin
+          code: 'import { format } from "node:util";'
+          why:
+            uk: "`node:util` — вбудований модуль, і `format` — його справжній іменований експорт. Цей рядок коду працює."
+            en: "`node:util` is a built-in module, and `format` is its real named export. This line of code works."
+        - id: no-extension
+          code: 'import { currentStreak } from "./domain/streak";'
+        - id: named-cjs
+          code: 'import { loadHabits } from "./fixtures.cjs";'
+      correct: [no-extension, named-cjs]
+    explanation:
+      uk: "Відносний specifier в ES-модулі мусить мати розширення, тож `./domain/streak` дає `ERR_MODULE_NOT_FOUND`. А `fixtures.cjs` присвоює `module.exports = api` наприкінці, тож назви `loadHabits` Node наперед не бачить і іменований імпорт падає з `SyntaxError`. Node повідомляє про них по черзі: спершу про файл, якого не знайшов."
+      en: "A relative specifier in an ES module must have its extension, so `./domain/streak` gives `ERR_MODULE_NOT_FOUND`. And `fixtures.cjs` assigns `module.exports = api` at the end, so Node cannot see the name `loadHabits` in advance and the named import fails with a `SyntaxError`. Node reports them one after the other: first the file it could not find."
+
+  - id: predict-listener-count
+    kind: prediction
+    prompt:
+      uk: "Імпорти полагоджено. `reload()` трекера щоразу викликає `source.on('record', …)` і ніде не викликає `off`. Скільки покаже `source.listenerCount('record')` після п’яти викликів `reload()`?"
+      en: "The imports are repaired. The tracker’s `reload()` calls `source.on('record', …)` every time and never calls `off`. What does `source.listenerCount('record')` show after five calls of `reload()`?"
+    answer:
+      type: choice
+      options:
+        - id: five
+          code: "5"
+        - id: one
+          code: "1"
+          why:
+            uk: "`on` не замінює попереднього слухача — він додає ще одного. Навіть однаковий за текстом код — це щоразу нова функція."
+            en: "`on` does not replace the previous listener — it adds one more. Even code that reads the same is a new function every time."
+        - id: zero
+          code: "0"
+          why:
+            uk: "Слухачі не зникають після `emit`: вони лишаються на емітері, доки їх не приберуть через `off` (крім `once`)."
+            en: "Listeners do not vanish after `emit`: they stay on the emitter until removed with `off` (except `once`)."
+      correct: [five]
+    explanation:
+      uk: "Кожен `reload()` додає нову функцію-слухача: після п’яти — п’ять. І кожен запис тепер обробляють усі п’ятеро, тож робота росте з кожним перезавантаженням. Справжній Node.js під час підготовки уроку показав саме 5."
+      en: "Every `reload()` adds a new listener function: after five calls, five. And now every record is handled by all five of them, so the work grows with every reload. Real Node.js showed exactly 5 while this lesson was prepared."
+
+  - id: leak-replay
+    kind: example
+    runtime: isolated-node
+    dir: leak-replay
+    entry: index.js
+    strings:
+      processed: { uk: "оброблено записів", en: "records processed" }
+      morning: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      words: { uk: "Вчити англійські слова", en: "Learn English words" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+    title:
+      uk: "Витік у цифрах"
+      en: "The leak in numbers"
+    body:
+      uk: |
+        Тут імпорти трекера вже полагоджено, а витік лишився. `index.js` викликає `reload()` 11 разів і після 1-го, 5-го й 11-го друкує кількість слухачів і скільки записів оброблено загалом. Фікстур — шість звичок.
+
+        Натисни **Запустити** й порівняй з передбаченням. Наприкінці — червоне попередження: на 11-му слухачі Node надрукував `MaxListenersExceededWarning`. Серії звичок при цьому правильні — витік не видно в результаті, лише в лічильниках.
+      en: |
+        Here the tracker’s imports are already repaired, while the leak is still there. `index.js` calls `reload()` 11 times and after the 1st, 5th and 11th prints the number of listeners and how many records were processed in total. The fixtures hold six habits.
+
+        Press **Run** and compare with your prediction. At the end there is a red warning: at the 11th listener Node printed `MaxListenersExceededWarning`. The habit streaks are right meanwhile — the leak does not show in the result, only in the counters.
+    tryIt:
+      uk: "Порахуй: без витоку п’ять перезавантажень обробили б 5 × 6 = 30 записів. Звідки 90? Перший `reload()` обробив 6 записів, другий — 12 (два слухачі), третій — 18… Разом 6 + 12 + 18 + 24 + 30 = 90."
+      en: "Do the sums: without the leak, five reloads would process 5 × 6 = 30 records. Where does 90 come from? The first `reload()` processed 6 records, the second 12 (two listeners), the third 18… Together 6 + 12 + 18 + 24 + 30 = 90."
+
+  - id: failing-run
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Невдалий запуск, крок за кроком"
+      en: "The failing run, step by step"
+    textEquivalent:
+      uk: "Спершу Node збирає граф модулів. Імпорт ./domain/streak без розширення не знаходить файлу: ERR_MODULE_NOT_FOUND з підказкою Did you mean ./domain/streak.js. Коли розширення додано, наступний збій — іменований імпорт loadHabits з fixtures.cjs: файл CommonJS присвоює module.exports = api наприкінці, і Node повідомляє, що такого експорту немає. Коли й це виправлено, програма працює, але кожен виклик reload() додає слухача record до джерела: після першого виклику — 1, після другого — 2, після п’ятого — 5. На одинадцятому слухачі Node друкує MaxListenersExceededWarning. Ліміт можна підняти, але слухачі все одно накопичуватимуться; виправлення — додавати слухача один раз або прибирати його після кожного перезавантаження."
+      en: "First Node puts together the module graph. The import ./domain/streak without an extension finds no file: ERR_MODULE_NOT_FOUND with the hint Did you mean ./domain/streak.js. Once the extension is added, the next failure is the named import of loadHabits from fixtures.cjs: the CommonJS file assigns module.exports = api at the end, and Node reports that there is no such export. Once that is fixed too, the program works, but every call of reload() adds a record listener to the source: 1 after the first call, 2 after the second, 5 after the fifth. At the eleventh listener Node prints MaxListenersExceededWarning. The limit can be raised, but the listeners would still pile up; the fix is to add the listener once or remove it after each reload."
+    spec:
+      layout: grid
+      nodes:
+        - { id: import-streak, label: "./domain/streak", w: 140, col: 0, row: 0 }
+        - { id: not-found, label: "ERR_MODULE_NOT_FOUND", shape: note, w: 168, col: 1, row: 0 }
+        - { id: import-cjs, label: "{ loadHabits } ← .cjs", w: 160, col: 0, row: 1 }
+        - { id: no-export, label: "no export named", shape: note, w: 168, col: 1, row: 1 }
+        - { id: reload, label: "reload() × N", shape: round, w: 140, col: 0, row: 2 }
+        - { id: source, label: "source: 'record'", w: 168, col: 1, row: 2 }
+        - { id: warning, label: "MaxListenersExceeded", shape: note, w: 168, col: 1, row: 3 }
+      edges:
+        - { id: e-streak, from: import-streak, to: not-found }
+        - { id: e-cjs, from: import-cjs, to: no-export }
+        - { id: e-reload, from: reload, to: source, label: "on()" }
+        - { id: e-warning, from: source, to: warning }
+      hidden: [warning]
+      steps:
+        - caption:
+            uk: "Два імпорти й один `reload()`, що його викликають знову й знову. Спершу Node збирає граф модулів — ще до першого рядка коду."
+            en: "Two imports and one `reload()` called again and again. First Node puts together the module graph — before the first line of code."
+          dim: [not-found, no-export, source]
+        - caption:
+            uk: "`./domain/streak` без розширення: файлу з такою назвою немає — `ERR_MODULE_NOT_FOUND` і підказка `Did you mean to import \"./domain/streak.js\"?`."
+            en: "`./domain/streak` without an extension: there is no file with that name — `ERR_MODULE_NOT_FOUND` and the hint `Did you mean to import \"./domain/streak.js\"?`."
+          highlight: [import-streak, e-streak, not-found]
+          dim: [import-cjs, no-export, reload, source]
+        - caption:
+            uk: "Розширення додано — наступний збій: `fixtures.cjs` присвоює `module.exports = api`, назви `loadHabits` Node наперед не бачить, і іменований імпорт дає `SyntaxError`."
+            en: "With the extension added, the next failure: `fixtures.cjs` assigns `module.exports = api`, Node cannot see the name `loadHabits` in advance, and the named import gives a `SyntaxError`."
+          highlight: [import-cjs, e-cjs, no-export]
+          dim: [import-streak, not-found, reload, source]
+        - caption:
+            uk: "Імпорти полагоджено, програма працює. Перший `reload()` додав слухача: `listenerCount('record')` — 1."
+            en: "The imports are repaired and the program works. The first `reload()` added a listener: `listenerCount('record')` is 1."
+          highlight: [reload, e-reload, source]
+          dim: [import-streak, not-found, import-cjs, no-export]
+          annotate:
+            - { id: source, text: { uk: "слухачів: 1", en: "listeners: 1" } }
+        - caption:
+            uk: "Після п’ятого `reload()` слухачів уже 5, і кожен запис обробляють усі п’ятеро. Результат правильний — витік видно лише в лічильнику."
+            en: "After the fifth `reload()` there are 5 listeners, and every record is handled by all five. The result is right — the leak shows only in the counter."
+          highlight: [reload, e-reload, source]
+          dim: [import-streak, not-found, import-cjs, no-export]
+          annotate:
+            - { id: source, text: { uk: "слухачів: 5", en: "listeners: 5" } }
+        - caption:
+            uk: "На 11-му слухачі Node друкує `MaxListenersExceededWarning`. Підняти ліміт — значить вимкнути сигнал; виправлення — додавати слухача один раз або прибирати його."
+            en: "At the 11th listener Node prints `MaxListenersExceededWarning`. Raising the limit switches the signal off; the fix is to add the listener once or remove it."
+          highlight: [source, e-warning, warning]
+          dim: [import-streak, not-found, import-cjs, no-export]
+          show: [warning]
+          annotate:
+            - { id: source, text: { uk: "слухачів: 11", en: "listeners: 11" } }
+
+  - id: recall-leaks
+    kind: review
+    title:
+      uk: "Пригадай: витоки й типи"
+      en: "Recall: leaks and types"
+    items:
+      - id: counting-registrations
+        from: js-13-11-debug-leaks-cycles
+        prompt:
+          uk: "Панель відкривали й закривали тричі. Лічильник живих слухачів показує, що на `document` висять три слухачі `keydown` від неї. Що це означає?"
+          en: "A panel was opened and closed three times. The live listener counter shows three `keydown` listeners from it on `document`. What does that mean?"
+        answer:
+          type: choice
+          options:
+            - id: leak
+              text:
+                uk: "Відкриття додає слухача, а закриття його не прибирає — витік"
+                en: "Opening adds a listener and closing does not remove it — a leak"
+            - id: normal
+              text:
+                uk: "Нічого: браузер сам прибере слухачів, коли панель зникне"
+                en: "Nothing: the browser removes the listeners itself when the panel disappears"
+              why:
+                uk: "Слухач на `document` живе, доки живе `document`. Зникнення панелі його не прибирає — це мусить зробити її код закриття."
+                en: "A listener on `document` lives as long as `document` does. The panel disappearing does not remove it — its closing code must do that."
+            - id: three-panels
+              text:
+                uk: "Що на сторінці зараз три відкриті панелі"
+                en: "That three panels are open on the page now"
+              why:
+                uk: "Панель закрито всі три рази. Лічильник показує слухачів, що лишилися від закритих панелей."
+                en: "The panel was closed all three times. The counter shows listeners left over from closed panels."
+          correct: [leak]
+        explanation:
+          uk: "Те саме правило в Node: якщо кількість слухачів росте з кожним повтором дії, хтось додає й не прибирає. Рахуй до і після — це найшвидший доказ."
+          en: "The same rule holds in Node: if the number of listeners grows with each repetition of an action, something adds and does not remove. Count before and after — it is the quickest proof."
+      - id: ran-means-checked
+        from: no-01-06-typescript-in-node
+        prompt:
+          uk: "Колега каже: «Мій `server.ts` запустився командою `node server.ts` без помилок, отже типи правильні». Чи так це?"
+          en: "A colleague says: “My `server.ts` started with `node server.ts` without errors, so its types are right.” Is that so?"
+        answer:
+          type: choice
+          options:
+            - id: no
+              text:
+                uk: "Ні: Node вирізає типи й не перевіряє їх; потрібен `tsc --noEmit`"
+                en: "No: Node cuts out the types and does not check them; `tsc --noEmit` is needed"
+            - id: yes
+              text:
+                uk: "Так: Node не запустив би файл із помилкою типу"
+                en: "Yes: Node would not run a file with a type error"
+              why:
+                uk: "Node запустить файл `.ts` і з помилкою типу — він лише вирізає анотації. Це показав `next port: 30001`."
+                en: "Node runs a `.ts` file even with a type error — it only cuts out the annotations. `next port: 30001` showed that."
+          correct: [no]
+        explanation:
+          uk: "Запуск доводить лише, що JavaScript без типів виконався. Типи перевіряє тільки `tsc`."
+          en: "Running proves only that the JavaScript without types ran. Only `tsc` checks the types."
+
+  - id: habit-tracker
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: habit-tracker
+    entry: index.js
+    editable: [tracker.js]
+    strings:
+      processed: { uk: "оброблено записів", en: "records processed" }
+      morning: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      words: { uk: "Вчити англійські слова", en: "Learn English words" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+    title:
+      uk: "Полагодь трекер звичок"
+      en: "Repair the habit tracker"
+    instructions:
+      uk: |
+        У `tracker.js` три вади: дві в імпортах і витік слухачів у `reload()`. Решту файлів не змінюй. Натисни **Запустити**, читай кожну помилку й лагодь по одній.
+
+        Коли все гаразд:
+
+        - програма завантажується, а `streaks` після `reload()` містить серії всіх активних звичок;
+        - після п’яти `reload()` на джерелі стільки ж слухачів `'record'`, як після одного, — не більше **одного**, і кожен `reload()` обробляє кожну звичку **один** раз;
+        - слухачі `'record'`, яких додав хтось інший, лишаються на місці;
+        - ліміт слухачів джерела не змінено (10): підняти його — не виправлення.
+      en: |
+        `tracker.js` has three defects: two in the imports and a listener leak in `reload()`. Do not change the other files. Press **Run**, read each error and fix them one at a time.
+
+        When everything is right:
+
+        - the program loads, and after `reload()` `streaks` holds the streaks of all active habits;
+        - after five `reload()` calls the source has as many `'record'` listeners as after one — at most **one**, and each `reload()` processes every habit **once**;
+        - `'record'` listeners someone else added stay in place;
+        - the source’s listener limit is unchanged (10): raising it is not a fix.
+    testTitles:
+      "reload computes the streak of every active habit":
+        uk: "`reload()` обчислює серії всіх активних звичок"
+        en: "`reload()` computes the streaks of all active habits"
+      "the record listener count does not grow across reloads":
+        uk: "Кількість слухачів `'record'` не росте з кожним `reload()` (щонайбільше один)"
+        en: "The number of `'record'` listeners does not grow with each `reload()` (at most one)"
+      "each reload processes every habit once":
+        uk: "П’ять `reload()` обробляють 5 × 6 = 30 записів"
+        en: "Five `reload()` calls process 5 × 6 = 30 records"
+      "keeps record listeners that others added":
+        uk: "Чужий слухач `'record'` лишається й отримує записи"
+        en: "Someone else’s `'record'` listener stays and receives records"
+      "leaves the max-listeners limit at 10":
+        uk: "Ліміт слухачів джерела лишається 10"
+        en: "The source’s listener limit stays at 10"
+    hints:
+      nudge:
+        uk: "Почни з першої помилки в консолі: її код і specifier кажуть, яке правило порушено. Для витоку подумай, скільки разів за життя трекера має виконатися `source.on`."
+        en: "Start from the first error in the console: its code and specifier say which rule is broken. For the leak, think about how many times `source.on` should run during the tracker’s life."
+      explanation:
+        uk: "Імпорти: відносний шлях в ES-модулі — з розширенням; з файлу CommonJS, що присвоює `module.exports` цілим об’єктом, — імпорт за замовчуванням і деструктуризація. Витік: слухач, доданий у функції, яку викликають багато разів, додається багато разів. Або додай його один раз там, де трекер створюється, або прибирай тією самою функцією через `off`, коли перезавантаження закінчилося (`emit` синхронний, тож після `load()` усі записи вже прийшли). `removeAllListeners` і `setMaxListeners` не годяться."
+        en: "Imports: a relative path in an ES module has its extension; from a CommonJS file that assigns `module.exports` as a whole object — a default import plus destructuring. The leak: a listener added in a function that is called many times gets added many times. Either add it once where the tracker is created, or remove it with the same function via `off` once the reload is over (`emit` is synchronous, so all records have arrived after `load()`). `removeAllListeners` and `setMaxListeners` do not fit."
+    solutionNote:
+      uk: "Розширення `.js` і імпорт CommonJS за замовчуванням лагодять завантаження. Слухач `'record'` тепер додається один раз — у `createTracker`, а `reload()` лише очищує серії й знову завантажує фікстури. Кількість слухачів стала (1), робота не росте, попередження немає — і без підняття ліміту."
+      en: "The `.js` extension and the default import of CommonJS repair the loading. The `'record'` listener is now added once — in `createTracker` — and `reload()` only clears the streaks and loads the fixtures again. The listener count is constant (1), the work does not grow, there is no warning — and the limit was not raised."
+    feedback:
+      - when: { test: "the record listener count does not grow across reloads" }
+        message:
+          uk: "Ця перевірка п’ять разів викликає `reload()` і чекає, що `source.listenerCount('record')` такий самий, як після одного, і не більший за 1. Якщо він росте — `reload()` щоразу додає нового слухача."
+          en: "This check calls `reload()` five times and expects `source.listenerCount('record')` to be the same as after one and not above 1. If it grows, `reload()` adds a new listener every time."
+      - when: { test: "each reload processes every habit once" }
+        message:
+          uk: "Ця перевірка чекає `stats.processed` = 30 після п’яти `reload()` (6 звичок × 5). Більше число означає, що кожен запис обробляють кілька накопичених слухачів."
+          en: "This check expects `stats.processed` = 30 after five `reload()` calls (6 habits × 5). A larger number means each record is handled by several piled-up listeners."
+      - when: { test: "keeps record listeners that others added" }
+        message:
+          uk: "Ця перевірка додає власного слухача `'record'` до створення трекера й чекає, що він отримає всі 19 записів. `removeAllListeners('record')` прибирає й чужих слухачів — прибирай лише свого через `off`."
+          en: "This check adds its own `'record'` listener before the tracker is created and expects it to receive all 19 records. `removeAllListeners('record')` removes other people’s listeners too — remove only yours with `off`."
+      - when: { test: "leaves the max-listeners limit at 10" }
+        message:
+          uk: "Ця перевірка чекає, що `source.getMaxListeners()` — 10. `setMaxListeners` лише ховає попередження; виправ причину — слухача, що додається на кожен `reload()`."
+          en: "This check expects `source.getMaxListeners()` to be 10. `setMaxListeners` only hides the warning; fix the cause — the listener added on every `reload()`."
+      - when: { test: "reload computes the streak of every active habit" }
+        message:
+          uk: "Ця перевірка двічі викликає `reload()` і чекає серії `h-01` 3, `h-02` 2, `h-03` 1, `h-04` 1, `h-06` 0. Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі — найчастіше програма ще не завантажується."
+          en: "This check calls `reload()` twice and expects the streaks `h-01` 3, `h-02` 2, `h-03` 1, `h-04` 1, `h-06` 0. If every check fails at once, fix the first error in the console first — most often the program does not load yet."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-01
+    body:
+      uk: "Якщо скрипт у кроці проєкту не стартує, читай помилку так само: код, specifier, правило. Найімовірніші причини в теці `server/`, запланованій для кроку проєкту, — забуте розширення у відносному імпорті спільного доменного коду чи `package.json` без `\"type\": \"module\"`."
+      en: "If the script in the project step does not start, read the error the same way: code, specifier, rule. The most likely causes in the `server/` folder planned for the project step are a forgotten extension in a relative import of the shared domain code, or a `package.json` without `\"type\": \"module\"`."

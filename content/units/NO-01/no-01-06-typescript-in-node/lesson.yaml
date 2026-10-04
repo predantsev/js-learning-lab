@@ -1,0 +1,516 @@
+id: no-01-06-typescript-in-node
+unit: NO-01
+title:
+  uk: "TypeScript у Node: збірка проти виконання"
+  en: "TypeScript in Node: build vs runtime"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Пояснити, що Node виконує JavaScript: типи прибирає `tsc` або type stripping ще до запуску, тож під час виконання їх ніхто не перевіряє."
+    en: "Explain that Node executes JavaScript: types are erased by `tsc` or by type stripping before code runs, so nothing checks them at run time."
+  - uk: "Налаштувати скрипт так, щоб `tsc --noEmit` перевіряв його типи, а Node виконував, і передбачити, які помилки ловить кожен крок."
+    en: "Set up a script so `tsc --noEmit` typechecks it and Node runs it, and predict which faults each step catches."
+prerequisites: [no-01-05-eventemitter-errors, js-14-08-compile-time-vs-runtime]
+subskills:
+  - { family: B-01, skill: "TS build/runtime distinction", depth: intro }
+glossary: [type-stripping]
+selfCheck: [predict-ts-run, read-port]
+
+blocks:
+  - id: node-runs-js
+    kind: explanation
+    title:
+      uk: "Node виконує JavaScript, а не типи"
+      en: "Node runs JavaScript, not types"
+    body:
+      uk: |
+        У розділі про TypeScript ти бачив, що [[tsc]] перевіряє типи, а в браузер іде JavaScript без них ([[type-erasure|стирання типів]]). Сучасний Node вміє запускати файл `.ts` напряму, але робить це так само: просто **вирізає** анотації типів і виконує те, що лишилося. Це [[type-stripping]].
+
+        Що із цього випливає:
+
+        - Node **не перевіряє** типи. Файл із помилкою типів запуститься, ніби помилки немає.
+        - Типи, що імпортуються, треба позначати `import type`: інакше після вирізання лишиться імпорт назви, якої в модулі під час виконання немає.
+        - У відносному імпорті — розширення `.ts`. Синтаксис, який не можна просто вирізати (`enum`, `namespace` з кодом), Node без додаткового прапорця не виконає, а `tsconfig.json` він не читає.
+
+        За документацією Node.js 22 type stripping увімкнено за замовчуванням від версії 22.18; у 22.13–22.17 потрібен прапорець `--experimental-strip-types` (платформа додає його сама). Перевіряє типи лише окремий крок — `tsc --noEmit`.
+      en: |
+        In the TypeScript unit you saw that [[tsc]] checks types, while the browser gets JavaScript without them ([[type-erasure]]). Modern Node can run a `.ts` file directly, but it does the same thing: it simply **cuts out** the type annotations and runs what is left. This is [[type-stripping]].
+
+        What follows from that:
+
+        - Node does **not check** types. A file with a type error runs as if there were no error.
+        - Imported types must be marked `import type`: otherwise, after cutting, an import of a name that does not exist at run time is left behind.
+        - A relative import has the `.ts` extension. Syntax that cannot simply be cut out (`enum`, `namespace` with code) does not run without an extra flag, and Node does not read `tsconfig.json`.
+
+        According to the Node.js 22 documentation, type stripping is on by default from version 22.18; in 22.13–22.17 it needs the flag `--experimental-strip-types` (the platform adds it itself). Only a separate step checks the types — `tsc --noEmit`.
+
+  - id: predict-ts-run
+    kind: prediction
+    prompt:
+      uk: "Файл `summary.ts` запускають командою `node summary.ts`, а окремо — `npx tsc --noEmit`. Що станеться?"
+      en: "The file `summary.ts` is started with `node summary.ts`, and separately checked with `npx tsc --noEmit`. What happens?"
+    code: |
+      interface Config {
+        port: number;
+        locale: "uk" | "en";
+      }
+
+      const fallback: Config = { port: "3000", locale: "uk" };
+      console.log(`next port: ${fallback.port + 1}`);
+    lang: ts
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: both-lanes
+          text:
+            uk: "Node друкує `next port: 30001`; `tsc` повідомляє про помилку TS2322 у рядку 6: текст не можна присвоїти числу"
+            en: "Node prints `next port: 30001`; `tsc` reports error TS2322 on line 6: a string cannot be assigned to a number"
+        - id: node-refuses
+          text:
+            uk: "Node відмовляється запускати файл через помилку типу, а `tsc` повідомляє про неї"
+            en: "Node refuses to run the file because of the type error, and `tsc` reports it"
+          why:
+            uk: "Node типів не перевіряє: він вирізає анотації й виконує JavaScript. Якщо файл `.ts` запустився, це нічого не каже про його типи."
+            en: "Node does not check types: it cuts out the annotations and runs JavaScript. A `.ts` file that runs tells you nothing about its types."
+        - id: types-convert
+          text:
+            uk: "Node друкує `next port: 3001`, бо тип `number` перетворює `\"3000\"` на число"
+            en: "Node prints `next port: 3001`, because the `number` type turns `\"3000\"` into a number"
+          why:
+            uk: "Типи нічого не перетворюють — під час виконання їх просто немає. `\"3000\" + 1` склеює тексти: `30001`."
+            en: "Types convert nothing — at run time they simply do not exist. `\"3000\" + 1` joins texts: `30001`."
+        - id: all-fine
+          text:
+            uk: "Node друкує `next port: 30001`, і `tsc` теж мовчить"
+            en: "Node prints `next port: 30001`, and `tsc` stays silent too"
+          why:
+            uk: "`tsc` якраз і бачить, що `\"3000\"` — текст, а `port` оголошено як `number`. Це помилка, яку ловить саме перевірка типів."
+            en: "`tsc` sees exactly that `\"3000\"` is text while `port` is declared as `number`. This is the kind of error only the type check catches."
+      correct: [both-lanes]
+    explanation:
+      uk: "Два кроки — два різні результати. `node summary.ts` вирізає типи й виконує `\"3000\" + 1`, тобто `30001`. `npx tsc --noEmit` нічого не виконує, лише перевіряє й пише `error TS2322: Type 'string' is not assignable to type 'number'`. Обидва результати отримано під час підготовки уроку (Node.js 25.2.1, TypeScript 7.0.2)."
+      en: "Two steps — two different results. `node summary.ts` cuts out the types and runs `\"3000\" + 1`, that is `30001`. `npx tsc --noEmit` runs nothing, it only checks and writes `error TS2322: Type 'string' is not assignable to type 'number'`. Both results were obtained while this lesson was prepared (Node.js 25.2.1, TypeScript 7.0.2)."
+
+  - id: types-erased
+    kind: example
+    runtime: isolated-node
+    dir: types-erased
+    entry: index.ts
+    strings:
+      fromCode: { uk: "Хибний літерал у коді", en: "A wrong literal in the code" }
+      fromEnv: { uk: "Хибне значення з оточення", en: "A wrong value from the environment" }
+    title:
+      uk: "Дві помилки, яких Node не помічає"
+      en: "Two mistakes Node does not notice"
+    body:
+      uk: |
+        `index.ts` створює два об’єкти типу `Config`. Перший має помилку типу, яку побачив би `tsc`. Другий типово бездоганний, але `Number("abc")` — це `NaN`, і про це `tsc` знати не може: значення з’явиться лише під час виконання.
+
+        Натисни **Запустити**. Обидва рядки надрукуються без жодної помилки — Node виконав JavaScript, що лишився після вирізання типів.
+      en: |
+        `index.ts` creates two objects of type `Config`. The first has a type error `tsc` would see. The second is flawless as far as types go, but `Number("abc")` is `NaN`, and `tsc` cannot know that: the value appears only at run time.
+
+        Press **Run**. Both lines are printed without any error — Node ran the JavaScript left after cutting out the types.
+    tryIt:
+      uk: |
+        1. У рядку 6 заміни `"3000"` на `3000` і запусти: перший рядок тепер правильний (`next 3001`), а другий так само показує `NaN`. Таку помилку ловить лише перевірка під час виконання.
+        2. У рядку 2 прибери слово `type` з `import type` і запусти: `SyntaxError: The requested module './config.ts' does not provide an export named 'Config'`. Інтерфейс існує лише для `tsc`, а після вирізання типів імпортувати нічого. Поверни `type`.
+      en: |
+        1. On line 6 replace `"3000"` with `3000` and run: the first line is now right (`next 3001`), while the second still shows `NaN`. Only a check at run time catches that mistake.
+        2. On line 2 remove the word `type` from `import type` and run: `SyntaxError: The requested module './config.ts' does not provide an export named 'Config'`. The interface exists only for `tsc`; after the types are cut out there is nothing to import. Put `type` back.
+
+  - id: two-lanes
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Один файл — дві доріжки"
+      en: "One file — two lanes"
+    textEquivalent:
+      uk: "Із того самого summary.ts виходять дві доріжки. Ліва — перевірка типів: tsc --noEmit читає файл разом із типами, знаходить, що в поле port типу number записано текст \"3000\", і повідомляє про помилку TS2322. Вона нічого не виконує й нічого не змінює. Права — виконання: Node вирізає типи, отримує звичайний JavaScript і виконує його; \"3000\" + 1 дає 30001, і помилки немає. Значення з оточення, наприклад PORT=abc, з’являється лише на правій доріжці, тож від нього захищає тільки перевірка в самому коді."
+      en: "Two lanes leave the same summary.ts. The left one is the type check: tsc --noEmit reads the file together with its types, finds that the text \"3000\" was written into the port field of type number, and reports error TS2322. It runs nothing and changes nothing. The right one is execution: Node cuts out the types, gets plain JavaScript and runs it; \"3000\" + 1 gives 30001, and there is no error. A value from the environment, for example PORT=abc, appears only in the right lane, so only a check in the code itself protects against it."
+    spec:
+      layout: grid
+      nodes:
+        - { id: source, label: "summary.ts", shape: note, w: 140, col: 0, row: 0 }
+        - { id: env, label: "PORT=abc", shape: pill, w: 140, col: 1, row: 0 }
+        - { id: tsc, label: "tsc --noEmit", w: 140, col: 0, row: 1 }
+        - { id: strip, label: { uk: "node: вирізати типи", en: "node: strip types" }, w: 160, col: 1, row: 1 }
+        - { id: report, label: "error TS2322", shape: round, w: 140, col: 0, row: 2 }
+        - { id: output, label: "next port: 30001", shape: round, w: 160, col: 1, row: 2 }
+      edges:
+        - { id: source-tsc, from: source, to: tsc }
+        - { id: source-strip, from: source, to: strip }
+        - { id: env-strip, from: env, to: strip, kind: dashed }
+        - { id: tsc-report, from: tsc, to: report }
+        - { id: strip-output, from: strip, to: output }
+      steps:
+        - caption:
+            uk: "Той самий файл `summary.ts` іде двома доріжками: перевірка типів і виконання."
+            en: "The same `summary.ts` file goes down two lanes: type checking and execution."
+          dim: [env]
+        - caption:
+            uk: "Доріжка перевірки: `tsc --noEmit` читає типи й знаходить `\"3000\"` у полі `port: number` — помилка TS2322. Нічого не виконується, файл не змінюється."
+            en: "The checking lane: `tsc --noEmit` reads the types and finds `\"3000\"` in the field `port: number` — error TS2322. Nothing runs, the file does not change."
+          highlight: [source, source-tsc, tsc, tsc-report, report]
+          dim: [env, strip, output]
+        - caption:
+            uk: "Доріжка виконання: Node вирізає типи й виконує JavaScript. `\"3000\" + 1` — це `30001`, і жодної помилки."
+            en: "The execution lane: Node cuts out the types and runs JavaScript. `\"3000\" + 1` is `30001`, and there is no error."
+          highlight: [source, source-strip, strip, strip-output, output]
+          dim: [env, tsc, report]
+        - caption:
+            uk: "Значення з оточення (`PORT=abc`) приходить лише на доріжку виконання — `tsc` його ніколи не бачить. Від нього захищає тільки перевірка в коді, що працює під час виконання."
+            en: "A value from the environment (`PORT=abc`) arrives only in the execution lane — `tsc` never sees it. Only a check in code that runs at run time protects against it."
+          highlight: [env, env-strip, strip]
+          dim: [tsc, report]
+
+  - id: recall-types
+    kind: review
+    title:
+      uk: "Пригадай: що лишається після типів"
+      en: "Recall: what is left after types"
+    items:
+      - id: type-only-import
+        from: js-14-07-modules-type-imports
+        prompt:
+          uk: "Модуль починається так. Скільки імпортів лишиться в JavaScript, який виконується?"
+          en: "A module starts like this. How many imports are left in the JavaScript that runs?"
+        code: |
+          import type { Wish } from "./model.ts";
+          import { formatWish } from "./format.ts";
+        lang: ts
+        runnable: false
+        answer:
+          type: choice
+          options:
+            - id: one
+              text:
+                uk: "Один — `formatWish` з `./format.ts`"
+                en: "One — `formatWish` from `./format.ts`"
+            - id: two
+              text:
+                uk: "Два — імпорти не зникають"
+                en: "Two — imports do not disappear"
+              why:
+                uk: "`import type` існує лише для перевірки типів і зникає повністю разом з анотаціями — і в `tsc`, і в type stripping Node."
+                en: "`import type` exists only for type checking and disappears completely along with the annotations — in `tsc` and in Node’s type stripping alike."
+            - id: zero
+              text:
+                uk: "Жодного — усі імпорти `.ts` зникають"
+                en: "None — all `.ts` imports disappear"
+              why:
+                uk: "`formatWish` — функція, тобто справжнє значення, потрібне під час виконання. Її імпорт лишається."
+                en: "`formatWish` is a function, a real value needed at run time. Its import stays."
+          correct: [one]
+        explanation:
+          uk: "`import type` зникає, а імпорт значення лишається. Тому в Node, що вирізає типи, позначка `type` обов’язкова: без неї лишився б імпорт інтерфейсу, якого під час виконання немає."
+          en: "`import type` disappears, while an import of a value stays. That is why in Node, which cuts out types, the `type` mark is required: without it an import of an interface that does not exist at run time would be left."
+      - id: listener-count
+        from: no-01-05-eventemitter-errors
+        prompt:
+          uk: "Функція викликає `emitter.on('record', handler)` при кожному виклику й ніколи не викликає `off`. Її викликали 11 разів для одного емітера. Що надрукує Node?"
+          en: "A function calls `emitter.on('record', handler)` every time it is called and never calls `off`. It was called 11 times for one emitter. What does Node print?"
+        answer:
+          type: choice
+          options:
+            - id: warning
+              text:
+                uk: "Попередження `MaxListenersExceededWarning`: 11 слухачів `record`, а ліміт — 10"
+                en: "The warning `MaxListenersExceededWarning`: 11 `record` listeners, while the limit is 10"
+            - id: error
+              text:
+                uk: "Помилку, що зупиняє програму на 11-му `on`"
+                en: "An error that stops the program at the 11th `on`"
+              why:
+                uk: "Node лише попереджає: слухач додається, програма працює далі. Попередження — сигнал про ймовірний витік."
+                en: "Node only warns: the listener is added and the program carries on. The warning is a signal of a likely leak."
+            - id: nothing
+              text:
+                uk: "Нічого — кількість слухачів не обмежено"
+                en: "Nothing — the number of listeners is unlimited"
+              why:
+                uk: "Обмеження справді не жорстке, але понад 10 слухачів на одну подію Node друкує попередження, щоб ти помітив витік."
+                en: "The limit is indeed not hard, but above 10 listeners on one event Node prints a warning so you notice the leak."
+          correct: [warning]
+        explanation:
+          uk: "Під час підготовки уроку Node.js 25.2.1 надрукував: `MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 record listeners added to [RecordLoader]. MaxListeners is 10.` Правильне виправлення — прибирати слухача, а не піднімати ліміт."
+          en: "While this lesson was prepared, Node.js 25.2.1 printed: `MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 record listeners added to [RecordLoader]. MaxListeners is 10.` The right fix is to remove the listener, not to raise the limit."
+
+  - id: read-port
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: read-port
+    entry: index.ts
+    editable: [port.ts]
+    title:
+      uk: "Обіцянку типу виконує перевірка"
+      en: "A check keeps the type’s promise"
+    instructions:
+      uk: |
+        `readPort(env: Env): number` у `port.ts` обіцяє повернути число, але `Number("abc")` — теж «число» (`NaN`). Допиши перевірку під час виконання:
+
+        - `PORT` не задано — поверни `DEFAULT_PORT` (3000);
+        - `PORT` — лише цифри, число від 1 до 65535 — поверни його як число;
+        - інакше кинь `RangeError`, повідомлення якого містить отримане значення в лапках, наприклад `"abc"`.
+
+        Платформа виконує TypeScript, вирізаючи типи, і **не** перевіряє їх. Тут перевіряється поведінка; типи ти перевіриш `tsc` у локальному завданні «Дві доріжки у твоєму терміналі: tsc і node».
+      en: |
+        `readPort(env: Env): number` in `port.ts` promises to return a number, but `Number("abc")` is a “number” too (`NaN`). Add a check at run time:
+
+        - `PORT` unset — return `DEFAULT_PORT` (3000);
+        - `PORT` made of digits only, a number from 1 to 65535 — return it as a number;
+        - otherwise throw a `RangeError` whose message contains the value received in quotes, for example `"abc"`.
+
+        The platform runs TypeScript by cutting out the types and does **not** check them. The behaviour is checked here; you will check the types with `tsc` in the local task “Two lanes in your terminal: tsc and node”.
+    testTitles:
+      "returns 3000 when PORT is unset":
+        uk: "Без `PORT` повертає `3000`"
+        en: "Without `PORT` it returns `3000`"
+      "returns PORT as a number":
+        uk: "`\"8080\"`, `\"1\"`, `\"65535\"` повертає як числа"
+        en: "Returns `\"8080\"`, `\"1\"`, `\"65535\"` as numbers"
+      "throws a RangeError that names an invalid PORT":
+        uk: "Для `abc`, `0`, `70000`, `30.5`, `8080abc` і порожнього тексту кидає `RangeError` зі значенням у лапках"
+        en: "For `abc`, `0`, `70000`, `30.5`, `8080abc` and empty text it throws a `RangeError` with the value in quotes"
+    hints:
+      nudge:
+        uk: "Тип `number` у сигнатурі — лише обіцянка. Що саме має перевірити код, щоб текст `\"8080abc\"` чи `\"30.5\"` не став портом?"
+        en: "The `number` type in the signature is only a promise. What exactly must the code check so that the text `\"8080abc\"` or `\"30.5\"` does not become a port?"
+      explanation:
+        uk: "`Number.parseInt(\"8080abc\", 10)` дає `8080`, а `Number(\"\")` — `0`, тож самого перетворення мало: спершу перевір форму тексту (лише цифри), потім межі. Помилку певного виду кидають так само, як звичайну: `throw new TypeError(\"…\")` — тільки з потрібним класом. Значення в повідомленні візьми в лапки через шаблонний рядок."
+        en: "`Number.parseInt(\"8080abc\", 10)` gives `8080` and `Number(\"\")` gives `0`, so converting alone is not enough: first check the shape of the text (digits only), then the limits. An error of a particular kind is thrown like an ordinary one: `throw new TypeError(\"…\")` — only with the class you need. Put the value in quotes in the message with a template literal."
+    solutionNote:
+      uk: "Сигнатура `(env: Env): number` — для `tsc`: він не дасть передати `{ PORT: 8080 }` (число замість тексту). Перевірка форми й меж — для виконання: вона ловить `PORT=abc`, якого `tsc` не бачить ніколи. Разом вони тримають обіцянку типу."
+      en: "The signature `(env: Env): number` is for `tsc`: it will not let you pass `{ PORT: 8080 }` (a number instead of text). The shape-and-limits check is for run time: it catches `PORT=abc`, which `tsc` never sees. Together they keep the type’s promise."
+    feedback:
+      - when: { test: "returns PORT as a number" }
+        message:
+          uk: "Ця перевірка чекає для `\"8080\"` саме число `8080`, а не текст. `as number` нічого не перетворює — він лише просить `tsc` замовкнути; перетвори текст через `Number`."
+          en: "This check expects exactly the number `8080` for `\"8080\"`, not text. `as number` converts nothing — it only asks `tsc` to keep quiet; convert the text with `Number`."
+      - when: { test: "throws a RangeError that names an invalid PORT" }
+        message:
+          uk: "Ця перевірка чекає `RangeError` (не просто `Error`) з отриманим значенням у лапках для `abc`, `0`, `70000`, `30.5`, `8080abc` і порожнього тексту. `parseInt` пропускає `30.5` і `8080abc`, а `Number(\"\")` дає `0` — перевір форму тексту, а не лише число."
+          en: "This check expects a `RangeError` (not just an `Error`) with the value received in quotes, for `abc`, `0`, `70000`, `30.5`, `8080abc` and empty text. `parseInt` lets `30.5` and `8080abc` through, and `Number(\"\")` gives `0` — check the shape of the text, not only the number."
+      - when: { test: "returns 3000 when PORT is unset" }
+        message:
+          uk: "Ця перевірка викликає `readPort({})` і чекає число `3000` (`DEFAULT_PORT`)."
+          en: "This check calls `readPort({})` and expects the number `3000` (`DEFAULT_PORT`)."
+
+  - id: tsc-and-node
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Дві доріжки у твоєму терміналі: tsc і node"
+      en: "Two lanes in your terminal: tsc and node"
+    intro:
+      uk: |
+        Платформа не перевіряє типи Node-коду, тому цей крок — у твоєму терміналі. Тека `~/js-course/no01-ts` — окрема, лише для цього уроку.
+
+        Усі команди виконано під час підготовки уроку на macOS з Node.js v25.2.1 і npm 11.6.2; npm установив `typescript` 7.0.2 і `@types/node` 22.20.5. На Windows і Linux кроки не перевіряли. У Node.js 22.13–22.17 запускай `.ts` як `node --experimental-strip-types summary.ts` (за документацією Node.js 22; ці версії під час підготовки не перевіряли).
+
+        **Крок 4 — `tsconfig.json`:**
+
+        ```json
+        {
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true,
+            "target": "es2023",
+            "module": "nodenext",
+            "types": ["node"],
+            "allowImportingTsExtensions": true,
+            "verbatimModuleSyntax": true,
+            "erasableSyntaxOnly": true
+          }
+        }
+        ```
+
+        `erasableSyntaxOnly` просить `tsc` забороняти те, чого Node не вміє просто вирізати (`enum` тощо), а `types: ["node"]` підключає типи `process` та інших API Node з `@types/node`.
+
+        **Крок 4 — `summary.ts`:**
+
+        ```ts
+        interface Config {
+          port: number;
+          locale: "uk" | "en";
+        }
+
+        const fallback: Config = { port: "3000", locale: "uk" };
+        console.log(`next port: ${fallback.port + 1}`);
+        ```
+
+        **Крок 6 — що пише `tsc` (коротко, без кольорів):**
+
+        ```text
+        summary.ts(6,28): error TS2322: Type 'string' is not assignable to type 'number'.
+        ```
+
+        У терміналі той самий рядок буде кольоровим і з фрагментом коду, а наприкінці — `Found 1 error in summary.ts:6`.
+
+        **Крок 8 — `check-port.ts`:**
+
+        ```ts
+        import { readPort } from "./port.ts";
+
+        console.log(readPort({ PORT: 8080 }));
+        console.log(readPort(process.env));
+        ```
+
+        **Крок 8 — що пише `tsc`:**
+
+        ```text
+        check-port.ts(3,24): error TS2322: Type 'number' is not assignable to type 'string'.
+        ```
+      en: |
+        The platform does not check the types of Node code, so this step happens in your terminal. The folder `~/js-course/no01-ts` is a separate one, only for this lesson.
+
+        All commands were run while preparing this lesson on macOS with Node.js v25.2.1 and npm 11.6.2; npm installed `typescript` 7.0.2 and `@types/node` 22.20.5. The steps were not checked on Windows or Linux. In Node.js 22.13–22.17 run a `.ts` file as `node --experimental-strip-types summary.ts` (per the Node.js 22 documentation; those versions were not checked while preparing).
+
+        **Step 4 — `tsconfig.json`:**
+
+        ```json
+        {
+          "compilerOptions": {
+            "strict": true,
+            "noEmit": true,
+            "target": "es2023",
+            "module": "nodenext",
+            "types": ["node"],
+            "allowImportingTsExtensions": true,
+            "verbatimModuleSyntax": true,
+            "erasableSyntaxOnly": true
+          }
+        }
+        ```
+
+        `erasableSyntaxOnly` asks `tsc` to forbid what Node cannot simply cut out (`enum` and the like), and `types: ["node"]` brings in the types of `process` and other Node APIs from `@types/node`.
+
+        **Step 4 — `summary.ts`:**
+
+        ```ts
+        interface Config {
+          port: number;
+          locale: "uk" | "en";
+        }
+
+        const fallback: Config = { port: "3000", locale: "uk" };
+        console.log(`next port: ${fallback.port + 1}`);
+        ```
+
+        **Step 6 — what `tsc` writes (short form, without colours):**
+
+        ```text
+        summary.ts(6,28): error TS2322: Type 'string' is not assignable to type 'number'.
+        ```
+
+        In a terminal the same line is coloured and shows the piece of code, and ends with `Found 1 error in summary.ts:6`.
+
+        **Step 8 — `check-port.ts`:**
+
+        ```ts
+        import { readPort } from "./port.ts";
+
+        console.log(readPort({ PORT: 8080 }));
+        console.log(readPort(process.env));
+        ```
+
+        **Step 8 — what `tsc` writes:**
+
+        ```text
+        check-port.ts(3,24): error TS2322: Type 'number' is not assignable to type 'string'.
+        ```
+    tools:
+      - { name: "Node.js", version: { uk: "22.18 або новіший", en: "22.18 or newer" }, note: { uk: "перевірено з v25.2.1", en: "checked with v25.2.1" } }
+      - { name: "npm", version: "11.6.2", note: { uk: "іде разом із Node.js", en: "comes with Node.js" } }
+      - { name: "TypeScript", version: "7.0.2", note: { uk: "встановлюється в кроці 3", en: "installed in step 3" } }
+      - { name: "@types/node", version: "22.20.5", note: { uk: "встановлюється в кроці 3", en: "installed in step 3" } }
+    steps:
+      - text:
+          uk: "Створи теку для лабораторії й перейди в неї."
+          en: "Create a folder for the lab and go into it."
+        command: "mkdir -p ~/js-course/no01-ts\ncd ~/js-course/no01-ts"
+      - text:
+          uk: "Створи `package.json` і познач теку як ES-модулі."
+          en: "Create `package.json` and mark the folder as ES modules."
+        command: "npm init -y\nnpm pkg set type=module"
+        expect:
+          uk: "`npm init -y` друкує `Wrote to …/package.json:` і вміст нового файлу; друга команда нічого не друкує."
+          en: "`npm init -y` prints `Wrote to …/package.json:` and the content of the new file; the second command prints nothing."
+      - text:
+          uk: "Встанови компілятор TypeScript і типи Node.js 22 як залежності розробки, потім подивись, які версії встановлено."
+          en: "Install the TypeScript compiler and the Node.js 22 types as development dependencies, then see which versions were installed."
+        command: "npm install --save-dev typescript@7 @types/node@22\nnpm ls"
+        expect:
+          uk: "`added 4 packages`, а `npm ls` показує `typescript@7…` і `@types/node@22…` (під час підготовки — 7.0.2 і 22.20.5; у тебе можуть бути новіші в межах тих самих основних версій)."
+          en: "`added 4 packages`, and `npm ls` shows `typescript@7…` and `@types/node@22…` (7.0.2 and 22.20.5 while preparing; you may get newer ones within the same major versions)."
+      - text:
+          uk: "Створи у VS Code файли `tsconfig.json` і `summary.ts` з вмістом із кроку 4 вступу."
+          en: "In VS Code create the files `tsconfig.json` and `summary.ts` with the content from step 4 of the introduction."
+      - text:
+          uk: "Запусти файл у Node.js."
+          en: "Run the file in Node.js."
+        command: "node summary.ts"
+        expect:
+          uk: "`next port: 30001` — програма виконалася, хоча в ній помилка типу."
+          en: "`next port: 30001` — the program ran even though it has a type error."
+      - text:
+          uk: "Перевір типи."
+          en: "Check the types."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Помилка TS2322 у `summary.ts`, рядок 6 (як у кроці 6 вступу). Жодних нових файлів у теці не з’явилося."
+          en: "Error TS2322 in `summary.ts`, line 6 (as in step 6 of the introduction). No new files appeared in the folder."
+      - text:
+          uk: "У `summary.ts` заміни `\"3000\"` на `3000`, збережи й повтори обидві команди."
+          en: "In `summary.ts` replace `\"3000\"` with `3000`, save, and repeat both commands."
+        command: "npx tsc --noEmit\nnode summary.ts"
+        expect:
+          uk: "`tsc` нічого не друкує (помилок немає), а Node друкує `next port: 3001`."
+          en: "`tsc` prints nothing (no errors), and Node prints `next port: 3001`."
+      - text:
+          uk: "Скопіюй сюди свій `port.ts` із вправи «Обіцянку типу виконує перевірка» (після того як він пройшов перевірки), створи `check-port.ts` з кроку 8 вступу й перевір типи."
+          en: "Copy your `port.ts` from the exercise “A check keeps the type’s promise” here (after it passed the checks), create `check-port.ts` from step 8 of the introduction and check the types."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Помилка TS2322 у `check-port.ts`, рядок 3: число `8080` не можна передати туди, де чекають текст. Це ловить сигнатура `readPort`."
+          en: "Error TS2322 in `check-port.ts`, line 3: the number `8080` cannot be passed where text is expected. The signature of `readPort` catches this."
+      - text:
+          uk: "Виправ рядок 3 на `readPort({ PORT: \"8080\" })`, переконайся, що `tsc` мовчить, і запусти скрипт із хибним значенням оточення."
+          en: "Change line 3 to `readPort({ PORT: \"8080\" })`, make sure `tsc` is silent, and run the script with an invalid environment value."
+        command: "npx tsc --noEmit\nPORT=abc node check-port.ts"
+        expect:
+          uk: "`tsc` мовчить, але скрипт друкує `8080`, а потім падає з твоїм `RangeError`, у повідомленні якого є `\"abc\"`. Цю помилку `tsc` побачити не міг — її спіймала перевірка під час виконання."
+          en: "`tsc` is silent, but the script prints `8080` and then crashes with your `RangeError`, whose message contains `\"abc\"`. `tsc` could not have seen this error — the check at run time caught it."
+    verify:
+      - id: node-ran-bad-types
+        text:
+          uk: "`node summary.ts` надрукував `next port: 30001`, хоча `tsc --noEmit` знайшов у цьому файлі помилку TS2322."
+          en: "`node summary.ts` printed `next port: 30001`, even though `tsc --noEmit` found error TS2322 in that file."
+      - id: tsc-clean
+        text:
+          uk: "Після виправлення `tsc --noEmit` нічого не надрукував, а Node надрукував `next port: 3001`."
+          en: "After the fix `tsc --noEmit` printed nothing, and Node printed `next port: 3001`."
+      - id: runtime-caught
+        text:
+          uk: "`PORT=abc node check-port.ts` упав із моїм `RangeError` при «чистому» `tsc`."
+          en: "`PORT=abc node check-port.ts` crashed with my `RangeError` while `tsc` was clean."
+    troubleshooting:
+      - problem:
+          uk: "`node summary.ts` відповідає помилкою про невідоме розширення `.ts`"
+          en: "`node summary.ts` answers with an error about the unknown `.ts` extension"
+        fix:
+          uk: "Найімовірніше, Node.js старший за 22.18 (перевір `node --version`). За документацією Node.js 22, у версіях 22.13–22.17 запускай `node --experimental-strip-types summary.ts` або онови Node.js. Під час підготовки уроку ці версії не перевіряли, тож точний текст помилки може відрізнятися."
+          en: "Most likely Node.js is older than 22.18 (check `node --version`). Per the Node.js 22 documentation, in versions 22.13–22.17 run `node --experimental-strip-types summary.ts`, or update Node.js. Those versions were not checked while preparing this lesson, so the exact error text may differ."
+    recovery:
+      uk: "Тека `~/js-course/no01-ts` окрема від решти курсу: якщо щось заплуталося, видали її вміст, крім `node_modules`, і повтори кроки із четвертого. Твій проєкт і вправи на платформі цей урок не змінює."
+      en: "The folder `~/js-course/no01-ts` is connected to nothing: if something gets tangled, delete its content except `node_modules` and repeat the steps from step four. This lesson does not change your project or the exercises on the platform."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-01
+    body:
+      uk: "За планом кроку проєкту його скрипт у теці `server/` проходитиме обидві доріжки: `tsc` перевірить, що він правильно користується доменними типами, а `loadConfig` на старті перевірить те, чого `tsc` не бачить, — значення з оточення."
+      en: "As the project step is planned, its script in the `server/` folder goes down both lanes: `tsc` checks that it uses the domain types correctly, and `loadConfig` at the start checks what `tsc` cannot see — the values from the environment."
