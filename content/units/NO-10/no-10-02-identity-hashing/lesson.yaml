@@ -1,0 +1,357 @@
+id: no-10-02-identity-hashing
+unit: NO-10
+title:
+  uk: "Синтетична ідентичність і перевірене хешування паролів"
+  en: "Synthetic identity and vetted password hashing"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Створити синтетичних локальних користувачів і зберігати лише хеш пароля із сіллю, навмисно повільний і з перевіреної функції (scrypt з node:crypto), разом із його параметрами."
+    en: "Create synthetic local users and store only a salted, deliberately slow password hash from a vetted function (scrypt in node:crypto) together with its parameters."
+  - uk: "Перевірити вхід: обчислити хеш заново зі збереженою сіллю й порівняти через timingSafeEqual, і пояснити, чому простий SHA-256, оборотне шифрування чи власна схема неприйнятні."
+    en: "Verify a login by re-deriving the hash with the stored salt and comparing with timingSafeEqual, and explain why plain SHA-256, reversible encryption or a home-made scheme is unacceptable."
+prerequisites: [no-10-01-authn-vs-authz]
+subskills:
+  - { family: B-06, skill: "local synthetic identity", depth: intro }
+  - { family: B-06, skill: "vetted password hashing", depth: intro }
+glossary: [password-hash, salt, key-derivation-function, timing-safe-comparison]
+selfCheck: [predict-same-password, password-store]
+
+blocks:
+  - id: never-the-password
+    kind: explanation
+    title:
+      uk: "Сервер не зберігає пароль"
+      en: "The server does not store the password"
+    body:
+      uk: |
+        Щоб вхід працював, серверу треба колись перевірити пароль. Але **зберігати** сам пароль не можна: сховище колись витече — копія диска, резервна копія, журнал, помилка в коді, — і разом із ним витечуть паролі, які люди повторюють на інших сайтах. Оборотне шифрування теж не рятує: ключ лежить поруч на тому самому сервері.
+
+        Тому сервер зберігає [[password-hash|хеш пароля]] — значення, з якого пароль назад не обчислити. А під час входу обчислює хеш того, що ввели, і порівнює.
+
+        Звичайний SHA-256 для цього не годиться, і посібник OWASP «Password Storage» пише прямо: швидкі алгоритми на зразок SHA-256 дають змогу перебирати величезну кількість паролів за секунду. До того ж однаковий пароль у SHA-256 завжди дає однаковий хеш.
+
+        Користувачі цієї лабораторної — **синтетичні**: вигадані id, імена й паролі на зразок `sunflower-42`. Справжніх облікових записів, хмарних сервісів входу чи пароля від платформи тут немає й не треба.
+      en: |
+        For login to work, the server has to check a password at some point. But it must not **store** the password itself: the store will leak some day — a disk copy, a backup, a log, a bug — and with it the passwords people reuse on other sites. Reversible encryption does not save you either: the key lies next to the data on the same server.
+
+        So the server stores a [[password-hash]] — a value from which the password cannot be computed back. At login it computes the hash of what was typed and compares.
+
+        Plain SHA-256 will not do, and the OWASP “Password Storage” cheat sheet says so directly: fast algorithms such as SHA-256 let an attacker try a huge number of passwords per second. Besides, the same password always gives the same SHA-256 hash.
+
+        The users of this lab are **synthetic**: made-up ids, names and passwords such as `sunflower-42`. There are no real accounts, no cloud sign-in services and no platform password here, and none are needed.
+
+  - id: slow-salted-vetted
+    kind: explanation
+    title:
+      uk: "Повільний, із сіллю, перевірений"
+      en: "Slow, salted, vetted"
+    body:
+      uk: |
+        Хеш пароля має три властивості:
+
+        - **Сіль.** Для кожного користувача — свої випадкові байти, [[salt|сіль]]: `crypto.randomBytes(16)` (документація Node.js 22 радить випадкову сіль щонайменше з 16 байтів). Однакові паролі дають різні хеші, і заздалегідь обчислена таблиця «пароль → хеш» стає марною.
+        - **Навмисна повільність.** [[key-derivation-function|Функція виведення ключа]] scrypt з `node:crypto` витрачає час і пам’ять на кожну спробу. Користувач при вході цього не помітить, а перебір мільйонів паролів стає дорогим. Параметри (`N` — вартість, `r`, `p`) зберігаються разом із хешем.
+        - **Перевірена функція.** Власні «суміші» солей і раундів не мають жодного аналізу. Бери готову функцію з документованими параметрами.
+
+        Вхід: дістати збережені сіль і параметри, обчислити scrypt від введеного пароля й порівняти через `crypto.timingSafeEqual` — [[timing-safe-comparison|порівняння за сталий час]]. Воно кидає `RangeError`, якщо довжини різні, тому довжини спершу перевіряють.
+
+        Значення: OWASP наводить для scrypt базові параметри `N=2^17, r=8, p=1`. У лабораторній `N=16384` — типове значення Node.js, щоб перевірки йшли швидко. OWASP ставить на перше місце Argon2id, але в `node:crypto` Node.js 22 його немає (він з’явився у 24.7.0).
+      en: |
+        A password hash has three properties:
+
+        - **Salt.** Each user gets their own random bytes, a [[salt]]: `crypto.randomBytes(16)` (the Node.js 22 documentation recommends a random salt of at least 16 bytes). Equal passwords give different hashes, and a precomputed “password → hash” table becomes useless.
+        - **Deliberate slowness.** The [[key-derivation-function]] scrypt from `node:crypto` spends time and memory on every attempt. A user logging in does not notice, but trying millions of passwords becomes expensive. The parameters (`N` — the cost, `r`, `p`) are stored together with the hash.
+        - **A vetted function.** Home-made “mixes” of salts and rounds have no analysis behind them. Take a ready-made function with documented parameters.
+
+        Login: fetch the stored salt and parameters, compute scrypt of the typed password and compare with `crypto.timingSafeEqual` — a [[timing-safe-comparison]]. It throws a `RangeError` when the lengths differ, so the lengths are checked first.
+
+        Values: OWASP gives `N=2^17, r=8, p=1` as the baseline for scrypt. The lab uses `N=16384`, Node.js's default, so that the checks run fast. OWASP puts Argon2id first, but `node:crypto` in Node.js 22 does not have it (it arrived in 24.7.0).
+
+  - id: cast-of-a-key
+    kind: analogy
+    body:
+      uk: "Хеш пароля схожий на гіпсовий зліпок ключа замість самого ключа. Принесений ключ можна прикласти до зліпка й побачити, чи підходить, але вирізати ключ зі зліпка непросто. Сіль робить зліпки різними навіть для однакових ключів."
+      en: "A password hash is like a plaster cast of a key instead of the key itself. You can hold a key someone brings against the cast and see whether it fits, but you cannot easily cut a key from the cast. The salt makes the casts different even for identical keys."
+    limits:
+      uk: "Швидкий хеш — зліпок, до якого зловмисник прикладає мільярди ключів за секунду, і так знаходить потрібний. Тому функція мусить бути навмисно повільною й із сіллю, і годиться лише перевірена. А ще, на відміну від зліпка, хеш показує лише «підходить чи ні» — форму ключа з нього не видно взагалі."
+      en: "A fast hash is a cast that an attacker holds billions of keys against per second, and that is how they find the right one. So the function must be deliberately slow and salted, and only a vetted one will do. And unlike a cast, a hash shows only “fits or not” — the key's shape cannot be seen in it at all."
+
+  - id: register-login
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Реєстрація і вхід: що потрапляє у сховище"
+      en: "Registration and login: what reaches the store"
+    textEquivalent:
+      uk: "Три учасники: клієнт, сервер і сховище користувачів. Під час реєстрації клієнт надсилає пароль серверу; сервер створює випадкову сіль на 16 байтів і обчислює scrypt від пароля із цією сіллю; у сховище потрапляють лише параметри, сіль і хеш — пароль ніде не записується. Під час входу клієнт знову надсилає пароль; сервер читає зі сховища сіль, параметри й хеш, обчислює scrypt від введеного пароля з тією самою сіллю й тими самими параметрами й порівнює результат зі збереженим хешем через timingSafeEqual; клієнт отримує 200 або 401."
+      en: "Three participants: the client, the server and the user store. At registration the client sends the password to the server; the server creates a random 16-byte salt and computes scrypt of the password with that salt; only the parameters, the salt and the hash reach the store — the password is written nowhere. At login the client sends the password again; the server reads the salt, the parameters and the hash from the store, computes scrypt of the typed password with the same salt and parameters, and compares the result with the stored hash through timingSafeEqual; the client gets 200 or 401."
+    spec:
+      actors:
+        - { id: client, label: { uk: "Клієнт", en: "Client" } }
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+        - { id: store, label: { uk: "Сховище користувачів", en: "User store" } }
+      messages:
+        - from: client
+          to: server
+          label: "POST /register"
+          note: { uk: "{ id: \"u-01\", password: \"sunflower-42\" }", en: "{ id: \"u-01\", password: \"sunflower-42\" }" }
+          caption:
+            uk: "Реєстрація: пароль приходить на сервер — це єдиний момент, коли сервер його бачить."
+            en: "Registration: the password arrives at the server — the only moment the server sees it."
+        - from: server
+          to: server
+          kind: note
+          label: "salt = randomBytes(16); hash = scrypt(password, salt)"
+          caption:
+            uk: "Сервер створює нову випадкову сіль і обчислює scrypt. Повільно — навмисно."
+            en: "The server creates a new random salt and computes scrypt. It is slow — on purpose."
+        - from: server
+          to: store
+          label: "{ N, r, p, salt, hash }"
+          caption:
+            uk: "У сховище йдуть параметри, сіль і хеш. Пароля немає ні тут, ні в журналі."
+            en: "The parameters, the salt and the hash go to the store. The password is neither here nor in the log."
+        - from: client
+          to: server
+          label: "POST /login"
+          note: { uk: "{ id: \"u-01\", password: \"…\" }", en: "{ id: \"u-01\", password: \"…\" }" }
+          caption:
+            uk: "Вхід: клієнт надсилає пароль знову."
+            en: "Login: the client sends the password again."
+        - from: store
+          to: server
+          kind: return
+          label: "{ N, r, p, salt, hash }"
+          caption:
+            uk: "Сервер читає збережені сіль і параметри: саме з ними треба обчислювати хеш."
+            en: "The server reads the stored salt and parameters: the hash must be computed with exactly those."
+        - from: server
+          to: server
+          kind: note
+          label: "timingSafeEqual(scrypt(attempt, salt), hash)"
+          caption:
+            uk: "Той самий scrypt від введеного пароля, потім порівняння за сталий час."
+            en: "The same scrypt of the typed password, then a constant-time comparison."
+        - from: server
+          to: client
+          kind: return
+          label: "200 / 401"
+          caption:
+            uk: "Збіглося — вхід успішний; ні — 401. Відкритий пароль так ніде й не записано."
+            en: "A match means a successful login; otherwise 401. The plaintext password was never written anywhere."
+
+  - id: predict-same-password
+    kind: prediction
+    prompt:
+      uk: "Синтетичні користувачі `u-01` і `u-02` випадково обрали той самий пароль `sunflower-42`. Що сервер збереже для них у двох варіантах: простий SHA-256 від пароля і scrypt із випадковою сіллю для кожного?"
+      en: "The synthetic users `u-01` and `u-02` happened to choose the same password `sunflower-42`. What does the server store for them in two variants: plain SHA-256 of the password, and scrypt with a random salt for each?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: sha-same-scrypt-different
+          text:
+            uk: "SHA-256: два однакові значення; scrypt із сіллю: два різні"
+            en: "SHA-256: two identical values; scrypt with salt: two different ones"
+        - id: both-different
+          text:
+            uk: "В обох варіантах значення різні: хеш приховує пароль"
+            en: "Different values in both variants: a hash hides the password"
+          why:
+            uk: "SHA-256 — детермінована функція: той самий вхід завжди дає той самий вихід. Без солі однакові паролі видно відразу."
+            en: "SHA-256 is a deterministic function: the same input always gives the same output. Without a salt equal passwords show at once."
+        - id: both-same
+          text:
+            uk: "В обох варіантах значення однакові: пароль же той самий"
+            en: "Identical values in both variants: the password is the same, after all"
+          why:
+            uk: "У scrypt разом із паролем іде сіль, а вона в кожного своя, випадкова. Різний вхід — різний хеш."
+            en: "In scrypt the salt goes in together with the password, and each user has their own random one. Different input gives a different hash."
+      correct: [sha-same-scrypt-different]
+    explanation:
+      uk: "Сіль — це те, що робить однакові паролі невидимими у сховищі. Без неї одна вгадана пара «пароль → хеш» відкриває всіх користувачів із цим паролем."
+      en: "The salt is what makes equal passwords invisible in the store. Without it, one guessed “password → hash” pair opens every user with that password."
+
+  - id: predict-leak
+    kind: prediction
+    prompt:
+      uk: "Таблиця користувачів витекла. У ній пароль кожного збережено як один SHA-256 без солі. Що найімовірніше станеться?"
+      en: "The users table leaked. Every password in it is stored as a single SHA-256 with no salt. What is most likely to happen?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: guessed
+          text:
+            uk: "Зловмисник хешує мільйони поширених паролів і знаходить усіх, чий хеш збігся: SHA-256 швидкий, а сіль нічого не змінює"
+            en: "The attacker hashes millions of common passwords and finds everyone whose hash matches: SHA-256 is fast, and there is no salt to change anything"
+        - id: safe
+          text:
+            uk: "Нічого: хеш неможливо обернути назад"
+            en: "Nothing: a hash cannot be reversed"
+          why:
+            uk: "Обертати й не треба — досить перебирати. Швидкий хеш без солі дає перевіряти дуже багато паролів за секунду проти всієї таблиці одразу."
+            en: "There is no need to reverse it — guessing is enough. A fast unsalted hash lets an attacker check a great many passwords per second against the whole table at once."
+        - id: needs-code
+          text:
+            uk: "Нічого, доки зловмисник не вкраде ще й код сервера"
+            en: "Nothing, until the attacker also steals the server's code"
+          why:
+            uk: "Алгоритм SHA-256 загальновідомий, секрету в коді немає. Безпека не може триматися на тому, що хтось не знає, який хеш ти обрав."
+            en: "The SHA-256 algorithm is public, there is no secret in the code. Security cannot rest on someone not knowing which hash you picked."
+      correct: [guessed]
+    explanation:
+      uk: "Хеш не обертають — його підбирають. Тому захист — це вартість кожної спроби (повільна функція) і сіль, через яку кожного користувача доводиться підбирати окремо."
+      en: "A hash is not reversed — it is guessed. So the protection is the cost of each attempt (a slow function) and a salt that forces each user to be guessed separately."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: bound-login-lookup
+        from: no-09-04-parameterized-queries
+        prompt:
+          uk: "Перед перевіркою пароля сервер шукає користувача за назвою, введеною у формі входу. Який запит до `node:sqlite` безпечний?"
+          en: "Before checking the password the server looks up the user by the name typed into the login form. Which `node:sqlite` query is safe?"
+        answer:
+          type: choice
+          options:
+            - id: bound
+              code: "db.prepare('SELECT id, passwordHash FROM users WHERE name = ?').get(name)"
+            - id: template
+              code: "db.prepare(`SELECT id, passwordHash FROM users WHERE name = '${name}'`).get()"
+              why:
+                uk: "Введений текст стає частиною SQL: назва на кшталт `x' OR 1=1 --` змінює сам запит і може «знайти» першого-ліпшого користувача."
+                en: "The typed text becomes part of the SQL: a name like `x' OR 1=1 --` changes the query itself and may “find” any user at all."
+            - id: escaped
+              code: "db.prepare(`SELECT id, passwordHash FROM users WHERE name = '${name.replaceAll(\"'\", \"''\")}'`).get()"
+              why:
+                uk: "Екранування вручну — та сама склейка тексту, лише з латкою. Параметр `?` передає назву як дані, і жодна латка не потрібна."
+                en: "Escaping by hand is the same text gluing with a patch. The `?` parameter passes the name as data, and no patch is needed."
+          correct: [bound]
+        explanation:
+          uk: "Поле форми входу — такий самий недовірений ввід, як пошук: у SQL він потрапляє лише як прив’язаний параметр."
+          en: "A login form field is untrusted input just like a search: it reaches SQL only as a bound parameter."
+
+  - id: hash-users
+    kind: example
+    runtime: isolated-node
+    dir: hash-users
+    entry: index.js
+    strings:
+      marta: { uk: "Марта", en: "Marta" }
+      bohdan: { uk: "Богдан", en: "Bohdan" }
+      salt: { uk: "сіль", en: "salt" }
+      oneHash: { uk: "Один хеш", en: "One hash" }
+    title:
+      uk: "Один пароль, два способи зберігання"
+      en: "One password, two ways to store it"
+    body:
+      uk: |
+        Двоє синтетичних користувачів мають однаковий пароль. Програма зберігає його як SHA-256 і як scrypt із випадковою сіллю, вимірює час одного scrypt і перевіряє правильний та хибний пароль.
+
+        Натисни **Запустити**. SHA-256 у обох однаковий; scrypt — різний, і сіль щоразу інша (запусти ще раз). Перед вимірюванням програма робить один розминочний виклик, щоб не міряти разові витрати на старт. Під час підготовки уроку на Node.js v25.2.1 один хеш з `N=16384` тривав близько 25 мс; на твоєму комп’ютері число буде своє.
+      en: |
+        Two synthetic users have the same password. The program stores it as SHA-256 and as scrypt with a random salt, times one scrypt and checks a right and a wrong password.
+
+        Press **Run**. The SHA-256 values are identical; the scrypt ones differ, and the salt changes every time (run it again). Before measuring, the program makes one warm-up call so as not to measure one-off start-up costs. While the lesson was prepared on Node.js v25.2.1, one hash with `N=16384` took about 25 ms; your computer gives its own number.
+    tryIt:
+      uk: |
+        1. Підвищ вартість: заміни `const COST = 16384;` на `const COST = 32768;` і запусти. Програма впаде з `RangeError: Invalid scrypt params … memory limit exceeded`: scrypt потребує приблизно `128 * N * r` байтів, а це вже 32 МіБ — стільки, скільки дозволяє типове `maxmem`.
+        2. Заміни `const MAXMEM = 32 * 1024 * 1024;` на `64 * 1024 * 1024` і запусти ще раз: хеш працює, а час одного хешу приблизно подвоюється. Так само ростуть і витрати зловмисника на кожну спробу.
+      en: |
+        1. Raise the cost: replace `const COST = 16384;` with `const COST = 32768;` and run. The program fails with `RangeError: Invalid scrypt params … memory limit exceeded`: scrypt needs roughly `128 * N * r` bytes, and that is already 32 MiB — as much as the default `maxmem` allows.
+        2. Replace `const MAXMEM = 32 * 1024 * 1024;` with `64 * 1024 * 1024` and run again: the hash works, and one hash takes about twice as long. The attacker's cost of every attempt grows in the same way.
+
+  - id: password-store
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: password-store
+    entry: index.js
+    editable: [passwords.js]
+    capabilities: { timeoutMs: 20000 }
+    strings:
+      login: { uk: "Вхід", en: "Login" }
+    title:
+      uk: "Зберігання паролів на scrypt"
+      en: "Password storage on scrypt"
+    instructions:
+      uk: |
+        У `passwords.js` напиши дві асинхронні функції на `node:crypto` (`scrypt` уже обгорнуто в проміс):
+
+        - `hashPassword(password)` повертає `{ algorithm: 'scrypt', N, r, p, salt, hash }`: параметри з `PARAMS` (`N: 16384, r: 8, p: 1`), нова випадкова сіль на 16 байтів для кожного виклику, хеш на 32 байти — scrypt пароля із цією сіллю; `salt` і `hash` — текст у base64 (`buffer.toString('base64')`). Самого пароля в результаті немає.
+        - `verifyPassword(password, stored)` повертає `true` чи `false`: обчислює scrypt введеного пароля зі **збереженими** сіллю й параметрами `N`, `r`, `p` (не з `PARAMS` — старі хеші могли мати інші) і порівнює через `crypto.timingSafeEqual`. Якщо збережений хеш має іншу довжину, функція повертає `false`, а не кидає помилку.
+
+        Одна перевірка рахує виклики `crypto.timingSafeEqual`. **Запустити** реєструє трьох синтетичних користувачів і пробує чотири входи.
+      en: |
+        In `passwords.js` write two async functions on `node:crypto` (`scrypt` is already wrapped in a promise):
+
+        - `hashPassword(password)` returns `{ algorithm: 'scrypt', N, r, p, salt, hash }`: the parameters from `PARAMS` (`N: 16384, r: 8, p: 1`), a new random 16-byte salt for every call, a 32-byte hash — scrypt of the password with that salt; `salt` and `hash` are base64 text (`buffer.toString('base64')`). The password itself is not in the result.
+        - `verifyPassword(password, stored)` returns `true` or `false`: it computes scrypt of the typed password with the **stored** salt and parameters `N`, `r`, `p` (not from `PARAMS` — old hashes may have others) and compares with `crypto.timingSafeEqual`. If the stored hash has another length, the function returns `false` instead of throwing.
+
+        One check counts the calls of `crypto.timingSafeEqual`. **Run** registers three synthetic users and tries four logins.
+    testTitles:
+      "hashPassword stores the scrypt parameters, a 16-byte salt and a 32-byte hash, never the password":
+        uk: "`hashPassword` зберігає параметри scrypt, сіль на 16 байтів і хеш на 32 байти — і ніколи пароль"
+        en: "`hashPassword` stores the scrypt parameters, a 16-byte salt and a 32-byte hash, never the password"
+      "the same password gives a different salt and hash every time":
+        uk: "Той самий пароль щоразу дає іншу сіль та інший хеш"
+        en: "The same password gives a different salt and hash every time"
+      "the stored hash is scrypt of the password with the stored salt":
+        uk: "Збережений хеш — це scrypt пароля зі збереженою сіллю"
+        en: "The stored hash is scrypt of the password with the stored salt"
+      "verifyPassword accepts the right password and refuses a wrong one":
+        uk: "`verifyPassword` приймає правильний пароль і відхиляє хибний"
+        en: "`verifyPassword` accepts the right password and refuses a wrong one"
+      "verifyPassword uses the parameters stored with the hash":
+        uk: "`verifyPassword` бере параметри, збережені разом із хешем"
+        en: "`verifyPassword` uses the parameters stored with the hash"
+      "verifyPassword answers false, without throwing, for a stored hash of another length":
+        uk: "`verifyPassword` відповідає `false` без помилки, коли збережений хеш іншої довжини"
+        en: "`verifyPassword` answers `false`, without throwing, for a stored hash of another length"
+      "verifyPassword compares the hashes with crypto.timingSafeEqual":
+        uk: "`verifyPassword` порівнює хеші через `crypto.timingSafeEqual`"
+        en: "`verifyPassword` compares the hashes with `crypto.timingSafeEqual`"
+    hints:
+      nudge:
+        uk: "Почни з `hashPassword`: що треба мати, щоб пізніше обчислити той самий хеш ще раз? Усе це й повертай."
+        en: "Start with `hashPassword`: what do you need in order to compute the same hash again later? Return all of that."
+      explanation:
+        uk: "Подібна пара для API-ключів могла б зберігати `{ salt: s.toString('base64'), hash: (await scrypt(key, s, 32, { N, r, p })).toString('base64') }`. Для перевірки base64 повертається в байти через `Buffer.from(text, 'base64')`. `crypto.timingSafeEqual(a, b)` кидає `RangeError`, коли `a.length !== b.length`, — порівняй довжини перед викликом."
+        en: "A similar pair for API keys could store `{ salt: s.toString('base64'), hash: (await scrypt(key, s, 32, { N, r, p })).toString('base64') }`. For the check, base64 goes back to bytes with `Buffer.from(text, 'base64')`. `crypto.timingSafeEqual(a, b)` throws a `RangeError` when `a.length !== b.length` — compare the lengths before the call."
+    solutionNote:
+      uk: "Усе, що треба для повторного обчислення, зберігається поруч із хешем: алгоритм, параметри й сіль. Тому завтра можна підняти `N` для нових користувачів, а старі хеші й далі перевірятимуться своїми параметрами. Порівняння через `timingSafeEqual` триває однаково для будь-яких хешів однієї довжини, а перевірка довжини перед ним перетворює зіпсований запис на звичайне «ні»."
+      en: "Everything needed to compute it again is stored next to the hash: the algorithm, the parameters and the salt. So tomorrow you can raise `N` for new users, and old hashes keep being checked with their own parameters. Comparing with `timingSafeEqual` takes the same time for any hashes of one length, and the length check before it turns a damaged record into a plain “no”."
+    feedback:
+      - when: { test: "the stored hash is scrypt of the password with the stored salt" }
+        message:
+          uk: "Ця перевірка сама обчислює `scrypt(password, salt, 32, { N: 16384, r: 8, p: 1 })` зі збереженою сіллю й чекає, що `hash` збігається. SHA-256 чи власна суміш солі й раундів не пройдуть."
+          en: "This check computes `scrypt(password, salt, 32, { N: 16384, r: 8, p: 1 })` itself with the stored salt and expects `hash` to match. SHA-256 or a home-made mix of salt and rounds will not pass."
+      - when: { test: "the same password gives a different salt and hash every time" }
+        message:
+          uk: "Ця перевірка двічі хешує один пароль і чекає різні `salt` і `hash`. Сіль має бути новою випадковою для кожного виклику (`crypto.randomBytes`)."
+          en: "This check hashes one password twice and expects different `salt` and `hash`. The salt must be new and random for every call (`crypto.randomBytes`)."
+      - when: { test: "verifyPassword uses the parameters stored with the hash" }
+        message:
+          uk: "Ця перевірка дає хеш, зроблений з `N: 1024`, і правильний пароль. Вона чекає `true`, тож `N`, `r`, `p` для обчислення беруть зі `stored`, а не з `PARAMS`."
+          en: "This check passes a hash made with `N: 1024` and the right password. It expects `true`, so `N`, `r`, `p` for the computation come from `stored`, not from `PARAMS`."
+      - when: { test: "verifyPassword answers false, without throwing, for a stored hash of another length" }
+        message:
+          uk: "Ця перевірка дає збережений хеш на 16 байтів і чекає `false` без помилки. Якщо бачиш `RangeError … same byte length`, порівнюй довжини до виклику `timingSafeEqual`."
+          en: "This check passes a 16-byte stored hash and expects `false` with no error. If you see `RangeError … same byte length`, compare the lengths before calling `timingSafeEqual`."
+      - when: { test: "verifyPassword compares the hashes with crypto.timingSafeEqual" }
+        message:
+          uk: "Ця перевірка рахує виклики `crypto.timingSafeEqual` і чекає один на кожен вхід. Порівняння `===` текстів чи `Buffer.equals` зупиняється на першому різному байті, і за часом відповіді можна дещо дізнатися."
+          en: "This check counts the calls of `crypto.timingSafeEqual` and expects one per login. Comparing texts with `===` or `Buffer.equals` stops at the first differing byte, and the response time can reveal something."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-10 немає, а твій однокористувацький проєкт паролів не має — і зберігати йому нічого. Якщо колись у твоєму `server/` з’явиться вхід, правило те саме: лише перевірена функція з `node:crypto` (чи перевірена бібліотека), сіль, збережені параметри й `timingSafeEqual`, і жодного пароля в даних, журналах чи резервних копіях."
+      en: "Your project does not change in this unit: NO-10 has no project step, and your single-user project has no passwords — so it has nothing to store. If your `server/` ever gets a login, the rule is the same: only a vetted function from `node:crypto` (or a vetted library), a salt, stored parameters and `timingSafeEqual`, and no password in the data, the logs or the backups."
