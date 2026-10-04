@@ -4,7 +4,9 @@
 // Where it differs from the real thing:
 // - only function components, host elements, Fragment and arrays of them; no class components,
 //   context, Suspense, lazy, portals, refs to DOM nodes, streaming or hydration;
-// - hooks: useState gives the initial value and a setter that does nothing on the server,
+// - hooks: useState gives the initial value; its setter does nothing when called after the render
+//   (on the server nothing calls it then: no clicks, no effects) and throws "not supported" when a
+//   component calls it during its own render — real React then renders that component again;
 //   useEffect and useLayoutEffect never run (as in React on the server), useMemo and useRef
 //   compute once; no other hooks;
 // - props: className → class, htmlFor → for, data-* and aria-*, lowercase attributes and the
@@ -29,7 +31,10 @@ function hook(name) {
 }
 export function useState(initial) {
   hook('useState');
-  return [typeof initial === 'function' ? initial() : initial, () => {}];
+  const setState = () => {
+    if (hooksAllowed) throw notSupported('Calling a state setter during render');
+  };
+  return [typeof initial === 'function' ? initial() : initial, setState];
 }
 export function useEffect() { hook('useEffect'); }
 export function useLayoutEffect() { hook('useLayoutEffect'); }
