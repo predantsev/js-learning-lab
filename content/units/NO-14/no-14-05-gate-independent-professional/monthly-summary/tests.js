@@ -64,6 +64,23 @@ test('top limits the categories, the total keeps every category', () => {
   } finally { db.close(); }
 });
 
+// Ties: equal amounts inside a category, equal totals across categories. Inserted so that neither
+// the insertion order nor the reverse order gives the right answer by luck.
+const TIES = [
+  { id: 't-02', label: 'second id', amountMinor: 500, date: '2026-08-10', category: 'food' },
+  { id: 't-01', label: 'first id', amountMinor: 500, date: '2026-08-11', category: 'food' },
+  { id: 't-04', label: 'lamp', amountMinor: 1000, date: '2026-08-13', category: 'home' },
+  { id: 't-03', label: 'cinema', amountMinor: 1000, date: '2026-08-12', category: 'fun' },
+];
+test('ties: the smaller id is the largest expense, equal totals go by category name', () => {
+  const db = new DatabaseSync(freshLedger(tmp('check-ties'), TIES));
+  try {
+    const august = monthSummary(db, '2026-08', 5);
+    expect(august.categories.map((row) => row.category), 'order of three categories with equal totals').toEqual(['food', 'fun', 'home']);
+    expect(august.categories[0]?.largest, 'largest of two food expenses of 500 (t-01 and t-02)').toBe('first id');
+  } finally { db.close(); }
+});
+
 test('the month is only data in the SQL', () => {
   const db = open('check-injection');
   try {
@@ -183,18 +200,24 @@ test('your tests pass on your summary.js', async () => {
   expect(results.filter((r) => !r.passed).map((r) => `${r.name}: ${r.message}`), 'your tests that fail on your summary.js').toEqual([]);
 });
 
-test('your tests fail on a summary that also counts the first day of the next month', async () => {
+test('your tests fail on the first broken summary', async () => {
   const results = await runYourTests('broken-edge', (to) => writeFile(to, BROKEN['counts-next-first-day']));
   expect(results.some((r) => !r.passed), 'at least one of your tests fails on it').toBe(true);
 });
 
-test('your tests fail on a summary whose total counts only the top categories', async () => {
+test('your tests fail on the second broken summary', async () => {
   const results = await runYourTests('broken-total', (to) => writeFile(to, BROKEN['total-of-top-only']));
   expect(results.some((r) => !r.passed), 'at least one of your tests fails on it').toBe(true);
 });
 
-test('the lab note uses SQL and SSR and explains why auth does not apply', () => {
-  expect([...(labs?.used ?? [])].sort(), 'labs used').toEqual(['sql', 'ssr']);
-  const auth = (labs?.notUsed ?? []).find((entry) => entry?.lab === 'auth');
-  expect(typeof auth?.why === 'string' && auth.why.trim().length >= 60, 'why auth does not apply has at least 60 characters').toBe(true);
+// A no-hint gate: the messages say whether the note is right, never which labs belong where.
+test('the lab note names the labs the feature applies and explains each other one', () => {
+  const used = Array.isArray(labs?.used) ? [...labs.used].sort() : [];
+  expect(used.join() === 'sql,ssr', 'labs.used holds exactly the labs this feature applies').toBe(true);
+  const notUsed = Array.isArray(labs?.notUsed) ? labs.notUsed : [];
+  const others = ['auth', 'sql', 'ssr'].filter((lab) => !used.includes(lab));
+  for (const lab of others) {
+    const entry = notUsed.find((item) => item?.lab === lab);
+    expect(typeof entry?.why === 'string' && entry.why.trim().length >= 60, `labs.notUsed explains ${lab} in at least 60 characters`).toBe(true);
+  }
 });
