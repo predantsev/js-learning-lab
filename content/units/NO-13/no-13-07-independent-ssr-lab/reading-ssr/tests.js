@@ -102,3 +102,8 @@ test('another address answers 404', async () => {
   const { base } = await start(stored);
   expect((await request(`${base}/books.json`)).status, 'status of GET /books.json').toBe(404);
 });
+
+test('another method answers 404', async () => {
+  const { base } = await start(stored);
+  expect((await request(`${base}/`, { method: 'POST', body: {} })).status, 'status of POST /').toBe(404);
+});
