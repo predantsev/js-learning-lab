@@ -1,0 +1,284 @@
+id: no-02-04-bounded-reads-writes
+unit: NO-02
+title:
+  uk: "Обмежене читання й запис"
+  en: "Bounded reads and writes"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Перевіряти розмір файла через `stat` до читання й відмовляти в усьому, що більше за заданий ліміт."
+    en: "Check a file’s size with `stat` before reading it and refuse anything above a configured limit."
+  - uk: "Читати великий файл шматками фіксованого розміру через FileHandle, щоб пам’ять лишалася обмеженою, і передбачати пікову пам’ять для читання всього файла й читання шматками."
+    en: "Read a large file in fixed-size chunks through a FileHandle so memory stays bounded, and predict peak memory for whole-file and chunked reads."
+prerequisites: [no-02-03-buffers-encoding]
+subskills:
+  - { family: B-02, skill: "bounded reads/writes", depth: intro }
+glossary: [file-handle, bounded-read]
+selfCheck: [predict-memory, read-bounded]
+
+blocks:
+  - id: whole-file-cost
+    kind: explanation
+    title:
+      uk: "readFile тримає весь файл у пам’яті"
+      en: "readFile holds the whole file in memory"
+    body:
+      uk: |
+        `readFile` зручний, але повертає **один** Buffer з усім файлом. Файл на 24 МБ — це 24 МБ пам’яті, на 2 ГБ — 2 ГБ, і процес падає. Так, усередині Node читає файл шматками, але складає їх в один Buffer, перш ніж віддати тобі.
+
+        Захист має дві частини:
+
+        1. **Межа до читання.** `stat(path)` повертає відомості про файл, зокрема `size` у байтах, не читаючи вмісту. Більше за ліміт — відмовляй одразу.
+        2. **Шматки фіксованого розміру.** `open(path)` повертає [[file-handle|FileHandle]] — відкритий файл. `handle.read(buffer, 0, buffer.length, null)` дописує в твій Buffer наступні байти й повертає `{ bytesRead }`; `bytesRead === 0` означає кінець файла. Один Buffer на 64 КБ, використаний знову й знову, — і пам’ять не росте разом із файлом.
+
+        Відкритий файл займає ресурс системи, тож `handle.close()` стоїть у `finally`.
+      en: |
+        `readFile` is handy, but it returns **one** Buffer with the whole file. A 24 MB file means 24 MB of memory, a 2 GB file 2 GB, and the process falls over. Yes, inside, Node reads the file in chunks, but it gathers them into one Buffer before handing it to you.
+
+        The protection has two parts:
+
+        1. **A limit before reading.** `stat(path)` returns facts about the file, including `size` in bytes, without reading the content. Above the limit — refuse at once.
+        2. **Fixed-size chunks.** `open(path)` returns a [[file-handle|FileHandle]] — an open file. `handle.read(buffer, 0, buffer.length, null)` puts the next bytes into your Buffer and returns `{ bytesRead }`; `bytesRead === 0` means the end of the file. One 64 KB Buffer, reused again and again — and memory does not grow with the file.
+
+        An open file holds a system resource, so `handle.close()` sits in `finally`.
+
+  - id: predict-memory
+    kind: prediction
+    prompt:
+      uk: "Програма створює файл на 24 МБ, читає його циклом шматками по 64 КБ, а потім ще раз через `readFile`. Скільки приблизно додаткової пам’яті під Buffers знадобиться кожному способу?"
+      en: "A program creates a 24 MB file, reads it with a loop of 64 KB chunks, then once more with `readFile`. Roughly how much extra Buffer memory does each way need?"
+    answer:
+      type: choice
+      options:
+        - id: flat-and-full
+          text:
+            uk: "Шматки — близько 0,1 МБ; `readFile` — близько 24 МБ"
+            en: "Chunks — about 0.1 MB; `readFile` — about 24 MB"
+        - id: both-small
+          text:
+            uk: "Обидва — близько 0,1 МБ: `readFile` теж читає шматками"
+            en: "Both — about 0.1 MB: `readFile` reads in chunks too"
+          why:
+            uk: "Усередині `readFile` справді читає шматками, але складає їх в один Buffer на весь файл — і саме його повертає."
+            en: "Inside, `readFile` does read in chunks, but it gathers them into one Buffer for the whole file — and returns exactly that."
+        - id: both-full
+          text:
+            uk: "Обидва — близько 24 МБ: прочитати файл — означає тримати його в пам’яті"
+            en: "Both — about 24 MB: reading a file means holding it in memory"
+          why:
+            uk: "Цикл щоразу перезаписує той самий Buffer на 64 КБ: попередній шматок уже оброблено, тримати його не треба."
+            en: "The loop overwrites the same 64 KB Buffer each time: the previous chunk has been processed, there is no need to keep it."
+      correct: [flat-and-full]
+    explanation:
+      uk: "Цикл тримає в пам’яті лише один шматок, хоч би яким був файл. `readFile` тримає весь файл, тож його пам’ять росте разом із розміром. Ці числа ти побачиш у прикладі нижче — платформа виміряє їх через `process.memoryUsage().arrayBuffers`."
+      en: "The loop keeps only one chunk in memory, whatever the size of the file. `readFile` keeps the whole file, so its memory grows with the size. You will see these numbers in the example below — the platform measures them with `process.memoryUsage().arrayBuffers`."
+
+  - id: memory-gauge
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Межа й шматки: де росте пам’ять"
+      en: "A limit and chunks: where memory grows"
+    textEquivalent:
+      uk: "Файл habit-history.txt має 24 МБ. Спершу stat дає його розмір, не читаючи вмісту, і порівнює з лімітом. Якщо ліміт 64 МБ, файл дозволено, і є два способи його прочитати. readFile складає весь файл в один Buffer — додаткова пам’ять стрибає до 24 МБ одним махом. Цикл шматками використовує один Buffer на 64 КБ знову й знову — пам’ять лишається рівною, близько 0,1 МБ, хоч би яким великим був файл. Якщо ліміт 1 МБ, stat бачить 24 МБ і програма відмовляє з RangeError ще до того, як прочитано хоч один байт: пам’ять під вміст файла не витрачено зовсім."
+      en: "The file habit-history.txt is 24 MB. First stat gives its size without reading the content and compares it with the limit. If the limit is 64 MB, the file is allowed, and there are two ways to read it. readFile gathers the whole file into one Buffer — extra memory jumps to 24 MB in one go. The chunk loop uses one 64 KB Buffer again and again — memory stays flat, about 0.1 MB, however large the file is. If the limit is 1 MB, stat sees 24 MB and the program refuses with a RangeError before a single byte is read: no memory is spent on the file’s content at all."
+    spec:
+      layout: lr
+      nodes:
+        - { id: gate, label: { uk: "stat: 24 МБ ≤ ліміт?", en: "stat: 24 MB ≤ limit?" }, shape: round, w: 170 }
+        - { id: whole, label: "readFile: 24 MB", w: 150 }
+        - { id: chunks, label: { uk: "шматки: 0,1 МБ", en: "chunks: 0.1 MB" }, w: 150 }
+        - { id: refuse, label: "RangeError", w: 150 }
+      edges:
+        - { id: to-whole, from: gate, to: whole }
+        - { id: to-chunks, from: gate, to: chunks }
+        - { id: to-refuse, from: gate, to: refuse }
+      hidden: [refuse, to-refuse]
+      steps:
+        - caption:
+            uk: "`stat` повідомляє розмір — 24 МБ — і не читає жодного байта вмісту. Ліміт поки 64 МБ: файл дозволено."
+            en: "`stat` reports the size — 24 MB — and reads no byte of the content. The limit is 64 MB for now: the file is allowed."
+          highlight: [gate]
+          dim: [whole, chunks, to-whole, to-chunks]
+        - caption:
+            uk: "`readFile` складає весь файл в **один** Buffer: додаткова пам’ять стрибає до 24 МБ одним махом."
+            en: "`readFile` gathers the whole file into **one** Buffer: extra memory jumps to 24 MB in one go."
+          highlight: [gate, to-whole, whole]
+          dim: [chunks, to-chunks]
+        - caption:
+            uk: "Цикл читає в той самий Buffer на 64 КБ знову й знову: пам’ять рівна, близько 0,1 МБ, хоч би яким був файл."
+            en: "The loop reads into the same 64 KB Buffer again and again: memory stays flat, about 0.1 MB, whatever the file size."
+          highlight: [gate, to-chunks, chunks]
+          dim: [whole, to-whole]
+        - caption:
+            uk: "Ліміт 1 МБ: `stat` бачить 24 МБ, і програма відмовляє з `RangeError` ще **до** читання — пам’ять під вміст не витрачено зовсім."
+            en: "A 1 MB limit: `stat` sees 24 MB, and the program refuses with a `RangeError` **before** reading — no memory is spent on the content at all."
+          show: [refuse, to-refuse]
+          highlight: [gate, to-refuse, refuse]
+          dim: [whole, chunks, to-whole, to-chunks]
+
+  - id: measure
+    kind: example
+    runtime: isolated-node
+    dir: measure
+    entry: index.js
+    title:
+      uk: "Виміряй сам: шматки, readFile і межа"
+      en: "Measure it yourself: chunks, readFile and a limit"
+    body:
+      uk: |
+        Натисни **Запустити**. Програма записує синтетичну історію виконань звичок на 24 МБ — по 1 МБ за раз, щоб сам запис не займав зайвої пам’яті. Потім рахує рядки циклом шматками і читає той самий файл через `readFile`.
+
+        «Extra Buffer memory» — скільки пам’яті Buffers додалося, за `process.memoryUsage().arrayBuffers`. Числа можуть трохи відрізнятися на твоєму комп’ютері, але різниця в сотні разів лишиться.
+      en: |
+        Press **Run**. The program writes a synthetic 24 MB history of habit completions — 1 MB at a time, so that writing itself takes no extra memory. Then it counts the lines with a chunk loop and reads the same file with `readFile`.
+
+        “Extra Buffer memory” is how much Buffer memory was added, according to `process.memoryUsage().arrayBuffers`. The numbers may differ a little on your computer, but the difference of hundreds of times stays.
+    tryIt:
+      uk: "Зміни `MAX_BYTES` на `1 * 1024 * 1024` — програма відмовить, не прочитавши жодного байта. Потім поверни 64 МБ і зміни `CHUNK` на `1024 * 1024`: пам’ять циклу виросте до 1 МБ — вона залежить від розміру шматка, а не файла."
+      en: "Change `MAX_BYTES` to `1 * 1024 * 1024` — the program refuses without reading a single byte. Then set it back to 64 MB and change `CHUNK` to `1024 * 1024`: the loop’s memory grows to 1 MB — it depends on the chunk size, not the file size."
+
+  - id: own-files-too
+    kind: explanation
+    title:
+      uk: "І для своїх файлів, і для запису"
+      en: "For your own files too, and for writing"
+    body:
+      uk: |
+        «Цей файл пише моя ж програма — навіщо ліміт?» Бо файли змінюються не лише так, як ти задумав: помилка в коді, що дописує записи без кінця; файл, який людина відредагувала вручну; копія з іншої версії застосунку; заповнений диск. Ліміт — дешевий запобіжник: він перетворює «процес упав без пам’яті» на зрозумілу помилку з розміром і межею.
+
+        Тип помилки має значення. `RangeError` («значення поза дозволеним діапазоном») каже тому, хто викликав, що проблема саме в розмірі, а не, скажімо, у відсутньому файлі.
+
+        Те саме з записом: перш ніж записати, виміряй `Buffer.byteLength(text)` і відмов, якщо дані більші за ліміт. Інакше ти запишеш файл, який твоє ж обмежене читання потім не прийме.
+      en: |
+        “My own program writes this file — why a limit?” Because files change not only the way you planned: a bug that appends records forever; a file someone edited by hand; a copy from another version of the app; a full disk. A limit is a cheap safeguard: it turns “the process ran out of memory” into a clear error with the size and the limit.
+
+        The error type matters. `RangeError` (“a value outside the allowed range”) tells the caller that the problem is the size, and not, say, a missing file.
+
+        The same goes for writing: before you write, measure `Buffer.byteLength(text)` and refuse when the data is bigger than the limit. Otherwise you write a file that your own bounded read will later refuse.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: виміряти, а не вгадати"
+      en: "Recall: measure, do not guess"
+    items:
+      - id: growth-from-measurements
+        from: js-17-02-big-o-measured
+        prompt:
+          uk: "Ти виміряв додаткову пам’ять `readFile`: файл на 1 МБ — 1 МБ, на 4 МБ — 4 МБ. Чого чекати для файла на 24 МБ, а чого — для циклу з одним шматком на 64 КБ?"
+          en: "You measured the extra memory of `readFile`: a 1 MB file — 1 MB, a 4 MB file — 4 MB. What should you expect for a 24 MB file, and what for a loop with one 64 KB chunk?"
+        answer:
+          type: choice
+          options:
+            - id: linear-and-constant
+              text:
+                uk: "`readFile` — близько 24 МБ (росте лінійно з розміром); цикл — близько 64 КБ для будь-якого розміру"
+                en: "`readFile` — about 24 MB (grows linearly with the size); the loop — about 64 KB for any size"
+            - id: quadratic
+              text:
+                uk: "`readFile` — близько 576 МБ (24 × 24); цикл — близько 24 МБ"
+                en: "`readFile` — about 576 MB (24 × 24); the loop — about 24 MB"
+              why:
+                uk: "Вимірювання показали, що пам’ять зросла вчетверо, коли файл став учетверо більшим, — це лінійний ріст, а не квадратичний."
+                en: "The measurements showed memory growing four times when the file became four times larger — that is linear growth, not quadratic."
+            - id: same-for-both
+              text:
+                uk: "Обидва — близько 24 МБ: читається той самий файл"
+                en: "Both — about 24 MB: the same file is read"
+              why:
+                uk: "Вимірюй не файл, а те, що програма тримає водночас. Цикл тримає один шматок, тож його пам’ять не залежить від розміру файла."
+                en: "Measure not the file but what the program holds at the same time. The loop holds one chunk, so its memory does not depend on the file size."
+          correct: [linear-and-constant]
+        explanation:
+          uk: "Два вимірювання вже показують форму росту: учетверо більший вхід — учетверо більше пам’яті. Пам’ять циклу залежить від розміру шматка, а не від розміру вхідних даних, — це сталий ріст."
+          en: "Two measurements already show the shape of the growth: four times the input — four times the memory. The loop’s memory depends on the chunk size, not on the input size — that is constant growth."
+
+  - id: read-bounded
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: read-bounded
+    entry: index.js
+    editable: [app.js]
+    strings:
+      task5: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      bytesRead: { uk: "байтів прочитано", en: "bytes read" }
+      habit: { uk: "Пити воду", en: "Drink water" }
+    title:
+      uk: "readBounded: межа до першого байта"
+      en: "readBounded: a limit before the first byte"
+    instructions:
+      uk: |
+        Зараз `readBounded(path, maxBytes)` у `app.js` читає будь-який файл повністю. Перероби її:
+
+        - повертає вміст файла як Buffer — увесь, навіть якщо він довший за один шматок;
+        - файл рівно на `maxBytes` байтів дозволений;
+        - файл, довший за `maxBytes`, відхиляє з `RangeError` — і **до** того, як прочитано хоч один його байт;
+        - читає через FileHandle (`open`) і закриває кожен відкритий FileHandle — і після успіху, і після відмови.
+
+        Перевірки підміняють `open`, `readFile` і методи читання FileHandle, щоб побачити, скільки читань відбулося й чи всі відкриті файли закрито. Тому користуйся функціями з `node:fs/promises`.
+      en: |
+        Right now `readBounded(path, maxBytes)` in `app.js` reads any file completely. Rework it:
+
+        - it returns the file’s content as a Buffer — all of it, even when it is longer than one chunk;
+        - a file of exactly `maxBytes` bytes is allowed;
+        - a file longer than `maxBytes` is refused with a `RangeError` — and **before** a single byte of it is read;
+        - it reads through a FileHandle (`open`) and closes every FileHandle it opened — after success and after a refusal alike.
+
+        The checks replace `open`, `readFile` and the read methods of FileHandle to see how many reads happened and whether every opened file was closed. So use the functions of `node:fs/promises`.
+    testTitles:
+      "returns the whole content of a file larger than one chunk":
+        uk: "Повертає весь вміст файла, довшого за один шматок"
+        en: "Returns the whole content of a file longer than one chunk"
+      "a file of exactly maxBytes is allowed":
+        uk: "Файл рівно на `maxBytes` байтів дозволений"
+        en: "A file of exactly `maxBytes` bytes is allowed"
+      "a file over the limit rejects with a RangeError":
+        uk: "Файл понад ліміт відхиляється з `RangeError`"
+        en: "A file over the limit rejects with a `RangeError`"
+      "an oversized file is refused before any byte is read":
+        uk: "Завеликий файл відхилено до читання першого байта"
+        en: "An oversized file is refused before any byte is read"
+      "every opened FileHandle is closed, on success and on refusal":
+        uk: "Кожен відкритий FileHandle закрито — і після успіху, і після відмови"
+        en: "Every opened FileHandle is closed — after success and after a refusal"
+    hints:
+      nudge:
+        uk: "Що програма може дізнатися про файл, не читаючи його вмісту? І де стоїть рядок, що закриває файл, коли функція кидає помилку?"
+        en: "What can a program learn about a file without reading its content? And where is the line that closes the file when the function throws?"
+      explanation:
+        uk: "`stat(path)` (або `handle.stat()` у відкритого файла) дає `size` без читання вмісту — порівняй його з лімітом першою дією. Читання шматками — цикл `handle.read(buffer, 0, buffer.length, null)`, доки `bytesRead` не стане 0; кожен прочитаний шматок (`buffer.subarray(0, bytesRead)`) збери в масив, а наприкінці склей через `Buffer.concat`. Закриття у `finally` спрацьовує і після `return`, і після `throw` — так, як `finally` закриває спінер у `try { await save() } finally { spinner.hidden = true }`."
+        en: "`stat(path)` (or `handle.stat()` on an open file) gives `size` without reading the content — compare it with the limit as the first step. Reading in chunks is a loop of `handle.read(buffer, 0, buffer.length, null)` until `bytesRead` is 0; collect every chunk you read (`buffer.subarray(0, bytesRead)`) in an array and join them at the end with `Buffer.concat`. A close in `finally` runs after `return` and after `throw` alike — the way `finally` hides a spinner in `try { await save() } finally { spinner.hidden = true }`."
+    solutionNote:
+      uk: "Розмір перевіряється через `stat` ще до `open`, тож завеликий файл навіть не відкривається. Читання йде шматками по 64 КБ у нові Buffers, які складаються через `Buffer.concat`; додаткова перевірка в циклі ловить файл, що виріс після `stat`. `finally` закриває FileHandle на кожному шляху. Рівноцінний варіант — відкрити файл, спитати `handle.stat()` і прочитати `handle.readFile()`: пам’ять обмежує ліміт, а `finally` закриває файл і після відмови."
+      en: "The size is checked with `stat` before `open`, so an oversized file is not even opened. The reading goes in 64 KB chunks into new Buffers joined with `Buffer.concat`; an extra check in the loop catches a file that grew after `stat`. `finally` closes the FileHandle on every path. An equivalent version opens the file, asks `handle.stat()` and reads `handle.readFile()`: the limit bounds the memory, and `finally` closes the file after a refusal too."
+    feedback:
+      - when: { test: "returns the whole content of a file larger than one chunk" }
+        message:
+          uk: "Ця перевірка очікує Buffer з усіма байтами файла понад 200 КБ. Один виклик `handle.read` дає лише один шматок: читай у циклі, доки `bytesRead` не стане 0, і склей шматки."
+          en: "This check expects a Buffer with all the bytes of a file over 200 KB. One `handle.read` call gives only one chunk: read in a loop until `bytesRead` is 0 and join the chunks."
+      - when: { test: "a file of exactly maxBytes is allowed" }
+        message:
+          uk: "Ця перевірка очікує, що файл на 5000 байтів з `maxBytes` 5000 буде прочитано. Відмовляй лише тоді, коли розмір **більший** за ліміт (`>`), а не більший або рівний."
+          en: "This check expects a 5000-byte file with `maxBytes` 5000 to be read. Refuse only when the size is **greater** than the limit (`>`), not greater or equal."
+      - when: { test: "a file over the limit rejects with a RangeError" }
+        message:
+          uk: "Ця перевірка очікує, що файл на 5001 байт з `maxBytes` 5000 відхилиться саме з `RangeError` (`throw new RangeError(…)`), а не зі звичайною `Error`."
+          en: "This check expects a 5001-byte file with `maxBytes` 5000 to reject with a `RangeError` specifically (`throw new RangeError(…)`), not a plain `Error`."
+      - when: { test: "an oversized file is refused before any byte is read" }
+        message:
+          uk: "Ця перевірка очікує нуль викликів читання для файла на 300 000 байтів з `maxBytes` 1000. Порівнюй розмір із `stat` до будь-якого `read` чи `readFile`, а не довжину вже прочитаних байтів."
+          en: "This check expects zero read calls for a 300,000-byte file with `maxBytes` 1000. Compare the size from `stat` before any `read` or `readFile`, not the length of bytes already read."
+      - when: { test: "every opened FileHandle is closed, on success and on refusal" }
+        message:
+          uk: "Ця перевірка очікує, що після кожного виклику не лишиться жодного відкритого FileHandle. Якщо файл відкрито до перевірки розміру, `close()` має стояти у `finally`, щоб спрацювати й після `throw`. Повідомлення «A FileHandle object was closed during garbage collection» означає те саме: файл лишився відкритим, і його закрив збирач сміття."
+          en: "This check expects no FileHandle left open after each call. If the file is opened before the size check, `close()` must sit in `finally` so that it also runs after `throw`. The message “A FileHandle object was closed during garbage collection” means the same: a file was left open, and the garbage collector closed it."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-02
+    body:
+      uk: "У кроці проєкту цього розділу файловий репозиторій читатиме файл даних твого домену з лімітом на кшталт `maxBytes` і відмовлятиме з `RangeError`, перш ніж читати завеликий файл. Ту саму межу він перевірятиме й перед записом."
+      en: "In this unit’s project step the file repository reads your domain’s data file with a limit such as `maxBytes` and refuses an oversized file with a `RangeError` before reading it. It checks the same limit before writing, too."
