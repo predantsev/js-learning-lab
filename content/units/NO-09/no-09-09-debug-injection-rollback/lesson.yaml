@@ -1,0 +1,254 @@
+id: no-09-09-debug-injection-rollback
+unit: NO-09
+title:
+  uk: "Налагодження: вразливий запит, зламане обмеження, відсутній rollback"
+  en: "Debug: injectable query, broken constraint, missing rollback"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знайти й виправити вразливий до ін’єкції пошук, зовнішній ключ, що мовчки не діє, бо перевірку вимкнено на з’єднанні, і багатокрокову зміну, яка після невдачі лишає частину даних."
+    en: "Find and repair an injectable search, a foreign-key constraint that silently does nothing because foreign keys are off on the connection, and a multi-step update that leaves partial data when it fails."
+  - uk: "Довести кожне виправлення перевіркою, що падає до виправлення й проходить після нього на синтетичній бібліотеці."
+    en: "Prove each repair with a check that fails before the fix and passes after it against the synthetic library database."
+prerequisites: [no-09-08-file-vs-relational]
+subskills:
+  - { family: B-04, skill: "CRUD/constraints/nulls", depth: assess }
+  - { family: B-04, skill: "transactions/isolation awareness", depth: assess }
+  - { family: B-04, skill: "parameterized queries", depth: assess }
+glossary: []
+selfCheck: [predict-symptoms, repair-lab]
+
+blocks:
+  - id: three-reports
+    kind: explanation
+    title:
+      uk: "Три скарги на один репозиторій"
+      en: "Three complaints about one repository"
+    body:
+      uk: |
+        Сервер бібліотеки працює, тести «на щасливому шляху» проходять, але надійшли три скарги:
+
+        1. пошук за назвою `x' OR 1=1 --` показав усі книжки;
+        2. у базі знайшлася видача для учасника, якого не існує;
+        3. після невдалої спроби видати книжку видач стало на одну більше.
+
+        Жодна з них не супроводжувалася помилкою там, де вона мала бути. Саме це й небезпечно: «помилки немає» не означає «правило працює». Обмеження, яке вимкнено, мовчить так само, як обмеження, якого ніхто не порушував.
+
+        Порядок роботи той самий, що й завжди: спершу відтворити кожну скаргу, потім виправити причину, а не симптом, і довести виправлення перевіркою, що падала до нього.
+      en: |
+        The library server runs, the “happy path” tests pass, but three complaints have arrived:
+
+        1. a search for the title `x' OR 1=1 --` showed every book;
+        2. the database holds a loan for a member who does not exist;
+        3. after a failed attempt to lend a book there was one loan too many.
+
+        None of them came with an error where one should have been. That is exactly the danger: “no error” does not mean “the rule works”. A constraint that is switched off is as silent as a constraint nobody broke.
+
+        The way of working is the usual one: first reproduce each complaint, then repair the cause rather than the symptom, and prove the repair with a check that failed before it.
+
+  - id: predict-symptoms
+    kind: prediction
+    prompt:
+      uk: "`openLibrary` вимикає зовнішні ключі командою `PRAGMA foreign_keys = OFF`, `searchBooks` вклеює назву в SQL, `borrowBook` виконує вставку видачі, а потім зменшення вільних примірників без транзакції. Що станеться в заповненій бібліотеці? Познач усе, що справдиться."
+      en: "`openLibrary` switches foreign keys off with `PRAGMA foreign_keys = OFF`, `searchBooks` glues the title into the SQL, and `borrowBook` inserts a loan and then decrements the available copies without a transaction. What happens in the seeded library? Mark everything that comes true."
+    code: |
+      searchBooks(db, "x' OR 1=1 --");
+      db.prepare("INSERT INTO loans (memberId, bookId, loanedOn) VALUES (9, 3, '2026-03-12')").run();
+      borrowBook(db, 3, 2, '2026-03-12'); // book 2 has 0 copies available
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: all-books
+          text: { uk: "Пошук поверне всі книжки", en: "The search returns every book" }
+        - id: orphan-saved
+          text: { uk: "Видачу для учасника 9 буде збережено", en: "The loan for member 9 is saved" }
+        - id: half-borrow
+          text: { uk: "`borrowBook` кине помилку, але нова видача лишиться в таблиці", en: "`borrowBook` throws, but the new loan stays in the table" }
+        - id: fk-error
+          text: { uk: "Вставка для учасника 9 впаде з `FOREIGN KEY constraint failed`", en: "The insert for member 9 fails with `FOREIGN KEY constraint failed`" }
+          why:
+            uk: "Зовнішній ключ записано в схемі, але перевірку вимкнено на цьому з’єднанні. Тоді `REFERENCES` нічого не перевіряє — і не каже про це."
+            en: "The foreign key is written in the schema, but enforcement is off on this connection. Then `REFERENCES` checks nothing — and says nothing about it."
+        - id: nothing-saved
+          text: { uk: "`borrowBook` не змінить нічого: помилка скасовує всю функцію", en: "`borrowBook` changes nothing: the error cancels the whole function" }
+          why:
+            uk: "Помилка скасовує лише інструкцію, що впала. Вставка виконалася раніше, і без транзакції її вже збережено."
+            en: "An error cancels only the statement that failed. The insert ran before it and, without a transaction, is already saved."
+      correct: [all-books, orphan-saved, half-borrow]
+    explanation:
+      uk: "Усі три скарги відтворюються, і лише одна з них (невдала видача) взагалі дає помилку — та й та не рятує дані. Приклад нижче запускає саме цей код."
+      en: "All three complaints reproduce, and only one of them (the failed borrow) gives any error at all — and even that does not save the data. The example below runs exactly this code."
+
+  - id: symptoms
+    kind: example
+    runtime: isolated-node
+    dir: symptoms
+    entry: index.js
+    strings:
+      marta: { uk: "Марта", en: "Marta" }
+      oleh: { uk: "Олег", en: "Oleh" }
+      borys: { uk: "Борис", en: "Borys" }
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+      garden: { uk: "Сад на даху", en: "A garden on the roof" }
+      stars: { uk: "Карта зоряного неба", en: "A map of the night sky" }
+    title:
+      uk: "Відтворення трьох скарг"
+      en: "Reproducing the three complaints"
+    body:
+      uk: |
+        Натисни **Запустити** і порівняй з тим, що ти передбачив. `repo.js` — це невиправлений репозиторій, `data.js` заповнює бібліотеку: три учасники, три книжки, дві видачі; у книжки 2 вільних примірників 0.
+
+        Коментар на початку `repo.js` пояснює, чому вимкнення ключів записано явно: `node:sqlite` вмикає їх сам, а SQLite, консольна програма `sqlite3` і деякі інші бібліотеки стартують із вимкненими.
+      en: |
+        Press **Run** and compare with your prediction. `repo.js` is the unrepaired repository, `data.js` fills the library: three members, three books, two loans; book 2 has 0 copies available.
+
+        The comment at the top of `repo.js` explains why the switch-off is written out: `node:sqlite` turns foreign keys on by itself, while SQLite, the `sqlite3` command-line program and some other libraries start with them off.
+    tryIt:
+      uk: "Подивись на рядки `loans before the borrow: 3` і `loans after the borrow: 4`: між ними `borrowBook` кинув помилку, а видачу однаково додано. Потім у `repo.js` заміни `OFF` на `ON` у рядку з `PRAGMA` і запусти: вставка для учасника 9 тепер падає з `FOREIGN KEY constraint failed`, а «після» — `loans` на одну менше. Решту виправиш у вправі."
+      en: "Look at the lines `loans before the borrow: 3` and `loans after the borrow: 4`: between them `borrowBook` threw, and the loan was added anyway. Then in `repo.js` change `OFF` to `ON` in the `PRAGMA` line and run: the insert for member 9 now fails with `FOREIGN KEY constraint failed`, and the counts are one lower. You repair the rest in the exercise."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: проковтнута помилка"
+      en: "Recall: a swallowed error"
+    items:
+      - id: swallowed-borrow
+        from: js-07-09-debug-swallowed-errors
+        prompt:
+          uk: "Що надрукує цей код і що з ним не так?"
+          en: "What does this code print, and what is wrong with it?"
+        code: |
+          function borrow() {
+            throw new Error("no copies left");
+          }
+          function onBorrow() {
+            try {
+              borrow();
+            } catch {
+              // rolled back, all good
+            }
+            return "borrowed";
+          }
+          console.log(onBorrow());
+        verify:
+          logs: ["borrowed"]
+        answer:
+          type: choice
+          options:
+            - id: lies
+              text: { uk: "`borrowed` — хоча видача не вдалася: `catch` проковтнув помилку", en: "`borrowed` — although the borrow failed: `catch` swallowed the error" }
+            - id: error
+              text: { uk: "Помилку `no copies left`", en: "The error `no copies left`" }
+              why:
+                uk: "`catch` перехопив помилку й нічого з нею не зробив, тож функція йде далі й повертає успіх."
+                en: "`catch` caught the error and did nothing with it, so the function carries on and returns success."
+            - id: fine
+              text: { uk: "`borrowed`, і все гаразд: помилку оброблено", en: "`borrowed`, and all is fine: the error was handled" }
+              why:
+                uk: "Відкат зберігає дані, але не повідомляє, що дія не вдалася. Людина бачить «видано», а книжки немає."
+                en: "A rollback protects the data but does not report that the action failed. The person sees “borrowed”, and there is no book."
+          correct: [lies]
+        explanation:
+          uk: "`ROLLBACK` у `catch` — це половина роботи. Друга половина — `throw error`, щоб той, хто викликав, дізнався про невдачу. Вправа нижче перевіряє обидві."
+          en: "A `ROLLBACK` in `catch` is half the job. The other half is `throw error`, so the caller learns about the failure. The exercise below checks both."
+
+  - id: repair-lab
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: repair-lab
+    entry: index.js
+    editable: [repo.js]
+    strings:
+      marta: { uk: "Марта", en: "Marta" }
+      oleh: { uk: "Олег", en: "Oleh" }
+      borys: { uk: "Борис", en: "Borys" }
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+      garden: { uk: "Сад на даху", en: "A garden on the roof" }
+      stars: { uk: "Карта зоряного неба", en: "A map of the night sky" }
+    title:
+      uk: "Полагодь репозиторій бібліотеки"
+      en: "Repair the library repository"
+    instructions:
+      uk: |
+        `repo.js` містить три вади зі скарг. Полагодь їх, не змінюючи правильних результатів:
+
+        - пошук `x' OR 1=1 --` нічого не знаходить, а звичайний пошук за назвою, як і раніше, знаходить свою книжку;
+        - на з’єднанні, яке відкриває `openLibrary`, видачу для неіснуючого учасника відхилено з `FOREIGN KEY constraint failed` — хоч би хто й як її вставляв;
+        - невдала видача книжки не лишає в базі нічого, і `borrowBook` повідомляє про невдачу помилкою;
+        - вдала видача додає одну видачу й зменшує вільні примірники на 1.
+
+        `index.js` відтворює всі три скарги — запусти його до й після виправлень.
+      en: |
+        `repo.js` holds the three defects from the complaints. Repair them without changing any correct result:
+
+        - a search for `x' OR 1=1 --` finds nothing, while an ordinary search by title still finds its book;
+        - on the connection `openLibrary` opens, a loan for a member who does not exist is refused with `FOREIGN KEY constraint failed` — whoever inserts it and however;
+        - a failed borrow leaves nothing behind in the database, and `borrowBook` reports the failure with an error;
+        - a successful borrow adds one loan and takes one available copy.
+
+        `index.js` reproduces all three complaints — run it before and after the repairs.
+    testTitles:
+      "a search for an injection payload finds nothing":
+        uk: "Пошук із спробою ін’єкції нічого не знаходить"
+        en: "A search for an injection payload finds nothing"
+      "an ordinary search still finds its book":
+        uk: "Звичайний пошук і далі знаходить свою книжку"
+        en: "An ordinary search still finds its book"
+      "a loan for an unknown member is refused on a connection from openLibrary":
+        uk: "На з’єднанні з `openLibrary` видачу для неіснуючого учасника відхилено"
+        en: "A loan for an unknown member is refused on a connection from `openLibrary`"
+      "a borrow that fails leaves no loan behind":
+        uk: "Невдала видача не лишає видачі в базі"
+        en: "A borrow that fails leaves no loan behind"
+      "a failed borrow is reported to the caller":
+        uk: "Про невдалу видачу дізнається той, хто викликав"
+        en: "A failed borrow is reported to the caller"
+      "a successful borrow adds one loan and takes one copy":
+        uk: "Вдала видача додає одну видачу й забирає один примірник"
+        en: "A successful borrow adds one loan and takes one copy"
+    hints:
+      nudge:
+        uk: "Для кожної скарги знайди в `repo.js` рядок, де правило мало б спрацювати, і запитай: чому воно мовчить?"
+        en: "For each complaint find the line in `repo.js` where the rule should have acted, and ask: why does it stay silent?"
+      explanation:
+        uk: "Кожна вада — тема одного з уроків цього розділу: значення, що потрапляє в текст SQL; налаштування, яке діє для кожного з’єднання окремо; і два кроки запису, між якими немає «все або нічого». Перевірка в JavaScript, чи існує учасник, не замінить зовнішнього ключа: вона захищає лише один шлях вставки, а скарга — про будь-який."
+        en: "Each defect is the topic of one lesson in this unit: a value that ends up in the SQL text; a setting that applies to each connection separately; and two write steps with no “all or nothing” between them. A JavaScript check that the member exists does not replace the foreign key: it guards only one path of inserting, and the complaint is about any path."
+    solutionNote:
+      uk: "Пошук отримує назву параметром `?`. `openLibrary` вмикає `PRAGMA foreign_keys = ON` (або передає `enableForeignKeyConstraints: true`) для кожного з’єднання, яке відкриває. `borrowBook` загортає обидва кроки в `BEGIN`/`COMMIT` і в `catch` робить `ROLLBACK` та `throw error`. Звичайний пошук і вдала видача поводяться як раніше."
+      en: "The search gets the title as the parameter `?`. `openLibrary` runs `PRAGMA foreign_keys = ON` (or passes `enableForeignKeyConstraints: true`) for every connection it opens. `borrowBook` wraps both steps in `BEGIN`/`COMMIT` and in `catch` does `ROLLBACK` and `throw error`. An ordinary search and a successful borrow behave as before."
+    feedback:
+      - when: { test: "a search for an injection payload finds nothing" }
+        message:
+          uk: "Ця перевірка шукає `x' OR 1=1 --` й очікує порожній список. Якщо повертаються всі книжки, назва досі стає частиною тексту SQL. Якщо всі перевірки не проходять разом, прочитай першу помилку в консолі після **Запустити**."
+          en: "This check searches for `x' OR 1=1 --` and expects an empty list. If every book comes back, the title still becomes part of the SQL text. If every check fails at once, read the first error in the console after **Run**."
+      - when: { test: "an ordinary search still finds its book" }
+        message:
+          uk: "Ця перевірка шукає точну назву «%%stars%%» й очікує рівно цю книжку. Виправлення пошуку не має ламати звичайний пошук."
+          en: "This check searches for the exact title “%%stars%%” and expects exactly that book. The repair of the search must not break an ordinary search."
+      - when: { test: "a loan for an unknown member is refused on a connection from openLibrary" }
+        message:
+          uk: "Ця перевірка вставляє видачу для учасника 9 напряму, повз `borrowBook`, на з’єднанні з `openLibrary`, й очікує `FOREIGN KEY constraint failed`. Перевірка в коді функції цього шляху не бачить — правило має діяти на самому з’єднанні."
+          en: "This check inserts a loan for member 9 directly, bypassing `borrowBook`, on the connection from `openLibrary`, and expects `FOREIGN KEY constraint failed`. A check inside a function does not see that path — the rule must act on the connection itself."
+      - when: { test: "a borrow that fails leaves no loan behind" }
+        message:
+          uk: "Ця перевірка видає книжку 2 (вільних примірників 0) й очікує ту саму кількість видач, що й до спроби. Якщо видач на одну більше, вставку збережено без транзакції."
+          en: "This check lends book 2 (0 copies available) and expects the same number of loans as before the attempt. If there is one loan more, the insert was saved without a transaction."
+      - when: { test: "a failed borrow is reported to the caller" }
+        message:
+          uk: "Ця перевірка очікує, що `borrowBook` для книжки 2 кине помилку. Якщо `catch` лише відкочує, той, хто викликав, вважає видачу вдалою — передай помилку далі."
+          en: "This check expects `borrowBook` for book 2 to throw. If `catch` only rolls back, the caller believes the borrow worked — pass the error on."
+      - when: { test: "a successful borrow adds one loan and takes one copy" }
+        message:
+          uk: "Ця перевірка видає книжку 3 й очікує на одну видачу більше і 1 вільний примірник замість 2. Якщо вона падає з `cannot start a transaction within a transaction`, на якомусь шляху бракує `COMMIT` чи `ROLLBACK`."
+          en: "This check lends book 3 and expects one more loan and 1 available copy instead of 2. If it fails with `cannot start a transaction within a transaction`, some path lacks a `COMMIT` or `ROLLBACK`."
+
+  - id: to-project
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-09 немає. Але ці три перевірки — ін’єкція, обмеження на з’єднанні й відкат — варто взяти з собою: за планом курсу безпеку сервера проєкту розбирає NO-07, а на контрольній точці CP-NO (розділ NO-08) сервер перевіряють справжніми запитами, зокрема з недійсним вводом."
+      en: "Your project does not change in this unit: NO-09 has no project step. But these three checks — injection, constraints on the connection and rollback — are worth taking along: in the course plan NO-07 covers the security of the project’s server, and at the CP-NO checkpoint (unit NO-08) the server is tested with real requests, invalid input among them."
