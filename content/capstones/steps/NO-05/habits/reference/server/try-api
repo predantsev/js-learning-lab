@@ -1,0 +1,24 @@
+#!/bin/sh
+# The curl script of the /v1 records API. Start the server first (npm start in server/), then in another
+# terminal, in server/:   sh try-api   (or: sh try-api http://127.0.0.1:4312 for another port)
+# 1. a create with an Idempotency-Key, 2. the same create retried with the same key, 3. an invalid
+# update, 4. page 1 sorted, 5. page 2 from its nextCursor. Every answer ends with its status.
+BASE="${1:-http://127.0.0.1:4311}"
+KEY="$(node -e 'console.log(crypto.randomUUID())')"
+BODY='{"name":"%%fixture1Name%% 2","frequency":"weekly"}'
+
+echo "== 1. POST /v1/records (Idempotency-Key: $KEY)"
+curl -sS -X POST "$BASE/v1/records" -H 'content-type: application/json' -H "idempotency-key: $KEY" --data "$BODY" -w ' → %{http_code}\n'
+echo "== 2. the same POST retried with the same key"
+curl -sS -X POST "$BASE/v1/records" -H 'content-type: application/json' -H "idempotency-key: $KEY" --data "$BODY" -w ' → %{http_code}\n'
+echo "== 3. PATCH /v1/records/h-01 with invalid fields"
+curl -sS -X PATCH "$BASE/v1/records/h-01" -H 'content-type: application/json' --data '{"name":"","completions":["2026-03-01","2026-02-27"]}' -w ' → %{http_code}\n'
+echo "== 4. GET /v1/records?sort=name&limit=3"
+PAGE="$(curl -sS "$BASE/v1/records?sort=name&limit=3")"
+echo "$PAGE"
+CURSOR="$(printf '%s' "$PAGE" | node -e 'let text = ""; process.stdin.on("data", (chunk) => (text += chunk)).on("end", () => console.log(JSON.parse(text).nextCursor));')"
+echo "== 5. GET /v1/records?sort=name&limit=3&cursor=$CURSOR"
+curl -sS "$BASE/v1/records?sort=name&limit=3&cursor=$CURSOR" -w ' → %{http_code}\n'
+echo "== 6. POST /v1/records/h-03/completions twice with the same day"
+curl -sS -X POST "$BASE/v1/records/h-03/completions" -H 'content-type: application/json' --data '{"day":"2026-03-02"}' -w ' → %{http_code}\n'
+curl -sS -X POST "$BASE/v1/records/h-03/completions" -H 'content-type: application/json' --data '{"day":"2026-03-02"}' -w ' → %{http_code}\n'
