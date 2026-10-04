@@ -1,0 +1,311 @@
+id: no-02-03-buffers-encoding
+unit: NO-02
+title:
+  uk: "Buffer і кодування"
+  en: "Buffer and encoding"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Передбачити `Buffer.byteLength` і `.length` для латиниці, українського тексту й емодзі та пояснити різницю між байтами й символами."
+    en: "Predict `Buffer.byteLength` versus string length for Latin text, Ukrainian text and an emoji, and explain the difference between bytes and characters."
+  - uk: "Декодувати байти з явно вказаним кодуванням і показати, як розріз багатобайтного символу UTF-8 між шматками псує текст, доки шматки не склеїть `StringDecoder`."
+    en: "Decode bytes with an explicit encoding and show how splitting a multi-byte UTF-8 character across chunks corrupts text unless a `StringDecoder` joins the chunks."
+prerequisites: [no-02-02-async-io, js-13-04-encoding-boundaries]
+subskills:
+  - { family: B-02, skill: "Buffer/encoding", depth: intro }
+glossary: [node-buffer, string-decoder]
+selfCheck: [predict-bytes, read-text]
+
+blocks:
+  - id: bytes-in-node
+    kind: explanation
+    title:
+      uk: "Файл віддає байти"
+      en: "A file gives you bytes"
+    body:
+      uk: |
+        У JS-13 ти бачив: текст і байти — різні речі, а правило перетворення між ними — [[character-encoding|кодування]], найчастіше [[utf-8|UTF-8]]. У Node байти живуть у [[node-buffer|Buffer]] — це `Uint8Array` з кількома зручними методами:
+
+        ```js
+        Buffer.from('ok');                 // <Buffer 6f 6b> — текст у байти UTF-8
+        Buffer.byteLength('ok');           // 2 — скільки байтів займе текст
+        Buffer.from([0x6f, 0x6b]).toString('utf8'); // 'ok' — байти в текст
+        ```
+
+        Головне для роботи з файлами: `readFile(path)` **без кодування** повертає Buffer, а не текст. Текст ти отримаєш, лише коли скажеш, як декодувати: `readFile(path, 'utf8')` чи `buffer.toString('utf8')`. Записуй кодування явно — тоді в коді видно, що ти очікуєш саме UTF-8.
+      en: |
+        In JS-13 you saw that text and bytes are different things, and the rule converting one into the other is a [[character-encoding]], most often [[utf-8|UTF-8]]. In Node, bytes live in a [[node-buffer|Buffer]] — a `Uint8Array` with a few handy methods:
+
+        ```js
+        Buffer.from('ok');                 // <Buffer 6f 6b> — text to UTF-8 bytes
+        Buffer.byteLength('ok');           // 2 — how many bytes the text takes
+        Buffer.from([0x6f, 0x6b]).toString('utf8'); // 'ok' — bytes to text
+        ```
+
+        The key point for files: `readFile(path)` **without an encoding** returns a Buffer, not text. You get text only when you say how to decode: `readFile(path, 'utf8')` or `buffer.toString('utf8')`. Write the encoding explicitly — then the code shows that you expect UTF-8.
+
+  - id: predict-bytes
+    kind: prediction
+    prompt:
+      uk: "Що надрукує цикл у Node.js?"
+      en: "What does the loop print in Node.js?"
+    code: |
+      for (const text of ['cat', 'кіт', '🐈']) {
+        console.log(text.length, Buffer.byteLength(text));
+      }
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: utf8
+          code: "3 3\n3 6\n2 4"
+        - id: one-byte-each
+          code: "3 3\n3 3\n1 1"
+          why:
+            uk: "Один символ — не завжди один байт. У UTF-8 кирилична літера займає 2 байти, а емодзі — 4."
+            en: "One character is not always one byte. In UTF-8 a Cyrillic letter takes 2 bytes, and an emoji takes 4."
+        - id: length-is-bytes
+          code: "3 3\n6 6\n4 4"
+          why:
+            uk: "`length` рахує не байти, а code units рядка JavaScript: у `кіт` їх 3, хоч байтів 6."
+            en: "`length` counts not bytes but the code units of a JavaScript string: `кіт` has 3 of them, although 6 bytes."
+        - id: emoji-one
+          code: "3 3\n3 6\n1 4"
+          why:
+            uk: "Емодзі `🐈` складається з двох code units, тому його `length` — 2, а не 1."
+            en: "The emoji `🐈` is made of two code units, so its `length` is 2, not 1."
+      correct: [utf8]
+    explanation:
+      uk: "Латиниця — по байту на літеру, кирилиця — по два, емодзі — чотири. `length` рахує code units: `кіт` — 3, `🐈` — 2. Тому ліміт «не більше N символів» і ліміт «не більше N байтів у файлі» — різні перевірки. (Цей фрагмент використовує `Buffer`, якого немає в браузері, тому «Запустити й перевірити» його не виконує; справжній запуск — у прикладі нижче.)"
+      en: "Latin letters take one byte each, Cyrillic two, an emoji four. `length` counts code units: `кіт` is 3, `🐈` is 2. That is why the limit “at most N characters” and the limit “at most N bytes in the file” are different checks. (This snippet uses `Buffer`, which the browser lacks, so “Run and check” does not run it; the real run is in the example below.)"
+
+  - id: predict-readfile
+    kind: prediction
+    prompt:
+      uk: "Файл `habit.txt` містить текст `Пити воду`. Що надрукує `console.log(await readFile('habit.txt'))` — без другого аргументу?"
+      en: "The file `habit.txt` contains the text `Пити воду`. What does `console.log(await readFile('habit.txt'))` print — with no second argument?"
+    answer:
+      type: choice
+      options:
+        - id: buffer
+          code: "<Buffer d0 9f d0 b8 d1 82 d0 b8 20 d0 b2 d0 be d0 b4 d1 83>"
+        - id: text
+          code: "Пити воду"
+          why:
+            uk: "`readFile` не вгадує кодування. Без другого аргументу він віддає сирі байти — Buffer."
+            en: "`readFile` does not guess the encoding. Without the second argument it hands over the raw bytes — a Buffer."
+        - id: mojibake
+          code: "ÐŸÐ¸Ñ‚Ð¸ Ð²Ð¾Ð´Ñƒ"
+          why:
+            uk: "Так виглядав би текст, якби ці байти UTF-8 декодували як однобайтове кодування. Але без кодування `readFile` нічого не декодує."
+            en: "That is what the text would look like if these UTF-8 bytes were decoded as a single-byte encoding. But without an encoding `readFile` decodes nothing."
+      correct: [buffer]
+    explanation:
+      uk: "17 байтів: по два на кожну з восьми кириличних літер і один на пробіл (`20`). Щоб отримати текст, вкажи кодування: `readFile('habit.txt', 'utf8')`."
+      en: "17 bytes: two for each of the eight Cyrillic letters and one for the space (`20`). To get text, give the encoding: `readFile('habit.txt', 'utf8')`."
+
+  - id: buffer-memory
+    kind: visual
+    visual: memory-graph
+    title:
+      uk: "Buffer, вікно на нього і розрізаний символ"
+      en: "A Buffer, a window onto it and a cut character"
+    textEquivalent:
+      uk: "Рядок 1 створює bytes — Buffer на 12 байтів над власним ArrayBuffer, усі байти нулі. Рядок 2 записує туди український підпис «Ціна ₴» у UTF-8: Ц — 208 166 (d0 a6), і — 209 150, н — 208 189, а — 208 176, пробіл — 32, знак гривні ₴ — три байти 226 130 180. Шість символів зайняли 12 байтів. Рядок 3 бере head = bytes.subarray(0, 3): це не копія, а нове вікно на ті самі байти з byteOffset 0 і довжиною 3. Рядок 4 декодує head: перші два байти — ціла Ц, а третій, 209, — лише початок і; декодер замінює його символом заміни, і виходить «Ц�». Рядки 5–6: StringDecoder отримує head, віддає «Ц» і притримує 209; коли приходить решта байтів, він склеює 209 зі 150 у «і» і повертає «Ціна ₴» без пошкоджень."
+      en: "Line 1 creates bytes — a 12-byte Buffer over its own ArrayBuffer, all bytes zero. Line 2 writes the Ukrainian label “Ціна ₴” (“Price ₴”) into it as UTF-8: Ц is 208 166 (d0 a6), і is 209 150, н is 208 189, а is 208 176, the space is 32, and the hryvnia sign ₴ is three bytes 226 130 180. Six characters took 12 bytes. Line 3 takes head = bytes.subarray(0, 3): not a copy but a new window onto the same bytes with byteOffset 0 and length 3. Line 4 decodes head: the first two bytes are a whole Ц, but the third, 209, is only the start of і; the decoder replaces it with the replacement character, giving “Ц�”. Lines 5–6: a StringDecoder gets head, returns “Ц” and keeps 209; when the rest of the bytes arrives, it joins 209 with 150 into “і” and returns “Ціна ₴” undamaged."
+    spec:
+      code: |
+        const bytes = Buffer.alloc(12);
+        bytes.write('Ціна ₴');                   // UTF-8 by default
+        const head = bytes.subarray(0, 3);
+        head.toString('utf8');                    // 'Ц�'
+        const decoder = new StringDecoder('utf8');
+        decoder.write(head) + decoder.write(bytes.subarray(3)); // 'Ціна ₴'
+      states:
+        - caption:
+            uk: "`bytes` — Buffer на 12 байтів. Самі байти лежать в окремому `ArrayBuffer`; поки що це нулі."
+            en: "`bytes` is a 12-byte Buffer. The bytes themselves live in a separate `ArrayBuffer`; for now they are zeros."
+          line: 1
+          bindings:
+            - { name: bytes, kind: const, value: { ref: buf } }
+          heap:
+            buf: { kind: object, ctor: Buffer, props: { buffer: { ref: store }, byteOffset: 0, length: 12 } }
+            store: { kind: object, ctor: ArrayBuffer, props: { "0": 0, "1": 0, "2": 0, "3": 0, "4": 0, "5": 0, "6": 0, "7": 0, "8": 0, "9": 0, "10": 0, "11": 0 } }
+        - caption:
+            uk: "Шість символів «Ціна ₴» зайняли **12 байтів**: кожна кирилична літера — два, пробіл — один, `₴` — три (`226 130 180`)."
+            en: "The six characters “Ціна ₴” (“Price ₴”) took **12 bytes**: each Cyrillic letter two, the space one, `₴` three (`226 130 180`)."
+          line: 2
+          bindings:
+            - { name: bytes, kind: const, value: { ref: buf } }
+          heap:
+            buf: { kind: object, ctor: Buffer, props: { buffer: { ref: store }, byteOffset: 0, length: 12 } }
+            store: { kind: object, ctor: ArrayBuffer, props: { "0": 208, "1": 166, "2": 209, "3": 150, "4": 208, "5": 189, "6": 208, "7": 176, "8": 32, "9": 226, "10": 130, "11": 180 } }
+          changed: [store]
+        - caption:
+            uk: "`subarray` не копіює: `head` — ще одне вікно на **ті самі** байти, перші три."
+            en: "`subarray` does not copy: `head` is another window onto **the same** bytes, the first three."
+          line: 3
+          bindings:
+            - { name: bytes, kind: const, value: { ref: buf } }
+            - { name: head, kind: const, value: { ref: headView } }
+          heap:
+            buf: { kind: object, ctor: Buffer, props: { buffer: { ref: store }, byteOffset: 0, length: 12 } }
+            headView: { kind: object, ctor: Buffer, props: { buffer: { ref: store }, byteOffset: 0, length: 3 } }
+            store: { kind: object, ctor: ArrayBuffer, props: { "0": 208, "1": 166, "2": 209, "3": 150, "4": 208, "5": 189, "6": 208, "7": 176, "8": 32, "9": 226, "10": 130, "11": 180 } }
+        - caption:
+            uk: "`208 166` — ціла `Ц`, а `209` — лише початок `і`. Декодер ставить замість нього символ заміни: `'Ц�'`."
+            en: "`208 166` is a whole `Ц`, but `209` is only the start of `і`. The decoder puts the replacement character in its place: `'Ц�'`."
+          line: 4
+          bindings:
+            - { name: bytes, kind: const, value: { ref: buf } }
+            - { name: head, kind: const, value: { ref: headView } }
+          heap:
+            buf: { kind: object, ctor: Buffer, props: { buffer: { ref: store }, byteOffset: 0, length: 12 } }
+            headView: { kind: object, ctor: Buffer, props: { buffer: { ref: store }, byteOffset: 0, length: 3 } }
+            store: { kind: object, ctor: ArrayBuffer, props: { "0": 208, "1": 166, "2": 209, "3": 150, "4": 208, "5": 189, "6": 208, "7": 176, "8": 32, "9": 226, "10": 130, "11": 180 } }
+          changed: []
+        - caption:
+            uk: "[[string-decoder|StringDecoder]] віддає `Ц` і притримує `209`; з наступним шматком склеює `209 150` в `і` — виходить `'Ціна ₴'`."
+            en: "The [[string-decoder|StringDecoder]] returns `Ц` and keeps `209`; with the next chunk it joins `209 150` into `і` — giving `'Ціна ₴'`."
+          line: 6
+          bindings:
+            - { name: bytes, kind: const, value: { ref: buf } }
+            - { name: head, kind: const, value: { ref: headView } }
+            - { name: decoder, kind: const, value: { ref: dec } }
+          heap:
+            buf: { kind: object, ctor: Buffer, props: { buffer: { ref: store }, byteOffset: 0, length: 12 } }
+            headView: { kind: object, ctor: Buffer, props: { buffer: { ref: store }, byteOffset: 0, length: 3 } }
+            store: { kind: object, ctor: ArrayBuffer, props: { "0": 208, "1": 166, "2": 209, "3": 150, "4": 208, "5": 189, "6": 208, "7": 176, "8": 32, "9": 226, "10": 130, "11": 180 } }
+            dec: { kind: object, ctor: StringDecoder, props: { encoding: "utf8" } }
+          changed: [dec]
+
+  - id: chunks
+    kind: example
+    runtime: isolated-node
+    dir: chunks
+    entry: index.js
+    title:
+      uk: "Байти, шматки й StringDecoder"
+      en: "Bytes, chunks and StringDecoder"
+    body:
+      uk: |
+        Натисни **Запустити**. Спершу — довжини з передбачення. Потім програма записує назву звички українською у файл, читає її без кодування (бачиш Buffer) і ділить байти на шматки по 3 — так текст приходить із потоку чи мережі.
+
+        Якщо кожен шматок декодувати окремо, розріз посеред літери дає символи заміни `�`. [[string-decoder|StringDecoder]] пам’ятає недописану літеру до наступного шматка й повертає текст цілим.
+      en: |
+        Press **Run**. First, the lengths from the prediction. Then the program writes a habit name in Ukrainian to a file, reads it without an encoding (you see a Buffer) and splits the bytes into 3-byte chunks — that is how text arrives from a stream or a network.
+
+        Decoding each chunk on its own turns a cut through a letter into replacement characters `�`. A [[string-decoder|StringDecoder]] remembers the unfinished letter until the next chunk and returns the text whole.
+    tryIt:
+      uk: "Зміни крок `start += 3` і розмір шматка `start + 3` на 2 — тепер кожна кирилична літера потрапляє в один шматок, і навіть окреме декодування дає правильний текст. Тоді заміни `'Пити воду'` на `'Пити воду 🐈'`: емодзі з 4 байтів знову розрізано, а StringDecoder і далі дає цілий текст."
+      en: "Change the step `start += 3` and the chunk size `start + 3` to 2 — now every Cyrillic letter lands in one chunk, and even decoding each chunk alone gives the right text. Then replace `'Пити воду'` with `'Пити воду 🐈'`: the 4-byte emoji is cut again, while StringDecoder still gives the whole text."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: вікна на один буфер"
+      en: "Recall: windows onto one buffer"
+    items:
+      - id: shared-window
+        from: js-13-03-bytes-typed-arrays
+        prompt:
+          uk: "Що надрукує програма?"
+          en: "What does the program print?"
+        code: |
+          const buffer = new ArrayBuffer(4);
+          const all = new Uint8Array(buffer);
+          const tail = all.subarray(2);
+          tail[0] = 7;
+          console.log(all[2], tail.length);
+        verify:
+          logs: ["7 2"]
+        answer:
+          type: choice
+          options:
+            - id: shared
+              code: "7 2"
+            - id: copy
+              code: "0 2"
+              why:
+                uk: "`subarray` не копіює байти: `tail` — вікно на той самий буфер, починаючи з байта 2. Запис через `tail[0]` змінює саме байт 2."
+                en: "`subarray` does not copy the bytes: `tail` is a window onto the same buffer, starting at byte 2. Writing through `tail[0]` changes exactly byte 2."
+            - id: whole-length
+              code: "7 4"
+              why:
+                uk: "Вікно `tail` починається з байта 2 і бачить лише байти 2 і 3, тож його довжина — 2."
+                en: "The `tail` window starts at byte 2 and sees only bytes 2 and 3, so its length is 2."
+          correct: [shared]
+        explanation:
+          uk: "Обидва масиви — вікна на один `ArrayBuffer`. `Buffer.subarray` у Node поводиться так само: зміна через вікно видна в усьому буфері."
+          en: "Both arrays are windows onto one `ArrayBuffer`. `Buffer.subarray` in Node behaves the same: a change through a window shows in the whole buffer."
+
+  - id: read-text
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: read-text
+    entry: index.js
+    editable: [app.js]
+    strings:
+      label: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+    title:
+      uk: "readTextFile: явний UTF-8 і жодних тихих пошкоджень"
+      en: "readTextFile: explicit UTF-8 and no silent damage"
+    instructions:
+      uk: |
+        Допиши `readTextFile(path)` у `app.js`:
+
+        - повертає **текст** (рядок), а не Buffer;
+        - декодує байти як UTF-8: українські літери, `₴` і емодзі мають лишитися цілими;
+        - якщо байти не є правильним UTF-8 (наприклад, файл збережено старим однобайтовим кодуванням), функція відхиляється з помилкою, а не повертає текст із символами заміни `�`.
+
+        **Запустити** записує два файли — у UTF-8 і в старому кодуванні windows-1251 — і читає обидва.
+      en: |
+        Finish `readTextFile(path)` in `app.js`:
+
+        - it returns **text** (a string), not a Buffer;
+        - it decodes the bytes as UTF-8: Ukrainian letters, `₴` and emoji must stay whole;
+        - if the bytes are not valid UTF-8 (for example, the file was saved in an old single-byte encoding), the function rejects with an error instead of returning text with replacement characters `�`.
+
+        **Run** writes two files — one in UTF-8 and one in the old windows-1251 encoding — and reads both.
+    testTitles:
+      "returns a string, not a Buffer":
+        uk: "Повертає рядок, а не Buffer"
+        en: "Returns a string, not a Buffer"
+      "decodes Ukrainian text, ₴ and an emoji as UTF-8":
+        uk: "Декодує українські літери, `₴` і емодзі як UTF-8"
+        en: "Decodes Ukrainian letters, `₴` and an emoji as UTF-8"
+      "rejects bytes that are not valid UTF-8":
+        uk: "Відхиляється на байтах, що не є правильним UTF-8"
+        en: "Rejects bytes that are not valid UTF-8"
+    hints:
+      nudge:
+        uk: "`readFile(path, 'utf8')` дає текст, але що він робить із байтами, які не складаються в UTF-8? Запусти програму й подивись на рядок для `legacy.txt`."
+        en: "`readFile(path, 'utf8')` gives text, but what does it do with bytes that do not form UTF-8? Run the program and look at the line for `legacy.txt`."
+      explanation:
+        uk: "Звичайне декодування UTF-8 ніколи не падає: кожну неправильну послідовність воно мовчки замінює на `�`. Щоб помилка стала помилкою, потрібен суворий декодер: `TextDecoder` з JS-13 приймає другий аргумент `{ fatal: true }` і тоді кидає `TypeError`. Наприклад, `new TextDecoder('utf-16le', { fatal: true }).decode(bytes)` кидає помилку на непарній кількості байтів. Інший шлях — спершу перевірити байти функцією `isUtf8` з `node:buffer`."
+        en: "Ordinary UTF-8 decoding never fails: it silently replaces every invalid sequence with `�`. To turn the error into an error you need a strict decoder: the `TextDecoder` from JS-13 takes a second argument `{ fatal: true }` and then throws a `TypeError`. For example, `new TextDecoder('utf-16le', { fatal: true }).decode(bytes)` throws on an odd number of bytes. Another way is to check the bytes first with the `isUtf8` function from `node:buffer`."
+    solutionNote:
+      uk: "`readFile` без кодування дає Buffer, а `TextDecoder('utf-8', { fatal: true })` декодує його і кидає `TypeError` на неправильних байтах замість тихої заміни на `�`. Рівноцінний варіант — `isUtf8(bytes)` з `node:buffer`, а потім `bytes.toString('utf8')`."
+      en: "`readFile` without an encoding gives a Buffer, and `TextDecoder('utf-8', { fatal: true })` decodes it and throws a `TypeError` on invalid bytes instead of silently replacing them with `�`. An equivalent version is `isUtf8(bytes)` from `node:buffer`, then `bytes.toString('utf8')`."
+    feedback:
+      - when: { test: "returns a string, not a Buffer" }
+        message:
+          uk: "Ця перевірка очікує, що `await readTextFile(...)` дасть рядок (`typeof` — `'string'`). `readFile` без кодування повертає Buffer — його ще треба декодувати."
+          en: "This check expects `await readTextFile(...)` to give a string (`typeof` is `'string'`). `readFile` without an encoding returns a Buffer — it still has to be decoded."
+      - when: { test: "decodes Ukrainian text, ₴ and an emoji as UTF-8" }
+        message:
+          uk: "Ця перевірка очікує точно той текст, що записано у файл у UTF-8. Якщо замість літер з’являються знаки на кшталт `Ð`, байти декодовано як однобайтове кодування (`latin1`), а не як UTF-8."
+          en: "This check expects exactly the text that was written to the file as UTF-8. If signs like `Ð` appear instead of the letters, the bytes were decoded as a single-byte encoding (`latin1`), not as UTF-8."
+      - when: { test: "rejects bytes that are not valid UTF-8" }
+        message:
+          uk: "Ця перевірка очікує, що файл зі словом у windows-1251 (не UTF-8) змусить `readTextFile` відхилитися з помилкою. `readFile(path, 'utf8')` і `toString('utf8')` мовчки ставлять `�` — потрібен суворий декодер або перевірка байтів."
+          en: "This check expects a file with a word in windows-1251 (not UTF-8) to make `readTextFile` reject with an error. `readFile(path, 'utf8')` and `toString('utf8')` silently insert `�` — you need a strict decoder or a check of the bytes."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-02
+    body:
+      uk: "У кроці проєкту цього розділу файл даних твого домену зберігатиметься в UTF-8, і репозиторій читатиме його з явно вказаним кодуванням. Назви бажань, справ, звичок чи витрат українською мають пережити запис і читання без жодного `�`."
+      en: "In this unit’s project step your domain’s data file is stored as UTF-8, and the repository reads it with an explicit encoding. Ukrainian names of wishes, tasks, habits or expenses must survive writing and reading without a single `�`."
