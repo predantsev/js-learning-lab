@@ -22,6 +22,8 @@ content/
     <exercise-dir>/tests.js       behavior tests
 ```
 
+Block folders hold text files only; the loader reads `.js .mjs .cjs .jsx .ts .tsx .json .html .css .md .txt .sql .yaml .yml .svg .csv .xml .env .gitignore` and files without an extension, and silently skips anything else. A configuration file that the learner edits as a file (an Android `network_security_config.xml`) is a real `.xml` file in the block, not a JavaScript string: the editor highlights it, `fetch("./res/xml/…")` answers it as `application/xml`, and project files may be `.xml` too.
+
 Names that the repository's `.gitignore` drops (`dist/`, `build/`, `coverage/`, `.env`, `.env.*`, `*.log`) work while you author but are never committed; the validator warns about them — name such folders differently (`dist-demo/`, `sample.env.txt`). The directory name equals the lesson id. Ids are stable: never rename a published lesson or block id (add a redirect in `content/redirects.yaml` instead).
 
 ## Commands
@@ -30,10 +32,16 @@ Names that the repository's `.gitignore` drops (`dist/`, `build/`, `coverage/`, 
 npm run build                                        # once, and after platform changes
 node scripts/content/validate.mjs --unit JS-03       # static checks + real execution of every fixture
 node scripts/content/validate.mjs --lesson <id>
+node scripts/content/validate.mjs --lesson <id> --verbose      # also every run and every check: ✔/✖ per check of each fixture
+node scripts/content/validate.mjs --since main                 # execute only what changed since a git ref (see below)
 node scripts/content/validate.mjs --unit JS-12 --locale uk-UA   # browser under another locale (default: en-US)
 node scripts/content/smoke.mjs --unit JS-12 --locale uk-UA      # every lesson page in the real app
 npm start                                            # read your lesson as a learner (http://localhost:7300)
 ```
+
+A full run with execution takes more than half an hour. `--since <git-ref>` (a branch, tag, commit or `HEAD~N`) executes only what changed since that ref — committed, staged, unstaged and untracked files alike: a change inside an example or exercise folder runs only that block; a changed `lesson.yaml` (predictions and review questions live there) or any other file of the lesson runs the whole lesson; a changed capstone step runs that step and the next one (its "state before"), and a change to the capstone start project or `domains.yaml` runs every step. Static checks still cover all content, because a glossary or syllabus edit can break a lesson whose files did not change; such files are listed in a note. When files that execute content changed (`sandbox/`, `shared/`, `server/`, `scripts/content/`, `app/src/harness*`), the validator says so and runs everything. It combines with `--unit`/`--lesson` (both must match). A full run is still required before a release (`--release`).
+
+`--verbose` prints, under a `▸ <lesson> › <block>` header, one line per run (example, prediction, fixture, capstone state, per language) and, for a fixture, one `✔`/`✖` line per check with the failure message: you see which checks each `wrong*` fixture fails (rule 54: a wrong fixture should break only the rule it models) and that `solution` and every `alt*` pass all of them. A line starts with `✖` when that run breaks the validator's rule; the errors are still listed at the end. Without `--verbose` the output is unchanged.
 
 The validator runs every example, every exercise fixture and every verifiable prediction in headless Chrome through the same sandbox the learner uses, in both languages. A lesson is not done until it passes. Headless Chrome reports the locale `en-US` unless `--locale` names another one (Chrome `--lang` plus the page locale: `Intl`, `navigator.language`, `localeCompare` and `toLocaleString` follow it); validate Intl-dependent lessons under `--locale uk-UA` and `--locale en-US`.
 
@@ -106,7 +114,7 @@ The validator runs every example, every exercise fixture and every verifiable pr
 43. **DevTools steps describe the default interface state:** collapsed panes, items behind the `»` overflow, saving a snippet before a breakpoint can be set. Never say a server "cannot" answer with an error when the lab can be asked to (`/lab/status/500`).
 44. **Time-zone-sensitive checks run under zones on both sides of UTC** (for example UTC+14 and UTC−11) with a full emulation of the machine's zone — the `Date` constructor and local getters, not only the formatter's default zone (see `withMachineZone` in `content/units/JS-12/js-12-10-intl-locale/`). Prove determinism with fixtures: an `alt-local` solution that is correct in local time must pass, and `wrong-*` solutions that mix local time and UTC must fail on every machine. Running the validator under several `TZ` values does not test learner variants.
 45. **Say "N `console.log` calls", not "N lines of code"**, when the snippet has more lines than outputs. One long synchronous call (a runaway regular expression) is not stopped by the 2-second loop budget; the platform stays responsive and Stop ends the run — describe it only after a timed run (rule 23). Write `[ [k, v] ]` rather than `[[k, v]]` in code spans: the double bracket reads as a glossary link.
-46. **Glossary link text is inline Markdown:** `[[id|text]]` renders a code span or bold inside `text` (`[[closure|\`makeCounter\` closure]]`); it cannot contain `]` or another link.
+46. **Glossary link text is inline Markdown:** `[[id|text]]` renders a code span or bold inside `text` (`[[closure|\`makeCounter\` closure]]`); it cannot contain `]` (not even inside a code span such as `` `items[0]` ``) or another link. The validator reports such a link in every prose field, including hints, feedback and review questions that the smoke test never shows.
 47. **Every troubleshooting row is reproduced** on the current Node and on the course minimum (Node 22) — error texts differ between versions (module-type detection on Node 25, `bad option` on Node 20); a row you cannot reproduce is removed or made conditional. Turning a compiler flag off is not "silent": run such a step on the learner's whole lab folder.
 48. **TypeScript facts:** `import { type X }` is not `import type { X }` under `verbatimModuleSyntax` (the first still emits an import under `tsc`; the sandbox drops it entirely, and so do Metro and Babel — never generalise `tsc` emit to another toolchain); the sandbox strips types and checks nothing — say that `tsc` in the local task is what checks them. A visual must not trace the function the exercise asks for (rule 13); an `alt` that "returns X" must not pass by returning its raw input.
 49. **Authored memory graphs draw real structures:** an array of N items is an object with `ctor: "Array(N)"` and bracketed keys, never a placeholder `Array(3)`; a module `const` that still points to a removed element is a retainer — do not caption it as unreachable.
@@ -222,10 +230,14 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are
   kind: review
   title: { uk, en }
   items:
-    - id: scope-of-let
+    - id: scope-of-let            # quote ids YAML would read as another type: id: "null", id: "true"
       from: js-02-03-block-scope  # the earlier lesson being retrieved
       prompt: { uk, en }
-      answer: { … }               # same shapes as prediction; `code`/`verify` allowed
+      code: |                     # optional, as in a prediction (also `lang`, `runnable`)
+        { let n = 1; } console.log(typeof n);
+      verify: { logs: ["undefined"] }   # as in a prediction: runs this question's own `code`, so
+                                  #   verify needs `code` on the same question (never inside `answer`)
+      answer: { … }               # same shapes as prediction
       explanation: { uk, en }
 
 - id: to-project
@@ -238,8 +250,10 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are
   runtime: local-web              # local-web | local-node | local-native
   title: { uk, en }
   intro: { uk, en }
-  tools: [ { name: "Node.js", version: "22.13", note: { uk, en } } ]   # version: a plain string shown in
-                                  #   both languages, or { uk, en } when it has words ("22.13 or newer")
+  tools: [ { name: "Node.js", version: "22.13", note: { uk, en } } ]   # name and version: a plain string
+                                  #   shown in both languages (a product name "Node.js", a version "22.13"),
+                                  #   or { uk, en } when it has words: name { uk: "Редактор коду",
+                                  #   en: "A code editor" }, version { uk: "22.13 або новіший", en: "22.13 or newer" }
   steps: [ { text: { uk, en }, command: "npm test", expect: { uk, en } } ]
   verify: [ { id: tests-green, text: { uk, en } } ]      # what the learner confirms having seen
   troubleshooting: [ { problem: { uk, en }, fix: { uk, en } } ]
@@ -254,8 +268,21 @@ Commands in `local-task` blocks must be commands you actually ran; record the to
 |---|---|---|
 | `browser-js` | Real browser JavaScript as native ES modules, with a real DOM | Imports need the file extension (`./util.js`), as in the browser. A project `.json` file imports as its data: `import items from "./items.json" with { type: "json" }` (also `import()` with `{ with: { type: "json" } }`); the platform also accepts it without `with`, which a browser refuses, so examples write `with { type: "json" }`. Other import attributes (`type: "css"`) are refused before running. `.ts` files run after type removal. `localStorage` is an isolated per-exercise store. `fetch("./data/items.json")` reads project files; `fetch("/lab/…")` reaches the lab HTTP fixtures when `capabilities.network: lab`. `alert` shows in the console; `confirm`/`prompt` are unavailable (build the UI in the page). `console.trace()` shows in the console with the stack of the call. Stack traces (`error.stack`, the error card) name project files (`index.js:3:7`) and leave out the platform's own frames. A loop running longer than 2 s is stopped. |
 | `browser-react` | Real React 19 (`react`, `react-dom/client`) | JSX only in `.jsx`/`.tsx`. Imports resolve like Vite (`./App`). Default page has `<div id="root">`. |
-| `concept-preview` | React Native components through `react-native-web` | Always add `limits`: no native rendering, device APIs or performance. |
+| `concept-preview` | React Native components through `react-native-web` | Always add `limits`: no native rendering, device APIs or performance. `global` (React Native's name of the global object) is not defined for learner code, as in any browser: write `globalThis`. The preview's own libraries get `global` replaced at build time, so stopping or unmounting an `Animated` animation works. Known preview limit, measured: the headless runner that the validator and the checks use never fires `ResizeObserver`, so a `FlatList` there renders only its first `initialNumToRender` rows (10 by default) and never measures more; checks must not expect rows beyond that, and a claim about how many rows a device keeps mounted is a device check for a local task. |
 | `isolated-node` | Real Node.js in an isolated child process on the learner's computer | For Node-stage practice: real `node:http` on loopback, `node:fs` in the exercise folder, `node:sqlite`, streams. No page, no npm packages. See [isolated-node](#isolated-node-real-nodejs). |
+
+### Runtimes per stage
+
+Both validators (`validate.mjs` for lesson blocks, `validate-syllabus.mjs` for syllabus practice entries) apply one table, `STAGE_RUNTIMES` in `shared/content-schema.js`:
+
+| Stage | Allowed runtimes |
+|---|---|
+| JS | `browser-js`, `local-web`, `concept-preview` |
+| RE | `browser-react`, `browser-js`, `local-web`, `concept-preview` |
+| RN | `browser-js`, `concept-preview`, `local-native`, `local-web`, `isolated-node`, `local-node` |
+| NO | every runtime |
+
+A React Native unit may contain computer-only Node.js work — the supplied mock service of `rn-06-01` runs as an `isolated-node` example and is started by the learner in a `local-node` task — because real server processes on the learner's machine are `local-node` in every stage. Such a task proves nothing about the app on a device: every RN unit still needs a `local-native` task, and every NO unit an `isolated-node` or `local-node` entry.
 
 ### Pages, images and links (`browser-js` with an `.html` entry)
 
@@ -277,7 +304,7 @@ test('keeps only items at or under the limit', () => {
 - `logs()` — printed lines as text (`console.log`, `info`, `warn`, `error`, `debug`, `table`, `dir`; not `alert` and not `console.trace`); `rawLogs()` — `[{ level, args }]` of all of them, a `console.trace` call as `{ level: "trace", args, stack }` (`stack`: one `at …` frame per line, in project paths, as the console shows it); `alerts()`; `loadError()`. Format specifiers in the first argument are applied as in the browser console when more arguments follow (`%s`, `%d`/`%i`, `%f`, `%o`/`%O`; `%c` styling is dropped): `console.log("%s: %d", "Lamp", 3)` gives the line `Lamp: 3` and `rawLogs()` args `["Lamp: 3"]`, in the learner's console too. `console.table` and `console.dir` are not formatted.
 - `expect(value, hint?)` — `toBe`, `toEqual`, `toBeTruthy/Falsy`, `toBeNull/Undefined/Defined/NaN`, `toBeGreaterThan(OrEqual)`, `toBeLessThan(OrEqual)`, `toBeCloseTo`, `toBeInstanceOf`, `toBeTypeOf`, `toContain`, `toContainEqual`, `toHaveLength`, `toHaveProperty`, `toMatch`, `toMatchObject`, `toThrow`, `toHaveBeenCalled(Times|With)`, DOM: `toHaveTextContent`, `toBeVisible`, `toBeInTheDocument`, `toHaveFocus`, `toHaveValue`, `toHaveAttribute`, `toHaveClass`, `toBeDisabled`, `toBeChecked`; plus `.not`, `.resolves`, `.rejects`. The optional `hint` names the checked thing in the failure message.
 - DOM: `screen.$(sel)`, `screen.$$(sel)`, `screen.byRole(role, { name })`, `screen.allByRole`, `screen.byText`, `screen.byLabel`, `screen.nameOf(el)`, `screen.text()` (the page's text without the content of `<script>` and `<style>`); `byRole`/`allByRole` skip hidden elements (`display: none` or `hidden` on the element or any ancestor, `visibility: hidden` on the element) unless `{ hidden: true }`, and `toBeVisible` uses the same rule; `await user.click(el)`, `user.type(el, text)`, `user.fill`, `user.clear`, `user.select`, `user.check`, `user.press('Enter', el)`, `user.submit(form)` (returns `{ prevented }`).
-- Async: `await sleep(ms)`, `await settle()`, `await waitFor(() => condition)`.
+- Async: `await sleep(ms)`, `await settle()`, `await waitFor(() => condition, { timeout: 1500, interval: 25 }?)` — calls the function until it returns a truthy value and resolves with that value (`const b = await waitFor(() => screen.byRole('button'))`); `false`, `null` (a query that found nothing), `undefined`, `0` and `''` keep it waiting, and so does a throw (an `expect` inside works). After the timeout it fails with the last error, or `waitFor: the condition stayed false (last value: …)`. The Node harness `waitFor` follows the same rule.
 - `spy(fn?)`, `mockFetch({ '/api/items': { status: 200, body: […] , delay: 50 } })` → `{ calls, restore }`, `storage` (the exercise's `localStorage`), `L` (localized strings), `files`.
 - `await rerun({ globals })` — runs the entry file again as a fresh module (new top-level bindings) with the given values defined as globals, and returns `{ logs, rawLogs, alerts, scope, error }` of that run only (its output does not reach the learner's console or `logs()`; `error` is what it threw, or `null`). Use it to check a top-level script against several inputs, including the boundaries:
 

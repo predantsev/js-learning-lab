@@ -10,6 +10,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import YAML from 'yaml';
+import { STAGE_REQUIRED_RUNTIMES, STAGE_RUNTIMES } from '../../shared/content-schema.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..', '..');
@@ -30,14 +31,9 @@ const PRACTICE_KINDS = ['predict', 'run-change', 'write', 'debug', 'independent'
 const DIFFICULT = ['scope-closure', 'reference-identity', 'event-loop-async', 'render-state-snapshot', 'effect-cleanup', 'client-server-boundary', 'native-web-boundary'];
 const CAPSTONE_MODES = ['in-platform', 'local'];
 const DOMAINS = ['wishlist', 'planner', 'habits', 'expenses'];
-// Runtime honesty per stage (REQ-013/014): what in-course practice may claim.
-const STAGE_RUNTIMES = {
-  JS: ['browser-js', 'local-web', 'concept-preview'],
-  RE: ['browser-react', 'browser-js', 'local-web', 'concept-preview'],
-  RN: ['browser-js', 'concept-preview', 'local-native', 'local-web'],
-  NO: ['browser-js', 'browser-react', 'concept-preview', 'isolated-node', 'local-node', 'local-web', 'local-native'],
-};
-const STAGE_REQUIRED_RUNTIME = { RN: ['local-native'], NO: ['isolated-node', 'local-node'] };
+// Runtime honesty per stage (REQ-013/014): what in-course practice may claim. One table for this
+// script and the lesson validator (shared/content-schema.js STAGE_RUNTIMES).
+const STAGE_REQUIRED_RUNTIME = STAGE_REQUIRED_RUNTIMES;
 const MAX_MINUTES = { instructional: 15, review: 45, assessment: 90, 'local-task': 60, 'capstone-step': 120 };
 
 const errors = [];

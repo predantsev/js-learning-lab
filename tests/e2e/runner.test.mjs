@@ -172,6 +172,19 @@ test('network is denied by default and limited to lab fixtures when enabled', as
 test('project files are served to fetch() without any network', async () => {
   const r = await run({ files: { 'index.js': 'const r = await fetch("./data/items.json"); console.log(r.status, (await r.json()).length);\nconst missing = await fetch("./nope.json"); console.log(missing.status);', 'data/items.json': '[1,2]' } });
   assert.deepEqual(logs(r), ['200 2', '404']);
+  const xml = await run({ files: { 'index.js': 'const r = await fetch("./res/xml/config.xml"); const doc = new DOMParser().parseFromString(await r.text(), "application/xml"); console.log(r.headers.get("content-type"), doc.documentElement.tagName);', 'res/xml/config.xml': '<?xml version="1.0" encoding="utf-8"?>\n<network-security-config/>\n' } });
+  assert.deepEqual(logs(xml), ['application/xml; charset=utf-8 network-security-config']);
+});
+
+test('waitFor keeps waiting while the condition is falsy (false, null, undefined, 0) and resolves with the first truthy value', async () => {
+  const source = [
+    'test("null from a query keeps waiting", async () => { setTimeout(() => document.body.append(Object.assign(document.createElement("button"), { textContent: "Late" })), 150); const b = await waitFor(() => screen.byRole("button")); expect(b).toHaveTextContent("Late"); });',
+    'test("undefined and 0 keep waiting", async () => { const list = []; setTimeout(() => list.push("a"), 100); expect(await waitFor(() => list[0])).toBe("a"); expect(await waitFor(() => list.length)).toBe(1); });',
+    'test("a condition that stays falsy fails with its last value", async () => { await waitFor(() => null, { timeout: 100 }); });',
+  ].join('\n');
+  const r = await run({ files: { 'index.js': '' }, tests: { path: '__tests__.js', source } });
+  assert.deepEqual(r.tests.map((t) => t.status), ['pass', 'pass', 'fail']);
+  assert.match(r.tests[2].message, /waitFor: the condition stayed false \(last value: null\)/);
 });
 
 test('learner code cannot reach the platform page, its storage or the API', async () => {
@@ -286,6 +299,35 @@ test('React components render and respond to events (browser-react)', async () =
   });
   assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
   assert.deepEqual(r.tests.map((t) => t.status), ['pass']);
+});
+
+test('an Animated animation in the preview can be stopped and unmounted without an error; learner code still has no `global`', async () => {
+  const r = await run({
+    runtime: 'concept-preview',
+    entry: 'main.jsx',
+    files: {
+      'main.jsx': [
+        'import { createRoot } from "react-dom/client";',
+        'import { Animated, Pressable, Text, View } from "react-native";',
+        'import { useEffect, useRef, useState } from "react";',
+        'function Fade() {',
+        '  const opacity = useRef(new Animated.Value(0)).current;',
+        '  useEffect(() => { const animation = Animated.timing(opacity, { toValue: 1, duration: 5000, useNativeDriver: false }); animation.start(); return () => animation.stop(); }, [opacity]);',
+        '  return <Animated.View style={{ opacity }}><Text>Fading</Text></Animated.View>;',
+        '}',
+        'function App() {',
+        '  const [shown, setShown] = useState(true);',
+        '  return <View><Pressable accessibilityRole="button" onPress={() => setShown(false)}><Text>Hide</Text></Pressable>{shown ? <Fade /> : <Text>Hidden</Text>}</View>;',
+        '}',
+        'createRoot(document.getElementById("root")).render(<App />);',
+        'console.log(typeof global);',
+      ].join('\n'),
+    },
+    tests: { path: '__tests__.js', source: 'test("stop on unmount", async () => { await waitFor(() => screen.byText("Fading")); await sleep(50); await user.click(screen.byRole("button")); await waitFor(() => screen.byText("Hidden")); expect(loadError()).toBeNull(); });' },
+  });
+  assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+  assert.deepEqual(r.tests.map((t) => [t.status, t.message ?? '']), [['pass', '']]);
+  assert.deepEqual(logs(r), ['undefined'], 'the RN global name is not added to learner code (as in a browser)');
 });
 
 test('React Native components render through the labeled web preview (concept-preview)', async () => {

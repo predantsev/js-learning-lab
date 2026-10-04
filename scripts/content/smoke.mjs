@@ -54,7 +54,12 @@ async function main() {
     for (const lesson of lessons) {
       for (let p = 1; p <= lesson.pages; p++) {
         where = `${lesson.id} page ${p} (${lang})`;
-        if (!(await visitLessonPage(page, server.url, lesson.id, p))) problems.push(`${where}: lesson did not render`);
+        if (!(await visitLessonPage(page, server.url, lesson.id, p))) {
+          // Say what is on screen instead: another lesson (a late navigation replaced the address),
+          // another page, or no lesson at all (an error page, or still loading).
+          const shown = await page.evaluate(() => ({ hash: location.hash, lesson: document.querySelector('.lesson[data-lesson]')?.dataset.lesson ?? null, page: document.querySelector('.lesson[data-page]')?.dataset.page ?? null, heading: document.querySelector('main h1')?.textContent?.trim().slice(0, 80) ?? null }));
+          problems.push(`${where}: lesson did not render within 8 s (address ${shown.hash || '(none)'}; on screen: ${shown.lesson ? `${shown.lesson} page ${shown.page}` : `no lesson${shown.heading ? `, heading "${shown.heading}"` : ''}`})`);
+        }
         await page.waitForTimeout(80);
         pages += 1;
         const report = await page.evaluate(() => ({

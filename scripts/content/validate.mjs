@@ -13,6 +13,13 @@
 //   node scripts/content/validate.mjs --capstone wishlist   capstone steps of one capstone only
 //   node scripts/content/validate.mjs --locale uk-UA  run the browser under that locale (Chrome
 //                                                     --lang and the page locale; default: Chrome's en-US)
+//   node scripts/content/validate.mjs --since main    execute only lessons, blocks and capstone steps whose
+//                                                     files changed since the git ref (committed or not,
+//                                                     untracked included); static checks cover all content
+//   node scripts/content/validate.mjs --verbose       also print every executed run as it happens: each
+//                                                     fixture's checks one by one (✔/✖ with the failure
+//                                                     message), so you can see which checks a wrong
+//                                                     fixture fails and that solution/alt pass them all
 // Capstone steps (content/capstones) are selected with their unit (--unit) or step lesson (--lesson).
 // When this machine cannot run the isolated Node executor, its blocks are reported as UNVERIFIED
 // (a note, or an error with --release) — never as passed.
@@ -24,7 +31,8 @@ import { consoleLines, localizeFiles, localizeText, runInputForBlock } from '../
 import { NODE_RUN_PATH, isLearnerSyntaxError, nodeRunRequest, parseUncaughtError, readNdjson, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
 import { unitOfLesson } from '../../shared/content-schema.js';
 import { localeArg, localeOptions } from './browser-locale.mjs';
-import { buildContent, exerciseFileSets } from './lib.mjs';
+import { CONTENT_DIR, buildContent, exerciseFileSets } from './lib.mjs';
+import { changedFilesSince, selectionFromChanges } from './since.mjs';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -33,6 +41,7 @@ const onlyUnits = new Set(values('--unit').map((u) => u.toUpperCase()));
 const onlyLessons = new Set(values('--lesson'));
 const jsonOut = values('--json')[0] ?? null;
 const release = flag('--release');
+const verbose = flag('--verbose');
 let locale;
 try {
   locale = localeArg(args);
@@ -40,18 +49,67 @@ try {
   console.error(e.message);
   process.exit(2);
 }
-const selected = (lessonId) => (onlyUnits.size === 0 && onlyLessons.size === 0) || onlyUnits.has(unitOfLesson(lessonId)) || onlyLessons.has(lessonId);
+const sinceRef = values('--since')[0] ?? null;
+if (flag('--since') && !sinceRef) {
+  console.error('--since needs a git ref, for example --since main or --since HEAD~3');
+  process.exit(2);
+}
+// --since: only lessons (and only the blocks) whose files changed since the ref; null = no filter.
+let since = null;
+const explicitlySelected = (lessonId) => (onlyUnits.size === 0 && onlyLessons.size === 0) || onlyUnits.has(unitOfLesson(lessonId)) || onlyLessons.has(lessonId);
+const selected = (lessonId) => explicitlySelected(lessonId) && (since === null || since.lessons.has(lessonId));
+const blockSelected = (lessonId, blockId) => since === null || since.lessons.get(lessonId) === null || since.lessons.get(lessonId)?.has(blockId) === true;
 
 const errors = [];
 const notes = [];
 const error = (where, message) => errors.push({ where, message });
 
+// --verbose: one header per block, then one line per run and one line per check of a fixture.
+let verboseWhere = null;
+const oneLine = (text) => String(text ?? '').replace(/\s+/g, ' ').trim().slice(0, 240);
+function trace(where, line, checks = null) {
+  if (!verbose) return;
+  if (where !== verboseWhere) {
+    console.log(`▸ ${where}`);
+    verboseWhere = where;
+  }
+  console.log(`  ${line}`);
+  for (const t of checks ?? []) console.log(`    ${t.status === 'pass' ? '✔' : '✖'} ${t.name}${t.status === 'pass' ? '' : ` — ${oneLine(t.message ?? t.status)}`}`);
+}
+/** "wrong (uk): 1 of 3 checks fail (expected: at least one)" for a fixture's check results. */
+function fixtureSummary(name, lang, tests, { starterPasses = false } = {}) {
+  const failed = tests.filter((t) => t.status !== 'pass').length;
+  const shouldPass = name === 'solution' || name.startsWith('alt');
+  const expected = shouldPass ? 'expected: every check passes' : name === 'starter' && starterPasses ? 'starterPasses: true' : 'expected: at least one fails';
+  const ok = shouldPass ? failed === 0 : failed > 0 || (name === 'starter' && starterPasses);
+  return `${ok ? '✔' : '✖'} ${name} (${lang}): ${failed === 0 ? `all ${tests.length} check(s) pass` : `${failed} of ${tests.length} check(s) fail`} (${expected})`;
+}
+
 const tmpOut = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-content-'));
 const warnings = [];
 const { issues, warnings: contentWarnings, all, index } = await buildContent({ outDir: tmpOut, quiet: true, release });
+if (sinceRef) {
+  let selection;
+  try {
+    const { top, files } = changedFilesSince(sinceRef, ROOT);
+    const stepUnits = all.competencies.unitOrder.map((u) => u.unit).filter((u) => Object.values(all.capstoneBuild?.capstones ?? {}).some((c) => c.steps.some((s) => s.unit === u)));
+    selection = selectionFromChanges(files, { contentRel: path.relative(top, CONTENT_DIR), lessons: all.lessons, stepUnits });
+  } catch (e) {
+    console.error(`--since ${sinceRef}: ${e.message}`);
+    process.exit(2);
+  }
+  if (selection.all) notes.push({ where: `--since ${sinceRef}`, message: `${selection.reason}; validating every selected lesson` });
+  else {
+    since = selection;
+    const partial = [...since.lessons.values()].filter((b) => b !== null).length;
+    notes.push({ where: `--since ${sinceRef}`, message: `${since.lessons.size} changed lesson(s)${partial > 0 ? ` (${partial} of them only in some example/exercise folders: only those blocks run)` : ''}, capstone steps of ${since.stepUnits.size} unit(s)${since.other.length > 0 ? `; other changed content files are checked statically only: ${since.other.slice(0, 3).join(', ')}${since.other.length > 3 ? ` and ${since.other.length - 3} more` : ''}` : ''}` });
+  }
+}
 for (const issue of [...issues, ...contentWarnings]) {
   const lessonId = /lesson ([a-z0-9-]+)/.exec(issue.path)?.[1];
-  if (lessonId && !selected(lessonId)) continue;
+  // With --since the static checks still cover every explicitly selected lesson: a changed glossary
+  // or syllabus file can break a lesson whose own files did not change. Warnings follow the selection.
+  if (lessonId && !(since !== null && issue.level !== 'warning' ? explicitlySelected(lessonId) : selected(lessonId))) continue;
   const where = issue.file ? `${issue.file} · ${issue.path}` : issue.path;
   if (issue.level === 'warning') warnings.push({ where, message: issue.message });
   else error(where, issue.message);
@@ -63,7 +121,8 @@ const onlyCapstones = new Set(values('--capstone'));
 const capstoneSteps = Object.entries(all.capstoneBuild?.capstones ?? {})
   .filter(([id]) => onlyCapstones.size === 0 || onlyCapstones.has(id))
   .flatMap(([id, c]) => c.steps.map((step) => ({ id, step })))
-  .filter(({ step }) => (onlyUnits.size === 0 && onlyLessons.size === 0) || onlyUnits.has(step.unit) || (step.lesson !== null && onlyLessons.has(step.lesson)));
+  .filter(({ step }) => (onlyUnits.size === 0 && onlyLessons.size === 0) || onlyUnits.has(step.unit) || (step.lesson !== null && onlyLessons.has(step.lesson)))
+  .filter(({ step }) => since === null || since.stepUnits.has(step.unit));
 
 if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
   const needBuild = !(await fs.access(path.join(ROOT, 'dist', 'app', 'harness.html')).then(() => true, () => false)) || !(await fs.access(path.join(ROOT, 'dist', 'sandbox', 'frame.html')).then(() => true, () => false));
@@ -127,12 +186,14 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
       for (const lang of langs) {
         const r = await runNode(nodeRunRequest(block, localizeFiles(assets.files, block, lang), { mode: 'run', lang }));
         if (r.failure) {
+          trace(where, `✖ example (${lang}, isolated-node): ${r.failure}`);
           error(where, `example (${lang}): ${r.failure}`);
           continue;
         }
         const thrown = parseUncaughtError(r.stderr, r.start?.cwd);
         const failed = r.exit.code !== 0;
         const what = thrown ? `throws ${thrown.name}: ${thrown.message}` : `exits with code ${r.exit.code}`;
+        trace(where, `${failed === (block.expectError === true) ? '✔' : '✖'} example (${lang}, isolated-node): ${failed ? what : 'exits with code 0'}${block.expectError === true ? ' (expectError)' : ''}`);
         if (failed && block.expectError !== true) error(where, `example (${lang}) ${what} (set expectError: true if the error is the point)`);
         else if (!failed && block.expectError === true) error(where, `example (${lang}) declares expectError but runs without an error`);
       }
@@ -145,6 +206,7 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
       const shouldPass = name === 'solution' || name.startsWith('alt');
       const r = await runNode(nodeRunRequest(compiledBlock, localizeFiles(rawFiles, block, lang), { mode: 'test', lang }));
       if (r.failure && !r.tests) {
+        trace(where, `✖ ${name} (${lang}, isolated-node): ${r.failure}`);
         error(where, `${name} (${lang}): ${r.failure}`);
         continue;
       }
@@ -155,14 +217,18 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
         // checks in another way (time limit, crash, an error in tests.js).
         const harness = outcome.harnessError;
         const compileLike = isLearnerSyntaxError(harness) || (harness.name === 'SyntaxError' && /does not provide an export named/.test(harness.message)) || harness.code === 'ERR_MODULE_NOT_FOUND';
-        if (shouldPass || !compileLike || r.failure) error(where, `${name} (${lang}): ${r.failure ?? `tests could not start: ${harness.name}: ${harness.message}`}`);
+        const bad = shouldPass || !compileLike || r.failure;
+        trace(where, `${bad ? '✖' : '✔'} ${name} (${lang}, isolated-node): ${r.failure ?? `tests could not start: ${harness.name}: ${oneLine(harness.message)}`}${bad ? '' : ' (counts as failing)'}`);
+        if (bad) error(where, `${name} (${lang}): ${r.failure ?? `tests could not start: ${harness.name}: ${harness.message}`}`);
         continue;
       }
       if (r.failure) {
+        trace(where, `✖ ${name} (${lang}, isolated-node): ${r.failure}`, outcome.results);
         error(where, `${name} (${lang}): ${r.failure}`);
         continue;
       }
       const tests = outcome.results;
+      trace(where, fixtureSummary(name, `${lang}, isolated-node`, tests, { starterPasses: block.starterPasses === true }), tests);
       const failed = tests.filter((t) => t.status !== 'pass');
       if (name === 'solution') {
         if (tests.length === 0) error(where, 'tests.js defines no tests');
@@ -187,6 +253,7 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
 
   for (const [id, lesson] of lessons) {
     for (const block of lesson.source.blocks ?? []) {
+      if (!blockSelected(id, block.id)) continue;
       const where = `${id} › ${block.id}`;
       const assets = lesson.assets[block.id];
       if (block.kind === 'prediction' || block.kind === 'review') {
@@ -202,15 +269,18 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
             // Code that does not even compile can be the point of a prediction: nothing is printed
             // and the "error" is a SyntaxError (verify: { logs: [], error: SyntaxError }).
             const syntaxFailure = r.status === 'compile-error' && r.compileErrors.some((e) => e.kind === 'syntax');
+            const before = errors.length;
             if (syntaxFailure && expectErrors === 'SyntaxError') {
               if (expected.length > 0) error(where, `prediction "${item.id ?? block.id}" (${lang}): the code does not compile, so it prints nothing, but verify.logs lists ${JSON.stringify(expected)}`);
             } else if (failure) error(where, `prediction code ${failure}${syntaxFailure ? ' (if the syntax error is the point, set verify: { logs: [], error: SyntaxError })' : ''}`);
             else {
               const lines = consoleLines(r.console);
+              trace(where, `${JSON.stringify(lines) === JSON.stringify(expected) ? '✔' : '✖'} prediction "${item.id ?? block.id}" (${lang}): prints ${oneLine(JSON.stringify(lines))}${r.errors[0] ? `, throws ${r.errors[0].name}` : ''}`);
               if (JSON.stringify(lines) !== JSON.stringify(expected)) error(where, `prediction "${item.id ?? block.id}" (${lang}): real output ${JSON.stringify(lines)} differs from verify.logs ${JSON.stringify(expected)}`);
               const thrown = r.errors[0]?.name ?? null;
               if (expectErrors !== thrown) error(where, `prediction "${item.id ?? block.id}": ${thrown ? `code throws ${thrown}` : 'code does not throw'} but verify.error is ${JSON.stringify(expectErrors)}`);
             }
+            if (failure || (syntaxFailure && expectErrors === 'SyntaxError')) trace(where, `${errors.length === before ? '✔' : '✖'} prediction "${item.id ?? block.id}" (${lang}): ${failure}`);
           }
         }
         continue;
@@ -227,6 +297,8 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
           executed.examples += 1;
           const r = await run(runInputForBlock({ ...block, tests: '' }, localizeFiles(assets.files, block, lang), { mode: 'run', lang }));
           const failure = describeFailure(r);
+          const ok = failure ? block.expectError === true && r.status === 'compile-error' : (r.errors.length > 0) === (block.expectError === true);
+          trace(where, `${ok ? '✔' : '✖'} example (${lang}): ${failure ?? (r.errors[0] ? `throws ${r.errors[0].name}: ${oneLine(r.errors[0].message)}` : `runs, ${consoleLines(r.console).length} console line(s)`)}${block.expectError === true ? ' (expectError)' : ''}`);
           // An example may demonstrate an error on purpose, including one that prevents running.
           if (failure && !(block.expectError === true && r.status === 'compile-error')) error(where, `example (${lang}) ${failure}`);
           else if (failure) continue;
@@ -249,10 +321,13 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
         if (failure) {
           // A starter or a deliberately wrong fixture may fail to compile (that counts as failing);
           // a passing fixture may not, and no fixture may crash the harness in another way.
-          if (shouldPass || r.status !== 'compile-error') error(where, `${name} (${lang}): ${failure}`);
+          const bad = shouldPass || r.status !== 'compile-error';
+          trace(where, `${bad ? '✖' : '✔'} ${name} (${lang}): ${oneLine(failure)}${bad ? '' : ' (counts as failing)'}`);
+          if (bad) error(where, `${name} (${lang}): ${failure}`);
           continue;
         }
         const tests = r.tests ?? [];
+        trace(where, `${fixtureSummary(name, lang, tests, { starterPasses: block.starterPasses === true })}${r.errors[0] ? ` · the program throws ${r.errors[0].name}: ${oneLine(r.errors[0].message)}` : ''}`, tests);
         const failed = tests.filter((t) => t.status !== 'pass');
         if (name === 'solution') {
           if (tests.length === 0) error(where, 'tests.js defines no tests');
@@ -283,11 +358,13 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
         const r = await run(runInputForBlock(block, localizeFiles(raw, block, lang), { mode: 'test', lang }));
         const failure = describeFailure(r);
         if (failure) {
+          trace(where, `✖ ${name} (${lang}): ${oneLine(failure)}`);
           error(where, `${name} (${lang}): ${failure}`);
           continue;
         }
         const tests = r.tests ?? [];
         const failed = tests.filter((t) => t.status !== 'pass');
+        trace(where, `${(failed.length === 0) === shouldPass ? '✔' : '✖'} ${name} (${lang}): ${failed.length === 0 ? `all ${tests.length} check(s) pass` : `${failed.length} of ${tests.length} check(s) fail`} (${shouldPass ? 'expected: every check passes' : 'expected: at least one fails'})`, tests);
         if (shouldPass) {
           if (tests.length === 0) error(where, 'tests.js defines no tests');
           for (const t of tests) if (!step.testTitles[t.name]) error(where, `test "${t.name}" has no bilingual title in testTitles`);

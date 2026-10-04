@@ -205,7 +205,7 @@ export async function startServer(overrides = {}) {
   try {
     first = await listen('127.0.0.1', app.config.port);
   } catch (error) {
-    if (error.code === 'EADDRINUSE') throw new Error(`Port ${app.config.port} is already in use. Stop the other process or choose another port: JSLL_PORT=7310 npm start`);
+    if (error.code === 'EADDRINUSE') throw new Error(`Port ${app.config.port} is already in use. Stop the other process or choose another port: JSLL_PORT=7301 npm start`);
     throw error;
   }
   app.state.port = first.address().port;

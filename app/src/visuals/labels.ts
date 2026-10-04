@@ -14,7 +14,7 @@ export type VisualLabels = {
   match: string; nomatch: string; threw: string; pending: string; comparison: (n: number, total: number) => string; aFirst: string; bFirst: string; keepOrder: string;
   nodes: string; edges: string; highlighted: string; dimmed: string; from: string; to: string; message: (n: number, total: number) => string; note: string; actors: string;
   commits: string; branches: string; head: string; detached: string; workingTree: string; modified: string; staged: string; conflicted: string; merging: (branch: string) => string; command: string; orphaned: string; parents: string;
-  render: (n: number) => string; commit: string; effects: string; event: (name: string) => string; idle: string; sees: string; actions: string; queued: string; dom: string; cleanup: string; run: string; props: string; state: string; reason: string; timeline: string; renderSees: (n: number) => string; noChange: string;
+  render: (n: number) => string; commit: string; effects: string; event: (name: string) => string; idle: string; sees: string; actions: string; queued: string; dom: string; domNative: string; cleanup: string; run: string; props: string; state: string; reason: string; timeline: string; renderSees: (n: number) => string; noChange: string;
 };
 
 export const VISUAL_LABELS: Record<'uk' | 'en', VisualLabels> = {
@@ -32,7 +32,7 @@ export const VISUAL_LABELS: Record<'uk' | 'en', VisualLabels> = {
     match: 'true — підходить', nomatch: 'false — не підходить', threw: 'кинуто помилку', pending: 'ще не вирішено', comparison: (n, total) => `порівняння ${n} з ${total}`, aFirst: 'менше нуля: a стає перед b', bFirst: 'більше нуля: b стає перед a', keepOrder: 'нуль: a і b лишаються в тому ж порядку',
     nodes: 'Вузли', edges: 'Зв’язки', highlighted: 'виділено', dimmed: 'приглушено', from: 'від', to: 'до', message: (n, total) => `повідомлення ${n} з ${total}`, note: 'примітка', actors: 'Учасники',
     commits: 'Коміти', branches: 'Гілки', head: 'HEAD', detached: 'detached HEAD', workingTree: 'Робоча директорія', modified: 'змінено', staged: 'staged', conflicted: 'конфлікт', merging: (branch) => `злиття з ${branch} триває`, command: 'команда', orphaned: 'застарілий (після rebase)', parents: 'батьки',
-    render: (n) => `Рендер ${n}`, commit: 'Commit', effects: 'Ефекти', event: (name) => `Подія: ${name}`, idle: 'нічого не відбувається', sees: 'обробник бачить', actions: 'виклики', queued: 'у черзі для наступного рендеру', dom: 'Екран (DOM)', cleanup: 'cleanup', run: 'запуск', props: 'props', state: 'state', reason: 'причина', timeline: 'Хронологія рендерів', renderSees: (n) => `Рендер ${n} бачить`, noChange: 'без змін',
+    render: (n) => `Рендер ${n}`, commit: 'Commit', effects: 'Ефекти', event: (name) => `Подія: ${name}`, idle: 'нічого не відбувається', sees: 'обробник бачить', actions: 'виклики', queued: 'у черзі для наступного рендеру', dom: 'Екран (DOM)', domNative: 'Екран (нативні view)', cleanup: 'cleanup', run: 'запуск', props: 'props', state: 'state', reason: 'причина', timeline: 'Хронологія рендерів', renderSees: (n) => `Рендер ${n} бачить`, noChange: 'без змін',
   },
   en: {
     previous: '‹ Previous', next: 'Next ›', reset: 'Reset', play: 'Play', pause: 'Pause',
@@ -48,6 +48,6 @@ export const VISUAL_LABELS: Record<'uk' | 'en', VisualLabels> = {
     match: 'true — matches', nomatch: 'false — does not match', threw: 'threw an error', pending: 'not decided yet', comparison: (n, total) => `comparison ${n} of ${total}`, aFirst: 'below zero: a goes before b', bFirst: 'above zero: b goes before a', keepOrder: 'zero: a and b keep their order',
     nodes: 'Nodes', edges: 'Edges', highlighted: 'highlighted', dimmed: 'dimmed', from: 'from', to: 'to', message: (n, total) => `message ${n} of ${total}`, note: 'note', actors: 'Participants',
     commits: 'Commits', branches: 'Branches', head: 'HEAD', detached: 'detached HEAD', workingTree: 'Working tree', modified: 'modified', staged: 'staged', conflicted: 'conflicted', merging: (branch) => `merge from ${branch} in progress`, command: 'command', orphaned: 'orphaned (after rebase)', parents: 'parents',
-    render: (n) => `Render ${n}`, commit: 'Commit', effects: 'Effects', event: (name) => `Event: ${name}`, idle: 'nothing happens', sees: 'the handler sees', actions: 'calls', queued: 'queued for the next render', dom: 'Screen (DOM)', cleanup: 'cleanup', run: 'run', props: 'props', state: 'state', reason: 'reason', timeline: 'Render timeline', renderSees: (n) => `Render ${n} sees`, noChange: 'no change',
+    render: (n) => `Render ${n}`, commit: 'Commit', effects: 'Effects', event: (name) => `Event: ${name}`, idle: 'nothing happens', sees: 'the handler sees', actions: 'calls', queued: 'queued for the next render', dom: 'Screen (DOM)', domNative: 'Screen (native views)', cleanup: 'cleanup', run: 'run', props: 'props', state: 'state', reason: 'reason', timeline: 'Render timeline', renderSees: (n) => `Render ${n} sees`, noChange: 'no change',
   },
 };

@@ -19,8 +19,9 @@ export type PlayerProps<S extends VisualSpec = VisualSpec> = { spec: S; index: n
  * Legible minimum for SVG pictures. They are drawn at their natural width when the column allows
  * it and otherwise scale down to the available width, but never below 75 %: there the 13 px labels
  * render at ~9.8 px and the smallest 11 px labels at ~8.3 px. Only a picture whose 75 % is still
- * wider than the panel makes the panel scroll horizontally. In the lesson column (about 345 px
- * inside the player) this fits pictures up to ~460 px natural width — see content/VISUALS.md.
+ * wider than the panel makes the panel scroll horizontally. In the lesson column (at least ~340 px
+ * inside the player from a 1100 px window up) this fits pictures up to ~450 px natural width — see
+ * content/VISUALS.md, section 6.
  */
 export const MIN_SVG_SCALE = 0.75;
 export const svgStyle = (width: number) => ({ maxWidth: '100%', height: 'auto', minWidth: Math.round(width * MIN_SVG_SCALE) });

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
 import * as visuals from '../../shared/visuals/index.js';
-import { CONTENT_DIR, compileLesson, createMarkdown, gitIgnoredLessonFiles, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
+import { STAGE_REQUIRED_RUNTIMES, STAGE_RUNTIMES } from '../../shared/content-schema.js';
+import { CONTENT_DIR, compileLesson, createMarkdown, gitIgnoredLessonFiles, glossaryLinkProblems, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
 
 const md = createMarkdown(new Map([['closure', { id: 'closure', term: 'closure' }]]));
 const ctx = { md, glossary: new Map([['closure', { id: 'closure', term: 'closure' }]]), syllabus: new Map(), lessonOrder: null, competencies: { families: null }, release: false };
@@ -115,6 +116,22 @@ test('the shown text of a glossary link is inline Markdown: code spans and bold 
   assert.equal(md.inline('[[closure]]'), '<button type="button" class="term" data-term="closure">closure</button>');
 });
 
+test('a glossary link whose shown text holds "]" or another link is reported, wherever the text is (rule 46)', () => {
+  assert.deepEqual(glossaryLinkProblems('[[closure|`makeCounter` **closure**]] and [[closure]]'), []);
+  assert.deepEqual(glossaryLinkProblems('a table cell [[closure\\|the closure]]'), []);
+  // `[[k, v]]` in code is not a link; a fenced block is skipped as a whole.
+  assert.deepEqual(glossaryLinkProblems('write `[[k, v]]` and `[[closure|x` here\n\n```js\nconst a = [[closure|1]];\n```'), []);
+  const bracket = glossaryLinkProblems('see [[closure|`items[0]` closure]] here');
+  assert.equal(bracket.length, 1);
+  assert.match(bracket[0], /\[\[closure\|`items\[0\]` closure\]\] here…" does not close: its shown text ends at the first "\]"/);
+  assert.match(glossaryLinkProblems('[[closure|see [[scope]] first]]')[0], /holds another link/);
+  assert.match(glossaryLinkProblems('[[closure|a [[scope|b]]')[0], /holds another link/);
+  // Reported with the field path from every prose field, hints and feedback included.
+  const block = { ...exercise, strings: undefined, hints: { nudge: pair('[[closure|`a[0]`]]', 'n'), explanation: pair('е', 'e') }, instructions: pair('і', 'i'), testTitles: { 'prints the total': pair('т', 't') }, solutionNote: pair('р', 'r'), feedback: [{ when: { test: 'prints the total' }, message: pair('ф', '[[closure|`b[1]`]]') }] };
+  const found = staticIssuesForLesson(lessonWith([block], { cart: { ...exerciseAssets.cart, starter: { 'index.js': '' } } }), ctx).filter((i) => /rule 46/.test(i.message)).map((i) => i.path);
+  assert.deepEqual(found, ['lesson js-01-09-sample › block "cart" › hints.nudge.uk', 'lesson js-01-09-sample › block "cart" › feedback[0].message.en']);
+});
+
 test('lesson files that the repository ignores (dist/, build/, coverage/, .env) are reported', () => {
   const dir = path.join(CONTENT_DIR, 'units', 'JS-01', 'js-01-99-ignored-files');
   const lesson = {
@@ -156,6 +173,40 @@ test('a diagram wider than the 450 px lesson column is a warning while authoring
   assert.deepEqual(await compile(narrow, false), []);
 });
 
+test('an id that YAML read as null, a boolean or a number is reported with its cause and path', () => {
+  const issuesOf = (blocks) => staticIssuesForLesson(lessonWith(blocks), ctx).map((i) => `${i.path}: ${i.message}`);
+  const prediction = (options) => ({ id: 'guess', kind: 'prediction', prompt: pair('п', 'p'), explanation: pair('е', 'e'), answer: { type: 'choice', options, correct: ['a'] } });
+  const found = issuesOf([prediction([{ id: 'a', text: pair('а', 'a') }, { id: null, text: pair('н', 'n') }, { id: true, text: pair('т', 't') }])]);
+  assert.ok(found.some((m) => /block "guess"\.answer\.options\[1\]\.id: id is null \(unquoted null or ~\?/.test(m)), found.join('\n'));
+  assert.ok(found.some((m) => /block "guess"\.answer\.options\[2\]\.id: id is the YAML boolean true, not text \(unquoted\? quote it: id: "true"\)/.test(m)), found.join('\n'));
+  const block = issuesOf([{ id: null, kind: 'explanation', title: pair('т', 't'), body: pair('т', 't') }]);
+  assert.ok(block.some((m) => /› blocks\[0\]\.id: id is null/.test(m)), block.join('\n'));
+  const review = issuesOf([{ id: 'recall', kind: 'review', title: pair('П', 'R'), items: [{ id: null, from: 'js-01-01-code-runs', prompt: pair('п', 'p'), answer: { type: 'text', accept: ['1'] }, explanation: pair('е', 'e') }] }]);
+  assert.ok(review.some((m) => /block "recall"\.items\[0\]\.id: id is null/.test(m)), review.join('\n'));
+});
+
+test('verify on a review question needs that question\'s own code; code or verify inside answer is reported', () => {
+  const item = (extra) => ({ id: 'recall', kind: 'review', title: pair('П', 'R'), items: [{ id: 'q', from: 'js-01-01-code-runs', prompt: pair('п', 'p'), answer: { type: 'text', accept: ['1'] }, explanation: pair('е', 'e'), ...extra }] });
+  const issuesOf = (extra) => staticIssuesForLesson(lessonWith([item(extra)]), ctx).map((i) => `${i.path}: ${i.message}`);
+  assert.deepEqual(issuesOf({ code: 'console.log(1);', verify: { logs: ['1'] } }), []);
+  const noCode = issuesOf({ verify: { logs: ['1'] } });
+  assert.equal(noCode.length, 1);
+  assert.match(noCode[0], /items\[0\]\.verify: verify runs this question's own "code" field \(as in a prediction\)/);
+  const nested = issuesOf({ answer: { type: 'text', accept: ['1'], code: 'console.log(1);', verify: { logs: ['1'] } } });
+  assert.ok(nested.some((m) => /items\[0\]\.answer\.verify: "verify" belongs to the question, next to "prompt", not inside "answer"/.test(m)), nested.join('\n'));
+});
+
+test('block runtimes follow the per-stage table the syllabus validator uses; an RN lesson may run computer-side Node.js', () => {
+  const task = (runtime) => ({ id: 'local', kind: 'local-task', runtime, title: pair('Т', 'T'), intro: pair('і', 'i'), tools: [{ name: 'Node.js' }], steps: [{ text: pair('к', 's') }], verify: [{ id: 'v', text: pair('в', 'v') }], troubleshooting: [{ problem: pair('п', 'p'), fix: pair('ф', 'f') }], recovery: pair('р', 'r') });
+  const runtimeIssues = (id, runtime) => staticIssuesForLesson({ ...lessonWith([task(runtime)]), source: { ...lessonWith([task(runtime)]).source, id, unit: id.slice(0, 5).toUpperCase() } }, ctx).filter((i) => /runtime/.test(i.path)).map((i) => i.message);
+  for (const runtime of STAGE_RUNTIMES.RN.filter((r) => r.startsWith('local-'))) assert.deepEqual(runtimeIssues('rn-06-09-sample', runtime), [], runtime);
+  assert.ok(STAGE_RUNTIMES.RN.includes('isolated-node'));
+  assert.deepEqual(STAGE_REQUIRED_RUNTIMES.RN, ['local-native'], 'computer-side Node.js never replaces the native task of an RN unit');
+  const found = runtimeIssues('js-01-09-sample', 'local-node');
+  assert.equal(found.length, 1);
+  assert.match(found[0], /runtime local-node is not honest for stage JS \(allowed: browser-js, local-web, concept-preview/);
+});
+
 test('a local-task tool version is a plain string or bilingual text, compiled as plain text', async () => {
   const task = (version) => ({ id: 'local', kind: 'local-task', runtime: 'local-node', title: pair('Т', 'T'), intro: pair('і', 'i'), tools: [{ name: 'Node.js', version }], steps: [{ text: pair('к', 's') }], verify: [{ id: 'v', text: pair('в', 'v') }], troubleshooting: [{ problem: pair('п', 'p'), fix: pair('ф', 'f') }], recovery: pair('р', 'r') });
   const localized = await compiledBlock(task({ uk: '22.13 або новіший', en: '22.13 or **newer**' }));
@@ -166,4 +217,32 @@ test('a local-task tool version is a plain string or bilingual text, compiled as
   assert.deepEqual(toolIssues({ uk: '22.13 або новіший', en: '22.13 or newer' }), []);
   assert.equal(toolIssues({ en: 'only English' }).length, 1);
   assert.match(toolIssues({ en: 'only English' })[0], /tools\[0\]\.version\.uk: missing or empty translation/);
+});
+
+test('a render-timeline commit panel shows native views in a React Native lesson and the DOM elsewhere, unless the spec says', async () => {
+  const timeline = (screen) => ({ id: 'tl', kind: 'visual', visual: 'render-timeline', title: pair('Т', 'T'), textEquivalent: pair('т', 't'), spec: { ...(screen ? { screen } : {}), steps: [{ phase: 'render', render: 1, reason: pair('п', 'r'), snapshot: { state: { n: 0 } }, caption: pair('к', 'c') }, { phase: 'commit', render: 1, dom: 'n = 0', caption: pair('к', 'c') }] } });
+  const screenOf = async (id, block, extra = []) => {
+    const lesson = lessonWith([block, ...extra]);
+    lesson.source = { ...lesson.source, id, unit: id.slice(0, 5).toUpperCase() };
+    const out = await compileLesson(lesson, { ...ctx, visuals });
+    assert.deepEqual(out.issues, []);
+    return out.lesson.blocks[0].spec.screen;
+  };
+  assert.equal(await screenOf('re-02-09-sample', timeline()), 'dom');
+  assert.equal(await screenOf('rn-04-09-sample', timeline()), 'native');
+  assert.equal(await screenOf('js-01-09-sample', timeline(), [{ id: 'demo', kind: 'example', runtime: 'concept-preview', dir: 'demo', entry: 'main.jsx', title: pair('Т', 'T'), body: pair('т', 't') }]), 'native');
+  assert.equal(await screenOf('rn-04-09-sample', timeline('dom')), 'dom');
+  const bad = await compileLesson(lessonWith([timeline('phone')]), { ...ctx, visuals });
+  assert.ok(bad.issues.some((i) => /spec › spec\.screen/.test(i.path)), JSON.stringify(bad.issues));
+});
+
+test('a local-task tool name is a product name (plain string) or bilingual text for a described tool', async () => {
+  const task = (name) => ({ id: 'local', kind: 'local-task', runtime: 'local-web', title: pair('Т', 'T'), intro: pair('і', 'i'), tools: [{ name, version: '1' }], steps: [{ text: pair('к', 's') }], verify: [{ id: 'v', text: pair('в', 'v') }], troubleshooting: [{ problem: pair('п', 'p'), fix: pair('ф', 'f') }], recovery: pair('р', 'r') });
+  assert.deepEqual((await compiledBlock(task({ uk: 'Редактор коду', en: 'A code editor' }))).tools[0].name, { uk: 'Редактор коду', en: 'A code editor' });
+  assert.equal((await compiledBlock(task('Node.js'))).tools[0].name, 'Node.js');
+  const nameIssues = (name) => staticIssuesForLesson(lessonWith([task(name)]), ctx).filter((i) => /tools/.test(i.path)).map((i) => `${i.path}: ${i.message}`);
+  assert.deepEqual(nameIssues('Node.js'), []);
+  assert.deepEqual(nameIssues({ uk: 'Термінал', en: 'A terminal' }), []);
+  assert.match(nameIssues({ en: 'A terminal' })[0], /tools\[0\]\.name\.uk: missing or empty translation/);
+  assert.match(nameIssues(undefined)[0], /tools\[0\]\.name: needs the tool name/);
 });

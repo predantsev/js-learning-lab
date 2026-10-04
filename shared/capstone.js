@@ -13,7 +13,7 @@ const FORBIDDEN_CHARS = /[\u0000-\u001f\u007f<>:"|?*\\]/;
 const WINDOWS_RESERVED = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$/i;
 export const MAX_PATH_LENGTH = 240;
 /** Extensions of files a learner may create in the platform (text files only). */
-export const TEXT_FILE_EXTENSIONS = ['html', 'css', 'js', 'mjs', 'jsx', 'ts', 'tsx', 'json', 'md', 'txt', 'svg', 'csv'];
+export const TEXT_FILE_EXTENSIONS = ['html', 'css', 'js', 'mjs', 'jsx', 'ts', 'tsx', 'json', 'md', 'txt', 'svg', 'csv', 'xml'];
 /** Paths the export writes itself; learner files may not use them. */
 export const RESERVED_PATHS = ['jsll-manifest.json'];
 

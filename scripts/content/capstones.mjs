@@ -13,7 +13,7 @@ import { pathProblem } from '../../shared/capstone.js';
 
 export const CAPSTONES_DIR = path.join(ROOT, 'content', 'capstones');
 export const STEP_MODES = ['in-platform', 'local'];
-const TEXT_EXT = new Set(['.js', '.mjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.svg', '.csv', '.gitignore']);
+const TEXT_EXT = new Set(['.js', '.mjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.svg', '.csv', '.xml', '.gitignore']);
 const KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9]*$/;
 const L_REFERENCE = /\bL\.([a-zA-Z_$][\w$]*)|\bL\[\s*(['"])([^'"]+)\2\s*\]/g;
 const TEST_NAME = /\btest\(\s*(['"`])((?:\\.|(?!\1).)+)\1/g;

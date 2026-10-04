@@ -24,6 +24,8 @@ export function RenderTimeline({ spec, index, tick, labels, lang }: PlayerProps<
   const step = spec.steps[index];
   const prev = index > 0 ? spec.steps[index - 1] : null;
   const code = spec.code ? spec.code.replace(/\n$/, '') : null;
+  // React Native lessons show native views here (the preview draws them with react-native-web).
+  const screen = spec.screen === 'native' ? labels.domNative : labels.dom;
   // Timeline cells: one per step, grouped by render; the current step is marked.
   const cells = spec.steps.map((s, i) => ({ i, phase: s.phase, render: s.render, label: s.phase === 'render' ? labels.render(s.render) : s.phase === 'commit' ? labels.commit : s.phase === 'effect' ? labels.effects : s.phase === 'event' ? labels.event(s.event?.name ?? '') : labels.idle }));
   const phaseTitle = step.phase === 'render' ? labels.render(step.render) : step.phase === 'commit' ? `${labels.commit} · ${labels.render(step.render)}` : step.phase === 'effect' ? `${labels.effects} · ${labels.render(step.render)}` : step.phase === 'event' ? labels.event(step.event?.name ?? '') : labels.idle;
@@ -65,8 +67,8 @@ export function RenderTimeline({ spec, index, tick, labels, lang }: PlayerProps<
             </div>
           ) : null}
         </section>
-        <section className="viz-panel viz-dom" aria-label={labels.dom}>
-          <header className="viz-panel-head"><span>{labels.dom}</span></header>
+        <section className="viz-panel viz-dom" aria-label={screen}>
+          <header className="viz-panel-head"><span>{screen}</span></header>
           <div className="viz-screen">
             {step.dom ? <code key={step.dom !== (prev?.dom ?? null) ? `${step.dom}-${tick}` : step.dom} className={step.dom !== (prev?.dom ?? null) ? 'viz-changed' : undefined}>{step.dom}</code> : <span className="viz-dim viz-small">{labels.empty}</span>}
           </div>

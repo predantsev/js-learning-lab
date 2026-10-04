@@ -595,6 +595,9 @@ Common mistakes: `stage` of a file that was never `modify`-ed; `merge` of a bran
 ```yaml
 spec:
   component: Counter
+  screen: dom                    # optional: dom | native — the commit panel is "Screen (DOM)" or
+                                 #   "Screen (native views)"; default native in React Native lessons
+                                 #   (stage RN or a concept-preview block), dom elsewhere
   code: |                        # the component source (JSX), shown with the current line
     function Counter() {
       const [count, setCount] = useState(0);
@@ -631,7 +634,8 @@ spec:
 ```
 
 The player shows a timeline of phases, the snapshot the current render sees, the handler's view
-and queued updates on an event step, the effects on an effect step, and the DOM as of the last commit.
+and queued updates on an event step, the effects on an effect step, and the screen as of the last commit
+(the DOM, or native views in a React Native lesson; `dom` is the text of that panel either way).
 
 Common mistakes: render numbers out of order; `commit`/`effect` with a render number that is not
 the last `render` step; an `effect` step with neither `run` nor `cleanup`; `sees` values that
@@ -657,14 +661,17 @@ UI strings live in `app/src/visuals/labels.ts` (`VISUAL_LABELS.uk` / `.en`).
 
 ## 6. Width: the lesson column
 
-A visual usually sits in the lesson column next to the workspace. In the narrowest supported
-layout that column is **about 420 px**, which leaves **about 345 px** for a picture inside the
-player. Keep the **natural width** of `diagram`, `sequence` and `memory-graph` pictures within
-**about 420–450 px**:
+A visual usually sits in the lesson column next to the workspace. In the narrowest two-column
+layout (a 1100 px window) that column is **about 420 px** in every style, which leaves **about
+340 px** for a picture inside the player (measured in the app: Calm Studio 339 px, Editorial
+370 px, Dev workspace 344 px at 1100 px; 384 / 420 / 347 px at 1280 px; it only grows in wider
+windows, and below 1100 px the lesson column takes the whole width). Keep the **natural width** of
+`diagram`, `sequence` and `memory-graph` pictures within **about 420–450 px**:
 
 - The player draws a picture at its natural width when the column allows it and otherwise **scales
   it down to the available width — but never below 75 %** (the legible minimum: 13 px labels render
-  at ~9.8 px, the smallest 11 px labels at ~8.3 px). 450 px × 75 % ≈ 338 px still fits the 345 px.
+  at ~9.8 px, the smallest 11 px labels at ~8.3 px). 450 px × 75 % ≈ 338 px still fits the ~340 px;
+  `tests/e2e/app-layout.test.mjs` checks that room in all three styles from 1100 px up.
 - Only a picture whose 75 % is wider than the panel makes the panel scroll sideways — avoid that:
   the learner then sees part of the picture at a time.
 - Natural widths: `diagram` — `compile-visual-samples.mjs` prints it and warns above 450 px, and the
