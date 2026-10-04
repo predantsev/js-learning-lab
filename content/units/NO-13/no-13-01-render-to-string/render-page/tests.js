@@ -36,9 +36,8 @@ test('the root element holds exactly the rendered list', () => {
 
 test('the list comes from the habits it is given', () => {
   const habits = other();
-  const expected = `<div id="root">${renderToString(h(HabitList, { habits }))}</div>`;
   const html = page(habits);
-  expect(html, 'the document for one other habit').toContain(expected);
+  expect(html, 'the document for one other habit').toContain(renderToString(h(HabitList, { habits })));
   expect(html.includes(L.exercise), 'a habit that was not passed in').toBe(false);
 });
 

@@ -32,11 +32,24 @@ test('the page answers 200 with the list', async () => {
   expect(response.text, 'body of GET /').toContain(L.dentist);
 });
 
+// The client's clock during the check: a fixed day far from the server's "today", so a client that
+// reads its own clock differs on every machine and on every date.
+const CLIENT_NOW = Date.UTC(2031, 0, 15, 12);
+function withClientClock(fn) {
+  const RealDate = Date;
+  globalThis.Date = class extends RealDate {
+    constructor(...args) { super(...(args.length > 0 ? args : [CLIENT_NOW])); }
+    static now() { return CLIENT_NOW; }
+  };
+  try { return fn(); } finally { globalThis.Date = RealDate; }
+}
+
 test('the client render matches the server markup', async () => {
   const { base } = await start(stored);
   const { markup, data } = parts((await request(`${base}/`)).text);
   expect(typeof clientElement, 'type of clientElement').toBe('function');
-  expect(renderToString(clientElement(data)), 'the client render from the page data').toBe(markup);
+  const clientMarkup = withClientClock(() => renderToString(clientElement(data)));
+  expect(clientMarkup, 'the client render from the page data').toBe(markup);
 });
 
 test('the page holds no server setting', async () => {
