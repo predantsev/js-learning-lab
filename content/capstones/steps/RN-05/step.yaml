@@ -1,0 +1,106 @@
+# Capstone step of unit RN-05 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of RN-05 from this file.
+# A local step: done in the learner's editor, terminal and on the declared native target; no platform
+# checks. The project page shows only the intro of a local step, so the intro carries the whole procedure.
+# Every computer-side command was run on macOS (Node.js 25.2.1, npm 11.6.2, Expo SDK 57) in a scratch home
+# on all four projects, continuing the RN-04 scratch projects: expo install of async-storage, tsc, the
+# course test runner (Ukrainian and English strings, TZ=Pacific/Pago_Pago), expo export for android and
+# ios, the commit. Deliberately wrong variants were run against the tests and failed them: an empty
+# legacy price as 0, amounts through Math.round(amount * 100), no backup before recovery, a v0 step that
+# overwrites an existing priority, a newer version accepted. Nothing was run on an emulator, a simulator
+# or a phone; AsyncStorage itself was not run (Node.js tests use the memory storage). Quoted output is
+# from the wishlist run.
+# reference/ is the native project after the step without the files the template generates and the
+# platform cannot carry (assets/*.png, LICENSE, package-lock.json, node_modules/).
+unit: RN-05
+mode: local
+entry: App.tsx
+title:
+  uk: "Дані на пристрої: версія знімка, міграція, відновлення"
+  en: "Data on the device: snapshot version, migration, recovery"
+intro:
+  uk: |
+    Записи нарешті переживають перезапуск: сховище в пам’яті замінює сховище пристрою (AsyncStorage) — з тими самими трьома методами, тож екрани не змінюються. Знімок має версію, старий знімок версії 0 мігрує до поточної, а пошкоджений не валить застосунок: його текст лягає під резервний ключ, і екран про це каже.
+
+    | Проєкт | Ключ (і резервний — з `.backup`) | Що змінилося між v0 і v1 | Крок міграції |
+    |---|---|---|---|
+    | Список бажань | `jsll.wishlist.v1` | ціна зберігалася текстом (`"80"`, `""`) | порожній текст — `null`, інший — `Number(…)` |
+    | Планувальник | `jsll.planner.v1` | пріоритету не було | відсутній пріоритет — `"normal"` |
+    | Трекер звичок | `jsll.habits.v1` | дати виконань повторювалися й не були впорядковані | `uniqueSortedDays` з домену |
+    | Трекер витрат | `jsll.expenses.v1` | сума — дробове число гривень у `amount` | `parseAmountMinor(String(amount))` з домену → `amountMinor` |
+
+    Знімок v0 — файл `data/legacy-v0.json`, який дає цей крок (вміст — у завданні проєкту). `.v1` у ключі — лише назва «полиці»; форму даних описує `schemaVersion` усередині знімка, тож ключ не змінюється.
+
+    Нижче — «Список бажань». Команди на комп’ютері виконано на macOS (Node.js 25.2.1, Expo SDK 57, async-storage 2.2.0) на всіх чотирьох проєктах; тести в Node.js працюють зі сховищем у пам’яті, саме AsyncStorage ми не запускали. Емулятора, симулятора й телефона не було: крок 8 описано за документацією async-storage 2.2.0 і уроками розділу.
+
+    **1. Стан на початку.** `cd ~/js-course/wishlist-native`, `git status` — чисто, `git log --oneline -1` — commit стеку екранів.
+
+    **2. Сховище пристрою.** `npx expo install @react-native-async-storage/async-storage` — у нас `› Installing 1 SDK 57.0.0 compatible native module using npm`, у `package.json` — `"2.2.0"`. `src/nativeStorage.ts`: об’єкт `nativeStorage` з `getItem`, `setItem`, `removeItem`, що викликають ті самі методи `AsyncStorage`. В `App.tsx` `createRepository` отримує `nativeStorage` замість `createMemoryStorage()`; більше нічого в екранах не змінюється. AsyncStorage не шифрує даних — секретів у ньому не тримають.
+
+    **3. Ланцюг читання.** `src/snapshot.ts`: `CURRENT_VERSION = 1`, `BACKUP_KEY = "jsll.wishlist.v1.backup"`; `migrate(snapshot)` — мапа кроків `steps = { 0: (records) => … }` і цикл `while (version < CURRENT_VERSION)`, вхід не змінюється, версія вища за поточну — `newer`, незнайома форма — `invalid`; `restoreSnapshot(text)` — `JSON.parse` у `try` → `migrate` → `parseItemList` (причини: `unparsable`, `newer`, `invalid`, `invalid-record`); `loadSnapshot(storage)` — нічого не збережено → `missing`; мігрований знімок одразу зберігається в поточній версії; невідновний — **спершу** копія тексту під `BACKUP_KEY`, лише потім щось інше.
+
+    **4. Репозиторій.** `readAll()` тепер повертає `{ records, recovered }`: після відкладеного знімка зберігає стартовий список (наступне читання чисте) і один раз повідомляє `recovered: true`. Деталі й редагування беруть `records`. `ItemsScreen` показує «Збережені бажання не вдалося прочитати…» з назвою резервного ключа, а коли саме сховище не відповіло — «Список не завантажився» і «Завантажити ще раз» (лічильник `attempt` у залежностях фокус-ефекту). Запис іде лише після вдалого читання — `apply` спершу читає.
+
+    **5. Довга категорія.** Контракт `parseItemList` відмовляє категорії довшій за 30 символів, тож поле категорії отримує `maxLength={30}` — інакше такий запис зробив би весь збережений список «пошкодженим» при наступному читанні.
+
+    **6. Репетиція на пристрої.** `data/legacy-v0.json` — знімок v0 із завдання. `src/seed.ts`: `SEED` — `'none'`, `'legacy-v0'` або `'corrupt'` (обрізаний текст знімка), і `applySeed(storage, seed)`. `App.tsx` у розробницькій збірці (`__DEV__`) з `SEED` не `'none'` спершу записує цей знімок, а вже потім показує навігатор.
+
+    **7. Перевірка на комп’ютері.** `npx tsc --noEmit` — жодного рядка; `npm test` — `Пройшли: 43 · не пройшли: 0`; нові тести в `tests/snapshot.test.js`: файл `data/legacy-v0.json` мігрує до очікуваних записів, `migrate` не змінює вхід, версія 2 — `newer`, обрізаний текст — `unparsable`, пошкоджений знімок лежить під резервним ключем без змін, а повідомлення приходить один раз; `npx expo export --platform android` — у нас `Android Bundled 2203ms index.ts (847 modules)`.
+
+    **8. На заявленій цілі.** `npm start`. Зміни бажання, **повністю** закрий застосунок (Android — прибери з недавніх, iOS — змахни вгору в перемикачі) і відкрий знову з Expo Go — зміна на місці. Потім `SEED = 'legacy-v0'` у `src/seed.ts`, збережи, `r` у терміналі Metro — три бажання, ціни «80 ₴», «240 ₴» і «без ціни». Потім `SEED = 'corrupt'`, `r` — стартовий список і повідомлення з ключем `jsll.wishlist.v1.backup`, без падіння. Поверни `SEED = 'none'`. Цих екранів ми не бачили.
+
+    **9. Доказ і commit.** У `EVIDENCE.md` — розділ «RN-05»: рядки кроку 7 і побачене на цілі (перезапуск, міграція, відновлення), або запис «не виконано» (що, ціль, чому, що потрібно, щоб повернутися). `git status --short` — серед іншого `?? data/legacy-v0.json`, `?? src/nativeStorage.ts`, `?? src/seed.ts`, `?? tests/snapshot.test.js`; `SEED` у commit — `'none'`. `git add -A`, `git commit -m "Persist records on the device with a versioned snapshot, migration and recovery"` — у нас `17 files changed`.
+
+    **Самоперевірка:** `src/snapshot.ts` не імпортує `react-native` і нічого не мутує; відкладений знімок копіюється під `BACKUP_KEY` до будь-якого запису під `KEY`; версія вища за поточну не перезаписується мовчки; екрани не знають, яке сховище отримали.
+
+    **Якщо щось пішло не так:** після перезапуску стартовий список — запис іде в пам’ять, а не в `nativeStorage`, або перезапуск був лише перезавантаженням `r` (тоді пам’ять теж жива). Повідомлення про відновлення з’являється щоразу — відкладений знімок не замінено стартовим списком. Міграція «спрацювала», а ціни порожні — крок v0 прочитав порожній текст як `0`, а не `null`.
+
+    Еталон кроку — `Завантажити: RN-05 — Дані на пристрої: версія знімка, міграція, відновлення` після експорту (без `assets/*.png`, `LICENSE`, `package-lock.json` і `node_modules/` — див. крок RN-01). Команди виконано лише на macOS; у Linux і Windows (Git Bash) їх не запускали.
+  en: |
+    The records finally survive a restart: the device storage (AsyncStorage) replaces the memory storage — with the same three methods, so the screens do not change. The snapshot has a version, an old version-0 snapshot migrates to the current one, and a damaged one does not crash the app: its text goes under a backup key, and the screen says so.
+
+    | Project | Key (and the backup — with `.backup`) | What changed between v0 and v1 | Migration step |
+    |---|---|---|---|
+    | Wishlist | `jsll.wishlist.v1` | the price was saved as text (`"80"`, `""`) | empty text — `null`, other text — `Number(…)` |
+    | Planner | `jsll.planner.v1` | there was no priority | a missing priority — `"normal"` |
+    | Habit tracker | `jsll.habits.v1` | completion dates repeated and were not sorted | `uniqueSortedDays` of the domain |
+    | Expense tracker | `jsll.expenses.v1` | the amount was a decimal number of hryvnias in `amount` | `parseAmountMinor(String(amount))` of the domain → `amountMinor` |
+
+    The v0 snapshot is the file `data/legacy-v0.json` this step supplies (its content is in the project task). `.v1` in the key is only the name of the “shelf”; `schemaVersion` inside the snapshot describes the data's shape, so the key does not change.
+
+    Below is the wishlist. The computer commands were run on macOS (Node.js 25.2.1, Expo SDK 57, async-storage 2.2.0) on all four projects; the Node.js tests use the memory storage, AsyncStorage itself we did not run. There was no emulator, simulator or phone: step 8 follows the async-storage 2.2.0 documentation and this unit's lessons.
+
+    **1. The starting state.** `cd ~/js-course/wishlist-native`, `git status` — clean, `git log --oneline -1` — the commit of the screen stack.
+
+    **2. The device storage.** `npx expo install @react-native-async-storage/async-storage` — for us `› Installing 1 SDK 57.0.0 compatible native module using npm`, and `package.json` has `"2.2.0"`. `src/nativeStorage.ts`: an object `nativeStorage` with `getItem`, `setItem`, `removeItem`, which call the same methods of `AsyncStorage`. In `App.tsx`, `createRepository` gets `nativeStorage` instead of `createMemoryStorage()`; nothing else in the screens changes. AsyncStorage does not encrypt — no secrets go into it.
+
+    **3. The read chain.** `src/snapshot.ts`: `CURRENT_VERSION = 1`, `BACKUP_KEY = "jsll.wishlist.v1.backup"`; `migrate(snapshot)` — a map of steps `steps = { 0: (records) => … }` and a loop `while (version < CURRENT_VERSION)`, the input never changes, a version above the current one is `newer`, an unknown shape is `invalid`; `restoreSnapshot(text)` — `JSON.parse` in a `try` → `migrate` → `parseItemList` (reasons: `unparsable`, `newer`, `invalid`, `invalid-record`); `loadSnapshot(storage)` — nothing saved → `missing`; a migrated snapshot is saved at once in the current version; one that cannot be restored — **first** a copy of its text under `BACKUP_KEY`, only then anything else.
+
+    **4. The repository.** `readAll()` now returns `{ records, recovered }`: after a snapshot was set aside it saves the starting list (the next read is clean) and reports `recovered: true` once. The detail and the edit take `records`. `ItemsScreen` shows “The saved wishes could not be read…” with the backup key's name, and when the storage itself did not answer — “The list did not load” and “Load again” (an `attempt` counter in the focus effect's dependencies). A write happens only after a successful read — `apply` reads first.
+
+    **5. A long category.** The contract `parseItemList` refuses a category longer than 30 characters, so the category field gets `maxLength={30}` — otherwise such a record would make the whole saved list “damaged” at the next read.
+
+    **6. A rehearsal on the device.** `data/legacy-v0.json` — the v0 snapshot of the task. `src/seed.ts`: `SEED` — `'none'`, `'legacy-v0'` or `'corrupt'` (a cut-off snapshot text), and `applySeed(storage, seed)`. In a development build (`__DEV__`) with `SEED` other than `'none'`, `App.tsx` first writes that snapshot and only then shows the navigator.
+
+    **7. The check on the computer.** `npx tsc --noEmit` — not a single line; `npm test` — `Passed: 43 · failed: 0`; the new tests in `tests/snapshot.test.js`: the file `data/legacy-v0.json` migrates to the expected records, `migrate` does not change its input, version 2 is `newer`, a cut-off text is `unparsable`, a damaged snapshot lies under the backup key unchanged and the notice comes once; `npx expo export --platform android` — for us `Android Bundled 2203ms index.ts (847 modules)`.
+
+    **8. On the declared target.** `npm start`. Change a wish, close the app **completely** (Android — remove it from the recent apps, iOS — swipe it up in the app switcher) and open it again from Expo Go — the change is there. Then `SEED = 'legacy-v0'` in `src/seed.ts`, save, `r` in the Metro terminal — three wishes, the prices “80 ₴”, “240 ₴” and “no price” (“UAH 80” in English). Then `SEED = 'corrupt'`, `r` — the starting list and the notice with the key `jsll.wishlist.v1.backup`, no crash. Put `SEED = 'none'` back. We have not seen these screens.
+
+    **9. Evidence and commit.** In `EVIDENCE.md`, a section “RN-05”: the lines of step 7 and what you saw on the target (restart, migration, recovery), or a “not performed” record (what, the target, why, what it takes to come back). `git status --short` — among others `?? data/legacy-v0.json`, `?? src/nativeStorage.ts`, `?? src/seed.ts`, `?? tests/snapshot.test.js`; `SEED` in the commit is `'none'`. `git add -A`, `git commit -m "Persist records on the device with a versioned snapshot, migration and recovery"` — for us `17 files changed`.
+
+    **Self-check:** `src/snapshot.ts` does not import `react-native` and mutates nothing; a snapshot set aside is copied under `BACKUP_KEY` before any write under `KEY`; a version above the current one is never silently overwritten; the screens do not know which storage they got.
+
+    **If something goes wrong:** the starting list after a restart — the write goes to memory, not to `nativeStorage`, or the restart was only an `r` reload (then the memory is alive too). The recovery notice appears every time — the snapshot set aside was not replaced by the starting list. The migration “worked” but the prices are empty — the v0 step read empty text as `0` instead of `null`.
+
+    The step's reference is `Download: RN-05 — Data on the device: snapshot version, migration, recovery` after the export (without `assets/*.png`, `LICENSE`, `package-lock.json` and `node_modules/` — see step RN-01). The commands were run on macOS only; they were not run on Linux or Windows (Git Bash).
+purpose:
+  uk: "Це крок твого проєкту: адаптер сховища пристрою, версію знімка, міграцію й відновлення після пошкодження з цього розділу ти застосовуєш до власного застосунку. Платформа цей крок не перевіряє: доказ — вивід команд, тести, `EVIDENCE.md` і commit."
+  en: "This is a step of your project: you apply this unit's device storage adapter, snapshot version, migration and recovery from damage to your own app. The platform does not check this step: the evidence is the command output, the tests, `EVIDENCE.md` and the commit."
+objectives:
+  - uk: "Зберігати записи на пристрої через адаптер AsyncStorage у знімку з версією так, щоб вони переживали перезапуск."
+    en: "Save the records on the device through an AsyncStorage adapter in a versioned snapshot so that they survive a restart."
+  - uk: "Мігрувати наданий знімок v0 до поточної версії й відкладати пошкоджений знімок під резервний ключ із повідомленням замість падіння, з тестами на кожну ланку."
+    en: "Migrate the supplied v0 snapshot to the current version and set a damaged snapshot aside under a backup key with a notice instead of crashing, with tests for every link."
+transfer:
+  uk: "Цей крок виконується в редакторі, терміналі й на заявленій нативній цілі: що зробити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor, a terminal and on the declared native target: what to do, the expected output and the self-check list are above and on the step's page in your project."
