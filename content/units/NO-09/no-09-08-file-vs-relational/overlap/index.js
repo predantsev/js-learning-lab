@@ -21,15 +21,18 @@ const tasks = [
   { id: 't-01', title: '%%water%%', done: false },
   { id: 't-02', title: '%%library%%', done: false },
 ];
-// The overlap injector: the first update pauses 20 ms between its read and its write, the second 40 ms.
+// The overlap injector: the first update to start pauses 20 ms between its read and its write, the second
+// 40 ms. The pause is taken when an update starts, so the order of the calls decides it, not which read
+// happens to finish first.
 let started = 0;
-const pause = () => sleep(20 * ++started);
+const nextPause = () => 20 * ++started;
 
 // File repository: every update reads the whole file, changes one record and writes the whole file back.
 const fileRepo = {
   async update(id, patch) {
+    const wait = nextPause();
     const records = JSON.parse(await readFile('tasks.json', 'utf8'));
-    await pause(); // meanwhile the other update reads the same old file
+    await sleep(wait); // meanwhile the other update reads the same old file
     const next = records.map((task) => (task.id === id ? { ...task, ...patch } : task));
     await writeAtomic('tasks.json', next);
   },
@@ -62,7 +65,7 @@ const insert = db.prepare('INSERT INTO tasks VALUES (?, ?, ?)');
 for (const task of tasks) insert.run(task.id, task.title, Number(task.done));
 const sqlRepo = {
   async update(id, patch) {
-    await pause();
+    await sleep(nextPause());
     if ('done' in patch) db.prepare('UPDATE tasks SET done = ? WHERE id = ?').run(Number(patch.done), id);
     if ('title' in patch) db.prepare('UPDATE tasks SET title = ? WHERE id = ?').run(patch.title, id);
   },

@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { DatabaseSync } from 'node:sqlite';
 
 export const tasks = [
+  { id: 't-07', title: '%%t7%%', dueDate: '2026-03-02', done: false },
   { id: 't-01', title: '%%t1%%', dueDate: '2026-03-02', done: false },
   { id: 't-02', title: '%%t2%%', dueDate: '2026-03-01', done: false },
   { id: 't-03', title: '%%t3%%', dueDate: null, done: false },

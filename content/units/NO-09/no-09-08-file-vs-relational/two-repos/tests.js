@@ -3,7 +3,7 @@ import { tasks, writeTasksFile, createTasksDb } from './fixtures.js';
 import { createFileRepo, createSqlRepo, choice } from './repos.js';
 
 const expected = {
-  pending: ['t-02', 't-01', 't-05', 't-03'],
+  pending: ['t-02', 't-01', 't-07', 't-05', 't-03'], // t-07 is stored first but has the date of t-01
   done: ['t-04', 't-06'],
 };
 let files = 0;
