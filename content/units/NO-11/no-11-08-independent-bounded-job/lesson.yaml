@@ -110,7 +110,7 @@ blocks:
 
         **`shutdown()`**: нові задачі й ті, що чекають, відхиляються з `ShutdownError`; promise виконується тоді, коли всі задачі, що будуються, завершилися; після цього не лишається жодного таймера.
 
-        `index.js` — демонстрація, яку можна змінювати.
+        `index.js` — демонстрація, яку можна змінювати. Перевірки не міряють часу: паузи вони бачать як затримки, які `app.js` просить у `setTimeout` (глобального, з `node:timers` чи з `node:timers/promises`).
       en: |
         In `app.js` write `createReportRunner({ concurrency, maxQueued, maxAttempts, baseMs, store, random })`. `store` is a store of reports with the methods `get(id)` (a report or `undefined`) and `save(id, report)`; `random` defaults to `Math.random`. `errors.js` has `QueueFull` and `ShutdownError`.
 
@@ -123,7 +123,7 @@ blocks:
 
         **`shutdown()`**: new jobs and waiting ones are rejected with `ShutdownError`; the promise fulfills once every job being built has finished; after that no timer is left.
 
-        `index.js` is a demo you may change.
+        `index.js` is a demo you may change. The checks measure no time: they see the pauses as the delays `app.js` asks `setTimeout` for (the global one, from `node:timers` or from `node:timers/promises`).
     testTitles:
       "runs at most concurrency builds at once":
         uk: "Будує щонайбільше `concurrency` звітів одночасно"
@@ -134,15 +134,21 @@ blocks:
       "retries a failing build up to maxAttempts with doubling pauses":
         uk: "Повторює `build`, що падає, до `maxAttempts` разів із паузами, що подвоюються"
         en: "Retries a failing build up to `maxAttempts` with doubling pauses"
+      "each pause is scaled by random() (jitter)":
+        uk: "Кожну паузу помножено на `random()` (jitter)"
+        en: "Each pause is scaled by `random()` (jitter)"
       "does not retry an error whose retryable is false":
         uk: "Не повторює помилку з `retryable: false`"
         en: "Does not retry an error whose `retryable` is false"
       "a job whose id is already in the store resolves with the saved report and builds nothing":
         uk: "Задача з `id`, що вже є в `store`, виконується збереженим звітом і нічого не будує"
         en: "A job whose `id` is already in the store resolves with the saved report and builds nothing"
-      "an abort stops a waiting job before it builds and a running job without more attempts":
-        uk: "Скасування зупиняє задачу, що чекає, до побудови, а задачу, що будується, — без нових спроб"
-        en: "An abort stops a waiting job before it builds and a running job without more attempts"
+      "an abort rejects a waiting job at once and it is never built":
+        uk: "Скасування одразу відхиляє задачу, що чекає, і її ніколи не будують"
+        en: "An abort rejects a waiting job at once, and it is never built"
+      "an abort of a running job rejects with AbortError and makes no more attempts":
+        uk: "Скасування задачі, що будується, відхиляє з `AbortError` без нових спроб"
+        en: "An abort of a running job rejects with `AbortError` and makes no more attempts"
       "shutdown refuses new and waiting jobs, waits for running ones and leaves no timers":
         uk: "`shutdown` відмовляє новим і тим, що чекають, дочікується тих, що будуються, і не лишає таймерів"
         en: "`shutdown` refuses new and waiting jobs, waits for running ones and leaves no timers"
@@ -160,8 +166,12 @@ blocks:
           en: "This check (`concurrency` 2, `maxQueued` 2) expects the 5th job to reject with `QueueFull` within 20 ms and never start building."
       - when: { test: "retries a failing build up to maxAttempts with doubling pauses" }
         message:
-          uk: "Ця перевірка (`maxAttempts` 3, `baseMs` 40, `random` = 1) очікує 3 спроби, відхилення помилкою останньої й паузи близько 40 і 80 мс."
-          en: "This check (`maxAttempts` 3, `baseMs` 40, `random` = 1) expects 3 attempts, a rejection with the last one’s error and pauses of about 40 and 80 ms."
+          uk: "Ця перевірка (`maxAttempts` 3, `baseMs` 40, `random` = 1) очікує 3 спроби, відхилення помилкою останньої й те, що `app.js` попросить у таймера паузи 40 і 80 мс."
+          en: "This check (`maxAttempts` 3, `baseMs` 40, `random` = 1) expects 3 attempts, a rejection with the last one’s error, and `app.js` asking a timer for pauses of 40 and 80 ms."
+      - when: { test: "each pause is scaled by random() (jitter)" }
+        message:
+          uk: "Ця перевірка (`maxAttempts` 2, `baseMs` 40, `random` = 0,25) очікує одну паузу 10 мс: значення, яке повертає `random()` з параметрів, множить усю паузу."
+          en: "This check (`maxAttempts` 2, `baseMs` 40, `random` = 0.25) expects one pause of 10 ms: the value that `random()` from the options returns scales the whole pause."
       - when: { test: "does not retry an error whose retryable is false" }
         message:
           uk: "Ця перевірка дає `build`, що кидає помилку з `retryable: false`, і очікує одну спробу й відхилення цією помилкою."
@@ -170,10 +180,14 @@ blocks:
         message:
           uk: "Ця перевірка кладе в `store` звіт для `r-done` і очікує, що `submit` із цим `id` виконається збереженим звітом без жодного `build` і `save`."
           en: "This check puts a report for `r-done` into `store` and expects `submit` with that `id` to fulfill with the saved report without any `build` or `save`."
-      - when: { test: "an abort stops a waiting job before it builds and a running job without more attempts" }
+      - when: { test: "an abort rejects a waiting job at once and it is never built" }
         message:
-          uk: "Ця перевірка спершу скасовує задачу, що чекає, поки обидва місця зайняті, і очікує `AbortError` протягом 50 мс — не тоді, коли до неї дійде черга. Потім скасовує задачу, що будується, і очікує `AbortError` без другої спроби. Задача, що чекала, не повинна будуватися взагалі."
-          en: "This check first aborts a waiting job while both places are busy and expects `AbortError` within 50 ms — not when its turn comes. Then it aborts a job being built and expects `AbortError` without a second attempt. The waiting job must never be built."
+          uk: "Ця перевірка скасовує задачу, що чекає, поки обидва місця зайняті, і очікує `AbortError` протягом 50 мс — не тоді, коли до неї дійде черга. Після звільнення місць її не повинні будувати взагалі."
+          en: "This check aborts a waiting job while both places are busy and expects `AbortError` within 50 ms — not when its turn comes. After the places free up it must never be built."
+      - when: { test: "an abort of a running job rejects with AbortError and makes no more attempts" }
+        message:
+          uk: "Ця перевірка скасовує задачу, що будується (`maxAttempts` 3), і очікує відхилення з `AbortError` і рівно одну спробу `build`: скасування — не та помилка, яку повторюють."
+          en: "This check aborts a job being built (`maxAttempts` 3) and expects a rejection with `AbortError` and exactly one `build` attempt: an abort is not an error to retry."
       - when: { test: "shutdown refuses new and waiting jobs, waits for running ones and leaves no timers" }
         message:
           uk: "Ця перевірка викликає `shutdown()`, коли 2 задачі будуються, а 1 чекає. Вона очікує `ShutdownError` для тієї, що чекала, і для нової, promise `shutdown()`, що чекає завершення обох, їхні звіти й жодного таймера після цього (через `activeResources()`)."

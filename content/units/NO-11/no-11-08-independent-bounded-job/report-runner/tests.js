@@ -1,7 +1,50 @@
 // Hidden checks of the report runner. Every check builds its own store (a Map with get/save that
-// counts saves) and its own jobs; "gated" builds finish only when the check releases them.
+// counts saves) and its own jobs; "gated" builds finish only when the check releases them. No check
+// measures time: the pause checks record the delay that code in app.js asks a timer for (global
+// setTimeout, node:timers or node:timers/promises), while the timers still run for real.
+import timers from 'node:timers';
+import timersPromises from 'node:timers/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { createReportRunner } from './app.js';
 import { QueueFull, ShutdownError } from './errors.js';
+
+const fromAppFile = () => /app\.js:\d/.test(new Error().stack);
+
+// Runs body() while the delay of every setTimeout called from app.js is recorded; returns the delays
+// rounded to whole milliseconds.
+async function recordPauses(body) {
+  const delays = [];
+  const original = { global: globalThis.setTimeout, timers: timers.setTimeout, promises: timersPromises.setTimeout };
+  const wrap = (setTimeoutFn) =>
+    function (callback, ms, ...rest) {
+      if (typeof callback === 'function' && fromAppFile()) delays.push(Math.round(Number(ms ?? 0)));
+      return setTimeoutFn.call(this, callback, ms, ...rest);
+    };
+  globalThis.setTimeout = wrap(original.global);
+  timers.setTimeout = wrap(original.timers);
+  timersPromises.setTimeout = (ms, value, options) => {
+    if (fromAppFile()) delays.push(Math.round(Number(ms ?? 0)));
+    return original.promises(ms, value, options);
+  };
+  syncBuiltinESMExports();
+  try {
+    await body();
+  } finally {
+    globalThis.setTimeout = original.global;
+    timers.setTimeout = original.timers;
+    timersPromises.setTimeout = original.promises;
+    syncBuiltinESMExports();
+  }
+  return delays;
+}
+
+const alwaysFails = (message, attempts) => ({
+  id: `r-${message}`,
+  build: async () => {
+    attempts.push(1);
+    throw new Error(message);
+  },
+});
 
 function memoryStore(initial = []) {
   const map = new Map(initial);
@@ -18,6 +61,8 @@ function gates() {
     id,
     build: (attempt, signal) => {
       started.push(id);
+      // An already aborted signal fails the build at once (a build never hangs on it).
+      if (signal?.aborted) return Promise.reject(signal.reason);
       running += 1;
       peak = Math.max(peak, running);
       return new Promise((resolve, reject) => {
@@ -66,23 +111,22 @@ test('rejects at once with QueueFull when maxQueued jobs are already waiting', a
 
 test('retries a failing build up to maxAttempts with doubling pauses', async () => {
   const runner = createReportRunner(options(memoryStore(), { baseMs: 40 }));
-  const times = [];
-  const started = performance.now();
-  const { error } = await settle(
-    runner.submit({
-      id: 'r-flaky',
-      build: async () => {
-        times.push(performance.now() - started);
-        throw new Error('database busy');
-      },
-    }),
-  );
-  expect(error?.message, 'the rejection after the last attempt').toBe('database busy');
-  expect(times.length, 'attempts with maxAttempts 3').toBe(3);
-  const [first, second] = [times[1] - times[0], times[2] - times[1]];
-  expect(first, 'pause before attempt 2 (baseMs 40, random 1)').toBeGreaterThanOrEqual(38);
-  expect(second, 'pause before attempt 3').toBeGreaterThanOrEqual(78);
-  expect(second, 'pause before attempt 3').toBeLessThan(160);
+  const attempts = [];
+  let outcome;
+  const delays = await recordPauses(async () => {
+    outcome = await settle(runner.submit(alwaysFails('database busy', attempts)));
+  });
+  expect(outcome.error?.message, 'the rejection after the last attempt').toBe('database busy');
+  expect(attempts.length, 'attempts with maxAttempts 3').toBe(3);
+  expect(delays, 'the pauses app.js asked a timer for (baseMs 40, random 1)').toEqual([40, 80]);
+});
+
+test('each pause is scaled by random() (jitter)', async () => {
+  const runner = createReportRunner(options(memoryStore(), { baseMs: 40, maxAttempts: 2, random: () => 0.25 }));
+  const delays = await recordPauses(async () => {
+    await settle(runner.submit(alwaysFails('timeout', [])));
+  });
+  expect(delays, 'the pause app.js asked a timer for (baseMs 40, random 0.25)').toEqual([10]);
 });
 
 test('does not retry an error whose retryable is false', async () => {
@@ -111,24 +155,33 @@ test('a job whose id is already in the store resolves with the saved report and 
   expect(store.saves, 'saves for an id already in the store').toBe(0);
 });
 
-test('an abort stops a waiting job before it builds and a running job without more attempts', async () => {
+test('an abort rejects a waiting job at once and it is never built', async () => {
   const runner = createReportRunner(options(memoryStore()));
   const g = gates();
-  const running = new AbortController();
-  const waiting = new AbortController();
-  const first = settle(runner.submit(g.job('r-1'), { signal: running.signal }));
+  quiet(runner.submit(g.job('r-1')));
   quiet(runner.submit(g.job('r-2')));
+  const waiting = new AbortController();
   const third = settle(runner.submit(g.job('r-3'), { signal: waiting.signal }));
   await sleep(10);
   waiting.abort();
   const early = await Promise.race([third, sleep(50).then(() => ({ pending: true }))]);
   expect(early.error?.name, 'the waiting job 50 ms after its abort, while both slots are still busy').toBe('AbortError');
-  running.abort();
-  expect((await first).error?.name, 'the running job after its abort').toBe('AbortError');
+  await g.releaseNext();
   await g.releaseNext();
   await sleep(30);
-  expect(g.started.filter((id) => id === 'r-1').length, 'builds of the aborted running job').toBe(1);
   expect(g.started.includes('r-3'), 'the aborted waiting job was built').toBe(false);
+});
+
+test('an abort of a running job rejects with AbortError and makes no more attempts', async () => {
+  const runner = createReportRunner(options(memoryStore()));
+  const g = gates();
+  const running = new AbortController();
+  const first = settle(runner.submit(g.job('r-1'), { signal: running.signal }));
+  await sleep(10);
+  running.abort();
+  expect((await first).error?.name, 'the running job after its abort').toBe('AbortError');
+  await sleep(50);
+  expect(g.started.filter((id) => id === 'r-1').length, 'builds of the aborted running job').toBe(1);
 });
 
 test('shutdown refuses new and waiting jobs, waits for running ones and leaves no timers', async () => {
