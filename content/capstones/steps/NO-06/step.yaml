@@ -1,0 +1,158 @@
+# Capstone step of unit NO-06 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of NO-06 from this file.
+# A local step: done in the learner's editor, terminal and browser; no platform checks. The project page shows
+# only the intro of a local step, so the intro carries the whole procedure.
+# Teaching order: …, NO-07, NO-11, NO-06 — this step continues the NO-11 reference.
+# Every command was run on macOS in a scratch home on all four projects, continuing the NO-11 references, in a
+# Ukrainian and an English workspace, on Node.js 25.2.1 (npm 11.6.2, curl 8.7.1) and on Node.js 22.13.1
+# (npm 10.9.2, with NODE_OPTIONS=--experimental-strip-types): npm run typecheck, npm run lint, npm test and
+# npm run build of the web project (also a build with DATA_SOURCE=http and no API_BASE_URL, refused),
+# npm run typecheck and npm test in server/, curl -i of a preflight. The browser part ran in Google Chrome
+# 154.0.8037.93 driven by playwright-core (channel "chrome", no window): the page on 127.0.0.1:4310 with the
+# server on 4311, the capstone's change, the server stopped and the page reloaded, the server restarted and
+# the page reloaded, /tests.html; and two wrong servers (PATCH missing from the allowed methods; another
+# allowed origin), whose Console lines are quoted. Deliberately wrong variants were run against npm test on all
+# four (listed in the task files' headers and in the hand-back); each failed at least one test. The native
+# companion: computer side only (npx tsc --noEmit, npm test with Jest); no emulator, simulator or phone, so the
+# target check is recorded as not performed. Quoted output is from the wishlist run on Node.js 25.2.1 (the
+# Ukrainian text quotes the Ukrainian workspace, the English text the English one). Not run: Linux, Windows,
+# other browsers.
+# reference/ is the NO-11 reference plus the files of this step (without node_modules/, package-lock.json,
+# dist/, .env, serve.mjs and the runtime folders server/data/ and server/.check/); sample names in tests/ are
+# fixture strings. The native project's change is described in the intro; its files are not in this reference.
+unit: NO-06
+mode: local
+entry: index.html
+title:
+  uk: "Вебклієнт на справжньому API: CORS, спільний контракт, сервер — джерело істини"
+  en: "The web client on the real API: CORS, a shared contract, the server as the source of truth"
+intro:
+  uk: |
+    Досі твій вебзастосунок брав записи з фікстурного API — «сервера», що жив у `localStorage` браузера, а справжній сервер на `127.0.0.1:4311` жив окремо. Тепер вони з’єднуються: застосунок читає й змінює записи через `/v1` справжнього сервера, а сервер стає **джерелом істини** — те, що показує й рахує сторінка, береться з його відповідей, а не з копії в браузері.
+
+    | Проєкт | Зміна зі сторінки | Що рахується зі списку сервера |
+    |---|---|---|
+    | Список бажань | `PATCH /v1/records/:id` з `{acquired}` | сума цін бажаних речей |
+    | Планувальник | `PATCH /v1/records/:id` з `{done}` | невиконані справи з терміном до заданого дня |
+    | Трекер звичок | `POST /v1/records/:id/completions` з `{day}` | виконання і серія на заданий день |
+    | Трекер витрат | `POST /v1/records` з ключем `Idempotency-Key` | суми за категоріями в `amountMinor` |
+
+    Перевірено на macOS на всіх чотирьох проєктах в українському й англійському проєктах — на Node.js 25.2.1 і 22.13.1 (з `NODE_OPTIONS=--experimental-strip-types`), у Google Chrome 154. Нижче — «Список бажань» в українському проєкті на 25.2.1. На Linux, Windows та в інших браузерах не перевірялося.
+
+    **1. Стан на початку.** `cd ~/js-course/<проєкт>`, `git status` — чисто, останній commit — `Stream the records out and in as JSON lines: a bounded, cancellable import job that upserts by id`.
+
+    **2. Спільний контракт — `shared/contract.ts`.** Один модуль на сервер, вебклієнт і нативний компаньйон: типи для `tsc` і схеми для даних, що приходять під час роботи (`tsc` відповіді з мережі не бачить). `RECORDS_PATH_V1 = "/v1/records"`, `PAGE_LIMIT_V1 = 50` (найбільша сторінка сервера), тип запису v1, `ListPageV1 = { items, nextCursor }`, `ErrorBodyV1`, і три схеми: запис (`parse…V1` — та сама перевірка з `data/model.ts`), сторінка `parseListPageV1` (кожен запис і `nextCursor` — `id` цієї сторінки або `null`), тіло відмови `parseErrorBodyV1`. Зайві поля дозволені: додати поле — сумісна зміна; перейменувати — це вже `/v2` поруч, а v1 не змінюється. У `tsconfig.json` — `"shared/**/*.ts"` в `include`.
+
+    **3. HTTP-джерело — `data/httpApi.ts`, `createHttpApi({ baseUrl, fetch, timeoutMs })`.** Ті самі функції, що й у фікстурного API (у «Списку бажань» — `listItems`, `createItem`, `saveItem`, `deleteItem`, і нова вузька `setAcquired`), але кожна — запит до `/v1`. `fetch` — параметр, тож тест передає свій. Список — усі сторінки `GET /v1/records?limit=50&…&cursor=…` (фільтр іде параметром сервера), кожна сторінка — через `parseListPageV1`; не більше 200 сторінок. Відповідь на запис — теж через схему запису: відповідь не тієї форми — `InvalidResponseError`, а не «якось покажемо». Не `ok` — `ApiError` зі статусом і `code` тіла. Повтор лише того, що може пройти: читання — ще двічі, через 100 і 200 мс, коли немає з’єднання (`TypeError`), минув час (`TimeoutError`, 5 с) чи прийшов `5xx`; `4xx` не повторюється. Створення несе `Idempotency-Key`, створений **один раз на виклик**, тож повтор після загубленої відповіді не додасть запис удруге. `PUT`, `PATCH`, `DELETE` не повторюються: людина натисне ще раз.
+
+    **4. Звідки дані — `data/api.ts`, `data/config.js`, `scripts/build.mjs`.** Старий `data/api.ts` стає `data/fixtureApi.ts` (`git mv`; `ApiError` — у `data/apiError.ts`). Новий `data/api.ts` — єдине місце, що вирішує джерело: `DATA_SOURCE=http` — сервер на `API_BASE_URL`, без нього — фікстурне API. Компоненти й доменні функції не змінюються. `resetApi` тестів перемикає на фікстурне API, тож `tests/ui.test.tsx` лишається без змін, а фікстури живуть далі — у тестах і як стартові записи сервера. `?synthetic=N` в адресі, як і раніше, — фікстурне API з N згенерованими записами (вимірювання не пише на сервер). `loadClientConfig(env)` у `data/config.js` — без тихого запасного варіанта: `http` без адреси чи адреса, що не є origin, — помилка конфігурації. `npm run build` тепер — `node --env-file-if-exists=.env scripts/build.mjs`: та сама збірка esbuild, плюс `define` `CLIENT_ENV` лише з `DATA_SOURCE` і `API_BASE_URL`; `scripts/release.mjs` додає те саме у свій `define`, а `npm run release` — з `--env-file-if-exists=.env`. У `.env` (і `.env.example`):
+
+    ```text
+    PORT=4310
+    DATA_SOURCE=http
+    API_BASE_URL=http://127.0.0.1:4311
+    ```
+
+    `API_BASE_URL` публічний: браузер кожного відвідувача звертається на цю адресу, тож вона **навмисно** потрапляє в збірку (у нас — у файл `dist/chunk-….js`). Це виняток з правила RE-12 «жодного значення з `.env` у збірці» лише для цього ключа; `PORT` і будь-що секретне в збірку не йдуть (`grep -c "4310" dist/*.js` — `0` у кожному файлі).
+
+    **5. Екрани — кеш даних.** Кеш лишається копією: після кожного вдалого запису всі ключі читаються знову, тож позначка, лічильник і сума на екрані — серверні. Оптимістична зміна твого проєкту надсилає лише своє поле (у «Списку бажань» — `setAcquired`: `PATCH {acquired}` замість цілого запису); відмова — запис повертається як був, і повідомлення його називає. У `errorText` — гілка для `TimeoutError`: сервер, що не відповідає, — це «немає з’єднання», а не «дані пошкоджені».
+
+    **6. CORS на сервері — `server/src/cors.ts`.** Сторінка з `127.0.0.1:4310` і сервер на `127.0.0.1:4311` — різні origin, тож браузер дає сторінці прочитати відповідь, лише коли та називає її origin. Список дозволених, ніколи `*`: дозволений `Origin` повторюється точно, кожна відповідь має `Vary: Origin`, іншим origin сервер не каже нічого. `PATCH` і JSON-тіло — не «простий» запит: спершу браузер питає `OPTIONS` з `Access-Control-Request-Method` (preflight); `answerPreflight` відповідає на нього сам, до маршрутів: `204`, `access-control-allow-methods: GET, POST, PUT, PATCH, DELETE`, `access-control-allow-headers: content-type, idempotency-key`. Без credentials: у API немає входу й cookies, тож `Access-Control-Allow-Credentials` не надсилається, а клієнт лишає типовий режим `fetch`. Список — у `loadConfig`: `ALLOWED_ORIGINS` (через кому), типово `http://127.0.0.1:4310`; `*` чи не-origin — помилка конфігурації. `createRecordsServer` отримує список останнім параметром. CORS не захищає API: curl і будь-яка програма надсилають запит напряму.
+
+    **7. Тести — `server/tests/client.test.ts`.** Вони імпортують сам `../../data/httpApi.ts` і `../../shared/contract.ts` — той код, що працює в браузері, — і справжній сервер на `listen(0)`: кожна сторінка `GET /v1/records` проходить контракт і дає кожен запис один раз; відповіді `POST`, `PATCH` і відмови — теж; preflight для `PATCH` і `POST` з `4310`; інший origin не названо, запит без `Origin` працює; HTTP-джерело збирає всі сторінки й фільтрує на сервері, а підсумок збігається з підсумком сховища; зміна твого проєкту переживає перезапуск (новий сервер на тій самій теці даних); відмова — зі статусом, і запис на сервері той самий; загублена відповідь створення — повтор із тим самим ключем, запис один; читання — три спроби без сервера, `4xx` — одна; відповідь не тієї форми відкинуто; час відповіді вичерпано — `TimeoutError`. Що браузер робить із заголовками CORS, Node не перевіряє (його `fetch` CORS не застосовує) — це крок 8.
+
+    **8. У браузері.** Два термінали: у `server/` — `npm start`, у теці проєкту — `npm start`; відкрий `http://127.0.0.1:4310/`. У нас (Chrome 154):
+
+    ```text
+    сторінка:        Бажань: 6 · Ще хочу на суму: 365 грн · Без ціни: 1
+    «Позначити отриманим: Навушники» → Бажань: 6 · Ще хочу на суму: 285 грн · Без ціни: 1
+    лог сервера:     OPTIONS /v1/records/w-01 204 · PATCH /v1/records/w-01 200 · GET /v1/records 200 …
+    сервер зупинено, сторінку перезавантажено → Список не завантажився (немає з’єднання)
+    сервер запущено знову, сторінку перезавантажено → позначка є, 285 грн
+    $ curl -sS http://127.0.0.1:4311/v1/records/w-01
+    {"id":"w-01","name":"Навушники","price":80,"acquired":true,"category":"Техніка"}
+    ```
+
+    Рядок логу сервера — JSON (`"method":"OPTIONS","route":"/v1/records/w-01","status":204`), ми лишили метод, маршрут і статус. Браузер показав `грн`, а Node форматує ту саму суму як `₴` — різні дані Intl, це знадобиться в NO-13. `http://127.0.0.1:4310/tests.html` — тести дій користувача на фікстурному API: `не пройшли: 0`.
+
+    **9. Спробуй зламати.** У сервері прибери `PATCH` з `ALLOWED_METHODS` — Console: `Access to fetch at 'http://127.0.0.1:4311/v1/records/w-01' from origin 'http://127.0.0.1:4310' has been blocked by CORS policy: Method PATCH is not allowed by Access-Control-Allow-Methods in preflight response.`, у лозі сервера є `OPTIONS`, а `PATCH` — немає, а сторінка пише `Позначку не збережено для «Навушники», повертаю як було (немає з’єднання)`: для коду сторінки блок CORS і відсутність мережі — однаковий `TypeError`. `ALLOWED_ORIGINS=http://localhost:4310` — `No 'Access-Control-Allow-Origin' header is present on the requested resource.` на кожен запит списку, хоча curl отримує той самий список. Потім проти тестів: `*` замість origin — `✖ only the web app's origin is named; another origin gets no CORS answer, a request without Origin still works`; лише перша сторінка — `✖ the HTTP source lists every wish across pages, filters on the server and the totals come from its list`; новий ключ на кожну спробу — `✖ a create whose answer was lost is sent again with the same Idempotency-Key and stored once`; повтор `4xx` — `✖ a read is tried three times when nothing answers, a 4xx once, and every failure rejects`. Назви тестів твого проєкту — у завданні. Поверни код.
+
+    **10. Нативний компаньйон.** У `~/js-course/<проєкт>-native` — копія `shared/contract.ts` без змін (`diff ../<проєкт>/shared/contract.ts shared/contract.ts` нічого не друкує; Metro не бачить файлів поза текою, тож це копія, як решта спільного коду), у `src/devConfig.ts` — `API_PORT = 4311` і `apiBaseUrl(target)` з тими самими адресами цілей, що й для mock-сервісу. Сервер слухає `127.0.0.1`: емулятор Android досягає його через `10.0.2.2`, симулятор iOS — через `127.0.0.1`, телефон на USB — після `adb reverse tcp:4311 tcp:4311`; телефон через Wi-Fi — лише з `HOST=0.0.0.0` і лише на час перевірки. CORS тут ні до чого: це не браузер. `npx tsc --noEmit` і `npm test` — на комп’ютері. Є ціль — направ екран, що читає mock-сервіс, на `apiBaseUrl(TARGET)` + `/v1/records` (сторінки — через `parseListPageV1`) і запиши побачене; немає — у `EVIDENCE.md` нативного проєкту розділ «NO-06»: **не виконано**, причина й що потрібно, щоб повернутися. У нас цілі не було: код екрана не написано, перевірка не виконана.
+
+    **11. Доказ і commit.** `npm run typecheck`, `npm run lint` — без помилок; `npm test` — `не пройшли: 0`; у `server/` — `npm run typecheck` без рядків і `npm test` — `fail 0`. У `docs/server.md` — розділ «NO-06»: preflight `curl -i`, що показала сторінка й лог, і обидві хибні спроби. `git add -A`, `git commit -m "Connect the web app to the records server: an HTTP source behind the data-source module, a shared v1 contract, CORS for the dev origin"`; у нативному проєкті — свій commit.
+
+    **Самоперевірка:** сторінка показує записи сервера, а зміна з неї — у лозі сервера (`OPTIONS`, потім сам запит) і переживає перезапуск; похідне значення твого проєкту після перезапуску й перезавантаження рахується зі списку сервера; без сервера сторінка чесно каже «немає з’єднання»; CORS дозволяє лише `http://127.0.0.1:4310`, без `*` і без credentials; відповіді проходять спільний контракт; повтор створення не дублює запис.
+
+    **Якщо щось не так:** `API_BASE_URL is required when DATA_SOURCE is "http"` під час `npm run build` — у `.env` немає адреси. Сторінка порожня, а в Console — `blocked by CORS policy` — сервер не знає origin сторінки: відкрий її саме як `http://127.0.0.1:4310/` (не `localhost`) або додай origin в `ALLOWED_ORIGINS`. Сторінка показує старі записи з фікстур — зібрано без `DATA_SOURCE=http` (перезапусти `npm start`, бо він збирає заново). `ERR_CONNECTION_REFUSED` у Console — сервер не запущено.
+
+    Референс кроку — `Завантажити: NO-06 — Вебклієнт на справжньому API: CORS, спільний контракт, сервер — джерело істини` після експорту; відкрий його після власної спроби.
+  en: |
+    Until now your web app took its records from the fixture API — a "server" that lived in the browser's `localStorage` — while the real server on `127.0.0.1:4311` lived apart. Now they are connected: the app reads and changes records through the real server's `/v1`, and the server becomes the **source of truth** — what the page shows and counts comes from its answers, not from a copy in the browser.
+
+    | Project | Change from the page | Counted from the server's list |
+    |---|---|---|
+    | Wishlist | `PATCH /v1/records/:id` with `{acquired}` | the total price of wanted things |
+    | Planner | `PATCH /v1/records/:id` with `{done}` | pending tasks due by a given day |
+    | Habit tracker | `POST /v1/records/:id/completions` with `{day}` | completions and the streak for a given day |
+    | Expense tracker | `POST /v1/records` with an `Idempotency-Key` | per-category totals in `amountMinor` |
+
+    Checked on macOS on all four projects in a Ukrainian and an English project — on Node.js 25.2.1 and 22.13.1 (with `NODE_OPTIONS=--experimental-strip-types`), in Google Chrome 154. Below is the Wishlist in an English project on 25.2.1. Not checked on Linux, Windows or in other browsers.
+
+    **1. The starting state.** `cd ~/js-course/<project>`, `git status` — clean, the last commit is `Stream the records out and in as JSON lines: a bounded, cancellable import job that upserts by id`.
+
+    **2. A shared contract — `shared/contract.ts`.** One module for the server, the web client and the native companion: types for `tsc` and schemas for the data that arrives while the code runs (`tsc` never sees an answer from the network). `RECORDS_PATH_V1 = "/v1/records"`, `PAGE_LIMIT_V1 = 50` (the server's biggest page), the v1 record type, `ListPageV1 = { items, nextCursor }`, `ErrorBodyV1`, and three schemas: a record (`parse…V1` — the same check as in `data/model.ts`), a page `parseListPageV1` (every record, and `nextCursor` an `id` of that page or `null`), a refusal body `parseErrorBodyV1`. Extra fields are allowed: adding a field is a compatible change; renaming one is a `/v2` next to it, and v1 does not change. `tsconfig.json` gets `"shared/**/*.ts"` in `include`.
+
+    **3. The HTTP source — `data/httpApi.ts`, `createHttpApi({ baseUrl, fetch, timeoutMs })`.** The same functions as the fixture API (in the Wishlist `listItems`, `createItem`, `saveItem`, `deleteItem`, and a new narrow `setAcquired`), but each one is a request to `/v1`. `fetch` is a parameter, so a test passes its own. The list is every page of `GET /v1/records?limit=50&…&cursor=…` (the filter goes as the server's parameter), each page through `parseListPageV1`; at most 200 pages. The answer to a write goes through the record schema too: an answer of the wrong shape is an `InvalidResponseError`, not "show it somehow". Not `ok` — an `ApiError` with the status and the body's `code`. Only what may pass is retried: a read twice more, after 100 and 200 ms, when there is no connection (`TypeError`), the time ran out (`TimeoutError`, 5 s) or a `5xx` came; a `4xx` is never retried. A create carries an `Idempotency-Key` made **once per call**, so a retry after a lost answer cannot add the record twice. `PUT`, `PATCH`, `DELETE` are not retried: the person presses again.
+
+    **4. Where the data comes from — `data/api.ts`, `data/config.js`, `scripts/build.mjs`.** The old `data/api.ts` becomes `data/fixtureApi.ts` (`git mv`; `ApiError` moves to `data/apiError.ts`). The new `data/api.ts` is the one place that decides the source: `DATA_SOURCE=http` — the server at `API_BASE_URL`, without it — the fixture API. Components and domain functions do not change. The tests' `resetApi` switches to the fixture API, so `tests/ui.test.tsx` stays as it is, and the fixtures live on — in the tests and as the server's starting records. `?synthetic=N` in the address still means the fixture API with N generated records (a measurement never writes to the server). `loadClientConfig(env)` in `data/config.js` has no silent fallback: `http` without an address, or an address that is not an origin, is a configuration error. `npm run build` is now `node --env-file-if-exists=.env scripts/build.mjs`: the same esbuild build, plus a `define` of `CLIENT_ENV` with only `DATA_SOURCE` and `API_BASE_URL`; `scripts/release.mjs` adds the same to its `define`, and `npm run release` runs with `--env-file-if-exists=.env`. In `.env` (and `.env.example`):
+
+    ```text
+    PORT=4310
+    DATA_SOURCE=http
+    API_BASE_URL=http://127.0.0.1:4311
+    ```
+
+    `API_BASE_URL` is public: every visitor's browser calls that address, so it goes into the build **on purpose** (for us into a `dist/chunk-….js` file). That is an exception to RE-12's "no value from `.env` in the build" for this one key only; `PORT` and anything secret stay out of the build (`grep -c "4310" dist/*.js` — `0` in every file).
+
+    **5. The screens — the data cache.** The cache stays a copy: after every successful write every key is read again, so the mark, the count and the total on screen are the server's. Your project's optimistic change sends only its own field (in the Wishlist `setAcquired`: `PATCH {acquired}` instead of the whole record); a refusal puts the record back as it was, and the message names it. `errorText` gets a branch for `TimeoutError`: a server that does not answer is "no connection", not "damaged data".
+
+    **6. CORS on the server — `server/src/cors.ts`.** The page from `127.0.0.1:4310` and the server on `127.0.0.1:4311` are different origins, so the browser lets the page read an answer only when the answer names its origin. An allowlist, never `*`: an allowed `Origin` is repeated exactly, every answer has `Vary: Origin`, and the server says nothing to other origins. A `PATCH` and a JSON body are not a "simple" request: the browser first asks with `OPTIONS` and `Access-Control-Request-Method` (a preflight); `answerPreflight` answers it itself, before the routes: `204`, `access-control-allow-methods: GET, POST, PUT, PATCH, DELETE`, `access-control-allow-headers: content-type, idempotency-key`. No credentials: the API has no login and no cookies, so `Access-Control-Allow-Credentials` is never sent, and the client keeps `fetch`'s default mode. The list lives in `loadConfig`: `ALLOWED_ORIGINS` (comma-separated), by default `http://127.0.0.1:4310`; `*` or a non-origin is a configuration error. `createRecordsServer` takes the list as its last parameter. CORS does not protect the API: curl and any program send a request directly.
+
+    **7. Tests — `server/tests/client.test.ts`.** They import `../../data/httpApi.ts` and `../../shared/contract.ts` themselves — the code that runs in the browser — and the real server on `listen(0)`: every page of `GET /v1/records` passes the contract and gives every record once; the answers of `POST`, `PATCH` and a refusal do too; the preflight for `PATCH` and `POST` from `4310`; another origin is not named, a request without `Origin` works; the HTTP source collects every page and filters on the server, and the summary equals the store's; your project's change survives a restart (a new server on the same data folder); a refusal comes with its status, and the record on the server is unchanged; a create whose answer was lost — a retry with the same key, one record; a read — three attempts without a server, a `4xx` — one; an answer of the wrong shape refused; a server that does not answer in time — `TimeoutError`. What a browser does with the CORS headers Node does not check (its `fetch` applies no CORS) — that is step 8.
+
+    **8. In the browser.** Two terminals: `npm start` in `server/`, `npm start` in the project folder; open `http://127.0.0.1:4310/`. For us (Chrome 154):
+
+    ```text
+    page:            Wishes: 6 · Still wanted, total: UAH 365 · Without a price: 1
+    "Mark as acquired: Headphones" → Wishes: 6 · Still wanted, total: UAH 285 · Without a price: 1
+    server log:      OPTIONS /v1/records/w-01 204 · PATCH /v1/records/w-01 200 · GET /v1/records 200 …
+    server stopped, page reloaded → The list did not load (no connection)
+    server started again, page reloaded → the mark is there, UAH 285
+    $ curl -sS http://127.0.0.1:4311/v1/records/w-01
+    {"id":"w-01","name":"Headphones","price":80,"acquired":true,"category":"Tech"}
+    ```
+
+    A server log line is JSON (`"method":"OPTIONS","route":"/v1/records/w-01","status":204`); we kept the method, the route and the status. `http://127.0.0.1:4310/tests.html` — the user-action tests on the fixture API: `failed: 0`.
+
+    **9. Try to break it.** In the server, take `PATCH` out of `ALLOWED_METHODS` — the Console: `Access to fetch at 'http://127.0.0.1:4311/v1/records/w-01' from origin 'http://127.0.0.1:4310' has been blocked by CORS policy: Method PATCH is not allowed by Access-Control-Allow-Methods in preflight response.`, the server log has the `OPTIONS` and no `PATCH`, and the page says the mark was not saved and puts it back, "(no connection)": for the page's code a CORS block and a missing network are the same `TypeError`. `ALLOWED_ORIGINS=http://localhost:4310` — `No 'Access-Control-Allow-Origin' header is present on the requested resource.` for every list request, while curl gets the same list. Then against the tests: `*` instead of the origin — `✖ only the web app's origin is named; another origin gets no CORS answer, a request without Origin still works`; only the first page — `✖ the HTTP source lists every wish across pages, filters on the server and the totals come from its list`; a new key on every attempt — `✖ a create whose answer was lost is sent again with the same Idempotency-Key and stored once`; a retried `4xx` — `✖ a read is tried three times when nothing answers, a 4xx once, and every failure rejects`. The test names of your project are in the task. Put the code back.
+
+    **10. The native companion.** In `~/js-course/<project>-native` — a copy of `shared/contract.ts` with no change (`diff ../<project>/shared/contract.ts shared/contract.ts` prints nothing; Metro does not see files outside the folder, so it is a copy, like the rest of the shared code), and in `src/devConfig.ts` `API_PORT = 4311` and `apiBaseUrl(target)` with the same target addresses as for the mock service. The server listens on `127.0.0.1`: the Android emulator reaches it through `10.0.2.2`, the iOS simulator through `127.0.0.1`, a USB phone after `adb reverse tcp:4311 tcp:4311`; a phone on Wi-Fi only with `HOST=0.0.0.0` and only for the time of the check. CORS plays no part here: this is not a browser. `npx tsc --noEmit` and `npm test` — on the computer. With a target — point the screen that reads the mock service at `apiBaseUrl(TARGET)` + `/v1/records` (pages through `parseListPageV1`) and record what you saw; without one — the native project's `EVIDENCE.md` gets a section "NO-06": **not performed**, the reason and what it takes to come back. We had no target: the screen's code is not written, the check was not performed.
+
+    **11. Evidence and the commit.** `npm run typecheck`, `npm run lint` — no errors; `npm test` — `failed: 0`; in `server/` `npm run typecheck` prints nothing and `npm test` — `fail 0`. In `docs/server.md` — a section "NO-06": the preflight `curl -i`, what the page and the log showed, and both wrong tries. `git add -A`, `git commit -m "Connect the web app to the records server: an HTTP source behind the data-source module, a shared v1 contract, CORS for the dev origin"`; the native project gets its own commit.
+
+    **Self-check:** the page shows the server's records, and a change from it is in the server log (`OPTIONS`, then the request itself) and survives a restart; your project's derived value after a restart and a reload is counted from the server's list; without the server the page honestly says "no connection"; CORS allows only `http://127.0.0.1:4310`, no `*` and no credentials; the answers pass the shared contract; a retried create does not duplicate a record.
+
+    **If something goes wrong:** `API_BASE_URL is required when DATA_SOURCE is "http"` during `npm run build` — `.env` has no address. The page is empty and the Console says `blocked by CORS policy` — the server does not know the page's origin: open it exactly as `http://127.0.0.1:4310/` (not `localhost`) or add the origin to `ALLOWED_ORIGINS`. The page shows the old records from the fixtures — built without `DATA_SOURCE=http` (restart `npm start`, it builds again). `ERR_CONNECTION_REFUSED` in the Console — the server is not running.
+
+    The step's reference is `Download: NO-06 — The web client on the real API: CORS, a shared contract, the server as the source of truth` after the export; open it after your own attempt.
+purpose:
+  uk: "Це крок твого проєкту: межу клієнт/сервер, заміну фікстур на HTTP-джерело, CORS без credentials, спільний версійований контракт, повтори з ключем ідемпотентності й перевірку на нативному компаньйоні із цього розділу ти застосовуєш до власного застосунку й сервера. Платформа цей крок не перевіряє: доказ — тести, що побачили сторінка й лог сервера, `docs/server.md` і commit."
+  en: "This is a step of your project: you apply this unit's client/server boundary, the swap of fixtures for an HTTP source, CORS without credentials, a shared versioned contract, retries with an idempotency key and the check on the native companion to your own app and server. The platform does not check this step: the evidence is the tests, what the page and the server log showed, `docs/server.md` and the commit."
+objectives:
+  - uk: "Під’єднати вебклієнт проєкту до справжнього локального API через HTTP-джерело зі спільним контрактом так, щоб усе, що сторінка показує й рахує після перезапуску сервера, бралося з відповідей сервера."
+    en: "Connect the project's web client to the real local API through an HTTP source with a shared contract, so that everything the page shows and counts after a server restart comes from the server's answers."
+  - uk: "Дозволити в CORS лише origin вебзастосунку без credentials, відповідати на preflight, перевірити це в справжньому браузері й записати нативну перевірку як виконану або як не виконану з причиною."
+    en: "Allow only the web app's origin in CORS without credentials, answer the preflight, check it in a real browser, and record the native check as performed or as not performed with its reason."
+transfer:
+  uk: "Цей крок виконується в редакторі, терміналі й браузері на твоєму комп’ютері: що зробити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor, a terminal and a browser on your computer: what to do, the expected output and the self-check list are above and on the step's page in your project."
