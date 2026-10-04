@@ -32,25 +32,42 @@ async function round(design, killAfterMs) {
   const acknowledged = [];
   const started = Date.now();
   let n = 0;
-  while (Date.now() - started < killAfterMs) {
-    const id = `w-${++n}`;
-    const response = await fetch(url, { method: 'POST', body: JSON.stringify({ id, name: '%%wish%%' }), signal: AbortSignal.timeout(2000) });
-    if (response.status === 201) acknowledged.push(id);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+  let inFlight = 0;
+  // Three senders at once and no pause, so that the kill usually lands while a request (and its
+  // save) is still running.
+  async function sender() {
+    while (Date.now() - started < killAfterMs) {
+      const id = `w-${++n}`;
+      inFlight++;
+      try {
+        const response = await fetch(url, { method: 'POST', body: JSON.stringify({ id, name: '%%wish%%' }), signal: AbortSignal.timeout(2000) });
+        if (response.status === 201) acknowledged.push(id);
+      } catch {
+        // the kill cut the connection: no answer, so not acknowledged
+      }
+      inFlight--;
+    }
   }
+  const senders = [sender(), sender(), sender()];
+  await new Promise((resolve) => setTimeout(resolve, killAfterMs));
+  const killedMidRequest = inFlight > 0;
   repo.kill(); // the crash: no more writes, memory is abandoned
   server.closeAllConnections();
   server.close();
   const onDisk = new Set(readBack(FILE).map((item) => item.id));
-  return acknowledged.filter((id) => !onDisk.has(id)).length;
+  const lost = acknowledged.filter((id) => !onDisk.has(id)).length;
+  await Promise.all(senders);
+  return { lost, killedMidRequest };
 }
 
 for (const [name, design] of [
   ['write-through', (file) => writeThrough(file)],
   [`cache, flush every ${FLUSH_MS} ms`, (file) => cached(file, FLUSH_MS)],
 ]) {
-  const losses = [];
-  for (let i = 0; i < ROUNDS; i++) losses.push(await round(design, 150 + Math.random() * 250));
-  const hit = losses.filter((lost) => lost > 0).length;
-  console.log(`${name}: %%rounds%% ${ROUNDS}, %%lostIn%% ${hit}, %%lostTotal%% ${losses.reduce((a, b) => a + b, 0)}`);
+  const results = [];
+  for (let i = 0; i < ROUNDS; i++) results.push(await round(design, 150 + Math.random() * 250));
+  const hit = results.filter((result) => result.lost > 0).length;
+  const total = results.reduce((sum, result) => sum + result.lost, 0);
+  const midRequest = results.filter((result) => result.killedMidRequest).length;
+  console.log(`${name}: %%rounds%% ${ROUNDS}, %%midRequest%% ${midRequest}, %%lostIn%% ${hit}, %%lostTotal%% ${total}`);
 }
