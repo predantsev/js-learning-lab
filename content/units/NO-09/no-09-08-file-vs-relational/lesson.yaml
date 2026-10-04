@@ -1,0 +1,329 @@
+id: no-09-08-file-vs-relational
+unit: NO-09
+title:
+  uk: "Файловий чи реляційний репозиторій"
+  en: "File vs relational repository"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Порівняти JSON-репозиторій з NO-02 і репозиторій на SQLite за запитами, одночасними записами, міграціями, резервними копіями й ціною налаштування та обрати один для заданого навантаження."
+    en: "Compare the JSON file repository from NO-02 with a SQLite repository on querying, concurrent writes, migrations, backup and setup cost, and choose one for a stated workload."
+  - uk: "Передбачити, що станеться з кожним, коли два оновлення «прочитати — змінити — записати» перекриваються, і пояснити, як транзакція чи черга з одного записувача зберігає дані узгодженими."
+    en: "Predict what each does when two read-modify-write updates overlap, and explain how a transaction or a single-writer queue keeps the data consistent."
+prerequisites: [no-09-07-migrations-seed, no-02-09-capstone-file-persistence]
+subskills:
+  - { family: B-05, skill: "file vs relational repository tradeoffs", depth: intro }
+  - { family: B-05, skill: "concurrency/transactions", depth: intro }
+glossary: [lost-update, single-writer-queue]
+selfCheck: [predict-overlap, two-repos]
+
+blocks:
+  - id: overlap-problem
+    kind: explanation
+    title:
+      uk: "Атомарний запис ще не захищає від перекриття"
+      en: "An atomic write does not yet protect from overlap"
+    body:
+      uk: |
+        Репозиторій з NO-02 оновлює запис так: прочитати весь файл, змінити один запис, атомарно записати весь файл. Кожен запис цілий — половини JSON не буває.
+
+        Але уяви два запити майже одночасно: A позначає справу `t-01` виконаною, B перейменовує `t-02`.
+
+        1. A читає файл (обидві справи старі).
+        2. B читає той самий файл.
+        3. A записує свою версію: `t-01` виконано.
+        4. B записує **свою** версію — зроблену зі старого файла, де `t-01` ще не виконано.
+
+        Обидва записи атомарні, а зміна A зникла. Це [[lost-update|втрачене оновлення]]: атомарність захищає від **порваного** файла, а не від того, що хтось запише поверх на основі застарілих даних.
+      en: |
+        The NO-02 repository updates a record like this: read the whole file, change one record, write the whole file atomically. Every write is whole — there is never half a JSON.
+
+        But imagine two requests almost at once: A marks task `t-01` done, B renames `t-02`.
+
+        1. A reads the file (both tasks old).
+        2. B reads the same file.
+        3. A writes its version: `t-01` is done.
+        4. B writes **its** version — made from the old file, where `t-01` is not done yet.
+
+        Both writes were atomic, and A’s change is gone. That is a [[lost-update]]: atomicity protects from a **torn** file, not from someone writing over it on the basis of stale data.
+
+  - id: predict-overlap
+    kind: prediction
+    strings:
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      renamed: { uk: "Здати книжки до п’ятниці", en: "Return the books by Friday" }
+    prompt:
+      uk: "Обидва оновлення стартують разом. Кожне читає файл, чекає (A — 20 мс, B — 40 мс) і атомарно записує весь список. Що буде у файлі після обох?"
+      en: "Both updates start together. Each reads the file, waits (A 20 ms, B 40 ms) and writes the whole list atomically. What is in the file after both?"
+    code: |
+      // tasks.json: t-01 done=false "%%water%%", t-02 done=false "%%library%%"
+      await Promise.all([
+        fileRepo.update('t-01', { done: true }),             // A
+        fileRepo.update('t-02', { title: '%%renamed%%' }),   // B
+      ]);
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: b-wins
+          text: { uk: "`t-01` не виконано, `t-02` перейменовано: зміну A втрачено", en: "`t-01` not done, `t-02` renamed: A’s change is lost" }
+        - id: both
+          text: { uk: "`t-01` виконано, `t-02` перейменовано", en: "`t-01` done, `t-02` renamed" }
+          why:
+            uk: "Кожен запис атомарний, але B прочитав файл **до** запису A і записав список, у якому `t-01` ще не виконано. Атомарність не об’єднує зміни."
+            en: "Every write is atomic, but B read the file **before** A’s write and wrote a list where `t-01` is not done yet. Atomicity does not merge changes."
+        - id: a-wins
+          text: { uk: "`t-01` виконано, `t-02` не перейменовано", en: "`t-01` done, `t-02` not renamed" }
+          why:
+            uk: "Перемагає той, хто записує **останнім**, — тут B, бо він чекає довше. Його список і стає файлом."
+            en: "Whoever writes **last** wins — here B, because it waits longer. Its list becomes the file."
+        - id: torn
+          text: { uk: "Зламаний JSON", en: "Broken JSON" }
+          why:
+            uk: "Записи йдуть через тимчасовий файл і `rename`, тож файл завжди повний. Проблема не в порваному файлі, а в застарілих даних."
+            en: "The writes go through a temp file and a `rename`, so the file is always complete. The problem is not a torn file but stale data."
+      correct: [b-wins]
+    explanation:
+      uk: "Обидва прочитали той самий старий список. A записав свій, потім B записав свій поверх — без зміни A. Приклад нижче показує це, а потім два способи виправити."
+      en: "Both read the same old list. A wrote its own, then B wrote its own over it — without A’s change. The example below shows it, and then two ways to fix it."
+
+  - id: two-fixes
+    kind: explanation
+    title:
+      uk: "Черга з одного записувача, транзакція і вибір сховища"
+      en: "A single-writer queue, a transaction and choosing a storage"
+    body:
+      uk: |
+        **Файл:** [[single-writer-queue|черга з одного записувача]] — наступне оновлення починається лише після того, як попереднє записало файл. Так B читає вже змінений A файл. Це працює в межах **одного** процесу; два процеси з’єднає лише блокування файла.
+
+        **SQLite:** `UPDATE … WHERE id = ?` змінює один рядок на місці — ніхто не переписує весь набір даних. Крок «прочитати — перевірити — змінити» загортають у транзакцію, і SQLite не пускає другого записувача, доки перша не завершиться.
+
+        Але «база завжди краща» — неправда. Порівняй:
+
+        | | JSON-файл | SQLite |
+        |---|---|---|
+        | Запити | `filter`/`sort` у JS над усім списком | SQL, з’єднання, індекси |
+        | Одночасні записи | черга в одному процесі | транзакції й блокування |
+        | Зміна схеми | своя функція `migrate` | міграції й `user_version` |
+        | Резервна копія | скопіювати файл | копія через `VACUUM INTO` чи `.backup` |
+        | Налаштування | нічого | схема, міграції, знання SQL |
+
+        Для 500 справ однієї людини файл цілком достатній. Вибір змінюють кілька записувачів одночасно, запити зі з’єднаннями й агрегатами чи дані, які вже не вміщаються в пам’ять.
+      en: |
+        **File:** a [[single-writer-queue]] — the next update starts only after the previous one has written the file. So B reads the file A already changed. This works within **one** process; two processes need a file lock.
+
+        **SQLite:** `UPDATE … WHERE id = ?` changes one row in place — nobody rewrites the whole data set. A “read — check — change” step is wrapped in a transaction, and SQLite keeps a second writer out until the first finishes.
+
+        But “a database is always better” is not true. Compare:
+
+        | | JSON file | SQLite |
+        |---|---|---|
+        | Queries | `filter`/`sort` in JS over the whole list | SQL, joins, indexes |
+        | Concurrent writes | a queue within one process | transactions and locks |
+        | Schema change | your own `migrate` function | migrations and `user_version` |
+        | Backup | copy the file | a copy through `VACUUM INTO` or `.backup` |
+        | Setup | none | a schema, migrations, SQL skills |
+
+        For 500 tasks of one person a file is perfectly enough. The choice changes with several writers at once, queries with joins and aggregates, or data that no longer fits in memory.
+
+  - id: decision-board
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Два оновлення, два сховища"
+      en: "Two updates, two storages"
+    textEquivalent:
+      uk: "Ліворуч JSON-репозиторій, праворуч SQLite. У файлі обидва оновлення спершу читають увесь список, потім A записує свою версію, а B — свою поверх неї, і зміну A втрачено. Черга з одного записувача змушує B чекати, доки A запише, — тоді B читає вже змінений файл, і обидві зміни лишаються. У SQLite кожне оновлення змінює лише свій рядок, t-01 чи t-02, тож обидві зміни зберігаються. Наостанок дошка підсумовує: файл — запити у JS, резервна копія копіюванням файла, налаштування немає; SQLite — запити SQL з індексами, міграції через user_version, але потрібні схема й знання SQL."
+      en: "On the left the JSON repository, on the right SQLite. In the file both updates first read the whole list, then A writes its version and B writes its own over it, and A’s change is lost. A single-writer queue makes B wait until A has written — then B reads the file A already changed, and both changes stay. In SQLite each update changes only its own row, t-01 or t-02, so both changes are kept. Finally the board sums up: the file — queries in JS, backup by copying the file, no setup; SQLite — SQL queries with indexes, migrations through user_version, but it needs a schema and SQL skills."
+    spec:
+      layout: grid
+      nodes:
+        - { id: f1, label: "tasks.json", col: 0, row: 0, shape: note, w: 166 }
+        - { id: f2, label: { uk: "A і B читають усе", en: "A and B read it all" }, col: 0, row: 1, w: 166 }
+        - { id: f3, label: { uk: "A пише, B пише", en: "A writes, B writes" }, col: 0, row: 2, w: 166 }
+        - { id: f4, label: { uk: "зміну A втрачено", en: "A’s change lost" }, col: 0, row: 3, shape: round, w: 166 }
+        - { id: s1, label: "tasks (SQLite)", col: 1, row: 0, shape: cylinder, w: 166 }
+        - { id: s2, label: "UPDATE … t-01", col: 1, row: 1, w: 166 }
+        - { id: s3, label: "UPDATE … t-02", col: 1, row: 2, w: 166 }
+        - { id: s4, label: { uk: "обидві зміни є", en: "both changes kept" }, col: 1, row: 3, shape: round, w: 166 }
+      edges:
+        - { from: f1, to: f2 }
+        - { from: f2, to: f3 }
+        - { from: f3, to: f4 }
+        - { from: s1, to: s2 }
+        - { from: s2, to: s3 }
+        - { from: s3, to: s4 }
+      steps:
+        - caption:
+            uk: "Ті самі два оновлення — A позначає `t-01` виконаною, B перейменовує `t-02` — у двох сховищах."
+            en: "The same two updates — A marks `t-01` done, B renames `t-02` — in two storages."
+        - caption:
+            uk: "Файл: обидва читають **увесь** старий список, потім кожен записує свою повну версію. Останнім пише B — і зміни A немає."
+            en: "File: both read the **whole** old list, then each writes its full version. B writes last — and A’s change is gone."
+          highlight: [f1, f2, f3, f4, f1->f2, f2->f3, f3->f4]
+          dim: [s1, s2, s3, s4]
+        - caption:
+            uk: "Черга з одного записувача: B починає лише після запису A й читає вже змінений файл. Обидві зміни лишаються — у межах одного процесу."
+            en: "A single-writer queue: B starts only after A’s write and reads the already changed file. Both changes stay — within one process."
+          highlight: [f2, f3]
+          dim: [s1, s2, s3, s4]
+          annotate:
+            - { id: f3, text: { uk: "черга: B чекає на A", en: "queue: B waits for A" } }
+            - { id: f4, text: { uk: "з чергою: обидві є", en: "with a queue: both kept" } }
+        - caption:
+            uk: "SQLite: кожен `UPDATE` змінює лише свій рядок, весь набір даних ніхто не переписує. Обидві зміни є."
+            en: "SQLite: each `UPDATE` changes only its own row; nobody rewrites the whole data set. Both changes are there."
+          highlight: [s1, s2, s3, s4, s1->s2, s2->s3, s3->s4]
+          dim: [f1, f2, f3, f4]
+        - caption:
+            uk: "Дошка рішення: файл простіший, SQLite сильніший у запитах і змінах. Вибір залежить від навантаження."
+            en: "The decision board: the file is simpler, SQLite is stronger at queries and changes. The choice depends on the workload."
+          annotate:
+            - { id: f1, text: { uk: "запити в JS · копія = файл · без налаштування", en: "queries in JS · backup = a file · no setup" } }
+            - { id: s1, text: { uk: "SQL та індекси · міграції · схема й SQL", en: "SQL and indexes · migrations · schema and SQL" } }
+
+  - id: overlap
+    kind: example
+    runtime: isolated-node
+    dir: overlap
+    entry: index.js
+    strings:
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      renamed: { uk: "Здати книжки до п’ятниці", en: "Return the books by Friday" }
+    title:
+      uk: "Перекриття у файлі, черга і SQLite"
+      en: "An overlap in a file, a queue and SQLite"
+    body:
+      uk: |
+        Натисни **Запустити**. Програма тричі виконує ті самі два оновлення: у JSON-репозиторії з атомарним записом, у ньому ж за чергою з одного записувача і в SQLite.
+
+        Перекриття тут **імітовано**: паузу між читанням і записом задано явно (20 і 40 мс), тож результат щоразу однаковий. Коментар на початку файла перелічує, чим це відрізняється від справжнього перекриття.
+      en: |
+        Press **Run**. The program runs the same two updates three times: in the JSON repository with an atomic write, in the same repository behind a single-writer queue, and in SQLite.
+
+        The overlap here is **simulated**: the pause between reading and writing is set explicitly (20 and 40 ms), so the result is the same every time. The comment at the top of the file lists how this differs from a real overlap.
+    tryIt:
+      uk: "У першому `Promise.all` поміняй місцями два виклики `fileRepo.update` і запусти: тепер довше чекає оновлення `t-01`, воно пише останнім — і втрачається перейменування `t-02`. Яке оновлення пропаде, вирішує лише час; черга й SQLite в обох порядках зберігають обидва."
+      en: "In the first `Promise.all` swap the two `fileRepo.update` calls and run: now the `t-01` update waits longer, writes last — and the rename of `t-02` is lost. Which update disappears is decided by timing alone; the queue and SQLite keep both in either order."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: ціна лінійного пошуку"
+      en: "Recall: the cost of a linear search"
+    items:
+      - id: linear-growth
+        from: js-05-06-search-complexity
+        prompt:
+          uk: "Пошук справи за `id` перебирає масив по черзі. У найгіршому випадку це 500 порівнянь для 500 справ. Скільки — для 50 000?"
+          en: "Searching for a task by `id` walks the array in order. In the worst case that is 500 comparisons for 500 tasks. How many for 50 000?"
+        answer:
+          type: choice
+          options:
+            - id: fifty-thousand
+              text: { uk: "50 000 — кількість росте разом із розміром списку", en: "50 000 — the count grows with the size of the list" }
+            - id: same
+              text: { uk: "500 — пошук зупиняється на знайденому", en: "500 — the search stops at the one it finds" }
+              why:
+                uk: "Зупиняється — але в найгіршому випадку шуканий останній або його немає, і перевірити доводиться кожен елемент."
+                en: "It does stop — but in the worst case the one sought is last or missing, and every item has to be checked."
+            - id: log
+              text: { uk: "Близько 16 — як у словнику", en: "About 16 — as in a dictionary" }
+              why:
+                uk: "Так шукають у **впорядкованій** структурі, як індекс бази. Перебір масиву по черзі цього не вміє."
+                en: "That is how an **ordered** structure is searched, like a database index. Walking an array in order cannot do that."
+          correct: [fifty-thousand]
+        explanation:
+          uk: "Лінійний пошук росте разом зі списком. Для 500 справ це непомітно — тому файл і `filter` тут достатні; для частих запитів до великих даних потрібен індекс, і це вже аргумент на користь бази."
+          en: "A linear search grows with the list. For 500 tasks it is unnoticeable — which is why a file and `filter` are enough here; frequent queries over large data need an index, and that is an argument for a database."
+
+  - id: two-repos
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: two-repos
+    entry: index.js
+    editable: [repos.js]
+    strings:
+      t1: { uk: "Полити квіти", en: "Water the plants" }
+      t2: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      t3: { uk: "Написати бабусі", en: "Write to grandma" }
+      t4: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      t5: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      t6: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+    title:
+      uk: "Один інтерфейс, два сховища"
+      en: "One interface, two storages"
+    instructions:
+      uk: |
+        Планувальник має два репозиторії з однаковим методом `list({ status })`: один читає `tasks.json` (`{ schemaVersion, records }`), другий — таблицю SQLite `tasks` (`done` там `0` чи `1`). Допиши в `repos.js` обидва й записку про вибір:
+
+        - `list({ status: 'pending' })` повертає невиконані справи, `'done'` — виконані, як `{ id, title, dueDate }`;
+        - порядок: за `dueDate`, справи без дати — в кінці, за однакової дати — за `id`;
+        - будь-який інший `status` — помилка в обох репозиторіях;
+        - обидва репозиторії повертають однакові списки для тих самих даних;
+        - `choice`: `storage` — `'file'` чи `'sqlite'` для 500 справ однієї людини, `reason` — чому (щонайменше 20 символів), `wouldChange` — що змінило б вибір (щонайменше 20 символів).
+      en: |
+        The planner has two repositories with the same method `list({ status })`: one reads `tasks.json` (`{ schemaVersion, records }`), the other the SQLite table `tasks` (where `done` is `0` or `1`). Finish both in `repos.js`, plus a note about the choice:
+
+        - `list({ status: 'pending' })` returns the tasks not done, `'done'` the done ones, as `{ id, title, dueDate }`;
+        - order: by `dueDate`, tasks without a date last, equal dates by `id`;
+        - any other `status` is an error in both repositories;
+        - both repositories return the same lists for the same data;
+        - `choice`: `storage` is `'file'` or `'sqlite'` for 500 tasks of one person, `reason` says why (at least 20 characters), `wouldChange` what would change the choice (at least 20 characters).
+    testTitles:
+      "the file repository lists each status by due date, undated last":
+        uk: "Файловий репозиторій дає кожен статус за датою, без дати — в кінці"
+        en: "The file repository lists each status by due date, undated last"
+      "the SQLite repository lists each status by due date, undated last":
+        uk: "Репозиторій SQLite дає кожен статус за датою, без дати — в кінці"
+        en: "The SQLite repository lists each status by due date, undated last"
+      "both repositories refuse an unknown status":
+        uk: "Обидва репозиторії відхиляють невідомий статус"
+        en: "Both repositories refuse an unknown status"
+      "the note names a storage, a reason and what would change it":
+        uk: "Записка називає сховище, причину й те, що змінило б вибір"
+        en: "The note names a storage, a reason and what would change it"
+    hints:
+      nudge:
+        uk: "Де в SQLite опиняються рядки з `NULL`, якщо сортувати за зростанням? І як у JavaScript порівняти дві дати-тексти й поставити `null` в кінець?"
+        en: "Where do rows with `NULL` end up in SQLite when sorting ascending? And how do you compare two date texts in JavaScript and put `null` last?"
+      explanation:
+        uk: |
+          У SQLite `NULL` за зростанням іде **першим**. Вираз `x IS NULL` дає 0 або 1, тож його можна поставити першим ключем сортування — наприклад, для витрат без категорії: `ORDER BY category IS NULL, category, id`.
+
+          У JavaScript компаратор спершу перевіряє `null`, а дати `'YYYY-MM-DD'` порівнює як текст через `<`. Для статусу знадобиться той самий список дозволених варіантів, що й для сортування в уроці про параметри: об’єкт `{ pending: 0, done: 1 }` і `Object.hasOwn`.
+        en: |
+          In SQLite `NULL` comes **first** when sorting ascending. The expression `x IS NULL` gives 0 or 1, so it can be the first sort key — for example, for expenses without a category: `ORDER BY category IS NULL, category, id`.
+
+          In JavaScript the comparator checks for `null` first and compares `'YYYY-MM-DD'` dates as text with `<`. The status needs the same kind of allowlist as the sort in the parameters lesson: an object `{ pending: 0, done: 1 }` and `Object.hasOwn`.
+    solutionNote:
+      uk: "Файловий репозиторій фільтрує й сортує в JavaScript, SQLite — у запиті з параметром і `ORDER BY dueDate IS NULL, dueDate, id`; статус в обох проходить через список дозволених. Для 500 справ однієї людини обидва вибори захищені, якщо причина названа чесно: файл простіший у налаштуванні й копіюванні, SQLite дає запити й міграції. Варіант із `localeCompare(…, 'en')`, іменованим параметром `:done` і вибором `sqlite` теж правильний."
+      en: "The file repository filters and sorts in JavaScript, SQLite in a query with a parameter and `ORDER BY dueDate IS NULL, dueDate, id`; in both the status goes through an allowlist. For 500 tasks of one person either choice holds if the reason is honest: a file is simpler to set up and copy, SQLite gives queries and migrations. A version with `localeCompare(…, 'en')`, the named parameter `:done` and the choice `sqlite` is correct too."
+    feedback:
+      - when: { test: "the file repository lists each status by due date, undated last" }
+        message:
+          uk: "Ця перевірка очікує для `pending` порядок `t-02, t-01, t-05, t-03` (без дати — в кінці), а для `done` — `t-04, t-06`, з полями рівно `id`, `title`, `dueDate`. Якщо всі перевірки не проходять разом, прочитай першу помилку в консолі після **Запустити**."
+          en: "This check expects the order `t-02, t-01, t-05, t-03` for `pending` (undated last) and `t-04, t-06` for `done`, with exactly the fields `id`, `title`, `dueDate`. If every check fails at once, read the first error in the console after **Run**."
+      - when: { test: "the SQLite repository lists each status by due date, undated last" }
+        message:
+          uk: "Ця перевірка очікує від SQLite ті самі списки, що й від файла. Якщо `t-03` (без дати) стоїть першою, пам’ятай: `NULL` за зростанням іде першим."
+          en: "This check expects the same lists from SQLite as from the file. If `t-03` (no date) comes first, remember: `NULL` comes first when sorting ascending."
+      - when: { test: "both repositories refuse an unknown status" }
+        message:
+          uk: "Ця перевірка передає `status: 'archived'` в обидва репозиторії й очікує помилку від кожного. Статус не має потрапляти в SQL як текст — лише через список дозволених варіантів."
+          en: "This check passes `status: 'archived'` to both repositories and expects an error from each. The status must not reach the SQL as text — only through an allowlist."
+      - when: { test: "the note names a storage, a reason and what would change it" }
+        message:
+          uk: "Ця перевірка очікує в `choice` поле `storage` зі значенням `'file'` чи `'sqlite'` і поля `reason` та `wouldChange`, кожне щонайменше 20 символів."
+          en: "This check expects `choice` to have `storage` set to `'file'` or `'sqlite'` and the fields `reason` and `wouldChange`, each at least 20 characters long."
+
+  - id: to-project
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-09 немає. Твій проєкт з NO-02 зберігає записи у файлі. За планом курсу в NO-05 ти обереш сховище для сервера проєкту й запишеш контракт схеми. Тоді й став ті самі питання, що в записці цієї вправи: скільки записів, скільки записувачів, які запити, як робити копію."
+      en: "Your project does not change in this unit: NO-09 has no project step. Your project from NO-02 keeps its records in a file. In the course plan you choose the storage for the project’s server in NO-05 and write the schema contract. That is when to ask the questions of this exercise’s note: how many records, how many writers, which queries, how to make a backup."
