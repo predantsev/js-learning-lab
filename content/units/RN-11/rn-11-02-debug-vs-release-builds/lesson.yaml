@@ -1,0 +1,289 @@
+id: rn-11-02-debug-vs-release-builds
+unit: RN-11
+title:
+  uk: "Debug- і release-збірки"
+  en: "Debug vs release builds"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Перелічити, що змінює release-збірка: JavaScript вбудовано в застосунок, dev-сервера й dev-меню немає, оптимізацію ввімкнено, `__DEV__` дорівнює `false`, підпис — release-ключем."
+    en: "List what a release build changes: the JS bundle embedded in the app, the dev server and dev menu gone, optimization on, `__DEV__` false and release signing."
+  - uk: "Знайти причину, коли функція працює в debug, але ламається в release, бо залежала від dev-сервера чи коду лише для розробки."
+    en: "Diagnose a feature that works in debug but fails in release because it depended on the dev server or on dev-only code."
+prerequisites: [rn-11-01-app-config-ids-versions, re-12-01-production-build-env]
+subskills:
+  - { family: N-11, skill: "debug/release", depth: intro }
+glossary: [build-variant, embedded-bundle]
+selfCheck: [predict-release-snippets, release-empty-list]
+
+blocks:
+  - id: two-variants
+    kind: explanation
+    title:
+      uk: "Що саме змінює release"
+      en: "What exactly release changes"
+    body:
+      uk: |
+        У розділі RN-01 ти бачив головне: debug-збірка бере JavaScript з dev-сервера Metro, а release — ні. Тепер подивимось ближче, бо release ти збиратимеш сам. Той самий проєкт збирається у двох [[build-variant|варіантах збірки]]: `npx expo run:android --variant release` чи `npx expo run:ios --configuration Release` дає release.
+
+        Що ми побачили в проєкті Expo SDK 57 (команди `npx expo export --platform android` і `npx expo prebuild`):
+
+        - **JavaScript усередині застосунку** — це [[embedded-bundle|вбудований bundle]]. Туди потрапили й JSON-фікстури, які код імпортує, і модуль, який імпортовано вгорі файла, хоч викликали його лише під `if (__DEV__)`.
+        - **`__DEV__` — `false`**, і код під `if (__DEV__) { … }` з bundle вирізано.
+        - **`console.log` поза умовою лишився** й виконується. [Документація React Native 0.86 (сторінка Performance)](https://reactnative.dev/docs/0.86/performance) попереджає: у зібраному застосунку такі виклики можуть сильно гальмувати JS-потік.
+        - **Простий HTTP дозволено лише в debug**: `android:usesCleartextTraffic="true"` стоїть тільки в debug-маніфесті Android. Release не дістанеться `http://10.0.2.2:7310`.
+        - **Dev-меню немає**: у вихідному коді React Native 0.86 `DevSettings.addMenuItem` поза `__DEV__` нічого не робить.
+        - Release підписується release-налаштуваннями — про ключі наступний урок.
+      en: |
+        In unit RN-01 you saw the main point: a debug build takes its JavaScript from the Metro dev server, and a release build does not. Now a closer look, because you will build the release yourself. The same project is built in two [[build-variant|build variants]]: `npx expo run:android --variant release` or `npx expo run:ios --configuration Release` gives the release.
+
+        What we saw in an Expo SDK 57 project (the commands `npx expo export --platform android` and `npx expo prebuild`):
+
+        - **The JavaScript is inside the app** — it is the [[embedded-bundle|embedded bundle]]. The JSON fixtures the code imports went in too, and so did a module imported at the top of a file, even though it was called only under `if (__DEV__)`.
+        - **`__DEV__` is `false`**, and the code under `if (__DEV__) { … }` is cut out of the bundle.
+        - **A `console.log` outside a condition stays** and runs. [The React Native 0.86 docs (the Performance page)](https://reactnative.dev/docs/0.86/performance) warn that in a bundled app such calls can slow the JS thread a lot.
+        - **Plain HTTP is allowed only in debug**: `android:usesCleartextTraffic="true"` sits only in Android's debug manifest. A release cannot reach `http://10.0.2.2:7310`.
+        - **There is no dev menu**: in the React Native 0.86 source `DevSettings.addMenuItem` does nothing outside `__DEV__`.
+        - A release is signed with the release settings — keys are the next lesson.
+
+  - id: predict-release-snippets
+    kind: prediction
+    prompt:
+      uk: |
+        Застосунок списку бажань на Android-емуляторі має такий код:
+
+        ```js
+        import { DevSettings } from 'react-native';
+        import { seedDemoWishes } from './dev/seed';
+
+        console.log('wishes screen opened');
+        if (__DEV__) seedDemoWishes();
+        DevSettings.addMenuItem('Reset wishes', resetWishes);
+        fetch('http://10.0.2.2:7310/records/wishlist');
+        ```
+
+        Що з цього відбувається в **release-збірці**? Обери все, що відбувається.
+      en: |
+        A wishlist app on the Android emulator has this code:
+
+        ```js
+        import { DevSettings } from 'react-native';
+        import { seedDemoWishes } from './dev/seed';
+
+        console.log('wishes screen opened');
+        if (__DEV__) seedDemoWishes();
+        DevSettings.addMenuItem('Reset wishes', resetWishes);
+        fetch('http://10.0.2.2:7310/records/wishlist');
+        ```
+
+        Which of these happen in a **release build**? Choose all that happen.
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: log-runs
+          text:
+            uk: "Виклик `console.log` виконується"
+            en: "The `console.log` call runs"
+        - id: log-gone
+          text:
+            uk: "Виклику `console.log` у release немає — збирач прибирає логи"
+            en: "The `console.log` call is gone in release — the bundler removes logs"
+          why:
+            uk: "Збирач вирізає лише гілки `if (__DEV__)`. Звичайний лог лишається в bundle й виконується — і коштує часу JS-потоку. Прибрати всі логи можна окремим плагіном Babel, про який пише документація React Native."
+            en: "The bundler cuts out only the `if (__DEV__)` branches. An ordinary log stays in the bundle and runs — and costs JS-thread time. Removing all logs takes a separate Babel plugin, which the React Native docs describe."
+        - id: seed-runs
+          text:
+            uk: "`seedDemoWishes()` виконується"
+            en: "`seedDemoWishes()` runs"
+          why:
+            uk: "У release `__DEV__` — `false`, і цього виклику в bundle взагалі немає."
+            en: "In release `__DEV__` is `false`, and this call is not in the bundle at all."
+        - id: seed-module-bundled
+          text:
+            uk: "Модуль `./dev/seed` є в bundle"
+            en: "The module `./dev/seed` is in the bundle"
+        - id: menu-item
+          text:
+            uk: "У dev-меню з’являється пункт «Reset wishes»"
+            en: "The item “Reset wishes” appears in the dev menu"
+          why:
+            uk: "У release dev-меню немає, а `DevSettings.addMenuItem` поза `__DEV__` нічого не робить."
+            en: "A release has no dev menu, and `DevSettings.addMenuItem` does nothing outside `__DEV__`."
+        - id: mock-reached
+          text:
+            uk: "Запит доходить до mock-сервісу на комп’ютері"
+            en: "The request reaches the mock service on the computer"
+          why:
+            uk: "Release на Android не дозволяє простого HTTP: дозвіл стоїть лише в debug-маніфесті. Запит відхиляється, а mock-сервіс нічого не бачить."
+            en: "A release on Android does not allow plain HTTP: the permission sits only in the debug manifest. The request is rejected, and the mock service sees nothing."
+      correct: [log-runs, seed-module-bundled]
+    explanation:
+      uk: "Release вирізає гілки `__DEV__`, але не звичайні виклики й не імпорти: `console.log` виконується, а модуль `./dev/seed` потрапив у bundle, хоч його функцію ніхто не викликає (так ми й побачили в `npx expo export`). Dev-меню й простого HTTP у release немає. Звідси правило: усе, що потрібне лише для розробки, ховай під `__DEV__` разом із джерелом даних, а release має працювати без твого комп’ютера."
+      en: "A release cuts out the `__DEV__` branches, but not ordinary calls and not imports: `console.log` runs, and the module `./dev/seed` went into the bundle although nobody calls its function (that is what we saw in `npx expo export`). A release has no dev menu and no plain HTTP. Hence the rule: everything needed only for development hides under `__DEV__` together with its data source, and a release must work without your computer."
+
+  - id: build-flags
+    kind: example
+    runtime: concept-preview
+    dir: build-flags
+    entry: main.jsx
+    strings:
+      title: { uk: "Список бажань", en: "Wishlist" }
+      count: { uk: "Кількість", en: "Count" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+    title:
+      uk: "Той самий екран у debug і release"
+      en: "The same screen in debug and release"
+    body:
+      uk: |
+        `WishScreen.jsx` бере бажання з mock-сервісу на комп’ютері — так, як ти робив у RN-06. Два файли тут — **імітація**:
+
+        - `simulated-build.js` задає `__DEV__` замість збирача;
+        - `simulated-network.js` стоїть замість `fetch` на Android-емуляторі: комп’ютер видно як `10.0.2.2`, а простий HTTP дозволено лише в debug, як у маніфестах Expo.
+
+        Натисни **Запустити** й подивись на екран і консоль.
+      en: |
+        `WishScreen.jsx` takes the wishes from the mock service on the computer — the way you did in RN-06. Two files here are a **simulation**:
+
+        - `simulated-build.js` sets `__DEV__` in place of the bundler;
+        - `simulated-network.js` stands in for `fetch` on the Android emulator: the computer is seen as `10.0.2.2`, and plain HTTP is allowed only in debug, as in Expo's manifests.
+
+        Press **Run** and look at the screen and the console.
+    tryIt:
+      uk: "У `simulated-build.js` заміни `'debug'` на `'release'` і запусти. Значок DEV і рядок `[dev] source: …` зникли, `render: …` лишився, у консолі з’явився `load failed: TypeError Network request failed`, а список порожній — «Кількість: 0». Так виглядає release, що залежав від твого комп’ютера. Поверни `'debug'`."
+      en: "In `simulated-build.js` replace `'debug'` with `'release'` and run. The DEV badge and the `[dev] source: …` line are gone, `render: …` stays, the console has `load failed: TypeError Network request failed`, and the list is empty — “Count: 0”. This is what a release that depended on your computer looks like. Put `'debug'` back."
+    limits:
+      uk: "Концептуальний перегляд через react-native-web, а не збірка. `__DEV__` і мережу тут імітують два файли: справжнього Metro, емулятора, маніфесту Android і mock-сервісу немає, а код під `if (__DEV__)` не вирізається з файлу, як у справжньому release. Немає native view, жестів і швидкодії телефона, тож і гальмування від логів тут не видно."
+      en: "A concept preview through react-native-web, not a build. Two files simulate `__DEV__` and the network: there is no real Metro, emulator, Android manifest or mock service, and the code under `if (__DEV__)` is not cut out of the file as in a real release. There are no native views, gestures or phone speed, so the slowdown from logs does not show here either."
+
+  - id: recall-production-build
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: where-the-value-lives
+        from: re-12-01-production-build-env
+        prompt:
+          uk: "Після `npm run build` у React-проєкті на Vite ти змінив у `.env` значення `VITE_APP_TITLE` і **нічого не перезбирав**. Відкриваєш `dist` через `npm run preview`. Який заголовок покаже сторінка?"
+          en: "After `npm run build` in a Vite React project you changed `VITE_APP_TITLE` in `.env` and **rebuilt nothing**. You open `dist` with `npm run preview`. Which title does the page show?"
+        answer:
+          type: choice
+          options:
+            - id: old
+              text:
+                uk: "Старий: значення вписане текстом у JS-файл у `dist/assets`"
+                en: "The old one: the value is written as text into the JS file in `dist/assets`"
+            - id: new
+              text:
+                uk: "Новий: сторінка читає `.env`, коли відкривається"
+                en: "The new one: the page reads `.env` when it opens"
+              why:
+                uk: "Браузер `.env` не бачить. Значення вписав збирач під час `npm run build`, тож воно міняється лише з новим збиранням."
+                en: "The browser never sees `.env`. The bundler wrote the value in during `npm run build`, so it changes only with a new build."
+            - id: none
+              text:
+                uk: "Порожній: у production-збірці `import.meta.env` недоступний"
+                en: "An empty one: `import.meta.env` is not available in a production build"
+              why:
+                uk: "Значення з префіксом `VITE_`, які читає код, у production-збірці є — вписані текстом."
+                en: "`VITE_`-prefixed values the code reads are there in a production build — written in as text."
+          correct: [old]
+        explanation:
+          uk: "Production-збірка несе все в собі. Release-збірка React Native так само: її вбудований bundle не знає ні про `.env`, ні про dev-сервер — нове значення приходить лише з новою збіркою."
+          en: "A production build carries everything inside. A React Native release build is the same: its embedded bundle knows nothing about `.env` or the dev server — a new value arrives only with a new build."
+
+  - id: release-empty-list
+    kind: exercise
+    mode: debug
+    runtime: concept-preview
+    dir: release-empty-list
+    entry: main.jsx
+    editable: [loadExpenses.js]
+    strings:
+      title: { uk: "Витрати", en: "Expenses" }
+      loading: { uk: "Завантаження…", en: "Loading…" }
+      count: { uk: "Кількість", en: "Count" }
+      currency: { uk: "грн", en: "UAH" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+    title:
+      uk: "Порожній список у release"
+      en: "An empty list in release"
+    instructions:
+      uk: |
+        Звіт тестувальника: «У debug трекер витрат показує дві витрати з mock-сервісу. Release-збірка на тому самому емуляторі показує "Кількість: 0"». Ця лабораторна збірка — release (`simulated-build.js`). Запусти й прочитай консоль.
+
+        Полагодь `loadExpenses.js`:
+
+        - release показує шість витрат, вбудованих у застосунок, — файл `expenses.json` поруч (імпортуй його так, як Metro імпортує JSON: `import … from './expenses.json'`);
+        - release не надсилає жодного запиту на комп’ютер розробника;
+        - debug, як і раніше, бере дані з mock-сервісу.
+
+        Перевіряй `__DEV__` усередині `loadExpenses`: перевірки перемикають його між викликами. (У справжньому застосунку він під час роботи не змінюється.) Файли `simulated-*.js` — імітація, їх не змінюй.
+      en: |
+        The tester's report: “In debug the expense tracker shows two expenses from the mock service. The release build on the same emulator shows "Count: 0"”. This lab build is a release (`simulated-build.js`). Run it and read the console.
+
+        Repair `loadExpenses.js`:
+
+        - the release shows the six expenses embedded in the app — the `expenses.json` file next to it (import it the way Metro imports JSON: `import … from './expenses.json'`);
+        - the release sends no request to the developer's computer;
+        - debug still takes its data from the mock service.
+
+        Check `__DEV__` inside `loadExpenses`: the checks switch it between calls. (In a real app it never changes while running.) The `simulated-*.js` files are a simulation; do not change them.
+    testTitles:
+      "the release screen shows the six bundled expenses":
+        uk: "Екран release показує шість вбудованих витрат"
+        en: "The release screen shows the six bundled expenses"
+      "a release build sends no request to the developer computer":
+        uk: "Release не надсилає запитів на комп’ютер розробника"
+        en: "A release build sends no request to the developer's computer"
+      "a debug build still loads from the mock service":
+        uk: "Debug, як і раніше, бере дані з mock-сервісу"
+        en: "A debug build still loads from the mock service"
+    hints:
+      nudge:
+        uk: "Консоль каже, чим закінчився запит. Запитай себе: до чого цей запит міг би дійти в застосунку на телефоні людини, у якої немає твого комп’ютера?"
+        en: "The console says how the request ended. Ask yourself: what could this request reach in the app on the phone of a person who does not have your computer?"
+      explanation:
+        uk: |
+          Release не має dev-машини, тож усе, що йде до неї, — частина debug і живе під `__DEV__`. Release бере те, що лежить у ньому самому: для планувальника з файлом `tasks.json` це було б `import bundledTasks from './tasks.json'` і повернення цих справ, коли `__DEV__` — `false`, ще до будь-якого запиту. Запасний варіант «спробувати мережу, а як не вийде — фікстури» в release все одно надсилає марний запит.
+        en: |
+          A release has no dev machine, so everything that goes to it belongs to debug and lives under `__DEV__`. A release takes what is inside itself: for a planner with a `tasks.json` file that would be `import bundledTasks from './tasks.json'` and returning those tasks when `__DEV__` is `false`, before any request. A fallback of “try the network, and if that fails, the fixtures” still sends a useless request in release.
+    solutionNote:
+      uk: "Release повертає вбудовані витрати ще до будь-якого запиту, а запит до `10.0.2.2:7310` лишився лише в debug. `localhost` нічого б не змінив: у release немає dev-машини взагалі, а простий HTTP заборонено. Тепер release працює без твого комп’ютера — саме так його й отримають люди."
+      en: "The release returns the bundled expenses before any request, and the request to `10.0.2.2:7310` is left only in debug. `localhost` would change nothing: a release has no dev machine at all, and plain HTTP is forbidden. Now the release works without your computer — exactly how people will get it."
+    feedback:
+      - when: { test: "the release screen shows the six bundled expenses" }
+        message:
+          uk: "Ця перевірка чекає на екрані release шість витрат з `expenses.json` і рядок «Кількість: 6». Якщо там «Кількість: 0», release досі бере дані з мережі, якої в нього немає."
+          en: "This check expects six expenses from `expenses.json` on the release screen and the line “Count: 6”. If it says “Count: 0”, the release still takes its data from a network it does not have."
+      - when: { test: "a release build sends no request to the developer computer" }
+        message:
+          uk: "Ця перевірка викликає `loadExpenses` з `__DEV__`, рівним `false`, і чекає: жодного запиту на `10.0.2.2`, `localhost` чи `127.0.0.1`, а результат — шість витрат з `expenses.json`. Запит, після якого підставляються фікстури, — теж запит."
+          en: "This check calls `loadExpenses` with `__DEV__` set to `false` and expects no request to `10.0.2.2`, `localhost` or `127.0.0.1`, and six expenses from `expenses.json` as the result. A request followed by the fixtures is still a request."
+      - when: { test: "a debug build still loads from the mock service" }
+        message:
+          uk: "Ця перевірка викликає `loadExpenses` з `__DEV__`, рівним `true`, і чекає рівно один запит на `http://10.0.2.2:7310/records/expenses` та дві витрати з mock-сервісу. Debug-збірці dev-машина доступна — не забирай її."
+          en: "This check calls `loadExpenses` with `__DEV__` set to `true` and expects exactly one request to `http://10.0.2.2:7310/records/expenses` and the two expenses from the mock service. A debug build does have the dev machine — do not take it away."
+      - when: { error: SyntaxError }
+        message:
+          uk: "Програма не змогла запуститися. Перевір дужки й лапки в `loadExpenses.js`, а імпорт JSON пиши як `import назва from './expenses.json'`."
+          en: "The program could not start. Check the brackets and quotes in `loadExpenses.js`, and write the JSON import as `import name from './expenses.json'`."
+    limits:
+      uk: "Імітація в перегляді react-native-web. `simulated-build.js` і `simulated-network.js` стоять замість збирача й мережі емулятора; справжньої release-збірки, маніфесту Android і mock-сервісу тут немає. Перевір release на своїй заявленій цілі в локальних завданнях цього розділу."
+      en: "A simulation in the react-native-web preview. `simulated-build.js` and `simulated-network.js` stand in for the bundler and the emulator's network; there is no real release build, Android manifest or mock service here. Check the release on your declared target in this unit's local tasks."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-11
+    body:
+      uk: "Перш ніж збирати release свого проєкту, пройдися по коду: кожне звертання до dev-машини чи mock-сервісу має бути під `__DEV__`, а release — брати дані зі сховища на пристрої чи вбудованих фікстур. Перевірка простіша, ніж здається: release має працювати з вимкненим dev-сервером."
+      en: "Before you build your project's release, walk through the code: every call to the dev machine or the mock service must sit under `__DEV__`, and the release must take its data from on-device storage or bundled fixtures. The check is simpler than it sounds: the release must work with the dev server stopped."

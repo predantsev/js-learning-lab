@@ -1,0 +1,397 @@
+id: rn-11-03-signing-key-hygiene
+unit: RN-11
+title:
+  uk: "Підпис і гігієна ключів"
+  en: "Signing and key hygiene"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Простежити, як підписується release на Android (keystore, ключ завантаження, підпис магазином) і на iOS (сертифікат, профіль забезпечення), і що пристрій робить з оновленням, підписаним іншим ключем."
+    en: "Trace how a release is signed on Android (keystore, upload key, store app signing) and on iOS (certificate, provisioning profile), and what the device does with an update signed by a different key."
+  - uk: "Тримати ключі підпису та їхні паролі поза репозиторієм і журналами, з резервною копією й записаним шляхом відновлення."
+    en: "Keep signing keys and their passwords out of the repository and logs, with a backup and a written recovery path."
+prerequisites: [rn-11-02-debug-vs-release-builds, rn-09-02-no-embedded-secrets]
+subskills:
+  - { family: N-11, skill: "signing/key hygiene", depth: intro }
+glossary: [code-signing, signing-key, upload-key, provisioning-profile]
+selfCheck: [predict-new-key, habits-signing]
+
+blocks:
+  - id: who-sealed-it
+    kind: explanation
+    title:
+      uk: "Хто зібрав цю збірку"
+      en: "Who built this build"
+    body:
+      uk: |
+        Ідентифікатор застосунку може вписати будь-хто. Тому телефон перевіряє ще й [[code-signing|підпис]]: збірку підписують закритим [[signing-key|ключем підпису]], а пристрій запам’ятовує сертифікат першої встановленої збірки. [Документація Android](https://developer.android.com/studio/publish/app-signing) каже прямо: оновлення мають бути підписані **тим самим** сертифікатом увесь час життя застосунку.
+
+        **Android.** Ключ лежить у файлі-сховищі (keystore) під паролями. Ось як ми його створили (JDK 21, не в теці проєкту; паролі ми передали ще й параметрами `-storepass` і `-keypass`, тут їх прибрано):
+
+        ```text
+        $ keytool -genkeypair -v -storetype PKCS12 -keystore rn11-upload.keystore -alias rn11-upload -keyalg RSA -keysize 2048 -validity 10000
+        Generating 2,048 bit RSA key pair and self-signed certificate (SHA384withRSA) with a validity of 10,000 days
+        ```
+
+        Для Google Play цей ключ — [[upload-key|ключ завантаження]]: Play App Signing переписує застосунок для людей ключем Google, а загублений ключ завантаження можна скинути в Play Console. Збірку ж, яку ти ставиш сам, далі можна оновити лише тим самим ключем.
+
+        **iOS.** Справжній iPhone ставить лише збірку, підписану сертифікатом Apple, з [[provisioning-profile|профілем забезпечення]]; обидва видає обліковий запис Apple Developer. Симулятору вони не потрібні.
+
+        **Пастка шаблону.** У щойно згенерованому проєкті Expo SDK 57 release підписується `debug.keystore` — пароль `android` записано просто в `build.gradle`. Такий підпис не захищає нічого.
+      en: |
+        Anyone can write an app id. So the phone also checks the [[code-signing|signature]]: a build is signed with a private [[signing-key|signing key]], and the device remembers the certificate of the first build installed. [The Android documentation](https://developer.android.com/studio/publish/app-signing) says it plainly: updates must be signed with **the same** certificate for the whole life of the app.
+
+        **Android.** The key lives in a store file (a keystore) behind passwords. This is how we created one (JDK 21, not in the project folder; we also passed the passwords as the options `-storepass` and `-keypass`, left out here):
+
+        ```text
+        $ keytool -genkeypair -v -storetype PKCS12 -keystore rn11-upload.keystore -alias rn11-upload -keyalg RSA -keysize 2048 -validity 10000
+        Generating 2,048 bit RSA key pair and self-signed certificate (SHA384withRSA) with a validity of 10,000 days
+        ```
+
+        For Google Play this key is the [[upload-key|upload key]]: Play App Signing re-signs the app for people with Google's key, and a lost upload key can be reset in Play Console. A build you install yourself, though, can then be updated only with the same key.
+
+        **iOS.** A real iPhone installs only a build signed with an Apple certificate, with a [[provisioning-profile|provisioning profile]]; an Apple Developer account issues both. The simulator needs neither.
+
+        **The template's trap.** In a freshly generated Expo SDK 57 project, release is signed with `debug.keystore` — its password `android` is written right in `build.gradle`. Such a signature protects nothing.
+
+  - id: wax-seal
+    kind: analogy
+    body:
+      uk: "Підпис схожий на воскову печатку на листі. Отримувач порівнює відбиток з перснем відправника й не приймає листа з іншою печаткою, хоч би як правдоподібно виглядав конверт."
+      en: "A signature is like a wax seal on a letter. The recipient compares the imprint with the sender's ring and refuses a letter with a different seal, however believable the envelope looks."
+    limits:
+      uk: "Печатка доводить лише, хто запечатав пакет, — не те, що лист усередині правдивий чи безпечний: підписана збірка теж може мати помилки. А загублений перстень не відновити: що буде далі, вирішують правила платформи (скидання ключа завантаження в Google Play), а не ти."
+      en: "A seal only proves who sealed the package — not that the letter inside is true or safe: a signed build can have bugs too. And a lost ring cannot be recreated: what happens next is decided by the platform's rules (an upload key reset in Google Play), not by you."
+
+  - id: signing-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Підпис, встановлення й оновлення з чужим ключем"
+      en: "Signing, installing and an update with another key"
+    textEquivalent:
+      uk: "Ти даєш Gradle шлях до keystore і паролі з файлу поза репозиторієм. Gradle підписує збірку 1 і передає її на пристрій. Пристрій перевіряє підпис і запам’ятовує сертифікат. Пізніше ключ загублено, і збірку 2 підписано новим ключем. Пристрій бачить той самий ідентифікатор, але інший сертифікат, і відмовляє в оновленні: поставити збірку 2 можна лише після видалення збірки 1 разом з її даними. Шлях через Google Play описано, а не виконано: якщо ввімкнено Play App Signing, люди отримують збірки, підписані ключем Google, і загублений ключ завантаження можна скинути в Play Console."
+      en: "You give Gradle the keystore path and the passwords from a file outside the repository. Gradle signs build 1 and hands it to the device. The device checks the signature and remembers the certificate. Later the key is lost, and build 2 is signed with a new key. The device sees the same id but a different certificate and refuses the update: build 2 can go on only after removing build 1 together with its data. The Google Play path is described, not performed: with Play App Signing on, people get builds signed with Google's key, and a lost upload key can be reset in Play Console."
+    spec:
+      actors:
+        - { id: dev, label: { uk: "Ти + keystore", en: "You + keystore" } }
+        - { id: gradle, label: "Gradle" }
+        - { id: device, label: { uk: "Пристрій", en: "Device" } }
+      intro:
+        uk: "Три учасники: ти зі своїм keystore, інструмент збирання Gradle і пристрій чи емулятор."
+        en: "Three participants: you with your keystore, the Gradle build tool, and a device or emulator."
+      messages:
+        - from: dev
+          to: gradle
+          label: { uk: "шлях до keystore + паролі", en: "keystore path + passwords" }
+          caption:
+            uk: "Gradle бере шлях і паролі з `~/.gradle/gradle.properties` — файлу поза репозиторієм."
+            en: "Gradle takes the path and the passwords from `~/.gradle/gradle.properties` — a file outside the repository."
+        - from: gradle
+          to: device
+          label: { uk: "збірка 1, підписана", en: "build 1, signed" }
+          caption:
+            uk: "Gradle підписує збірку 1 ключем і передає її на пристрій."
+            en: "Gradle signs build 1 with the key and hands it to the device."
+        - from: device
+          to: device
+          kind: note
+          label: { uk: "підпис перевірено, сертифікат запам’ятано", en: "signature checked, certificate remembered" }
+          caption:
+            uk: "Пристрій перевіряє підпис і запам’ятовує сертифікат: з цього моменту він — частина особи застосунку."
+            en: "The device checks the signature and remembers the certificate: from now on it is part of the app's identity."
+        - from: dev
+          to: gradle
+          label: { uk: "ключ загублено → новий ключ", en: "key lost → a new key" }
+          caption:
+            uk: "Ключ загублено. Ти створюєш новий і підписуєш ним збірку 2 — той самий ідентифікатор, більший `versionCode`."
+            en: "The key is lost. You create a new one and sign build 2 with it — the same id, a higher `versionCode`."
+        - from: gradle
+          to: device
+          label: { uk: "збірка 2, інший підпис", en: "build 2, another signature" }
+          caption:
+            uk: "Збірка 2 приходить як оновлення того самого застосунку…"
+            en: "Build 2 arrives as an update of the same app…"
+        - from: device
+          to: dev
+          kind: return
+          label: { uk: "відмова: підпис не збігається", en: "refused: signature differs" }
+          caption:
+            uk: "…і пристрій відмовляє: сертифікат інший. Поставити її можна лише після видалення збірки 1 — разом з усіма її даними."
+            en: "…and the device refuses: the certificate differs. It can go on only after removing build 1 — together with all its data."
+          note:
+            uk: "Google Play (описано, не виконано): з Play App Signing людям іде ключ Google, а ключ завантаження скидають у Play Console."
+            en: "Google Play (described, not performed): with Play App Signing people get Google's key, and the upload key is reset in Play Console."
+
+  - id: predict-new-key
+    kind: prediction
+    prompt:
+      uk: "Ти ставиш трекер витрат на свій емулятор сам, без магазину: збірка 1 уже там, з витратами за тиждень. Keystore загубився разом зі старим ноутбуком, тож збірку 2 (той самий ідентифікатор, `versionCode` 2) ти підписав новим ключем. Що буде, коли ставиш її поверх збірки 1?"
+      en: "You install the expense tracker on your emulator yourself, without a store: build 1 is already there, with a week of expenses. The keystore was lost with an old laptop, so you signed build 2 (the same id, `versionCode` 2) with a new key. What happens when you install it over build 1?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: refused
+          text:
+            uk: "Встановлення відхилено; поставити збірку 2 можна лише після видалення збірки 1 разом з витратами"
+            en: "The installation is refused; build 2 can go on only after removing build 1 together with the expenses"
+        - id: updates
+          text:
+            uk: "Оновиться, як завжди: ідентифікатор той самий, а `versionCode` більший"
+            en: "It updates as usual: the id is the same and the `versionCode` is higher"
+          why:
+            uk: "Ідентифікатор і номер — лише частина перевірки. Сертифікат інший, і для пристрою це вже не той, хто зібрав збірку 1."
+            en: "The id and the number are only part of the check. The certificate differs, and for the device it is no longer whoever built build 1."
+        - id: side-by-side
+          text:
+            uk: "Стане другим застосунком поруч зі старим"
+            en: "It installs as a second app next to the old one"
+          why:
+            uk: "Двох застосунків з одним ідентифікатором на пристрої бути не може. Поруч став би лише застосунок з іншим ідентифікатором."
+            en: "A device cannot hold two apps with one id. Only an app with a different id would install next to it."
+        - id: ask-user
+          text:
+            uk: "Телефон спитає людину, чи довіряє вона новому ключу, і оновить"
+            en: "The phone asks the person whether they trust the new key, and updates"
+          why:
+            uk: "Такого питання немає: правило «той самий сертифікат» система виконує сама. Новий ключ можна зробити, але оновити ним уже встановлений застосунок — ні."
+            en: "There is no such question: the system enforces the “same certificate” rule by itself. A new key can be made, but it cannot update the app already installed."
+      correct: [refused]
+    explanation:
+      uk: "Встановлений напряму застосунок оновлюється лише збіркою з тим самим сертифікатом. Новий ключ створити можна, але для пристрою це чужий підпис. Через Google Play з Play App Signing історія інша: люди отримують збірки з ключем Google, а загублений ключ завантаження скидають. Тому резервна копія ключа — не формальність."
+      en: "An app installed directly updates only with a build carrying the same certificate. A new key can be made, but for the device it is a stranger's signature. Through Google Play with Play App Signing the story differs: people get builds with Google's key, and a lost upload key is reset. That is why a backup of the key is not a formality."
+
+  - id: repo-scan
+    kind: example
+    runtime: concept-preview
+    dir: repo-scan
+    entry: main.jsx
+    strings:
+      tracked: { uk: "Git відстежує", en: "Git tracks" }
+      scan: { uk: "Знахідки сканера секретів", en: "Secret scanner findings" }
+      outside: { uk: "Поза репозиторієм", en: "Outside the repository" }
+      keyFile: { uk: "файл ключа", en: "key file" }
+      password: { uk: "пароль", en: "password" }
+    title:
+      uk: "Ключ, що потрапив у репозиторій"
+      en: "A key that got into the repository"
+    body:
+      uk: |
+        Хтось підписав список бажань за інструкцією: поклав `my-upload-key.keystore` у корінь проєкту, а паролі — у `keystore.properties` поруч. `project.js` описує файли проєкту, а `gitignore` — справжні рядки `.gitignore` з шаблону Expo SDK 57.
+
+        `simulated-git.js` — **імітація** `git check-ignore` і сканера секретів: він знає лише ті правила `.gitignore`, що тут ужито. Натисни **Запустити**.
+      en: |
+        Someone signed the wishlist following a guide: put `my-upload-key.keystore` in the project root and the passwords in `keystore.properties` next to it. `project.js` describes the project's files, and `gitignore` holds the real `.gitignore` lines of the Expo SDK 57 template.
+
+        `simulated-git.js` is a **simulation** of `git check-ignore` and a secret scanner: it knows only the `.gitignore` rules used here. Press **Run**.
+    tryIt:
+      uk: |
+        Знахідок дві. Шаблон ігнорує `*.jks`, але не `*.keystore` і не `keystore.properties` — ми перевірили це командою `git check-ignore -v` у свіжому проєкті. А `android/app/debug.keystore` Git не бачить лише тому, що ігнорується вся тека `/android`.
+
+        1. Перенеси рядок `'my-upload-key.keystore'` з `repo` у `home`, змінивши шлях на `'/Users/learner/keys/wishlist-upload.keystore'`. Запусти: знахідка одна.
+        2. Так само перенеси `'keystore.properties'` у `home` під шляхом `'/Users/learner/.gradle/gradle.properties'`. Запусти: знахідок нуль, а обидва файли — в розділі «Поза репозиторієм».
+        3. Додай у `gitignore` рядок `'*.keystore'` — це запобіжник на випадок, коли хтось знову покладе ключ у проєкт. Поверни ключ у `repo` під старою назвою й запусти: його вже немає серед відстежуваних.
+      en: |
+        There are two findings. The template ignores `*.jks` but not `*.keystore` and not `keystore.properties` — we checked it with `git check-ignore -v` in a fresh project. And Git does not see `android/app/debug.keystore` only because the whole `/android` folder is ignored.
+
+        1. Move the `'my-upload-key.keystore'` line from `repo` to `home`, changing the path to `'/Users/learner/keys/wishlist-upload.keystore'`. Run: one finding left.
+        2. Move `'keystore.properties'` to `home` the same way, under the path `'/Users/learner/.gradle/gradle.properties'`. Run: zero findings, and both files are in the “Outside the repository” section.
+        3. Add the line `'*.keystore'` to `gitignore` — a safety net for when someone puts a key into the project again. Put the key back into `repo` under its old name and run: it is no longer among the tracked files.
+    limits:
+      uk: "Концептуальний перегляд через react-native-web. Тут немає справжнього Git, файлової системи й сканера: `simulated-git.js` розуміє лише форми `.gitignore`, ужиті в цьому прикладі, і шукає ключі за розширенням, а паролі — за рядками зі словом password. Справжній сканер і `git status` у твоєму проєкті можуть знайти більше."
+      en: "A concept preview through react-native-web. There is no real Git, file system or scanner here: `simulated-git.js` understands only the `.gitignore` forms used in this example and looks for keys by extension and for passwords by lines with the word password. A real scanner and `git status` in your project may find more."
+
+  - id: recall-secrets
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: binary-is-public
+        from: rn-09-02-no-embedded-secrets
+        prompt:
+          uk: "Колега пропонує: «Покладемо секретний API-ключ у native-конфігурацію — `gradle.properties` чи `Info.plist`. Застосунок же компілюється, з бінарного файлу ніхто не прочитає». Що відповісиш?"
+          en: "A teammate suggests: “Let's put the secret API key into native config — `gradle.properties` or `Info.plist`. The app is compiled anyway, nobody will read it from a binary.” What do you answer?"
+        answer:
+          type: choice
+          options:
+            - id: public
+              text:
+                uk: "Усе, що потрапило в пакет застосунку, вважаємо публічним: його можна розпакувати. Секрет лишається на сервері"
+                en: "Everything that got into the app package counts as public: it can be unpacked. The secret stays on the server"
+            - id: native-safe
+              text:
+                uk: "Так, native-конфігурація безпечніша за JavaScript-bundle"
+                en: "Yes, native config is safer than the JavaScript bundle"
+              why:
+                uk: "Native-конфігурація теж їде в пакеті до кожного, хто встановив застосунок. Розпакувати пакет — справа хвилин."
+                en: "Native config also travels in the package to everyone who installed the app. Unpacking a package takes minutes."
+            - id: obfuscate
+              text:
+                uk: "Можна, якщо ключ зашифрувати й розшифровувати в коді"
+                en: "It is fine if the key is encrypted and decrypted in code"
+              why:
+                uk: "Код розшифрування теж у пакеті — а отже, і спосіб дістати ключ."
+                en: "The decryption code is in the package too — and with it the way to get the key."
+          correct: [public]
+        explanation:
+          uk: "Застосунок — це публічний клієнт: те, що в ньому, читає кожен, хто його має. З ключем підпису інакше: він ніколи не потрапляє в пакет, бо ним лише підписують. Але й він — секрет, тільки на твоєму комп’ютері."
+          en: "An app is a public client: whatever is in it can be read by anyone who has it. The signing key is different: it never gets into the package, because it only signs. But it is a secret too — just on your computer."
+      - id: config-vs-values
+        from: js-15-06-build-env-sourcemaps
+        prompt:
+          uk: "У проєкті зі збиранням є `build.mjs` (що збирати й куди класти) і значення, які різняться між комп’ютерами, — наприклад, адреса сервера. Що з цього тримають у репозиторії разом із кодом?"
+          en: "A project with a build step has `build.mjs` (what to build and where to put it) and values that differ between computers — a server address, for example. Which of them is kept in the repository together with the code?"
+        answer:
+          type: choice
+          options:
+            - id: config-in
+              text:
+                uk: "`build.mjs` — так; значення приходять зі змінних середовища, а не з коду"
+                en: "`build.mjs` — yes; the values come from environment variables, not from the code"
+            - id: both-in
+              text:
+                uk: "Обидва: так уся команда збиратиме однаково"
+                en: "Both: that way the whole team builds the same"
+              why:
+                uk: "Однаково збирати допомагає конфігурація інструментів. Значення конкретного комп’ютера в коді заважають іншим, а секретне значення там узагалі не можна тримати."
+                en: "Building the same way comes from the tools' config. One computer's values in the code get in everyone else's way, and a secret value must not be there at all."
+            - id: none-in
+              text:
+                uk: "Жодне: конфігурація теж може містити секрети"
+                en: "Neither: config may contain secrets too"
+              why:
+                uk: "Конфігурація інструментів секретів не містить — тому її й тримають з кодом. Секрети й локальні значення живуть окремо."
+                en: "The tools' config holds no secrets — that is why it lives with the code. Secrets and local values live apart."
+          correct: [config-in]
+        explanation:
+          uk: "Той самий поділ — і в підписі: блок `signingConfigs` у `build.gradle` описує, **як** підписувати, і може жити з кодом. Сам keystore і паролі — локальні значення й секрети, їхнє місце поза репозиторієм."
+          en: "The same split applies to signing: the `signingConfigs` block in `build.gradle` describes **how** to sign and may live with the code. The keystore itself and the passwords are local values and secrets; their place is outside the repository."
+
+  - id: habits-signing
+    kind: exercise
+    mode: guided
+    runtime: concept-preview
+    dir: habits-signing
+    entry: main.jsx
+    editable: [project.js]
+    strings:
+      tracked: { uk: "Git відстежує", en: "Git tracks" }
+      scan: { uk: "Знахідки сканера секретів", en: "Secret scanner findings" }
+      keyFile: { uk: "файл ключа", en: "key file" }
+      password: { uk: "пароль", en: "password" }
+      signing: { uk: "Release-підпис", en: "Release signing" }
+      signingOk: { uk: "Gradle знаходить keystore:", en: "Gradle finds the keystore:" }
+      noStoreFile: { uk: "Немає MYAPP_UPLOAD_STORE_FILE — release не підписати", en: "No MYAPP_UPLOAD_STORE_FILE — the release cannot be signed" }
+      keystoreNotFound: { uk: "Keystore не знайдено за цим шляхом", en: "Keystore not found at this path" }
+      missingPassword: { uk: "Бракує паролів чи alias", en: "Passwords or the alias are missing" }
+    title:
+      uk: "Ключі трекера звичок — поза репозиторієм"
+      en: "The habit tracker's keys, out of the repository"
+    instructions:
+      uk: |
+        Команда трекера звичок комітить теки `android/` та `ios/`, тож шаблонний рядок `/android` з `.gitignore` прибрано. Підпис налаштовано за інструкцією React Native 0.86: keystore лежить в `android/app/`, а паролі — в `android/gradle.properties`. Запусти й подивись на знахідки.
+
+        Зміни `project.js` так, щоб:
+
+        - keystore лежав **поза** репозиторієм, у `home` — наприклад, `/Users/learner/keys/habits-upload.keystore`;
+        - чотири рядки `MYAPP_UPLOAD_…` переїхали в `home` під шлях `/Users/learner/.gradle/gradle.properties`, а `MYAPP_UPLOAD_STORE_FILE` містив **повний** шлях до keystore;
+        - спільні налаштування `org.gradle.jvmargs` і `newArchEnabled` лишилися в `android/gradle.properties` у репозиторії;
+        - `.gitignore` ігнорував будь-який файл `*.keystore`;
+        - у `note` був рядок на кожне питання: де лежить ключ (`keyLocation`), де резервна копія (`backup`), що ігнорується (`ignored`), що робити, якщо ключ витік (`ifLeaked`). Перевірка бачить лише, що рядки заповнено, а копія не записана тим самим шляхом, що й ключ.
+
+        `simulated-git.js` і `simulated-gradle.js` — імітація, їх не змінюй.
+      en: |
+        The habit tracker's team commits the `android/` and `ios/` folders, so the template line `/android` was removed from `.gitignore`. Signing was set up following the React Native 0.86 guide: the keystore sits in `android/app/`, and the passwords in `android/gradle.properties`. Run it and look at the findings.
+
+        Change `project.js` so that:
+
+        - the keystore sits **outside** the repository, in `home` — for example `/Users/learner/keys/habits-upload.keystore`;
+        - the four `MYAPP_UPLOAD_…` lines move to `home` under the path `/Users/learner/.gradle/gradle.properties`, and `MYAPP_UPLOAD_STORE_FILE` holds the **full** path to the keystore;
+        - the shared settings `org.gradle.jvmargs` and `newArchEnabled` stay in `android/gradle.properties` in the repository;
+        - `.gitignore` ignores any `*.keystore` file;
+        - `note` has one line per question: where the key lives (`keyLocation`), where the backup is (`backup`), what is ignored (`ignored`), what to do if the key leaks (`ifLeaked`). The check only sees that the lines are filled in and that the backup is not written as the same path as the key.
+
+        `simulated-git.js` and `simulated-gradle.js` are a simulation; do not change them.
+    testTitles:
+      "no key file or password is tracked by Git":
+        uk: "Git не відстежує жодного файла ключа чи пароля"
+        en: "No key file or password is tracked by Git"
+      "no key store sits inside the repository folder":
+        uk: "Жодного keystore в теці репозиторію"
+        en: "No key store sits inside the repository folder"
+      "the release signing config still finds the key store and its passwords":
+        uk: "Release-підпис і далі знаходить keystore та паролі"
+        en: "The release signing config still finds the key store and its passwords"
+      "the shared Gradle settings stay in the repository":
+        uk: "Спільні налаштування Gradle лишаються в репозиторії"
+        en: "The shared Gradle settings stay in the repository"
+      ".gitignore also ignores any .keystore file":
+        uk: "`.gitignore` ігнорує й будь-який файл `.keystore`"
+        en: "`.gitignore` also ignores any `.keystore` file"
+      "the note answers all four questions, with a backup somewhere else":
+        uk: "Нотатка відповідає на чотири питання, а копія — деінде"
+        en: "The note answers all four questions, with a backup somewhere else"
+    hints:
+      nudge:
+        uk: "Подивись, що саме знайшов сканер і що каже рядок «Release-підпис» після кожної зміни. Ключ має зникнути з теки проєкту, але Gradle мусить і далі його знаходити."
+        en: "Look at what exactly the scanner found and what the “Release signing” line says after each change. The key has to leave the project folder, yet Gradle must still find it."
+      explanation:
+        uk: |
+          `.gitignore` лише не дає закомітити файл, але файл лишається в теці проєкту — його можна скопіювати разом з проєктом чи додати `git add -f`. Надійніше, щоб ключа там не було взагалі.
+
+          Gradle шукає відносний шлях поруч з `android/app/build.gradle`, а повний — там, де він є. Властивості з `~/.gradle/gradle.properties` діють у кожному проєкті цього комп’ютера й перекривають проєктні. Наприклад, для keystore `/Users/learner/vault/notes.jks` рядок мав би вигляд `MYAPP_UPLOAD_STORE_FILE=/Users/learner/vault/notes.jks`.
+        en: |
+          `.gitignore` only prevents committing a file; the file stays in the project folder — it can be copied along with the project or added with `git add -f`. It is safer for the key not to be there at all.
+
+          Gradle looks for a relative path next to `android/app/build.gradle`, and for a full one where it is. Properties from `~/.gradle/gradle.properties` apply to every project on this computer and override the project's. For example, for a keystore `/Users/learner/vault/notes.jks` the line would be `MYAPP_UPLOAD_STORE_FILE=/Users/learner/vault/notes.jks`.
+    solutionNote:
+      uk: |
+        Ключ і паролі тепер лише на твоєму комп’ютері, а в репозиторії — опис того, **як** підписувати (`build.gradle`), і спільні налаштування. Повний шлях потрібен, бо Gradle шукає відносний поруч з `build.gradle`. Рядок `*.keystore` — запобіжник: шаблон Expo ігнорує `*.jks`, але не `*.keystore`.
+
+        Резервна копія — це інше місце, яке не загубиться разом з ноутбуком: зашифрований носій чи менеджер паролів, разом з обома паролями. А якщо ключ витік, з ним більше не підписують: з Play App Signing роблять новий ключ завантаження й просять скидання в Play Console. Для застосунку, який люди ставили напряму, нового шляху оновлення немає — і це варто записати чесно.
+      en: |
+        The key and the passwords are now only on your computer, while the repository holds the description of **how** to sign (`build.gradle`) and the shared settings. The full path is needed because Gradle looks for a relative one next to `build.gradle`. The `*.keystore` line is a safety net: the Expo template ignores `*.jks` but not `*.keystore`.
+
+        A backup is another place that will not get lost together with the laptop: an encrypted drive or a password manager, with both passwords. And if the key leaks, it is no longer used for signing: with Play App Signing you make a new upload key and ask for a reset in Play Console. For an app people installed directly there is no new update path — worth writing down honestly.
+    feedback:
+      - when: { test: "no key file or password is tracked by Git" }
+        message:
+          uk: "Ця перевірка чекає, що сканер не знайде серед відстежуваних файлів жодного ключа (`.keystore`, `.jks` тощо) і жодного рядка з паролем. Паролі мають жити поза `repo`, а не в `android/gradle.properties`."
+          en: "This check expects the scanner to find no key (`.keystore`, `.jks` and so on) and no password line among the tracked files. The passwords must live outside `repo`, not in `android/gradle.properties`."
+      - when: { test: "no key store sits inside the repository folder" }
+        message:
+          uk: "Ця перевірка чекає, що в `repo` немає жодного шляху на `.keystore` чи `.jks` — навіть проігнорованого. Ігнорування не забирає файл з теки проєкту; перенеси його в `home`."
+          en: "This check expects no path ending in `.keystore` or `.jks` in `repo` — not even an ignored one. Ignoring does not take the file out of the project folder; move it to `home`."
+      - when: { test: "the release signing config still finds the key store and its passwords" }
+        message:
+          uk: "Ця перевірка чекає, що `MYAPP_UPLOAD_STORE_FILE` веде до keystore, який справді є (повний шлях — у `home`, відносний — в `android/app/` репозиторію), а `MYAPP_UPLOAD_KEY_ALIAS` і обидва паролі задано. Рядок «Release-підпис» на екрані каже, чого бракує."
+          en: "This check expects `MYAPP_UPLOAD_STORE_FILE` to lead to a keystore that really exists (a full path in `home`, a relative one in the repository's `android/app/`), and `MYAPP_UPLOAD_KEY_ALIAS` and both passwords to be set. The “Release signing” line on the screen says what is missing."
+      - when: { test: "the shared Gradle settings stay in the repository" }
+        message:
+          uk: "Ця перевірка чекає в `repo['android/gradle.properties']` рядки `org.gradle.jvmargs=…` і `newArchEnabled=true`. Їх потребує вся команда — переносити треба лише рядки `MYAPP_UPLOAD_…`."
+          en: "This check expects the lines `org.gradle.jvmargs=…` and `newArchEnabled=true` in `repo['android/gradle.properties']`. The whole team needs them — only the `MYAPP_UPLOAD_…` lines have to move."
+      - when: { test: ".gitignore also ignores any .keystore file" }
+        message:
+          uk: "Ця перевірка чекає, що `android/app/new-upload.keystore` і `upload.keystore` будуть проігноровані. Шаблонний `*.jks` цього не робить — додай до `gitignore` рядок для `.keystore`."
+          en: "This check expects `android/app/new-upload.keystore` and `upload.keystore` to be ignored. The template's `*.jks` does not do that — add a line for `.keystore` to `gitignore`."
+      - when: { test: "the note answers all four questions, with a backup somewhere else" }
+        message:
+          uk: "Ця перевірка чекає непорожні `keyLocation`, `backup`, `ignored` і `ifLeaked`, причому `backup` не має збігатися з `keyLocation`: копія на тому самому місці загубиться разом з оригіналом."
+          en: "This check expects non-empty `keyLocation`, `backup`, `ignored` and `ifLeaked`, and `backup` must not equal `keyLocation`: a copy in the same place gets lost together with the original."
+      - when: { error: SyntaxError }
+        message:
+          uk: "Програма не змогла запуститися. Перевір коми між записами в `repo` і `home` та лапки навколо шляхів у `project.js`."
+          en: "The program could not start. Check the commas between the entries in `repo` and `home` and the quotes around paths in `project.js`."
+    limits:
+      uk: "Концептуальний перегляд через react-native-web. `simulated-git.js` і `simulated-gradle.js` стоять замість Git, сканера секретів і Gradle: справжньої файлової системи, keystore й підпису тут немає. Шляхи у стилі macOS — приклад; на Windows повний шлях має вигляд `C:\\Users\\…`, і в `gradle.properties` зворотні скісні риски подвоюють."
+      en: "A concept preview through react-native-web. `simulated-git.js` and `simulated-gradle.js` stand in for Git, a secret scanner and Gradle: there is no real file system, keystore or signing here. The macOS-style paths are an example; on Windows a full path looks like `C:\\Users\\…`, and backslashes are doubled in `gradle.properties`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-11
+    body:
+      uk: "Для release свого проєкту ти створиш власний keystore поза текою проєкту, паролі покладеш у `~/.gradle/gradle.properties`, а в репозиторій закомітиш лише нотатку з гігієни ключів — без жодного ключа чи пароля."
+      en: "For your project's release you will create your own keystore outside the project folder, put the passwords into `~/.gradle/gradle.properties`, and commit only the key-hygiene note to the repository — without any key or password."
