@@ -1,0 +1,568 @@
+id: no-12-05-ci-checks-artifacts
+unit: NO-12
+title:
+  uk: "CI-перевірки й артефакти"
+  en: "CI checks and artifacts"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Вибудовувати lint, typecheck, тести й збірку в один локальний CI-скрипт, що зупиняється на першій невдачі й дає рівно один артефакт."
+    en: "Order lint, typecheck, tests and build into one local CI script that stops at the first failure and produces exactly one artifact."
+  - uk: "Записувати версію й контрольну суму артефакту, щоб запускати, перевіряти й відкочуватися саме до тієї збірки, яку перевірено."
+    en: "Record the artifact’s version and checksum so the same build is started, verified and rolled back to."
+prerequisites: [no-12-04-production-build-config, re-12-02-quality-checks-ci]
+subskills:
+  - { family: B-10, skill: "CI checks/artifacts", depth: intro }
+glossary: [release-record]
+selfCheck: [predict-type-error, release-record]
+
+blocks:
+  - id: ci-is-a-script
+    kind: explanation
+    title:
+      uk: "CI — це скрипт, а не хмара"
+      en: "CI is a script, not a cloud"
+    body:
+      uk: |
+        У RE-12 ти бачив [[ci-pipeline]]: `npm ci` з lockfile, далі lint, typecheck, тести, збірка — і зупинка на першій невдачі. Сервіс CI лише запускає ці самі команди на чистому чужому комп’ютері. Тому весь конвеєр можна тримати в проєкті як звичайний скрипт `scripts/ci.mjs` і запускати командою `node scripts/ci.mjs` — без жодного облікового запису.
+
+        Порядок має сенс: спершу дешеві перевірки, що ловлять найбільше (lint, typecheck — секунди), потім тести, і лише тоді збірка. Збірка й пакування — **останні**: артефакт з’являється тільки після того, як пройшло все інше. Червоний конвеєр не лишає по собі нового артефакту — отже, його неможливо випадково запустити.
+      en: |
+        In RE-12 you saw a [[ci-pipeline]]: `npm ci` from the lockfile, then lint, typecheck, tests, build — and a stop at the first failure. A CI service only runs these same commands on a clean computer that is not yours. So the whole pipeline can live in the project as an ordinary script `scripts/ci.mjs` and run with `node scripts/ci.mjs` — with no account at all.
+
+        The order makes sense: first the cheap checks that catch the most (lint, typecheck — seconds), then the tests, and only then the build. Build and packing come **last**: the artifact appears only after everything else has passed. A red pipeline leaves no new artifact behind — so it cannot be started by accident.
+
+  - id: keep-the-artifact
+    kind: explanation
+    title:
+      uk: "Зберігай саме ті байти, які перевірено"
+      en: "Keep exactly the bytes that were checked"
+    body:
+      uk: |
+        Здається, що артефакт можна будь-коли зібрати знову з того самого коміту. Під час підготовки уроку ми зібрали той самий коміт лабораторного проєкту двічі: на Node v25.2.1 з npm 11.6.2 і на Node v22.23.3 з npm 10.9.9. Файли всередині архівів `.tgz` збіглися байт у байт, а самі архіви — ні: інша версія zlib стиснула їх інакше, і контрольні суми різні. А між збірками можуть змінитися ще й залежності, інструменти чи сама машина.
+
+        Тому [[build-artifact]] не перезбирають, а **зберігають** і описують **записом релізу** ([[release-record]]): назва, версія, коміт, версія Node, розмір і [[checksum|sha256]] архіву плюс команди, якими будь-хто перевірить, що в нього той самий файл. Запускають, перевіряють і відкочуються саме до цього файла — за його контрольною сумою, а не за назвою.
+      en: |
+        It seems an artifact can be built again from the same commit at any time. While preparing this lesson we built the same commit of the lab project twice: on Node v25.2.1 with npm 11.6.2 and on Node v22.23.3 with npm 10.9.9. The files inside the `.tgz` archives matched byte for byte, but the archives themselves did not: another zlib version compressed them differently, and the checksums differ. And between builds the dependencies, the tools or the machine itself can change too.
+
+        So a [[build-artifact]] is not rebuilt but **kept**, and described by a **[[release-record]]**: the name, version, commit, Node version, size and [[checksum|sha256]] of the archive, plus the commands anyone can use to check they have the same file. You start, verify and roll back to exactly this file — by its checksum, not by its name.
+
+  - id: pipeline-picture
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Конвеєр зупиняється — артефакту немає"
+      en: "The pipeline stops — no artifact"
+    textEquivalent:
+      uk: "Локальний CI-конвеєр складається з етапів по черзі: встановлення з lockfile, lint, typecheck, тести, збірка й контрольна сума. У коміті з помилкою типу конвеєр проходить встановлення й lint, зупиняється на typecheck, і далі нічого не виконується: тести не запускаються, збірки й артефакту немає. У зеленому прогоні всі етапи проходять, і в кінці з’являється один артефакт із версією в назві, а поруч — запис релізу з його sha256."
+      en: "A local CI pipeline is a row of stages in turn: install from the lockfile, lint, typecheck, test, build and checksum. On a commit with a type error the pipeline passes install and lint, stops at typecheck, and nothing after it runs: the tests do not start, there is no build and no artifact. In a green run every stage passes, and at the end one artifact appears with the version in its name, with a release record holding its sha256 next to it."
+    spec:
+      layout: grid
+      nodes:
+        - { id: install, label: "npm ci", shape: pill, w: 130, col: 0, row: 0 }
+        - { id: lint, label: "lint", shape: pill, w: 130, col: 0, row: 1 }
+        - { id: typecheck, label: "typecheck", shape: pill, w: 130, col: 0, row: 2 }
+        - { id: test, label: "test", shape: pill, w: 130, col: 0, row: 3 }
+        - { id: build, label: "build", shape: pill, w: 130, col: 0, row: 4 }
+        - { id: checksum, label: "sha256", shape: pill, w: 130, col: 0, row: 5 }
+        - { id: stop, label: { uk: "зупинка, код 1", en: "stop, exit 1" }, shape: note, w: 160, col: 1, row: 2 }
+        - { id: artifact, label: "no12-lab-1.3.0.tgz", shape: cylinder, w: 180, col: 1, row: 4 }
+        - { id: record, label: "…release.json", shape: note, w: 180, col: 1, row: 5 }
+      edges:
+        - { id: a, from: install, to: lint }
+        - { id: b, from: lint, to: typecheck }
+        - { id: c, from: typecheck, to: test }
+        - { id: d, from: test, to: build }
+        - { id: e, from: build, to: checksum }
+        - { id: fail, from: typecheck, to: stop, kind: dashed, label: "TS2322" }
+        - { id: out, from: build, to: artifact }
+        - { id: rec, from: checksum, to: record }
+      hidden: [stop, fail, artifact, record, out, rec]
+      steps:
+        - caption:
+            uk: "Етапи йдуть по черзі, від найдешевших до збірки. Кожен наступний починається, лише коли попередній завершився з кодом 0."
+            en: "The stages go in turn, from the cheapest to the build. Each next one starts only when the previous one ended with exit code 0."
+          highlight: [install, lint, typecheck, test, build, checksum]
+        - caption:
+            uk: "Коміт із помилкою типу: `npm ci` і lint проходять, typecheck падає з `TS2322`, і скрипт виходить із кодом 1."
+            en: "A commit with a type error: `npm ci` and lint pass, typecheck fails with `TS2322`, and the script exits with code 1."
+          show: [stop, fail]
+          highlight: [install, lint, typecheck, stop, a, b, fail]
+        - caption:
+            uk: "Після зупинки нічого не виконується: тести не запускаються, збірки немає, нового артефакту теж — хоча тести, можливо, і пройшли б."
+            en: "After the stop nothing runs: the tests do not start, there is no build and no new artifact — even though the tests might have passed."
+          highlight: [stop]
+          dim: [test, build, checksum, c, d, e]
+        - caption:
+            uk: "Зелений прогін: усі етапи пройдено, збірка запакована в один архів із версією в назві."
+            en: "A green run: every stage passed, the build is packed into one archive with the version in its name."
+          show: [artifact, out]
+          dim: [stop, fail]
+          highlight: [test, build, artifact, c, d, out]
+        - caption:
+            uk: "Останній етап рахує sha256 архіву й пише поруч запис релізу: версія, коміт, Node, контрольна сума. Саме цей файл запускатимуть і до нього відкочуватимуться."
+            en: "The last stage computes the archive’s sha256 and writes a release record next to it: version, commit, Node, checksum. This very file is what will be started and rolled back to."
+          show: [record, rec]
+          dim: [stop, fail]
+          highlight: [checksum, record, e, rec]
+
+  - id: predict-type-error
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Локальний CI виконує по черзі `npm ci`, lint, typecheck, тести й збірку та зупиняється на першій невдачі. У коміті функція `byPriority` оголошена як така, що повертає `string`, хоча повертає число. Під час виконання типів немає, тож тести самі по собі пройшли б. Що зробить конвеєр?"
+      en: "A local CI runs `npm ci`, lint, typecheck, tests and build in turn and stops at the first failure. In a commit, the function `byPriority` is declared to return `string`, although it returns a number. At run time there are no types, so the tests on their own would pass. What does the pipeline do?"
+    answer:
+      type: choice
+      options:
+        - id: stops-at-typecheck
+          text:
+            uk: "Зупиняється на typecheck; тести не запускаються, артефакту немає"
+            en: "Stops at typecheck; the tests do not run, there is no artifact"
+        - id: artifact-anyway
+          text:
+            uk: "Проходить до кінця: тести зелені, отже, артефакт можна випускати"
+            en: "Goes to the end: the tests are green, so the artifact can be released"
+          why:
+            uk: "Конвеєр не «зважує» результати етапів — він зупиняється на першому червоному. Помилка типу — така сама невдача, як упалий тест: код не відповідає тому, що про нього обіцяно."
+            en: "A pipeline does not “weigh” stage results — it stops at the first red one. A type error is as much a failure as a failing test: the code does not match what is promised about it."
+        - id: tests-then-stop
+          text:
+            uk: "Спершу запускає всі етапи, а наприкінці повідомляє, що typecheck червоний"
+            en: "First runs every stage, and at the end reports that typecheck is red"
+          why:
+            uk: "Так працював би збирач звітів, а не конвеєр: кожен етап у ньому стартує лише після успіху попереднього. Тому червоний typecheck економить і час тестів, і збірку, яку все одно не можна випускати."
+            en: "That would be a report collector, not a pipeline: in a pipeline each stage starts only after the previous one succeeded. So a red typecheck saves both the test time and a build that could not be released anyway."
+      correct: [stops-at-typecheck]
+    explanation:
+      uk: "Саме так під час підготовки уроку повівся `node scripts/ci.mjs` лабораторного проєкту (TypeScript 6.0.3, Node v25.2.1): `error TS2322: Type 'number' is not assignable to type 'string'`, рядок `✖ CI stopped at \"typecheck\" (exit code 2). No artifact was produced.` і код виходу 1. Ті самі тести окремо (`node --test`) — 2 з 2 зелені. CI цінний саме тим, що не дає випустити те, що не пройшло **всіх** перевірок."
+      en: "That is exactly what the lab project’s `node scripts/ci.mjs` did while this lesson was prepared (TypeScript 6.0.3, Node v25.2.1): `error TS2322: Type 'number' is not assignable to type 'string'`, the line `✖ CI stopped at \"typecheck\" (exit code 2). No artifact was produced.` and exit code 1. The same tests on their own (`node --test`) — 2 of 2 green. CI is valuable precisely because it does not let out what has not passed **every** check."
+
+  - id: ci-demo
+    kind: example
+    runtime: isolated-node
+    dir: ci-demo
+    entry: index.js
+    strings:
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      stopped: { uk: "конвеєр зупинився на етапі", en: "the pipeline stopped at" }
+      passed: { uk: "конвеєр пройдено", en: "pipeline passed" }
+      failed: { uk: "конвеєр червоний", en: "pipeline is red" }
+      empty: { uk: "порожньо", en: "empty" }
+    title:
+      uk: "Конвеєр у мініатюрі"
+      en: "A pipeline in miniature"
+    body:
+      uk: |
+        Натисни **Запустити**. `ci.js` проходить етапи `lint`, `test`, `build` і `pack` по черзі, і кожен наступний стартує лише після успіху попереднього. Наприкінці `index.js` показує, чи є щось у `artifacts/`.
+
+        Коментар угорі `ci.js` чесно перелічує, чим ця мініатюра відрізняється від справжнього `scripts/ci.mjs`: пісочниця не запускає інших програм, тож `lint` тут — крихітна заміна ESLint на три правила, етапу typecheck немає (`tsc` працює у твоєму терміналі), а артефакт — стиснутий JSON, а не архів `npm pack`. Справжній конвеєр ти запустиш у локальному завданні цього уроку.
+      en: |
+        Press **Run**. `ci.js` goes through the stages `lint`, `test`, `build` and `pack` in turn, and each next one starts only after the previous one succeeded. At the end `index.js` shows whether anything is in `artifacts/`.
+
+        The comment at the top of `ci.js` honestly lists how this miniature differs from a real `scripts/ci.mjs`: the sandbox does not start other programs, so `lint` here is a tiny stand-in for ESLint with three rules, there is no typecheck stage (`tsc` runs in your terminal), and the artifact is gzipped JSON, not an `npm pack` archive. You run the real pipeline in this lesson’s local task.
+    tryIt:
+      uk: |
+        1. У `src/tasks.ts` заміни `high: 0, normal: 1, low: 2` на `high: 2, normal: 1, low: 0` і запусти. Етап `test` падає з `✖ high priority comes first`, `build` і `pack` не виконуються, а `artifacts/` — порожньо. Поверни `high: 0, normal: 1, low: 2`.
+        2. Додай у функцію `pendingCount` рядок `console.log(tasks.length);` і запусти. Тепер конвеєр зупиняється вже на `lint`: до тестів справа не доходить. Прибери рядок.
+        3. Запусти двічі поспіль: sha256 артефакту однаковий — ті самі файли, той самий Node, те саме стиснення. Тепер у `ci.js` заміни `level: 9` на `level: 1` і запусти: вміст той самий, а розмір і sha256 інші. Саме так відрізнилися архіви одного коміту, зібрані на Node 22 і Node 25. Поверни `level: 9`.
+      en: |
+        1. In `src/tasks.ts`, replace `high: 0, normal: 1, low: 2` with `high: 2, normal: 1, low: 0` and run. The `test` stage fails with `✖ high priority comes first`, `build` and `pack` do not run, and `artifacts/` is empty. Put back `high: 0, normal: 1, low: 2`.
+        2. Add the line `console.log(tasks.length);` to the function `pendingCount` and run. Now the pipeline stops already at `lint`: it never gets to the tests. Remove the line.
+        3. Run twice in a row: the artifact’s sha256 is the same — the same files, the same Node, the same compression. Now replace `level: 9` with `level: 1` in `ci.js` and run: the content is the same, but the size and the sha256 differ. That is exactly how the archives of one commit built on Node 22 and on Node 25 differed. Put back `level: 9`.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: CI на чужому комп’ютері"
+      en: "Recall: CI on someone else’s computer"
+    items:
+      - id: npm-ci
+        from: re-12-02-quality-checks-ci
+        prompt:
+          uk: "Чому конвеєр CI встановлює залежності командою `npm ci`, а не `npm install`?"
+          en: "Why does a CI pipeline install dependencies with `npm ci` and not `npm install`?"
+        answer:
+          type: choice
+          options:
+            - id: lockfile
+              text:
+                uk: "`npm ci` ставить рівно те, що записано в lockfile, і падає, якщо lockfile не збігається з `package.json`"
+                en: "`npm ci` installs exactly what the lockfile records and fails if the lockfile does not match `package.json`"
+            - id: faster
+              text:
+                uk: "`npm ci` швидший, а результат той самий"
+                en: "`npm ci` is faster, and the result is the same"
+              why:
+                uk: "Швидкість — приємний бонус, але суть у відтворюваності: `npm install` може оновити lockfile й поставити інші версії, ніж ті, з якими ти перевіряв код."
+                en: "Speed is a nice bonus, but the point is reproducibility: `npm install` may update the lockfile and install versions other than the ones you checked the code with."
+            - id: no-difference
+              text:
+                uk: "Різниці немає, це просто звичка"
+                en: "There is no difference, it is just a habit"
+              why:
+                uk: "Різниця є: `npm ci` ніколи не змінює lockfile й починає з чистого `node_modules`. Тому CI на чужому комп’ютері ставить ті самі версії, що й у тебе."
+                en: "There is one: `npm ci` never changes the lockfile and starts from a clean `node_modules`. That is why CI on another computer installs the same versions as yours."
+          correct: [lockfile]
+        explanation:
+          uk: "`npm ci` — перший етап і справжнього `scripts/ci.mjs` у цьому уроці. Якщо `package.json` і lockfile розійшлися (наприклад, після незавершеного оновлення залежності), конвеєр зупиняється ще до lint."
+          en: "`npm ci` is the first stage of the real `scripts/ci.mjs` in this lesson too. If `package.json` and the lockfile have drifted apart (for example, after an unfinished dependency upgrade), the pipeline stops even before lint."
+
+  - id: release-record
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: release-record
+    entry: index.js
+    editable: [release.js]
+    strings:
+      hello: { uk: "Привіт зі списку бажань", en: "Hello from the wishlist" }
+      verifyIntact: { uk: "перевірка цілого артефакту:", en: "check of the intact artifact:" }
+      verifyChanged: { uk: "перевірка після зміни одного біта:", en: "check after changing one bit:" }
+    title:
+      uk: "Запис релізу та його перевірка"
+      en: "A release record and its check"
+    instructions:
+      uk: |
+        У `release.js` напиши дві функції.
+
+        `createReleaseRecord(artifactPath, { name, version, commit, node })`:
+
+        - кидає помилку, у тексті якої названо поле, якщо будь-яке з `name`, `version`, `commit`, `node` порожнє чи відсутнє;
+        - читає **байти** артефакту й повертає запис `{ name, version, commit, node, artifact, bytes, sha256, verify }`: `artifact` — лише назва файла (без теки), `bytes` — розмір, `sha256` — шістнадцятковий sha256 саме цих байтів, `verify` — дві команди перевірки: `shasum -a 256 <назва файла>` і `sha256sum <назва файла>`;
+        - записує цей самий запис як JSON у файл `artifactPath + '.release.json'`.
+
+        `verifyRelease(artifactPath)` повертає `{ ok, problems }` і **ніколи не кидає**: проблема — немає запису поруч; розмір не той; sha256 не той. `ok` — `true` лише без проблем.
+      en: |
+        In `release.js`, write two functions.
+
+        `createReleaseRecord(artifactPath, { name, version, commit, node })`:
+
+        - throws an error whose text names the field if any of `name`, `version`, `commit`, `node` is empty or missing;
+        - reads the artifact’s **bytes** and returns the record `{ name, version, commit, node, artifact, bytes, sha256, verify }`: `artifact` is the file name only (without the folder), `bytes` the size, `sha256` the hexadecimal sha256 of exactly these bytes, `verify` two check commands: `shasum -a 256 <file name>` and `sha256sum <file name>`;
+        - writes this same record as JSON into the file `artifactPath + '.release.json'`.
+
+        `verifyRelease(artifactPath)` returns `{ ok, problems }` and **never throws**: a problem is — no record next to it; the size differs; the sha256 differs. `ok` is `true` only with no problems.
+    testTitles:
+      "the record describes the exact bytes of the artifact":
+        uk: "Запис описує саме байти артефакту"
+        en: "The record describes the exact bytes of the artifact"
+      "the record lists both verify commands with the file name":
+        uk: "Запис містить обидві команди перевірки з назвою файла"
+        en: "The record lists both verify commands with the file name"
+      "the record is written next to the artifact":
+        uk: "Запис збережено поруч з артефактом"
+        en: "The record is written next to the artifact"
+      "a record without a commit is refused":
+        uk: "Запис без коміту не створюється"
+        en: "A record without a commit is refused"
+      "verifyRelease passes an untouched artifact":
+        uk: "`verifyRelease` пропускає незмінений артефакт"
+        en: "`verifyRelease` passes an untouched artifact"
+      "one changed byte is reported":
+        uk: "Один змінений байт помічено"
+        en: "One changed byte is reported"
+      "a rebuild with the same content but other bytes is reported":
+        uk: "Перезбірку з тим самим вмістом, але іншими байтами, помічено"
+        en: "A rebuild with the same content but other bytes is reported"
+      "a missing record is reported, not thrown":
+        uk: "Відсутній запис позначено, а не кинуто"
+        en: "A missing record is reported, not thrown"
+    hints:
+      nudge:
+        uk: "`readFile(path)` **без** кодування повертає `Buffer` — точні байти; саме їх і передавай у `createHash('sha256').update(…)`. Назву файла без теки дає `path.basename`."
+        en: "`readFile(path)` **without** an encoding returns a `Buffer` — the exact bytes; pass exactly these to `createHash('sha256').update(…)`. `path.basename` gives the file name without the folder."
+      explanation:
+        uk: "Чому без кодування: архів — не текст. `readFile(file, 'utf8')` замінює кожну неправильну для UTF-8 послідовність байтів символом `�`, і sha256 рахується вже від іншого вмісту. Схема перевірки — як у `verifyBackup` з NO-05: прочитати запис у `try` (немає файла або не JSON → проблема, а не виняток), потім кожне порівняння додає текст до масиву `problems`. Для запису: `JSON.stringify(record, null, 2)` дає файл, який зручно читати людині."
+        en: "Why without an encoding: an archive is not text. `readFile(file, 'utf8')` replaces every byte sequence invalid in UTF-8 with the character `�`, and the sha256 is then computed from different content. The check follows the same pattern as `verifyBackup` in NO-05: read the record inside a `try` (no file or not JSON → a problem, not an exception), then each comparison adds a text to the `problems` array. For the record: `JSON.stringify(record, null, 2)` gives a file that is easy for a person to read."
+    solutionNote:
+      uk: "Запис релізу перетворює «версію 1.4.0» на перевірюваний факт: будь-хто з командою `shasum -a 256` порівняє свій файл із записом. Перевірка за байтами ловить і пошкоджений файл, і чесну перезбірку, що дала інші байти, — для відкату це однаково «не той артефакт». Варіант, що рахує sha256 потоком (`createReadStream`) і бере розмір через `stat`, теж правильний і годиться для великих архівів."
+      en: "A release record turns “version 1.4.0” into a verifiable fact: anyone with the command `shasum -a 256` can compare their file with the record. A check by bytes catches both a damaged file and an honest rebuild that produced other bytes — for a rollback both are “not that artifact”. A version that computes the sha256 as a stream (`createReadStream`) and takes the size through `stat` is correct too, and it suits large archives."
+    feedback:
+      - when: { test: "the record describes the exact bytes of the artifact" }
+        message:
+          uk: "Ця перевірка порівнює `sha256` із sha256 байтів файла, `bytes` — з його розміром, а `artifact` — із назвою файла без теки (`planner-service-1.4.0.bundle.gz`). Читай файл без кодування."
+          en: "This check compares `sha256` with the sha256 of the file’s bytes, `bytes` with its size, and `artifact` with the file name without the folder (`planner-service-1.4.0.bundle.gz`). Read the file without an encoding."
+      - when: { test: "the record lists both verify commands with the file name" }
+        message:
+          uk: "Ця перевірка очікує в `verify` рівно дві команди: `shasum -a 256 planner-service-1.4.0.bundle.gz` і `sha256sum planner-service-1.4.0.bundle.gz` (порядок будь-який)."
+          en: "This check expects exactly two commands in `verify`: `shasum -a 256 planner-service-1.4.0.bundle.gz` and `sha256sum planner-service-1.4.0.bundle.gz` (any order)."
+      - when: { test: "the record is written next to the artifact" }
+        message:
+          uk: "Ця перевірка читає файл `<артефакт>.release.json` і очікує в ньому той самий запис, який повернула функція."
+          en: "This check reads the file `<artifact>.release.json` and expects in it the same record the function returned."
+      - when: { test: "a record without a commit is refused" }
+        message:
+          uk: "Ця перевірка передає `commit: ''` і очікує помилку, у тексті якої є слово `commit`. Порожній текст — теж «немає значення»."
+          en: "This check passes `commit: ''` and expects an error whose text contains the word `commit`. Empty text also means “no value”."
+      - when: { test: "one changed byte is reported" }
+        message:
+          uk: "Ця перевірка змінює один біт архіву, не змінюючи розміру, і очікує `ok: false`. Таку зміну видно лише за sha256."
+          en: "This check changes one bit of the archive without changing its size and expects `ok: false`. Only the sha256 shows such a change."
+      - when: { test: "a missing record is reported, not thrown" }
+        message:
+          uk: "Ця перевірка не створює запису й очікує `{ ok: false, … }` без винятку `ENOENT`. Читай запис у `try`."
+          en: "This check creates no record and expects `{ ok: false, … }` without an `ENOENT` exception. Read the record inside a `try`."
+
+  - id: lab-kit
+    kind: example
+    runtime: isolated-node
+    dir: lab-kit
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+    title:
+      uk: "Набір лабораторного проєкту планувальника"
+      en: "The planner lab project kit"
+    body:
+      uk: |
+        `create-lab.mjs` створює в поточній теці проєкт `no12-lab` — сервіс планувальника на TypeScript із тестами `node:test`, налаштуваннями ESLint і TypeScript та скриптами `scripts/build.mjs` і `scripts/ci.mjs`. Якщо `no12-lab` уже існує, скрипт нічого не змінює. Файли записано всередині як JSON-текст, тож читати їх зручніше вже після створення — у VS Code.
+
+        Натисни **Запустити**: `index.js` створює проєкт у пісочниці й одразу запускає його сервіс на loopback. ESLint, `tsc` і CI-скрипт потребують npm-пакетів і запуску інших програм, тож вони працюватимуть лише у твоєму терміналі.
+      en: |
+        `create-lab.mjs` creates the project `no12-lab` in the current folder — a planner service in TypeScript with `node:test` tests, ESLint and TypeScript settings, and the scripts `scripts/build.mjs` and `scripts/ci.mjs`. If `no12-lab` already exists, the script changes nothing. The files are stored inside as JSON text, so they are easier to read once created — in VS Code.
+
+        Press **Run**: `index.js` creates the project in the sandbox and immediately starts its service on loopback. ESLint, `tsc` and the CI script need npm packages and starting other programs, so they work only in your terminal.
+
+  - id: ci-locally
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Справжній CI у твоєму терміналі: артефакт і запис релізу"
+      en: "A real CI in your terminal: an artifact and a release record"
+    intro:
+      uk: |
+        Проєкт `~/js-course/no12-lab` знадобиться й у наступних уроках цього розділу: тут ти його створюєш, а вони знаходять його на цьому місці.
+
+        Під час підготовки уроку кроки виконано на macOS з Node.js v25.2.1, npm 11.6.2 і git 2.51.0, а також (кроки 1–6) з Node.js v22.23.3 і npm 10.9.9; вивід нижче справжній, знятий з англійської версії файлів. Пакети: TypeScript 6.0.3, @types/node 22.20.5, ESLint 10.11.0, @eslint/js 10.0.1, typescript-eslint 8.71.0. Ми ставимо TypeScript 6, а не 7: typescript-eslint 8.71.0 підтримує TypeScript лише до версії 6.1 (його `peerDependencies`: `>=4.8.4 <6.1.0`). Windows і Linux не перевіряли; у Linux замість `shasum -a 256` є `sha256sum`.
+
+        **Крок 5 — зелений прогін (Node v25.2.1; уривок):**
+
+        ```text
+        $ node scripts/ci.mjs
+
+        ▶ install: npm ci --no-audit --no-fund
+
+        added 98 packages in 540ms
+
+        ▶ lint: npx eslint .
+
+        ▶ typecheck: npx tsc -p .
+
+        ▶ test: node --test test/app.test.ts
+        ✔ GET /tasks lists high priority first (28.195959ms)
+        ✔ POST /tasks stores a task (8.0465ms)
+        ℹ tests 2
+        …
+        ▶ build: node scripts/build.mjs
+        (node:48277) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+        (Use `node --trace-warnings ...` to show where the warning was created)
+        build: release/ holds 6 files of no12-lab 1.3.0
+
+        ✔ CI passed: artifacts/no12-lab-1.3.0.tgz
+          sha256 561432a997efd7d93c7c08d38a1964f93645beabc55a960af005520b8d3802f4
+        ```
+
+        `ExperimentalWarning` — попередження, а не помилка: `stripTypeScriptTypes` у Node 22 і 25 позначено як експериментальну. На Node v22.23.3 тести друкуються у форматі TAP (`ok 1 - …`), коли вивід перенаправлено у файл, і той самий коміт дав **інший** sha256 — `fe800a3e…2014`: вміст архіву той самий, а стиснення інше. Твій sha256 буде своїм уже тому, що назви справ у тебе мовою уроку. На Node 22.13–22.17 `node --test` з файлом `.ts` потребує прапорця `--experimental-strip-types` (за документацією Node 22 «Modules: TypeScript»); ці версії ми не запускали.
+
+        **Крок 6 — запис релізу:**
+
+        ```text
+        $ cat artifacts/no12-lab-1.3.0.release.json
+        {
+          "name": "no12-lab",
+          "version": "1.3.0",
+          "commit": "a7ab36a",
+          "node": "v25.2.1",
+          "artifact": "artifacts/no12-lab-1.3.0.tgz",
+          "sha256": "561432a997efd7d93c7c08d38a1964f93645beabc55a960af005520b8d3802f4"
+        }
+        $ shasum -a 256 artifacts/no12-lab-1.3.0.tgz
+        561432a997efd7d93c7c08d38a1964f93645beabc55a960af005520b8d3802f4  artifacts/no12-lab-1.3.0.tgz
+        ```
+
+        **Крок 8 — помилка типу (уривок):**
+
+        ```text
+        ▶ typecheck: npx tsc -p .
+        src/app.ts(17,102): error TS2345: Argument of type '(a: Task, b: Task) => string' is not assignable to parameter of type '(a: Task, b: Task) => number'.
+          Type 'string' is not assignable to type 'number'.
+        src/tasks.ts(15,3): error TS2322: Type 'number' is not assignable to type 'string'.
+
+        ✖ CI stopped at "typecheck" (exit code 2). No artifact was produced.
+        ```
+      en: |
+        The project `~/js-course/no12-lab` is needed in the next lessons of this unit too: you create it here, and they find it in this place.
+
+        While preparing this lesson the steps were run on macOS with Node.js v25.2.1, npm 11.6.2 and git 2.51.0, and also (steps 1–6) with Node.js v22.23.3 and npm 10.9.9; the output below is real, captured from the English version of the files. Packages: TypeScript 6.0.3, @types/node 22.20.5, ESLint 10.11.0, @eslint/js 10.0.1, typescript-eslint 8.71.0. We install TypeScript 6, not 7: typescript-eslint 8.71.0 supports TypeScript only below 6.1 (its `peerDependencies`: `>=4.8.4 <6.1.0`). Windows and Linux were not checked; on Linux use `sha256sum` instead of `shasum -a 256`.
+
+        **Step 5 — a green run (Node v25.2.1; an excerpt):**
+
+        ```text
+        $ node scripts/ci.mjs
+
+        ▶ install: npm ci --no-audit --no-fund
+
+        added 98 packages in 540ms
+
+        ▶ lint: npx eslint .
+
+        ▶ typecheck: npx tsc -p .
+
+        ▶ test: node --test test/app.test.ts
+        ✔ GET /tasks lists high priority first (28.195959ms)
+        ✔ POST /tasks stores a task (8.0465ms)
+        ℹ tests 2
+        …
+        ▶ build: node scripts/build.mjs
+        (node:48277) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+        (Use `node --trace-warnings ...` to show where the warning was created)
+        build: release/ holds 6 files of no12-lab 1.3.0
+
+        ✔ CI passed: artifacts/no12-lab-1.3.0.tgz
+          sha256 561432a997efd7d93c7c08d38a1964f93645beabc55a960af005520b8d3802f4
+        ```
+
+        The `ExperimentalWarning` is a warning, not an error: `stripTypeScriptTypes` is marked experimental in Node 22 and 25. On Node v22.23.3 the tests print in TAP format (`ok 1 - …`) when the output is redirected to a file, and the same commit gave a **different** sha256 — `fe800a3e…2014`: the archive’s content is the same, the compression is not. Your sha256 will be your own anyway, because your task titles are in the lesson’s language. On Node 22.13–22.17 `node --test` with a `.ts` file needs the flag `--experimental-strip-types` (according to the Node 22 documentation, “Modules: TypeScript”); we did not run those versions.
+
+        **Step 6 — the release record:**
+
+        ```text
+        $ cat artifacts/no12-lab-1.3.0.release.json
+        {
+          "name": "no12-lab",
+          "version": "1.3.0",
+          "commit": "a7ab36a",
+          "node": "v25.2.1",
+          "artifact": "artifacts/no12-lab-1.3.0.tgz",
+          "sha256": "561432a997efd7d93c7c08d38a1964f93645beabc55a960af005520b8d3802f4"
+        }
+        $ shasum -a 256 artifacts/no12-lab-1.3.0.tgz
+        561432a997efd7d93c7c08d38a1964f93645beabc55a960af005520b8d3802f4  artifacts/no12-lab-1.3.0.tgz
+        ```
+
+        **Step 8 — a type error (an excerpt):**
+
+        ```text
+        ▶ typecheck: npx tsc -p .
+        src/app.ts(17,102): error TS2345: Argument of type '(a: Task, b: Task) => string' is not assignable to parameter of type '(a: Task, b: Task) => number'.
+          Type 'string' is not assignable to type 'number'.
+        src/tasks.ts(15,3): error TS2322: Type 'number' is not assignable to type 'string'.
+
+        ✖ CI stopped at "typecheck" (exit code 2). No artifact was produced.
+        ```
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1 і v22.23.3", en: "checked with v25.2.1 and v22.23.3" } }
+      - { name: "npm", version: { uk: "разом із Node.js", en: "comes with Node.js" }, note: { uk: "перевірено з 11.6.2 і 10.9.9", en: "checked with 11.6.2 and 10.9.9" } }
+      - { name: "git", version: "2.28+", note: { uk: "для `git init -b`; перевірено з 2.51.0", en: "for `git init -b`; checked with 2.51.0" } }
+    steps:
+      - text:
+          uk: "Перейди в теку курсу (створи її, якщо її ще немає)."
+          en: "Go to the course folder (create it if it does not exist yet)."
+        command: "mkdir -p ~/js-course\ncd ~/js-course"
+      - text:
+          uk: "Створи в VS Code файл `~/js-course/create-lab.mjs`, встав у нього весь вміст вкладки `create-lab.mjs` з прикладу «Набір лабораторного проєкту планувальника» і запусти його."
+          en: "In VS Code, create the file `~/js-course/create-lab.mjs`, paste into it the whole content of the `create-lab.mjs` tab from the example “The planner lab project kit” and run it."
+        command: "node create-lab.mjs"
+        expect:
+          uk: "`Created no12-lab with 12 files.` Якщо замість цього `no12-lab already exists here; nothing was changed.` — проєкт уже є; переходь до кроку 3."
+          en: "`Created no12-lab with 12 files.` If you see `no12-lab already exists here; nothing was changed.` instead, the project is already there; go on to step 3."
+      - text:
+          uk: "Встанови інструменти перевірок саме цих версій."
+          en: "Install the check tools in exactly these versions."
+        command: "cd no12-lab\nnpm install --save-dev typescript@6.0.3 @types/node@22.20.5 eslint@10.11.0 @eslint/js@10.0.1 typescript-eslint@8.71.0"
+        expect:
+          uk: "`added 98 packages, and audited 99 packages in …` і `found 0 vulnerabilities`; з’явилися `node_modules` і `package-lock.json`."
+          en: "`added 98 packages, and audited 99 packages in …` and `found 0 vulnerabilities`; `node_modules` and `package-lock.json` appeared."
+      - text:
+          uk: "Збережи проєкт у git: запис релізу бере з нього коміт."
+          en: "Save the project in git: the release record takes the commit from it."
+        command: "git init -b main\ngit add -A\ngit commit -m \"planner lab 1.3.0\""
+        expect:
+          uk: "`[main (root-commit) …] planner lab 1.3.0` і `13 files changed`."
+          en: "`[main (root-commit) …] planner lab 1.3.0` and `13 files changed`."
+      - text:
+          uk: "Запусти локальний CI. Перший прогін триває кілька секунд."
+          en: "Run the local CI. The first run takes a few seconds."
+        command: "node scripts/ci.mjs"
+        expect:
+          uk: "Етапи `install`, `lint`, `typecheck`, `test`, `build` по черзі й наприкінці `✔ CI passed: artifacts/no12-lab-1.3.0.tgz` із sha256, як у кроці 5 вступу."
+          en: "The stages `install`, `lint`, `typecheck`, `test`, `build` in turn and at the end `✔ CI passed: artifacts/no12-lab-1.3.0.tgz` with a sha256, as in step 5 of the introduction."
+      - text:
+          uk: "Прочитай запис релізу й перевір архів сам — командою, а не на око."
+          en: "Read the release record and check the archive yourself — with a command, not by eye."
+        command: "cat artifacts/no12-lab-1.3.0.release.json\nshasum -a 256 artifacts/no12-lab-1.3.0.tgz"
+        expect:
+          uk: "sha256 у записі й у виводі `shasum` однакові, а `commit` збігається з першим рядком `git log --oneline`."
+          en: "The sha256 in the record and in the `shasum` output are the same, and `commit` matches the first line of `git log --oneline`."
+      - text:
+          uk: "Зламай тип: у `src/tasks.ts` в рядку `export function byPriority(a: Task, b: Task): number {` заміни `number` на `string` і збережи файл. Потім переконайся, що тести самі по собі все ще проходять."
+          en: "Break a type: in `src/tasks.ts`, on the line `export function byPriority(a: Task, b: Task): number {`, replace `number` with `string` and save the file. Then make sure the tests on their own still pass."
+        command: "node --test test/app.test.ts"
+        expect:
+          uk: "`ℹ pass 2` і `ℹ fail 0`: під час виконання типів немає."
+          en: "`ℹ pass 2` and `ℹ fail 0`: there are no types at run time."
+      - text:
+          uk: "Запусти CI на зламаному коді й переконайся, що архів із кроку 5 не змінився."
+          en: "Run CI on the broken code and make sure the archive from step 5 has not changed."
+        command: "node scripts/ci.mjs\nshasum -a 256 artifacts/no12-lab-1.3.0.tgz"
+        expect:
+          uk: "`✖ CI stopped at \"typecheck\" (exit code 2). No artifact was produced.`, як у кроці 8 вступу, і той самий sha256, що в кроці 6."
+          en: "`✖ CI stopped at \"typecheck\" (exit code 2). No artifact was produced.`, as in step 8 of the introduction, and the same sha256 as in step 6."
+      - text:
+          uk: "Поверни файл до збереженого в git стану й запусти CI ще раз."
+          en: "Return the file to the state saved in git and run CI once more."
+        command: "git checkout -- src/tasks.ts\nnode scripts/ci.mjs"
+        expect:
+          uk: "Знову `✔ CI passed` — і на тому самому комп’ютері з тим самим Node той самий sha256, що в кроці 6."
+          en: "`✔ CI passed` again — and on the same computer with the same Node, the same sha256 as in step 6."
+    verify:
+      - id: green-run
+        text:
+          uk: "Мій `node scripts/ci.mjs` пройшов усі етапи й залишив `artifacts/no12-lab-1.3.0.tgz` та запис релізу."
+          en: "My `node scripts/ci.mjs` passed every stage and left `artifacts/no12-lab-1.3.0.tgz` and a release record."
+      - id: checksum-matches
+        text:
+          uk: "sha256 із запису збігся з виводом `shasum -a 256`."
+          en: "The sha256 from the record matched the output of `shasum -a 256`."
+      - id: red-stops
+        text:
+          uk: "З помилкою типу CI зупинився на typecheck, хоча тести окремо проходили, і архів не змінився."
+          en: "With a type error CI stopped at typecheck although the tests passed on their own, and the archive did not change."
+    troubleshooting:
+      - problem:
+          uk: "`npm ci` пише `npm error ERESOLVE could not resolve` і `peer typescript@\">=4.8.4 <6.1.0\" from typescript-eslint`."
+          en: "`npm ci` says `npm error ERESOLVE could not resolve` and `peer typescript@\">=4.8.4 <6.1.0\" from typescript-eslint`."
+        fix:
+          uk: "У проєкті встановлено TypeScript 7 (наприклад, без `@6.0.3` у кроці 3). `npm install` лише попереджає про такий конфлікт, а `npm ci` відмовляється — це ми бачили під час підготовки уроку. Встанови `npm install --save-dev typescript@6.0.3`, зроби коміт і запусти CI знову."
+          en: "TypeScript 7 got installed in the project (for example, without `@6.0.3` in step 3). `npm install` only warns about such a conflict, while `npm ci` refuses — we saw this while preparing the lesson. Run `npm install --save-dev typescript@6.0.3`, commit and run CI again."
+      - problem:
+          uk: "Запис релізу каже `\"commit\": \"not a git repository\"`."
+          en: "The release record says `\"commit\": \"not a git repository\"`."
+        fix:
+          uk: "Крок 4 пропущено: у теці немає git-репозиторію. Виконай `git init -b main`, `git add -A`, `git commit -m \"planner lab 1.3.0\"` і запусти CI знову."
+          en: "Step 4 was skipped: there is no git repository in the folder. Run `git init -b main`, `git add -A`, `git commit -m \"planner lab 1.3.0\"` and run CI again."
+      - problem:
+          uk: "Етап test падає з `Unknown file extension \".ts\"`."
+          en: "The test stage fails with `Unknown file extension \".ts\"`."
+        fix:
+          uk: "Твій Node старіший за 22.18 і не вилучає типи без прапорця. Онови Node до 22.18 або новішого, або заміни в `scripts/ci.mjs` команду етапу test на `node --experimental-strip-types --test test/app.test.ts`. Цей рядок під час підготовки не відтворювали."
+          en: "Your Node is older than 22.18 and does not strip types without a flag. Update Node to 22.18 or newer, or replace the test stage’s command in `scripts/ci.mjs` with `node --experimental-strip-types --test test/app.test.ts`. This row was not reproduced while preparing."
+    recovery:
+      uk: "Усе, що змінює це завдання, лежить у git: `git status` покаже змінені файли, а `git checkout -- <файл>` поверне збережену версію. `node_modules` можна будь-коли видалити й поставити знову з lockfile командою `npm ci`. Якщо проєкт заплутався зовсім, перейменуй теку (`mv no12-lab no12-lab-old`) і почни з кроку 2."
+      en: "Everything this task changes is in git: `git status` shows the changed files, and `git checkout -- <file>` returns the saved version. `node_modules` can be deleted at any time and installed again from the lockfile with `npm ci`. If the project gets completely tangled, rename the folder (`mv no12-lab no12-lab-old`) and start from step 2."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-12
+    body:
+      uk: "Проєктний крок цього розділу ще не написано. За планом курсу сервер твого проєкту отримає власний `ci.mjs`: lint, typecheck, тести й збірку по черзі, один артефакт і запис релізу з контрольною сумою. Тримай кожен перевірений артефакт поруч із записом — саме до них ти відкочуватимешся в уроках про runbook і rollback."
+      en: "The project step of this unit is not written yet. According to the course plan your project’s server gets its own `ci.mjs`: lint, typecheck, tests and build in turn, one artifact and a release record with a checksum. Keep every verified artifact next to its record — those are what you roll back to in the lessons on runbooks and rollback."
