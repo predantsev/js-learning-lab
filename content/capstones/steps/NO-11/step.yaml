@@ -1,0 +1,166 @@
+# Capstone step of unit NO-11 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of NO-11 from this file.
+# A local step: done in the learner's editor and terminal; no platform checks. The project page shows only
+# the intro of a local step, so the intro carries the whole procedure.
+# Every command was run on macOS in a scratch home on all four projects, continuing the NO-07 references, in a
+# Ukrainian and an English workspace, on Node.js 25.2.1 (npm 11.6.2, curl 8.7.1) and on Node.js 22.13.1
+# (npm 10.9.2, with NODE_OPTIONS=--experimental-strip-types), on a fresh data folder: npm run synth, npm run
+# import (twice), npm run export, npm start with the curl requests of the intro (export, import, a bad file, a
+# slow import plus a second one, the slow one cancelled), npm test, npm run check, npm run check:server, npm run
+# typecheck. Deliberately wrong variants were run against npm test on all four; each failed at least one test
+# (listed in the task files' headers and in the hand-back). Quoted output is from the wishlist run in the
+# Ukrainian workspace on Node.js 25.2.1. Not run: Linux, Windows.
+# reference/ is the NO-07 reference plus the files of this step (without node_modules/, package-lock.json and
+# the runtime folders server/data/ and server/.check/); sample names in tests/ are fixture strings.
+unit: NO-11
+mode: local
+entry: index.html
+title:
+  uk: "Потоковий експорт та імпорт: JSON lines, backpressure, обмежена задача"
+  en: "Streamed export and import: JSON lines, backpressure, a bounded job"
+intro:
+  uk: |
+    Твій проєкт уміє зберігати й віддавати записи по одному. Тепер — тисячами: експорт усіх записів як **JSON lines** (один запис — один рядок JSON) потоком, з урахуванням backpressure, і імпорт великого файлу як обмежена задача, яку можна скасувати й безпечно повторити. Ключ безпеки повтору — **upsert за `id`**: запис із відомим `id` замінює збережений, новий — додається, тож той самий файл, імпортований двічі, дає те саме сховище.
+
+    | Проєкт | Рядок експорту | Upsert за `id` |
+    |---|---|---|
+    | Список бажань | `{id, name, price, acquired, category}` | бажання з рядка замінює збережене |
+    | Планувальник | `{id, title, dueDate, done, priority}` | `done` не скидається: виконана справа лишається виконаною |
+    | Трекер звичок | `{id, name, frequency, active, completions}` | `completions` зливаються у відсортовану множину різних днів |
+    | Трекер витрат | `{id, label, amountMinor, date, category}` | витрата з рядка замінює збережену: суми категорій не подвоюються |
+
+    Перевірено на macOS на всіх чотирьох проєктах в українському й англійському проєктах — на Node.js 25.2.1 (curl 8.7.1) і на Node.js 22.13.1 (з `NODE_OPTIONS=--experimental-strip-types`: ті самі рядки плюс `ExperimentalWarning`, `npm test` у файл — формат TAP); нижче — «Список бажань» в українському проєкті на 25.2.1, на свіжій теці `data/`. На Linux і Windows не перевірялося; `curl --limit-rate` і `&` — для терміналів macOS і Linux.
+
+    **1. Стан на початку.** `cd ~/js-course/<проєкт>/server`, `git status` — чисто, останній commit — `Harden the API edge: body and time limits, safe keys and paths, loopback, request-id logs`.
+
+    **2. Рядки — `src/jsonl.ts`.** `wishLine` (у твоєму проєкті — рядок твого запису) — поля в сталому порядку; `toJsonLines(records)` — async-генератор рядків. `writeJsonLines(lines, writable)` пише в будь-який потік і поважає backpressure: `write()` повернув `false` — чекаємо `'drain'` (`once` з `node:events`); рядок не загублено, писати його вдруге — означає записати двічі. `exportToFile(records, destPath, signal)` — `pipeline(Readable.from(…), createWriteStream(тимчасовий), { signal })`, `rename` лише після успіху, `rm` тимчасового файлу після помилки чи скасування: `pipeline` закриває потоки, але файлів не видаляє. `splitLines(chunks, limits)` ділить байти на нумеровані рядки, зберігаючи незавершений кінець частини (`rest = lines.pop()`), і відмовляє (`413`) на рядку довшому за `maxLineBytes` чи тілі понад `maxBytes`.
+
+    **3. Задачі — `src/jobs.ts`.** `createJobQueue({ concurrency, maxQueued })`: зайнято й черга повна — `QueueFull` одразу, слот звільняється в `finally` (і після збою). `retry(fn, { maxAttempts, baseMs, isRetryable, signal })`: пауза `random() × baseMs × 2^(n − 1)`, переривається сигналом; повторюється лише те, що може пройти, і лише ідемпотентне.
+
+    **4. Імпорт — `src/importer.ts`, `importJsonLines(source, repository, { idPattern, signal, limits })`.** `pipeline(source, splitLines, перевірка, { signal })`: кожен рядок — контракт сховища й форма `id`; проблеми збираються з номерами рядків (`"line 2": "price: notWholeNonNegative"`), `id` двічі у файлі — `id: duplicate`. Бюджет: `maxRecords` (20 000) рядків — інакше `413`; кожні 500 рядків — `await setImmediate()` з `node:timers/promises` (сервер устигає відповідати іншим) і `signal.throwIfAborted()` у цій безпечній точці. У сховище нічого не потрапляє, доки не прочитано й не перевірено **все**; потім — одна зміна репозиторію `upsertMany` у черзі записів, загорнута в `retry` для тимчасових збоїв диска (upsert ідемпотентний, тож повтор безпечний).
+
+    **5. Маршрути — `src/api.ts`, `src/server.ts`.** `GET /v1/export` — `application/x-ndjson`, `pipeline` у відповідь. `POST /v1/import` — тіло JSON lines; черга імпорту сервера `createJobQueue({ concurrency: 1, maxQueued: 0 })`: другий імпорт під час першого — `503 IMPORT_BUSY` з `Retry-After: 1`. Клієнт пішов посеред тіла — подія `close` відповіді скасовує задачу через `AbortController`, сховище не змінюється. Тіло йде в задачу через `PassThrough`: відмова на межі руйнує лише копію, решта тіла дочитується й відкидається (`dropRest`), і `413` доходить до клієнта цілим. `MAX_DATA_BYTES` сховища — 10 000 000 (у трекері звичок — більше, див. завдання).
+
+    **6. Скрипти.** `npm run -s synth -- 10000 > data/import.jsonl` — синтетичні записи з `data/synthetic.js` вебпроєкту (той самий `count` — той самий список), `id` від `…-101`; пише в stdout через `writeJsonLines`, тобто з backpressure. Щоб TypeScript прийняв імпорт `.js`, у `server/tsconfig.json` — `"allowJs": true`. `npm run export -- <файл>` і `npm run import -- <файл>` (сервер зупинено: черга записів захищає один процес) — та сама робота без HTTP; Ctrl+C скасовує.
+
+    **7. Тести — `tests/streams.test.ts`.** Експорт по HTTP: усі записи, поля в сталому порядку; `writeJsonLines` з повільним потоком (`highWaterMark` 256): черга — не більше за межу плюс один рядок; скасований `exportToFile` — старий файл цілий, тимчасового немає; 10 000 синтетичних записів — один раз, повторний імпорт нічого не дублює; upsert за `id`; кожен поганий рядок названо номером, і нічого не записано; бюджет `maxRecords` і `maxLineBytes` — `413` (через сирий сокет: тіло ще йде, а відповідь уже є); клієнт пішов — нічого не записано, наступний імпорт іде; другий імпорт — `503` з `Retry-After`; збій запису `EBUSY` повторено без дублів. Правило твого проєкту — у завданні.
+
+    **8. Прогін.** На свіжій теці `data/` (вивід — «Список бажань», українська; `…` — час, id):
+
+    ```text
+    $ npm run -s synth -- 10000 > data/import.jsonl
+    $ head -2 data/import.jsonl
+    {"id":"w-101","name":"Навушники 0","price":null,"acquired":true,"category":"Техніка"}
+    {"id":"w-102","name":"Настільна лампа 1","price":37,"acquired":false,"category":"Дім"}
+    $ npm run -s import -- data/import.jsonl
+    Imported 10000 lines in … ms: 10000 new wishes, 0 updated; the store holds 10006.
+    $ npm run -s import -- data/import.jsonl
+    Imported 10000 lines in … ms: 0 new wishes, 10000 updated; the store holds 10006.
+    $ npm run -s export -- data/export.jsonl
+    Exported 10006 wishes to data/export.jsonl
+    $ npm start   (і в другому терміналі:)
+    $ curl -sS http://127.0.0.1:4311/v1/export | wc -l
+    10006
+    $ curl -sS http://127.0.0.1:4311/v1/import -H "content-type: application/x-ndjson" --data-binary @data/import.jsonl
+    {"lines":10000,"created":0,"updated":10000}
+    $ curl -sS http://127.0.0.1:4311/v1/import -H "content-type: application/x-ndjson" --data-binary @data/bad.jsonl
+    {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"line 2":"price: notWholeNonNegative","line 3":"not-json","line 4":"id: malformed"},"requestId":"…"}}
+    $ curl -sS --limit-rate 100k http://127.0.0.1:4311/v1/import -H "content-type: application/x-ndjson" --data-binary @data/import.jsonl &
+    $ curl -sS -i http://127.0.0.1:4311/v1/import -H "content-type: application/x-ndjson" --data-binary @data/import.jsonl
+    HTTP/1.1 503 Service Unavailable
+    retry-after: 1
+    {"error":{"code":"IMPORT_BUSY","messageKey":"errors.importBusy","details":{},"requestId":"…"}}
+    $ kill %1
+    $ curl -sS http://127.0.0.1:4311/v1/export | wc -l
+    10006
+    ```
+
+    `data/bad.jsonl` — чотири рядки: правильний, з ціною `12.5`, обірваний JSON, з `id` `../w-04` (точний вміст — у завданні). `curl -i` показує й `HTTP/1.1 100 Continue` — так curl відправляє велике тіло; ми лишили статус, `retry-after` і тіло. Після `kill %1` у терміналі сервера — рядок `{"level":"error",…,"event":"failed","error":"AbortError","code":"ABORT_ERR"}`, а кількість записів та сама: скасований імпорт нічого не записав.
+
+    **9. Спробуй зламати.** Ігноруй відповідь `write()` — `✖ writeJsonLines waits for 'drain': the writer's queue never holds more than its limit plus one line`; пиши рядки в сховище одразу, до кінця перевірки, — `✖ every line is checked and named by its number; one bad line and nothing is written`; встав запис замість upsert — `✖ 10,000 synthetic wishes import once; the same file imported again duplicates nothing`; прибери `controller.abort()` у `close` — `✖ a client that goes away in the middle aborts the import: nothing is written, the next import runs`. Назви тестів твого проєкту — у завданні. Поверни код.
+
+    **10. Доказ і commit.** `npm run typecheck` — жодного рядка; `npm run check` і `npm run check:server` — усі `✔`; `npm test` — `fail 0`. У `docs/server.md` — розділ «NO-11»: вивід кроку 8 і рядки логу. `cd ..`, `git add -A`, `git commit -m "Stream the records out and in as JSON lines: a bounded, cancellable import job that upserts by id"`.
+
+    **Самоперевірка:** експорт — один рядок на запис, потоком, із backpressure, а файл з’являється лише цілим; імпорт перевіряє кожен рядок і називає поганий номером, нічого не пише до кінця перевірки, тримає бюджет записів і довжини рядка, поступається циклу подій між пакетами, скасовується сигналом; другий імпорт під час першого — `503` з `Retry-After`; повторений імпорт не дублює й не псує записів.
+
+    **Якщо щось не так:** `error TS7016: Could not find a declaration file for module '../../data/synthetic.js'` — у `server/tsconfig.json` немає `"allowJs": true`. `413` на справжньому файлі — перевір `maxBytes` і `maxLineBytes` (у списку бажань — 8 000 000 і 4096; межі твого проєкту — у завданні). `Import failed, nothing was written: RangeError` — `MAX_DATA_BYTES` сховища менший за 10 000 записів (у нас із 1 000 000 було саме так). `npm run import` під час запущеного сервера — не роби так: два процеси пишуть один файл, а черга записів захищає лише один.
+
+    Референс кроку — `Завантажити: NO-11 — Потоковий експорт та імпорт: JSON lines, backpressure, обмежена задача` після експорту; відкрий його після власної спроби.
+  en: |
+    Your project can store and serve records one at a time. Now in thousands: an export of every record as **JSON lines** (one record — one line of JSON), streamed, with backpressure, and an import of a big file as a bounded job that can be cancelled and safely retried. The key to a safe retry is an **upsert by `id`**: a record with a known `id` replaces the stored one, a new one is added, so the same file imported twice gives the same store.
+
+    | Project | Export line | Upsert by `id` |
+    |---|---|---|
+    | Wishlist | `{id, name, price, acquired, category}` | the wish of the line replaces the stored one |
+    | Planner | `{id, title, dueDate, done, priority}` | `done` is never reset: a finished task stays finished |
+    | Habit tracker | `{id, name, frequency, active, completions}` | `completions` are merged as a sorted set of different days |
+    | Expense tracker | `{id, label, amountMinor, date, category}` | the expense of the line replaces the stored one: category totals never double |
+
+    Checked on macOS on all four projects in a Ukrainian and an English project — on Node.js 25.2.1 (curl 8.7.1) and on Node.js 22.13.1 (with `NODE_OPTIONS=--experimental-strip-types`: the same lines plus an `ExperimentalWarning`, `npm test` into a file — the TAP format); below is the Wishlist in a Ukrainian project on 25.2.1, on a fresh `data/` folder. Not checked on Linux or Windows; `curl --limit-rate` and `&` are for macOS and Linux terminals.
+
+    **1. The starting state.** `cd ~/js-course/<project>/server`, `git status` — clean, the last commit is `Harden the API edge: body and time limits, safe keys and paths, loopback, request-id logs`.
+
+    **2. Lines — `src/jsonl.ts`.** `wishLine` (in your project, the line of your record) — the fields in a fixed order; `toJsonLines(records)` — an async generator of lines. `writeJsonLines(lines, writable)` writes to any stream and respects backpressure: `write()` returned `false` — wait for `'drain'` (`once` from `node:events`); the line was not lost, and writing it again means writing it twice. `exportToFile(records, destPath, signal)` — `pipeline(Readable.from(…), createWriteStream(temp), { signal })`, `rename` only after success, `rm` of the temp file after an error or a cancel: `pipeline` closes the streams but deletes no files. `splitLines(chunks, limits)` cuts bytes into numbered lines, keeping the unfinished end of a chunk (`rest = lines.pop()`), and refuses (`413`) a line longer than `maxLineBytes` or a body over `maxBytes`.
+
+    **3. Jobs — `src/jobs.ts`.** `createJobQueue({ concurrency, maxQueued })`: busy and the queue full — `QueueFull` at once, the slot is freed in `finally` (after a failure too). `retry(fn, { maxAttempts, baseMs, isRetryable, signal })`: a pause of `random() × baseMs × 2^(n − 1)`, cut short by the signal; only what can pass is retried, and only an idempotent step.
+
+    **4. The import — `src/importer.ts`, `importJsonLines(source, repository, { idPattern, signal, limits })`.** `pipeline(source, splitLines, check, { signal })`: every line — the storage contract and the `id` shape; the problems are collected with their line numbers (`"line 2": "price: notWholeNonNegative"`), an `id` twice in the file is `id: duplicate`. The budget: `maxRecords` (20,000) lines, otherwise a `413`; every 500 lines — `await setImmediate()` from `node:timers/promises` (the server still answers others) and `signal.throwIfAborted()` at that safe point. Nothing reaches the store until **everything** has been read and checked; then one change of the repository, `upsertMany`, in the write queue, wrapped in `retry` for passing disk failures (the upsert is idempotent, so a retry is safe).
+
+    **5. Routes — `src/api.ts`, `src/server.ts`.** `GET /v1/export` — `application/x-ndjson`, a `pipeline` into the answer. `POST /v1/import` — a JSON-lines body; the server's import queue is `createJobQueue({ concurrency: 1, maxQueued: 0 })`: a second import during the first is a `503 IMPORT_BUSY` with `Retry-After: 1`. A client that goes away mid-body — the answer's `close` event cancels the job through an `AbortController`, and the store does not change. The body reaches the job through a `PassThrough`: a refusal at the edge destroys only that copy, the rest of the body is read and dropped (`dropRest`), and the `413` reaches the client whole. The store's `MAX_DATA_BYTES` is 10,000,000 (more in the habit tracker, see the task).
+
+    **6. Scripts.** `npm run -s synth -- 10000 > data/import.jsonl` — synthetic records from the web project's `data/synthetic.js` (the same `count` gives the same list), ids from `…-101`; it writes to stdout through `writeJsonLines`, that is, with backpressure. For TypeScript to accept an import of `.js`, `server/tsconfig.json` gets `"allowJs": true`. `npm run export -- <file>` and `npm run import -- <file>` (with the server stopped: the write queue protects one process) do the same work without HTTP; Ctrl+C cancels.
+
+    **7. Tests — `tests/streams.test.ts`.** The export over HTTP: every record, fields in a fixed order; `writeJsonLines` with a slow stream (`highWaterMark` 256): the queue never above the limit plus one line; a cancelled `exportToFile` — the old file whole, no temp file; 10,000 synthetic records once, a repeated import duplicates nothing; an upsert by `id`; every bad line named by its number, and nothing written; the `maxRecords` and `maxLineBytes` budget — `413` (through a raw socket: the body is still on its way when the answer is there); a client that goes away — nothing written, the next import runs; a second import — `503` with `Retry-After`; an `EBUSY` write failure retried without duplicates. Your project's rule is in the task.
+
+    **8. The run.** On a fresh `data/` folder (the output is the Wishlist, Ukrainian; `…` is a time or an id):
+
+    ```text
+    $ npm run -s synth -- 10000 > data/import.jsonl
+    $ head -2 data/import.jsonl
+    {"id":"w-101","name":"Навушники 0","price":null,"acquired":true,"category":"Техніка"}
+    {"id":"w-102","name":"Настільна лампа 1","price":37,"acquired":false,"category":"Дім"}
+    $ npm run -s import -- data/import.jsonl
+    Imported 10000 lines in … ms: 10000 new wishes, 0 updated; the store holds 10006.
+    $ npm run -s import -- data/import.jsonl
+    Imported 10000 lines in … ms: 0 new wishes, 10000 updated; the store holds 10006.
+    $ npm run -s export -- data/export.jsonl
+    Exported 10006 wishes to data/export.jsonl
+    $ npm start   (and in a second terminal:)
+    $ curl -sS http://127.0.0.1:4311/v1/export | wc -l
+    10006
+    $ curl -sS http://127.0.0.1:4311/v1/import -H "content-type: application/x-ndjson" --data-binary @data/import.jsonl
+    {"lines":10000,"created":0,"updated":10000}
+    $ curl -sS http://127.0.0.1:4311/v1/import -H "content-type: application/x-ndjson" --data-binary @data/bad.jsonl
+    {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"line 2":"price: notWholeNonNegative","line 3":"not-json","line 4":"id: malformed"},"requestId":"…"}}
+    $ curl -sS --limit-rate 100k http://127.0.0.1:4311/v1/import -H "content-type: application/x-ndjson" --data-binary @data/import.jsonl &
+    $ curl -sS -i http://127.0.0.1:4311/v1/import -H "content-type: application/x-ndjson" --data-binary @data/import.jsonl
+    HTTP/1.1 503 Service Unavailable
+    retry-after: 1
+    {"error":{"code":"IMPORT_BUSY","messageKey":"errors.importBusy","details":{},"requestId":"…"}}
+    $ kill %1
+    $ curl -sS http://127.0.0.1:4311/v1/export | wc -l
+    10006
+    ```
+
+    `data/bad.jsonl` is four lines: a correct one, one with the price `12.5`, broken JSON, one with the `id` `../w-04` (the exact content is in the task). `curl -i` also shows `HTTP/1.1 100 Continue` — that is how curl sends a big body; we kept the status, `retry-after` and the body. After `kill %1` the server terminal shows the line `{"level":"error",…,"event":"failed","error":"AbortError","code":"ABORT_ERR"}`, and the record count is the same: the cancelled import wrote nothing.
+
+    **9. Try to break it.** Ignore the answer of `write()` — `✖ writeJsonLines waits for 'drain': the writer's queue never holds more than its limit plus one line`; write the lines to the store at once, before the check ends — `✖ every line is checked and named by its number; one bad line and nothing is written`; insert instead of an upsert — `✖ 10,000 synthetic wishes import once; the same file imported again duplicates nothing`; remove `controller.abort()` from `close` — `✖ a client that goes away in the middle aborts the import: nothing is written, the next import runs`. The test names of your project are in the task. Put the code back.
+
+    **10. Evidence and the commit.** `npm run typecheck` — not a single line; `npm run check` and `npm run check:server` — every check `✔`; `npm test` — `fail 0`. In `docs/server.md` — a section “NO-11”: the output of step 8 and the log lines. `cd ..`, `git add -A`, `git commit -m "Stream the records out and in as JSON lines: a bounded, cancellable import job that upserts by id"`.
+
+    **Self-check:** the export is one line per record, streamed, with backpressure, and the file appears only whole; the import checks every line and names a bad one by its number, writes nothing before the check ends, keeps its budget of records and line length, yields to the event loop between batches, is cancelled by a signal; a second import during the first is a `503` with `Retry-After`; a repeated import neither duplicates nor spoils records.
+
+    **If something goes wrong:** `error TS7016: Could not find a declaration file for module '../../data/synthetic.js'` — `server/tsconfig.json` has no `"allowJs": true`. A `413` on a real file — check `maxBytes` and `maxLineBytes` (the wishlist has 8,000,000 and 4096; your project's limits are in the task). `Import failed, nothing was written: RangeError` — the store's `MAX_DATA_BYTES` is smaller than 10,000 records (with 1,000,000 that is exactly what we saw). `npm run import` while the server runs — do not: two processes write one file, and the write queue protects only one.
+
+    The step's reference is `Download: NO-11 — Streamed export and import: JSON lines, backpressure, a bounded job` after the export; open it after your own attempt.
+purpose:
+  uk: "Це крок твого проєкту: потоки з backpressure, pipeline зі скасуванням і прибиранням, поступливість циклу подій, обмежені черги, повтори й ідемпотентність із цього розділу ти застосовуєш до експорту й імпорту записів власного сервера. Платформа цей крок не перевіряє: доказ — `npm test`, вивід `synth`, `import`, `export` і curl, рядки логу, `docs/server.md` і commit."
+  en: "This is a step of your project: you apply this unit's streams with backpressure, pipeline with cancellation and cleanup, a yielding event loop, bounded queues, retries and idempotency to the export and import of your own server's records. The platform does not check this step: the evidence is `npm test`, the output of `synth`, `import`, `export` and curl, the log lines, `docs/server.md` and the commit."
+objectives:
+  - uk: "Потоково експортувати записи проєкту як JSON lines з урахуванням backpressure, а файл експорту записувати лише цілим, прибираючи тимчасовий після помилки чи скасування."
+    en: "Stream the project's records out as JSON lines with backpressure, and write an export file only whole, removing the temp file after an error or a cancel."
+  - uk: "Імпортувати великий файл JSON lines як обмежену задачу, що перевіряє кожен рядок, нічого не пише до кінця перевірки, скасовується сигналом, відмовляє другому імпорту з `503` і робить upsert за `id`, тож повтор не дублює записів."
+    en: "Import a big JSON-lines file as a bounded job that checks every line, writes nothing before the check ends, is cancelled by a signal, refuses a second import with a `503` and upserts by `id`, so a retry never duplicates a record."
+transfer:
+  uk: "Цей крок виконується в редакторі й терміналі на твоєму комп’ютері: що зробити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor and a terminal on your computer: what to do, the expected output and the self-check list are above and on the step's page in your project."
