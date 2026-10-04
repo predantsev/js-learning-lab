@@ -4,9 +4,9 @@ import { runSummary } from './summary.js';
 // What the platform itself passed to this process: no arguments of yours.
 console.log('process.argv.slice(2):', process.argv.slice(2));
 
-// An environment variable is always text: Node stores the number 3000 as "3000".
-process.env.PORT = 3000;
-console.log('typeof process.env.PORT:', typeof process.env.PORT);
+// Every environment variable is text: not one value in process.env is a number.
+const allText = Object.values(process.env).every((value) => typeof value === 'string');
+console.log('every process.env value is a string:', allText);
 
 const commandLines = [
   { argv: ['--limit', '2'], env: { LOCALE: 'uk' } },
