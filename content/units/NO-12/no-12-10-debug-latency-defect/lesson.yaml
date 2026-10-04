@@ -1,0 +1,257 @@
+id: no-12-10-debug-latency-defect
+unit: NO-12
+title:
+  uk: "Налагодження: дефект затримки, доведений логами й метриками"
+  en: "Debug: a latency defect, proven by logs and metrics"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знаходити регресію затримки за метрикою p95, span найповільнішого запиту й профілем, а не вгадувати."
+    en: "Locate a latency regression from the p95 metric, the slow request’s spans and a CPU profile instead of guessing."
+  - uk: "Показувати, чому тести на фікстурах її пропустили, і додавати тест на реалістичному синтетичному наборі даних, що її відтворює."
+    en: "Show why the fixture-based tests missed it and add a test on a realistic synthetic dataset that reproduces it."
+  - uk: "Доводити виправлення значеннями p95 до й після та рядками логу, що не розкривають ні особи, ні секретів."
+    en: "Prove the fix with before-and-after metrics and log lines that leak no identities or secrets."
+prerequisites: [no-12-09-backup-restore-upgrades, no-12-02-profiling-service]
+subskills:
+  - { family: B-09, skill: "fixture/mocks limits", depth: assess }
+  - { family: B-09, skill: "metrics and basic traces", depth: assess }
+  - { family: B-09, skill: "profiling/debugging", depth: assess }
+glossary: []
+selfCheck: [predict-change, latency-fix]
+
+blocks:
+  - id: method
+    kind: explanation
+    title:
+      uk: "Від метрики до рядка коду — і назад до доказу"
+      en: "From a metric to a line of code — and back to proof"
+    body:
+      uk: |
+        Після релізу p95 маршруту `GET /expenses` виріс у десятки разів, а всі тести зелені. Тести працюють на шести фікстурах: на них будь-яка квадратична робота триває мікросекунди. Повільно стає лише на даних справжнього розміру — тому дефект і пройшов.
+
+        Порядок дій той самий, що в цьому розділі, лише тепер усе разом:
+
+        1. **Метрика** — p95 маршруту до й після релізу; це факт, а не відчуття.
+        2. **Span** найповільнішого запиту — який крок забрав час.
+        3. **Профіль** (`node --cpu-prof`, урок про профілювання) — яка функція в цьому кроці має найбільший власний час.
+        4. **Тест, що відтворює**: на синтетичних 20 000 записів, із бюджетом p95; спершу він має **впасти** на старому коді.
+        5. **Виправлення** — і той самий тест проходить, а p95 до й після записано.
+        6. **Логи як доказ** — без адрес, токенів і тіл запитів (NO-07): лише request id, маршрут, статус, тривалість.
+      en: |
+        After a release the p95 of `GET /expenses` grew tens of times, and all tests are green. The tests run on six fixtures: on them any quadratic work takes microseconds. It gets slow only on data of real size — that is why the defect got through.
+
+        The order of steps is the same as in this unit, only now all together:
+
+        1. **The metric** — the route’s p95 before and after the release; a fact, not a feeling.
+        2. **The spans** of the slowest request — which step took the time.
+        3. **The profile** (`node --cpu-prof`, the profiling lesson) — which function in that step has the most self time.
+        4. **A test that reproduces it**: on 20,000 synthetic records, with a p95 budget; it must **fail** on the old code first.
+        5. **The fix** — and the same test passes, with p95 before and after recorded.
+        6. **Logs as evidence** — without addresses, tokens or request bodies (NO-07): only the request id, route, status, duration.
+
+  - id: predict-change
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "У сервісі витрат три нові зміни: (1) файл `categories.json` (40 байтів) читається синхронно на кожен запит; (2) кожній із 20 витрат відповіді додається `rank` — її місце серед усіх 20 000 витрат за сумою, і для цього в циклі щоразу сортуються всі витрати; (3) рядок логу запиту тепер містить рядок запиту (query string). Які зміни помітно піднімуть p95 на 20 000 записів? Обери все, що підходить."
+      en: "The expense service has three new changes: (1) the file `categories.json` (40 bytes) is read synchronously on every request; (2) each of the 20 expenses in an answer gets a `rank` — its place among all 20,000 expenses by amount, and for that all expenses are sorted again inside a loop each time; (3) the request’s log line now contains the query string. Which changes noticeably raise p95 on 20,000 records? Pick all that apply."
+    answer:
+      type: multi
+      options:
+        - id: sort-loop
+          text:
+            uk: "(2) сортування всіх витрат у циклі"
+            en: "(2) sorting all expenses inside the loop"
+        - id: sync-read
+          text:
+            uk: "(1) синхронне читання файла на кожен запит"
+            en: "(1) the synchronous file read on every request"
+          why:
+            uk: "Синхронне читання справді блокує event loop, але 40-байтовий файл, що лежить у кеші ОС, читається за частки мілісекунди: у вимірі — 0,09 мс. Погана звичка, але не причина цієї регресії. Відповідь дала метрика, а не принцип."
+            en: "A synchronous read does block the event loop, but a 40-byte file sitting in the OS cache is read in a fraction of a millisecond: 0.09 ms in the measurement. A bad habit, but not the cause of this regression. The metric gave the answer, not the principle."
+        - id: log-line
+          text:
+            uk: "(3) довший рядок логу"
+            en: "(3) the longer log line"
+          why:
+            uk: "Кілька десятків байтів у рядку логу на тривалість майже не впливають. Ця зміна шкідлива з іншої причини: у query string є адреса платника — це витік особистих даних."
+            en: "A few dozen bytes in a log line barely affect the duration. This change is harmful for another reason: the query string has the payer’s address — a leak of personal data."
+      correct: [sort-loop]
+    explanation:
+      uk: "Наступний приклад міряє це на Node v25.2.1: на 6 фікстурах p95 — 1,3 мс, на 20 000 записів — 58,8 мс, а span найповільнішого запиту — `categories 0.09 ms, query 59.47 ms, serialize 0.01 ms`. Двадцять сортувань по 20 000 записів — ось де час. Але зміна (3) теж дефект: у рядку логу видно `payer=payer-3%40example.invalid`."
+      en: "The next example measures this on Node v25.2.1: on 6 fixtures p95 is 1.3 ms, on 20,000 records 58.8 ms, and the slowest request’s spans are `categories 0.09 ms, query 59.47 ms, serialize 0.01 ms`. Twenty sorts of 20,000 records — that is where the time goes. But change (3) is a defect too: the log line shows `payer=payer-3%40example.invalid`."
+
+  - id: expense-latency
+    kind: example
+    runtime: isolated-node
+    dir: expense-latency
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      pass: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      records: { uk: "записів", en: "records" }
+      spans: { uk: "span найповільнішого запиту", en: "spans of the slowest request" }
+      logLine: { uk: "його рядок логу", en: "its log line" }
+    title:
+      uk: "Ті самі запити: 6 фікстур і 20 000 записів"
+      en: "The same requests: 6 fixtures and 20,000 records"
+    body:
+      uk: |
+        Натисни **Запустити**. `index.js` надсилає ті самі 30 запитів сервісу з 6 фікстурами й сервісу з 20 000 синтетичних записів і друкує p50, p95, span найповільнішого запиту та його рядок логу.
+
+        Коментар угорі `service.js` перелічує три нещодавні зміни — ті самі, що в прогнозі. Профіль тут не записується (у пісочниці немає `--cpu-prof`); як його записати й прочитати у твоєму терміналі, ти бачив в уроці про профілювання.
+      en: |
+        Press **Run**. `index.js` sends the same 30 requests to the service with 6 fixtures and to the service with 20,000 synthetic records and prints p50, p95, the slowest request’s spans and its log line.
+
+        The comment at the top of `service.js` lists three recent changes — the same as in the prediction. No profile is recorded here (the sandbox has no `--cpu-prof`); how to record and read one in your terminal you saw in the profiling lesson.
+    tryIt:
+      uk: |
+        1. Порівняй два блоки виводу: на фікстурах `query` займає соті частки мілісекунди, на 20 000 записів — десятки мілісекунд. Тест на фікстурах дефекту не бачить.
+        2. Зміни в `index.js` другий виклик на `await measure(2_000);` і запусти: p95 менший приблизно на порядок — зростання вдесятеро даних дало вдесятеро більше часу сортування на кожне з 20 місць. Поверни `20_000`.
+      en: |
+        1. Compare the two blocks of output: on the fixtures `query` takes hundredths of a millisecond, on 20,000 records tens of milliseconds. A test on fixtures does not see the defect.
+        2. In `index.js`, change the second call to `await measure(2_000);` and run: p95 is roughly an order of magnitude smaller — ten times the data gave ten times more sorting for each of the 20 places. Put back `20_000`.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: синхронна робота й інші запити"
+      en: "Recall: synchronous work and other requests"
+    items:
+      - id: blocking
+        from: no-11-03-event-loop-blocking
+        prompt:
+          uk: "Обробник одного запиту 60 мс синхронно сортує масив. Що в цей час відбувається з іншими запитами до того самого процесу Node?"
+          en: "One request’s handler synchronously sorts an array for 60 ms. What happens to other requests to the same Node process meanwhile?"
+        answer:
+          type: choice
+          options:
+            - id: wait
+              text:
+                uk: "Чекають: поки сортування йде, event loop не обробляє нічого іншого"
+                en: "They wait: while the sort runs, the event loop handles nothing else"
+            - id: parallel
+              text:
+                uk: "Обробляються паралельно: Node обслуговує кожен запит в окремому потоці"
+                en: "They are handled in parallel: Node serves each request in its own thread"
+              why:
+                uk: "JavaScript сервера виконується в одному потоці. Поки синхронний код не завершився, жоден інший колбек — зокрема обробник іншого запиту — не стартує."
+                en: "The server’s JavaScript runs on one thread. Until the synchronous code finishes, no other callback — including another request’s handler — starts."
+            - id: async-fixes
+              text:
+                uk: "Вони б не чекали, якби обробник був `async`"
+                en: "They would not wait if the handler were `async`"
+              why:
+                uk: "`async` не переносить синхронну роботу кудись іще: сортування й далі блокує той самий потік."
+                en: "`async` does not move synchronous work anywhere else: the sort still blocks the same thread."
+          correct: [wait]
+        explanation:
+          uk: "Тому один повільний маршрут піднімає p95 і в інших маршрутах. Виправлення — зробити роботу меншою (тут: одне сортування замість двадцяти), а не «асинхроннішою»."
+          en: "That is why one slow route raises p95 on other routes too. The fix is to make the work smaller (here: one sort instead of twenty), not “more async”."
+
+  - id: latency-fix
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: latency-fix
+    entry: index.js
+    editable: [service.js, perf-check.js]
+    capabilities: { network: loopback, timeoutMs: 40000, testTimeoutMs: 8000 }
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      pass: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      passed: { uk: "перевірку пройдено", en: "check passed" }
+      failed: { uk: "перевірку не пройдено", en: "check failed" }
+      logLine: { uk: "рядок логу", en: "log line" }
+    title:
+      uk: "Виправ затримку й доведи це"
+      en: "Fix the latency and prove it"
+    instructions:
+      uk: |
+        `service.js` — сервіс витрат із прикладу з усіма трьома змінами. `original-service.js` — його копія лише для читання.
+
+        1. **Тест, що відтворює.** У `perf-check.js` напиши `checkLatency(createService, { records = 20_000, requests = 20, budgetMs = 20 })`: запусти сервіс на `makeExpenses(records)` з `expenses.js` (параметр `log` можна дати порожній), зроби кілька запитів на розігрів і `requests` запитів `GET /expenses?category=…`, порахуй p95 (найближчий ранг) і **кинь помилку**, якщо він більший за `budgetMs`; інакше поверни p95 у мілісекундах. На `original-service.js` вона має падати.
+        2. **Виправлення.** У `service.js` прибери причину затримки так, щоб `rank` лишився тим самим (місце серед усіх витрат за сумою, з 1).
+        3. **Логи.** Рядок логу не має містити адреси платника, але має й далі мати `requestId`, `route`, `status` і `ms`.
+
+        Перевірки міряють час: на 20 000 записів p95 виправленого сервісу має бути меншим за 20 мс.
+      en: |
+        `service.js` is the expense service from the example with all three changes. `original-service.js` is a read-only copy of it.
+
+        1. **A test that reproduces it.** In `perf-check.js`, write `checkLatency(createService, { records = 20_000, requests = 20, budgetMs = 20 })`: start the service on `makeExpenses(records)` from `expenses.js` (the `log` option may be an empty function), make a few warm-up requests and `requests` requests `GET /expenses?category=…`, compute p95 (nearest rank) and **throw an error** if it is greater than `budgetMs`; otherwise return p95 in milliseconds. It must fail on `original-service.js`.
+        2. **The fix.** In `service.js`, remove the cause of the latency so that `rank` stays the same (the place among all expenses by amount, from 1).
+        3. **Logs.** The log line must not contain the payer’s address, but it must still have `requestId`, `route`, `status` and `ms`.
+
+        The checks measure time: on 20,000 records the fixed service’s p95 must be under 20 ms.
+    testTitles:
+      "the ranks are still right":
+        uk: "Значення `rank` і далі правильні"
+        en: "The ranks are still right"
+      "p95 on 20,000 records is under 20 ms":
+        uk: "p95 на 20 000 записів менший за 20 мс"
+        en: "p95 on 20,000 records is under 20 ms"
+      "your perf check fails on the original service":
+        uk: "Твоя перевірка затримки падає на початковому сервісі"
+        en: "Your perf check fails on the original service"
+      "your perf check passes on your fixed service":
+        uk: "Твоя перевірка затримки проходить на виправленому сервісі"
+        en: "Your perf check passes on your fixed service"
+      "the log line leaks no payer address":
+        uk: "Рядок логу не розкриває адреси платника"
+        en: "The log line leaks no payer address"
+      "the log line keeps requestId, route, status and ms":
+        uk: "Рядок логу зберігає `requestId`, `route`, `status` і `ms`"
+        en: "The log line keeps `requestId`, `route`, `status` and `ms`"
+    hints:
+      nudge:
+        uk: "Почни з тесту: поки він не падає на `original-service.js`, ти ще не довів, що бачиш дефект. Потім подивись на крок `query` — що в ньому виконується стільки разів, скільки витрат у відповіді?"
+        en: "Start with the test: until it fails on `original-service.js`, you have not proven that you see the defect. Then look at the `query` step — what runs in it as many times as there are expenses in the answer?"
+      explanation:
+        uk: "Та сама пастка на іншому прикладі — місце звички в рейтингу: `habits.map((h) => allHabits.toSorted(byStreak).indexOf(h) + 1)` сортує весь список для кожної звички. Відсортуй один раз до циклу й збережи місця в `Map`, тоді в циклі лишиться лише пошук за ключем. Для тесту бери ту саму формулу p95, що й у метриках, і пам’ятай, що перші запити «холодні», — розігрій сервіс перед вимірюванням. У рядку логу залиш лише поля, потрібні для пошуку запиту."
+        en: "The same trap on another example — a habit’s place in a ranking: `habits.map((h) => allHabits.toSorted(byStreak).indexOf(h) + 1)` sorts the whole list for each habit. Sort once before the loop and keep the places in a `Map`; then only a key lookup is left in the loop. For the test use the same p95 formula as in the metrics, and remember that the first requests are “cold” — warm the service up before measuring. In the log line keep only the fields needed to find a request."
+    solutionNote:
+      uk: "Доказ складається з трьох частин: тест, що падав на старому коді (`p95 … ms is above 20 ms on 20000 records`) і проходить на новому; значення p95 до й після; рядки логу без особистих даних. Усі три — з даних, а не з читання коду. Синхронне читання `categories.json` теж варто прибрати (читати раз під час запуску), але вимір показав, що причина регресії не воно. Варіант, що лишає одне сортування й шукає місце через `indexOf` у вже відсортованому масиві, теж проходить бюджет: 20 лінійних пошуків по 20 000 — це мілісекунди."
+      en: "The proof has three parts: a test that failed on the old code (`p95 … ms is above 20 ms on 20000 records`) and passes on the new one; the p95 values before and after; log lines without personal data. All three come from data, not from reading code. The synchronous read of `categories.json` is worth removing too (read it once at startup), but the measurement showed it is not the cause of the regression. A version that keeps one sort and finds the place with `indexOf` in the already sorted array passes the budget too: 20 linear searches of 20,000 take milliseconds."
+    feedback:
+      - when: { test: "the ranks are still right" }
+        message:
+          uk: "Ця перевірка порівнює `[id, rank]` для `?category=food&limit=3` на 12 записах із місцями серед усіх витрат за сумою, рахуючи з 1. Виправлення має пришвидшити, а не змінити відповідь."
+          en: "This check compares `[id, rank]` for `?category=food&limit=3` on 12 records with the places among all expenses by amount, counting from 1. The fix must speed things up, not change the answer."
+      - when: { test: "p95 on 20,000 records is under 20 ms" }
+        message:
+          uk: "Ця перевірка надсилає 20 запитів (після 3 на розігрів) сервісу з 20 000 записів і очікує p95 менший за 20 мс. Сортування всіх витрат має відбуватися раз на запит, а не раз на кожну витрату відповіді."
+          en: "This check sends 20 requests (after 3 warm-up ones) to a service with 20,000 records and expects p95 under 20 ms. All expenses should be sorted once per request, not once per expense of the answer."
+      - when: { test: "your perf check fails on the original service" }
+        message:
+          uk: "Ця перевірка викликає твою `checkLatency(original)` і очікує, що вона кине помилку. Переконайся, що за замовчуванням вона бере 20 000 записів, а не фікстури, і кидає, коли p95 більший за `budgetMs`."
+          en: "This check calls your `checkLatency(original)` and expects it to throw. Make sure it takes 20,000 records by default, not the fixtures, and throws when p95 is greater than `budgetMs`."
+      - when: { test: "your perf check passes on your fixed service" }
+        message:
+          uk: "Ця перевірка викликає `checkLatency(createService)` з твоїм `service.js` і очікує, що вона поверне число менше за 20. Спершу виправ сервіс; якщо він уже швидкий, перевір, що функція повертає p95, а не нічого."
+          en: "This check calls `checkLatency(createService)` with your `service.js` and expects it to return a number under 20. Fix the service first; if it is already fast, check that the function returns p95 and not nothing."
+      - when: { test: "the log line leaks no payer address" }
+        message:
+          uk: "Ця перевірка надсилає `?payer=payer-3%40example.invalid` і очікує, що в рядках логу немає ні `@`, ні `%40`, ні `payer-3`. Не пиши в лог `url.search`."
+          en: "This check sends `?payer=payer-3%40example.invalid` and expects no `@`, `%40` or `payer-3` in the log lines. Do not write `url.search` to the log."
+      - when: { test: "the log line keeps requestId, route, status and ms" }
+        message:
+          uk: "Ця перевірка очікує в рядку логу `route: '/expenses'`, `status: 200`, текстовий `requestId` і числовий `ms`."
+          en: "This check expects `route: '/expenses'`, `status: 200`, a text `requestId` and a numeric `ms` in the log line."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-12
+    body:
+      uk: "Проєктний крок цього розділу ще не написано. За планом курсу сервер твого проєкту отримає метрики й перевірки production-режиму. Додай до його тестів перевірку затримки на синтетичному наборі реалістичного розміру — тисячі записів твого домену, — бо фікстури з шести записів не покажуть квадратичної роботи ніколи."
+      en: "The project step of this unit is not written yet. According to the course plan your project’s server gets metrics and production-mode checks. Add a latency check on a synthetic dataset of realistic size to its tests — thousands of records of your domain — because six-record fixtures will never show quadratic work."
