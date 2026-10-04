@@ -1,0 +1,377 @@
+id: no-02-05-atomic-recoverable-updates
+unit: NO-02
+title:
+  uk: "Атомарні й відновлювані оновлення"
+  en: "Atomic and recoverable updates"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Пояснити, чому перезапис JSON-файла на місці може після збою лишити напівзаписаний файл, і передбачити, що бачить читач у кожну мить."
+    en: "Explain why rewriting a JSON file in place can leave a half-written file after a crash, and predict what a reader sees at each moment."
+  - uk: "Написати `writeAtomic(path, value)`: записати тимчасовий файл у тій самій теці, скинути його на диск через `sync()` і перейменувати поверх цільового."
+    en: "Implement `writeAtomic(path, value)`: write a temp file in the same folder, flush it with `sync()`, then rename it over the target."
+  - uk: "Відновлюватися під час запуску: видаляти застарілі тимчасові файли й лишати останню повну версію."
+    en: "Recover on start by removing stale temp files and keeping the last complete version."
+prerequisites: [no-02-04-bounded-reads-writes, js-07-05-persist-reload]
+subskills:
+  - { family: B-02, skill: "atomic/recoverable updates", depth: intro }
+glossary: [atomic-write, atomic-rename, fsync]
+selfCheck: [predict-torn, write-atomic]
+
+blocks:
+  - id: in-place-is-fragile
+    kind: explanation
+    title:
+      uk: "Запис на місці можна перервати посередині"
+      en: "A write in place can be cut in the middle"
+    body:
+      uk: |
+        У JS-07 ти зберігав `{ schemaVersion, records }` у сховищі однією дією. З файлом так не буває. `writeFile('wishlist.json', text)` робить кілька кроків:
+
+        1. відкриває файл і **одразу спорожнює** його;
+        2. записує байти — для великого файла кількома порціями;
+        3. закриває файл.
+
+        Якщо процес упаде між кроками 1 і 3 — збій, `kill`, вимкнене живлення, — на диску лишиться порожній файл або половина JSON. Наступний запуск спробує його прочитати й отримає `SyntaxError`: і старих записів немає, і нових.
+
+        `catch` навколо `writeFile` тут не рятує. Він ловить помилку в **цьому** процесі, але не може повернути на диск байти, які вже стерто, — а після справжнього збою `catch` не виконається взагалі.
+      en: |
+        In JS-07 you saved `{ schemaVersion, records }` in storage in one step. A file does not work that way. `writeFile('wishlist.json', text)` takes several steps:
+
+        1. it opens the file and **empties it at once**;
+        2. it writes the bytes — for a large file in several portions;
+        3. it closes the file.
+
+        If the process dies between steps 1 and 3 — a crash, a `kill`, a power cut — the disk keeps an empty file or half of the JSON. The next start tries to read it and gets a `SyntaxError`: the old records are gone, and so are the new ones.
+
+        A `catch` around `writeFile` does not save you here. It catches the error in **this** process, but it cannot put back on the disk the bytes already erased — and after a real crash the `catch` never runs at all.
+
+  - id: predict-torn
+    kind: prediction
+    prompt:
+      uk: "Позначку `acquired` для бажання `w-02` зберігають двома способами, і обидва збереження перериває збій рівно посередині запису. Код моделює, що лишається у файлі `wishlist.json` після кожного збою. Що надрукує читач?"
+      en: "The `acquired` flag of wish `w-02` is saved in two ways, and a crash cuts both saves exactly in the middle of writing. The code models what is left in `wishlist.json` after each crash. What does the reader print?"
+    code: |
+      const oldText = JSON.stringify({ schemaVersion: 1, records: [{ id: "w-02", acquired: false }] });
+      const newText = JSON.stringify({ schemaVersion: 1, records: [{ id: "w-02", acquired: true }] });
+
+      // In place: the file was emptied and got only half of the new text.
+      const inPlace = newText.slice(0, Math.floor(newText.length / 2));
+      // Temp file: the half went into a temp file; wishlist.json still holds the old text.
+      const viaTemp = oldText;
+
+      for (const text of [inPlace, viaTemp]) {
+        try {
+          console.log(JSON.parse(text).records[0].acquired);
+        } catch (error) {
+          console.log(error.name);
+        }
+      }
+    verify:
+      logs: ["SyntaxError", "false"]
+    answer:
+      type: choice
+      options:
+        - id: torn-and-old
+          code: "SyntaxError\nfalse"
+        - id: all-or-nothing
+          code: "false\nfalse"
+          why:
+            uk: "Запис на місці не працює за принципом «усе або нічого»: файл спорожнено на початку, і на диску лишилася половина нового JSON, а не старий текст."
+            en: "A write in place is not all-or-nothing: the file was emptied at the start, and the disk holds half of the new JSON, not the old text."
+        - id: both-torn
+          code: "SyntaxError\nSyntaxError"
+          why:
+            uk: "Із тимчасовим файлом збій зіпсував лише тимчасовий файл. `wishlist.json` ніхто не чіпав, тож читач бачить стару повну версію."
+            en: "With a temp file the crash damaged only the temp file. Nobody touched `wishlist.json`, so the reader sees the old complete version."
+        - id: new-and-old
+          code: "true\nfalse"
+          why:
+            uk: "Половина JSON — це не JSON: бракує закривальних дужок, тож `JSON.parse` кидає `SyntaxError`, а не повертає частину даних."
+            en: "Half of a JSON text is not JSON: the closing brackets are missing, so `JSON.parse` throws a `SyntaxError` instead of returning part of the data."
+      correct: [torn-and-old]
+    explanation:
+      uk: "Запис на місці лишив зламаний файл: читач не отримує ні старого, ні нового. Із тимчасовим файлом цільовий файл до перейменування не змінюється, тож після збою читач бачить останню повну версію — тут `acquired: false`. Втрачено лише незавершену зміну."
+      en: "The write in place left a broken file: the reader gets neither old nor new. With a temp file the target does not change until the rename, so after the crash the reader sees the last complete version — here `acquired: false`. Only the unfinished change is lost."
+
+  - id: temp-then-rename
+    kind: explanation
+    title:
+      uk: "Тимчасовий файл, sync і одне перейменування"
+      en: "A temp file, sync and one rename"
+    body:
+      uk: |
+        [[atomic-write|Атомарний запис]] складається з трьох кроків:
+
+        1. **Тимчасовий файл у тій самій теці** з унікальною назвою, що закінчується на `.tmp`: `wishlist.json.<випадковий id>.tmp`. Унікальна — щоб два збереження одночасно не писали в один файл. У тій самій теці — бо перейменування в межах однієї файлової системи не копіює даних.
+        2. **`handle.sync()`** — [[fsync]]: операційна система часто тримає записане в пам’яті й скидає на диск пізніше. `sync` просить записати зараз, щоб нове ім’я не вказало на дані, які ще може стерти збій живлення.
+        3. **`rename(temp, target)`** — [[atomic-rename|перейменування поверх цільового файла]]. На macOS і Linux це одна неподільна дія: хто відкриває `wishlist.json`, отримує або старий файл, або новий. На Windows Node теж замінює наявний файл, але гарантії системи там інші, тож кажемо «на macOS і Linux».
+
+        Після збою лишається хіба що файл `*.tmp`. Тому під час запуску програма видаляє такі залишки й читає цільовий файл — останню повну версію.
+      en: |
+        An [[atomic-write]] has three steps:
+
+        1. **A temp file in the same folder** with a unique name ending in `.tmp`: `wishlist.json.<random id>.tmp`. Unique — so that two saves at once do not write into one file. In the same folder — because a rename within one file system copies no data.
+        2. **`handle.sync()`** — [[fsync]]: the operating system often keeps written data in memory and puts it on the disk later. `sync` asks it to write now, so that the new name does not point at data a power cut can still erase.
+        3. **`rename(temp, target)`** — an [[atomic-rename|atomic rename over the target]]. On macOS and Linux it is one indivisible step: whoever opens `wishlist.json` gets either the old file or the new one. On Windows Node also replaces the existing file, but the system’s guarantees differ there, so we say “on macOS and Linux”.
+
+        After a crash, at most a `*.tmp` file is left. So on start the program deletes such leftovers and reads the target — the last complete version.
+
+  - id: binder
+    kind: analogy
+    body:
+      uk: "Ти готуєш заміну сторінки в теці-реєстраторі на окремому аркуші й лише тоді, коли аркуш повністю готовий, одним рухом вставляєш його замість старого. Хто б не відкрив теку, він побачить або стару сторінку, або нову — але ніколи не недописану."
+      en: "You prepare a replacement page for a binder on a separate sheet, and only when the sheet is completely ready do you swap it in for the old one in one move. Whoever opens the binder sees either the old page or the new one — but never a half-written one."
+    limits:
+      uk: "«Одним рухом» заміна буває лише в межах однієї файлової системи: перейменування між різними дисками — це вже копіювання, яке теж можна перервати. А без `sync` після збою живлення може зникнути й новий аркуш — порваного аркуша не буде, але найсвіжіша зміна може загубитися."
+      en: "The swap is “one move” only within one file system: a rename between different disks is a copy, and a copy can be cut too. And without `sync`, a power cut can lose even the new sheet — there will be no torn sheet, but the newest change may be lost."
+
+  - id: save-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Два збереження, два збої"
+      en: "Two saves, two crashes"
+    textEquivalent:
+      uk: "Перше збереження йде на місці. Програма відкриває wishlist.json для запису — файл одразу порожній. Вона записує половину нового JSON, і тут стається збій. Читач відкриває wishlist.json і отримує половину JSON — JSON.parse кидає SyntaxError. Друге збереження йде через тимчасовий файл. Програма записує новий JSON у wishlist.json.<id>.tmp і викликає sync; якщо збій станеться тут, зіпсовано лише тимчасовий файл. Читач тим часом відкриває wishlist.json і отримує старий повний файл. Потім одне rename ставить тимчасовий файл на місце цільового. Наступне читання отримує новий повний файл. Під час запуску програма видаляє залишені файли .tmp."
+      en: "The first save goes in place. The program opens wishlist.json for writing — the file is empty at once. It writes half of the new JSON, and then a crash happens. The reader opens wishlist.json and gets half of a JSON text — JSON.parse throws a SyntaxError. The second save goes through a temp file. The program writes the new JSON into wishlist.json.<id>.tmp and calls sync; if the crash comes here, only the temp file is damaged. Meanwhile the reader opens wishlist.json and gets the old complete file. Then a single rename puts the temp file in place of the target. The next read gets the new complete file. On start the program deletes leftover .tmp files."
+    spec:
+      actors:
+        - { id: writer, label: { uk: "Програма", en: "Program" } }
+        - { id: disk, label: "data/" }
+        - { id: reader, label: { uk: "Читач", en: "Reader" } }
+      messages:
+        - from: writer
+          to: disk
+          label: "open('wishlist.json', 'w')"
+          caption:
+            uk: "Запис на місці: `open` з `'w'` **одразу спорожнює** `wishlist.json`."
+            en: "Writing in place: `open` with `'w'` **empties** `wishlist.json` **at once**."
+        - from: writer
+          to: disk
+          label: { uk: "половина JSON… збій", en: "half the JSON… crash" }
+          caption:
+            uk: "Записано половину нового JSON — і процес упав."
+            en: "Half of the new JSON is written — and the process dies."
+        - from: reader
+          to: disk
+          label: "readFile('wishlist.json')"
+          caption:
+            uk: "Після перезапуску читач відкриває файл…"
+            en: "After the restart the reader opens the file…"
+        - from: disk
+          to: reader
+          label: "SyntaxError"
+          kind: return
+          caption:
+            uk: "…і отримує половину JSON: `SyntaxError`. Немає ні старих записів, ні нових."
+            en: "…and gets half of a JSON text: `SyntaxError`. Neither the old records nor the new ones."
+        - from: writer
+          to: disk
+          label: "write + sync: wishlist.json.<id>.tmp"
+          caption:
+            uk: "Тепер через тимчасовий файл: новий JSON іде в `wishlist.json.<id>.tmp`, `sync` скидає його на диск. Збій тут зіпсує лише тимчасовий файл."
+            en: "Now through a temp file: the new JSON goes into `wishlist.json.<id>.tmp`, `sync` flushes it to the disk. A crash here damages only the temp file."
+        - from: disk
+          to: reader
+          label: { uk: "старий повний файл", en: "old complete file" }
+          kind: return
+          caption:
+            uk: "Читач, що відкриває `wishlist.json` у цей час, отримує старий **повний** файл."
+            en: "A reader opening `wishlist.json` meanwhile gets the old **complete** file."
+        - from: writer
+          to: disk
+          label: "rename(tmp, 'wishlist.json')"
+          caption:
+            uk: "Одне `rename` ставить новий файл на місце старого — на macOS і Linux це неподільна дія."
+            en: "One `rename` puts the new file in place of the old one — on macOS and Linux an indivisible step."
+        - from: disk
+          to: reader
+          label: { uk: "новий повний файл", en: "new complete file" }
+          kind: return
+          caption:
+            uk: "Наступне читання отримує новий **повний** файл. А під час запуску програма видаляє залишені `*.tmp`."
+            en: "The next read gets the new **complete** file. And on start the program deletes leftover `*.tmp` files."
+
+  - id: crash-injector
+    kind: example
+    runtime: isolated-node
+    dir: crash-injector
+    entry: index.js
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+    title:
+      uk: "Імітований збій посеред запису"
+      en: "A simulated crash in the middle of a write"
+    body:
+      uk: |
+        Натисни **Запустити**. Програма зберігає позначку `acquired` для `w-02` трьома способами: на місці зі збоєм, через тимчасовий файл зі збоєм і через тимчасовий файл без збою. Після кожного — що бачить читач.
+
+        Збій тут **імітовано**: функція `crash()` кидає помилку рівно посередині запису, а «перезапуск» — просто наступні рядки. Коментар на початку файла перелічує, чим це відрізняється від справжнього збою.
+      en: |
+        Press **Run**. The program saves the `acquired` flag of `w-02` in three ways: in place with a crash, through a temp file with a crash, and through a temp file without one. After each, it shows what the reader sees.
+
+        The crash here is **simulated**: the function `crash()` throws an error exactly in the middle of writing, and the “restart” is simply the next lines. The comment at the top of the file lists how this differs from a real crash.
+    tryIt:
+      uk: "Подивись на рядок `folder:` — після збою з тимчасовим файлом лишився `wishlist.json.1.tmp`, але `wishlist.json` цілий. Потім у функції `writeHalfThenCrash` закоментуй рядок `crash();` і запусти знову: тепер запис на місці теж дає `acquired = true` — без збою обидва способи працюють однаково, і різницю видно лише тоді, коли щось ламається."
+      en: "Look at the `folder:` line — after the crash with a temp file, `wishlist.json.1.tmp` was left behind, but `wishlist.json` is whole. Then in the function `writeHalfThenCrash` comment out the line `crash();` and run again: now the write in place gives `acquired = true` too — without a crash both ways behave the same, and the difference shows only when something breaks."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: помилка, яку проковтнули"
+      en: "Recall: an error that was swallowed"
+    items:
+      - id: swallowed-save
+        from: js-07-09-debug-swallowed-errors
+        prompt:
+          uk: "Що надрукує програма і що з нею не так?"
+          en: "What does the program print, and what is wrong with it?"
+        code: |
+          function save(records) {
+            throw new Error("disk full");
+          }
+          function onSave(records) {
+            try {
+              save(records);
+            } catch {}
+            console.log("saved");
+          }
+          onSave([]);
+        verify:
+          logs: ["saved"]
+        answer:
+          type: choice
+          options:
+            - id: lies
+              text:
+                uk: "`saved` — хоча збереження не вдалося: порожній `catch` проковтнув помилку"
+                en: "`saved` — although the save failed: the empty `catch` swallowed the error"
+            - id: crashes
+              text:
+                uk: "Нічого: програма зупиниться з помилкою `disk full`"
+                en: "Nothing: the program stops with the error `disk full`"
+              why:
+                uk: "Помилку перехопив `catch`, тож програма не зупиняється. У тому й біда: вона йде далі, ніби все гаразд."
+                en: "The `catch` caught the error, so the program does not stop. That is exactly the trouble: it carries on as if all were fine."
+            - id: nothing-wrong
+              text:
+                uk: "`saved`, і все гаразд: помилку оброблено"
+                en: "`saved`, and all is fine: the error was handled"
+              why:
+                uk: "Порожній `catch` нічого не обробляє: дані не збережено, а людина бачить «saved». Помилку треба показати або передати далі."
+                en: "An empty `catch` handles nothing: the data was not saved, yet the person sees “saved”. The error must be shown or passed on."
+          correct: [lies]
+        explanation:
+          uk: "Проковтнута помилка ховає невдале збереження. З файлами це ще небезпечніше: навіть чесний `catch` не відновить файл, який `writeFile` уже спорожнив. Тому атомарний запис захищає файл, а помилку все одно треба передати тому, хто викликав."
+          en: "A swallowed error hides a failed save. With files it is even more dangerous: even an honest `catch` cannot restore a file that `writeFile` has already emptied. So an atomic write protects the file, and the error must still be passed to the caller."
+
+  - id: write-atomic
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: write-atomic
+    entry: index.js
+    editable: [app.js]
+    strings:
+      task1: { uk: "Полити квіти", en: "Water the plants" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      before: { uk: "до прибирання", en: "before cleanup" }
+      after: { uk: "після прибирання", en: "after cleanup" }
+    title:
+      uk: "writeAtomic і прибирання після збою"
+      en: "writeAtomic and cleanup after a crash"
+    instructions:
+      uk: |
+        Зараз `writeAtomic(target, value)` у `app.js` пише просто в цільовий файл, а `removeStaleTemps(dir)` нічого не робить. Перероби обидві:
+
+        - після `writeAtomic` цільовий файл містить `JSON.stringify(value)`;
+        - нові дані йдуть у **тимчасовий файл у тій самій теці**, назва якого закінчується на `.tmp`, а потім одне `rename` ставить його на місце цільового;
+        - тимчасовий файл скинуто на диск через `sync()` (або `datasync()`) **до** `rename`;
+        - кожен відкритий FileHandle закрито;
+        - якщо запис обірвався посередині, цільовий файл лишається старим і цілим, а `writeAtomic` відхиляється;
+        - два виклики `writeAtomic` для того самого файла одночасно обидва вдаються (тимчасові назви унікальні);
+        - `removeStaleTemps(dir)` видаляє в теці всі файли, що закінчуються на `.tmp`, і не чіпає решти.
+
+        Перевірки підміняють `open`, `rename`, `writeFile` і методи FileHandle, щоб записати порядок викликів і обірвати запис посередині. Тому користуйся функціями з `node:fs/promises`.
+      en: |
+        Right now `writeAtomic(target, value)` in `app.js` writes straight into the target, and `removeStaleTemps(dir)` does nothing. Rework both:
+
+        - after `writeAtomic` the target contains `JSON.stringify(value)`;
+        - the new data goes into a **temp file in the same folder** whose name ends with `.tmp`, and then one `rename` puts it in place of the target;
+        - the temp file is flushed to the disk with `sync()` (or `datasync()`) **before** the `rename`;
+        - every FileHandle it opens is closed;
+        - if the write is cut in the middle, the target stays old and whole, and `writeAtomic` rejects;
+        - two calls of `writeAtomic` for the same file at the same time both succeed (the temp names are unique);
+        - `removeStaleTemps(dir)` deletes every file in the folder whose name ends with `.tmp` and leaves the rest alone.
+
+        The checks replace `open`, `rename`, `writeFile` and the methods of FileHandle to record the order of the calls and to cut a write in the middle. So use the functions of `node:fs/promises`.
+    testTitles:
+      "the target holds the new value as JSON afterwards":
+        uk: "Після збереження цільовий файл містить нове значення в JSON"
+        en: "Afterwards the target holds the new value as JSON"
+      "a .tmp file in the same folder is renamed over the target":
+        uk: "Файл `.tmp` у тій самій теці перейменовано поверх цільового"
+        en: "A `.tmp` file in the same folder is renamed over the target"
+      "the temp file is flushed with sync() before the rename":
+        uk: "Тимчасовий файл скинуто на диск через `sync()` до `rename`"
+        en: "The temp file is flushed with `sync()` before the `rename`"
+      "every FileHandle it opens is closed":
+        uk: "Кожен відкритий FileHandle закрито"
+        en: "Every FileHandle it opens is closed"
+      "a crash in the middle of writing leaves the old file whole":
+        uk: "Збій посеред запису лишає старий файл цілим"
+        en: "A crash in the middle of writing leaves the old file whole"
+      "two saves at the same time both succeed":
+        uk: "Два одночасні збереження обидва вдаються"
+        en: "Two saves at the same time both succeed"
+      "removeStaleTemps deletes only the .tmp files":
+        uk: "`removeStaleTemps` видаляє лише файли `.tmp`"
+        en: "`removeStaleTemps` deletes only the `.tmp` files"
+    hints:
+      nudge:
+        uk: "Поки нові дані не повні, цільовий файл не повинен змінюватися зовсім. Куди тоді писати — і яка одна дія замінить старий файл новим?"
+        en: "Until the new data is complete, the target must not change at all. So where do you write — and which single action replaces the old file with the new one?"
+      explanation:
+        uk: "Унікальну назву дає `randomUUID()` з `node:crypto`: наприклад, `${report}.${randomUUID()}.tmp` для звіту — у тій самій теці, бо до назви файла лише додано кінцівку. `open(name, 'w')` дає FileHandle з методами `writeFile` і `sync`; закриття — у `finally`. Коли тимчасовий файл записано й скинуто, `rename(старе, нове)` з `node:fs/promises` ставить його на місце. Для прибирання `readdir(dir)` дає назви файлів, `name.endsWith('.tmp')` відбирає залишки, а `rm(path.join(dir, name))` їх видаляє."
+        en: "`randomUUID()` from `node:crypto` gives a unique name: for example `${report}.${randomUUID()}.tmp` for a report — in the same folder, since only an ending is added to the file name. `open(name, 'w')` gives a FileHandle with the methods `writeFile` and `sync`; closing goes in `finally`. Once the temp file is written and flushed, `rename(old, new)` from `node:fs/promises` puts it in place. For the cleanup, `readdir(dir)` gives the file names, `name.endsWith('.tmp')` picks the leftovers, and `rm(path.join(dir, name))` deletes them."
+    solutionNote:
+      uk: "`writeAtomic` пише в `target.<uuid>.tmp` поруч із цільовим файлом, викликає `sync()`, закриває FileHandle у `finally` і лише потім робить одне `rename`. Якщо запис обірвався, `rename` не виконується, тож цільовий файл старий, а залишок `.tmp` прибере `removeStaleTemps` під час наступного запуску. Варіант із прапорцем `'wx'` (відмовити, якщо такий файл уже є), `datasync()` і видаленням тимчасового файла після помилки теж правильний."
+      en: "`writeAtomic` writes into `target.<uuid>.tmp` next to the target, calls `sync()`, closes the FileHandle in `finally` and only then does one `rename`. If the write is cut, the `rename` never runs, so the target is old, and `removeStaleTemps` clears the leftover `.tmp` on the next start. A version with the `'wx'` flag (refuse when such a file already exists), `datasync()` and deleting the temp file after an error is correct too."
+    feedback:
+      - when: { test: "the target holds the new value as JSON afterwards" }
+        message:
+          uk: "Ця перевірка очікує, що після двох збережень `JSON.parse` цільового файла дасть друге значення. Переконайся, що `rename` ставить тимчасовий файл саме на місце `target`."
+          en: "This check expects `JSON.parse` of the target after two saves to give the second value. Make sure the `rename` puts the temp file exactly in place of `target`."
+      - when: { test: "a .tmp file in the same folder is renamed over the target" }
+        message:
+          uk: "Ця перевірка очікує рівно один виклик `rename` з `node:fs/promises`: з файла в тій самій теці, назва якого закінчується на `.tmp`, на `target`. Запис просто в `target` не дає жодного `rename`."
+          en: "This check expects exactly one call of `rename` from `node:fs/promises`: from a file in the same folder whose name ends with `.tmp`, onto `target`. Writing straight into `target` makes no `rename` at all."
+      - when: { test: "the temp file is flushed with sync() before the rename" }
+        message:
+          uk: "Ця перевірка очікує виклик `sync()` або `datasync()` на FileHandle тимчасового файла раніше за `rename`. `writeFile(шлях, …)` такого кроку не має — відкрий файл через `open`."
+          en: "This check expects a call of `sync()` or `datasync()` on the temp file’s FileHandle before the `rename`. `writeFile(path, …)` has no such step — open the file with `open`."
+      - when: { test: "every FileHandle it opens is closed" }
+        message:
+          uk: "Ця перевірка очікує, що після збереження не лишиться відкритих FileHandle. Поклади `await handle.close()` у `finally`."
+          en: "This check expects no FileHandle left open after a save. Put `await handle.close()` in `finally`."
+      - when: { test: "a crash in the middle of writing leaves the old file whole" }
+        message:
+          uk: "Ця перевірка обриває кожен запис посередині й очікує, що `writeAtomic` відхилиться, а цільовий файл міститиме старе повне значення. Якщо запис іде просто в цільовий файл, від нього лишається половина JSON."
+          en: "This check cuts every write in the middle and expects `writeAtomic` to reject while the target holds the old complete value. If the write goes straight into the target, half of a JSON text is left of it."
+      - when: { test: "two saves at the same time both succeed" }
+        message:
+          uk: "Ця перевірка очікує, що два одночасні виклики для одного файла обидва вдадуться. Якщо тимчасова назва однакова щоразу, обидва пишуть в один файл, і друге `rename` не знаходить його (`ENOENT`) — зроби назву унікальною."
+          en: "This check expects two simultaneous calls for one file both to succeed. If the temp name is the same every time, both write into one file, and the second `rename` cannot find it (`ENOENT`) — make the name unique."
+      - when: { test: "removeStaleTemps deletes only the .tmp files" }
+        message:
+          uk: "Ця перевірка очікує, що в теці лишаться `notes.txt` і `wishlist.json`, а обидва файли `.tmp` зникнуть. Видаляй лише назви, що закінчуються на `.tmp`."
+          en: "This check expects `notes.txt` and `wishlist.json` to remain in the folder and both `.tmp` files to be gone. Delete only names that end with `.tmp`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-02
+    body:
+      uk: "У кроці проєкту цього розділу кожна зміна записів твого домену йтиме через `writeAtomic`, а під час запуску сервер прибиратиме залишені `*.tmp`. Там ти й перевіриш збій між записом тимчасового файла й `rename`: після перезапуску має читатися остання повна версія."
+      en: "In this unit’s project step every change of your domain’s records goes through `writeAtomic`, and on start the server clears leftover `*.tmp` files. That is where you test a crash between the temp-file write and the `rename`: after the restart the last complete version must be read."
