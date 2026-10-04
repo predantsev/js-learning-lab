@@ -7,7 +7,7 @@ const oneOf = (name, allowed) => (text) =>
   allowed.includes(text) ? { value: text } : { problem: `${name} must be one of ${allowed.join(', ')}, got "${text}"` };
 
 const rules = [
-  ['port', 'PORT', '7330', (text) => {
+  ['port', 'PORT', '7372', (text) => {
     const port = Number.parseInt(text, 10);
     return String(port) === text && port >= 1 && port <= 65535 ? { value: port } : { problem: `PORT must be a whole number from 1 to 65535, got "${text}"` };
   }],

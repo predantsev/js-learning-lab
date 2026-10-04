@@ -30,7 +30,8 @@ export async function verifyRelease(artifactPath) {
   const record = await readFile(artifactPath + '.release.json', 'utf8').then(JSON.parse, () => null);
   if (!record) return { ok: false, problems: ['the release record is missing'] };
   const problems = [];
-  const { size } = await stat(artifactPath);
+  const size = await stat(artifactPath).then((info) => info.size, () => null);
+  if (size === null) return { ok: false, problems: ['the artifact is missing'] };
   if (size !== record.bytes) problems.push('the size changed');
   if ((await digest(artifactPath)) !== record.sha256) problems.push('the checksum changed');
   return { ok: !problems.length, problems };

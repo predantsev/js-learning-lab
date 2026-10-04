@@ -15,7 +15,7 @@ const bookmark = (id, extra = {}) => ({ id, title: L.docs, url: 'https://example
 test('loadConfig: defaults and a frozen result', () => {
   guard('loadConfig');
   const config = loadConfig({ DATA_DIR: DATA });
-  expect({ ...config }, 'the config of { DATA_DIR } alone').toEqual({ port: 7340, host: '127.0.0.1', dataDir: DATA, deadlineMs: 5000 });
+  expect({ ...config }, 'the config of { DATA_DIR } alone').toEqual({ port: 7374, host: '127.0.0.1', dataDir: DATA, deadlineMs: 5000 });
   expect(Object.isFrozen(config), 'Object.isFrozen(config)').toBe(true);
 });
 
@@ -30,7 +30,7 @@ test('loadConfig: process.env is not read', () => {
   const saved = process.env.PORT;
   process.env.PORT = '1234';
   try {
-    expect(loadConfig({ DATA_DIR: DATA }).port, 'port while process.env.PORT is 1234').toBe(7340);
+    expect(loadConfig({ DATA_DIR: DATA }).port, 'port while process.env.PORT is 1234').toBe(7374);
   } finally {
     if (saved === undefined) delete process.env.PORT;
     else process.env.PORT = saved;
@@ -79,12 +79,14 @@ test('startService: /livez and /readyz follow the store', async () => {
   }
 });
 
-test('startService: POST /bookmarks validates and creates', async () => {
+test('startService: POST /bookmarks validates and creates, GET /bookmarks lists', async () => {
   guard('startService');
   const s = await start(fakeStore());
   try {
     expect([await post(s.url, { title: ' ', url: 'https://example.invalid' }), await post(s.url, { title: L.docs })], 'statuses of an empty title and a missing url').toEqual([400, 400]);
     expect(await post(s.url, { title: L.docs, url: 'https://example.invalid/new' }), 'status of a valid POST').toBe(201);
+    const list = await request(`${s.url}/bookmarks`);
+    expect([list.status, Array.isArray(list.json) ? list.json.map((b) => b.id) : list.json], '[status, ids] of GET /bookmarks after the valid POST').toEqual([200, ['bm-1', 'bm-2']]);
   } finally {
     await stop(s);
   }
@@ -104,13 +106,16 @@ test('startService: one log line per request without the body', async () => {
   }
 });
 
-test('startService: SIGTERM drains the POST in flight, flushes, exits 0 and removes its listeners', async () => {
+test('startService: SIGTERM refuses new connections, drains the POST in flight, flushes, exits 0 and removes its listeners', async () => {
   guard('startService');
   const store = fakeStore({ addMs: 300 });
   const s = await start(store);
   const answer = post(s.url, { title: L.docs, url: 'https://example.invalid/slow' });
   await sleep(80);
   process.emit('SIGTERM', 'SIGTERM');
+  await sleep(30);
+  const late = await fetch(`${s.url}/livez`, { signal: AbortSignal.timeout(1000) }).then((r) => r.status, (e) => e.cause?.code ?? e.name);
+  expect(late, 'a new connection after SIGTERM').toBe('ECONNREFUSED');
   expect(await answer, 'status of the POST in flight').toBe(201);
   await waitFor(() => s.exits.length > 0, { timeout: 1500 }).catch(() => {});
   expect(store.events, 'what happened, in order').toEqual(['add done', 'flush', 'exit 0']);

@@ -8,7 +8,7 @@ const LOG_LEVELS = ['error', 'warn', 'info', 'debug'];
 export function loadConfig(env) {
   const problems = [];
 
-  const portText = env.PORT ?? '7330';
+  const portText = env.PORT ?? '7372';
   const port = Number(portText);
   if (!Number.isInteger(port) || port < 1 || port > 65535) problems.push(`PORT must be a whole number from 1 to 65535, got "${portText}"`);
 

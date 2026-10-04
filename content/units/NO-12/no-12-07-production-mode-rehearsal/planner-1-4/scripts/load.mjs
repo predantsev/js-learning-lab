@@ -1,7 +1,7 @@
 // Synthetic load for the planner service: `node scripts/load.mjs <base-url> [seconds]`.
 // Sends GET /tasks (and every 10th time POST /tasks) with 4 requests at a time and reports how each
 // one ended: answered (with status), refused (no connection) or broken (connection cut mid-request).
-const [base = 'http://127.0.0.1:7330', seconds = '3'] = process.argv.slice(2);
+const [base = 'http://127.0.0.1:7372', seconds = '3'] = process.argv.slice(2);
 const until = Date.now() + Number(seconds) * 1000;
 const results = { answered: {}, refused: 0, broken: 0 };
 const durations = [];

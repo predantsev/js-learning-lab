@@ -30,7 +30,12 @@ export async function verifyRelease(artifactPath) {
   } catch {
     return { ok: false, problems: ['no readable release record next to the artifact'] };
   }
-  const bytes = await readFile(artifactPath);
+  let bytes;
+  try {
+    bytes = await readFile(artifactPath);
+  } catch {
+    return { ok: false, problems: ['the artifact itself cannot be read'] };
+  }
   if (bytes.length !== record.bytes) problems.push(`size ${bytes.length}, the record says ${record.bytes}`);
   return { ok: problems.length === 0, problems };
 }

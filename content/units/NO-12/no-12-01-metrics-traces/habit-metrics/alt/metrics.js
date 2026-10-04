@@ -1,42 +1,44 @@
-// Request metrics of one service process, with Node's built-in histogram (perf_hooks).
-// It stores whole numbers from 1 up, so durations are kept as whole milliseconds (at least 1).
-import { createHistogram } from 'node:perf_hooks';
+// Request metrics of one service process, kept per route in plain objects.
 
 export function createMetrics() {
-  const routes = new Map(); // route → { statuses: Map, errors, histogram }
-  const routeOf = (route) => {
-    if (!routes.has(route)) routes.set(route, { statuses: new Map(), errors: 0, histogram: createHistogram() });
-    return routes.get(route);
-  };
+  const routes = {}; // route → { statuses: { [status]: count }, errors, durations: [] }
 
-  const percentile = (route, p) => {
-    const entry = routes.get(route);
-    if (!entry || entry.histogram.count === 0) return null;
-    return entry.histogram.percentile(p);
-  };
+  function routeOf(route) {
+    routes[route] ??= { statuses: {}, errors: 0, durations: [] };
+    return routes[route];
+  }
+
+  function percentile(route, p) {
+    const durations = routes[route]?.durations ?? [];
+    if (durations.length === 0) return null;
+    const sorted = [...durations].sort((a, b) => a - b);
+    const place = Math.ceil((p * sorted.length) / 100); // counted from 1
+    return sorted[Math.max(place, 1) - 1];
+  }
 
   return {
     countRequest(route, status) {
       const entry = routeOf(route);
-      entry.statuses.set(status, (entry.statuses.get(status) ?? 0) + 1);
-      if (status >= 500) entry.errors += 1;
+      entry.statuses[status] = (entry.statuses[status] ?? 0) + 1;
+      if (status >= 500) entry.errors++;
     },
     observe(route, ms) {
-      routeOf(route).histogram.record(Math.max(1, Math.round(ms)));
+      routeOf(route).durations.push(ms);
     },
     percentile,
     render() {
-      let text = '';
-      for (const [route, entry] of routes) {
-        for (const [status, count] of entry.statuses) text += `http_requests_total{route="${route}",status="${status}"} ${count}\n`;
-        if (entry.statuses.size > 0) text += `http_errors_total{route="${route}"} ${entry.errors}\n`;
-        if (entry.histogram.count > 0) {
-          text += `http_request_duration_ms{route="${route}",quantile="0.5"} ${percentile(route, 50)}\n`;
-          text += `http_request_duration_ms{route="${route}",quantile="0.95"} ${percentile(route, 95)}\n`;
-          text += `http_request_duration_ms_count{route="${route}"} ${entry.histogram.count}\n`;
+      const lines = [];
+      for (const [route, entry] of Object.entries(routes)) {
+        const statuses = Object.entries(entry.statuses);
+        for (const [status, count] of statuses) lines.push(`http_requests_total{route="${route}",status="${status}"} ${count}`);
+        if (statuses.length > 0) lines.push(`http_errors_total{route="${route}"} ${entry.errors}`);
+        if (entry.durations.length > 0) {
+          lines.push(`http_request_duration_ms{route="${route}",quantile="0.5"} ${percentile(route, 50)}`);
+          lines.push(`http_request_duration_ms{route="${route}",quantile="0.95"} ${percentile(route, 95)}`);
+          lines.push(`http_request_duration_ms_count{route="${route}"} ${entry.durations.length}`);
         }
       }
-      return text;
+      return lines.join('\n');
     },
   };
 }

@@ -9,7 +9,7 @@ export function loadConfig(given) {
   const env = { ...given, ...process.env };
   const problems = [];
 
-  const portText = env.PORT ?? '7330';
+  const portText = env.PORT ?? '7372';
   const port = Number(portText);
   if (!/^\d+$/.test(portText) || port < 1 || port > 65535) problems.push(`PORT must be a whole number from 1 to 65535, got "${portText}"`);
 

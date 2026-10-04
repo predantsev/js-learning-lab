@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { createReleaseRecord, verifyRelease } from './release.js';
@@ -96,4 +96,14 @@ test('a missing record is reported, not thrown', async () => {
   const report = await reportOf(file);
   expect(report.thrown ?? null, 'what verifyRelease threw').toBe(null);
   expect(report.ok, 'report.ok without a record').toBe(false);
+});
+
+test('a missing artifact is reported, not thrown', async () => {
+  guard();
+  const { file } = await artifact();
+  await createReleaseRecord(file, meta);
+  await rm(file);
+  const report = await reportOf(file);
+  expect(report.thrown ?? null, 'what verifyRelease threw for a record whose artifact is gone').toBe(null);
+  expect(report.ok, 'report.ok without the artifact').toBe(false);
 });

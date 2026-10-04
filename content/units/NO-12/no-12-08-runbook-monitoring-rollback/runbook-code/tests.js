@@ -28,6 +28,7 @@ test('a window with fewer than 20 requests does not count', () => {
   guard();
   expect(alertFires([w(10, 3), w(10, 3), w(10, 3)]), 'index for three windows of 3/10').toBe(-1);
   expect(alertFires([w(40, 6), w(10, 3), w(40, 6), w(40, 6)]), 'index for bad, small, bad, bad').toBe(3);
+  expect(alertFires([w(20, 2), w(20, 2)]), 'index for two windows of 2/20 (exactly 20 requests count)').toBe(1);
 });
 
 test('the options change the threshold and the length', () => {
