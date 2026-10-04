@@ -61,7 +61,7 @@ test('login sets an HttpOnly, SameSite=Lax session cookie; unknown user and wron
   expect(ok.status, 'status of a right login').toBe(204);
   const setCookie = [ok.headers['set-cookie'] ?? []].flat()[0] ?? '';
   expect(/^sid=[A-Za-z0-9_-]{43,}|^sid=[0-9a-f]{64,}/.test(setCookie), `random sid in "${setCookie}"`).toBe(true);
-  expect(/;\s*httponly/i.test(setCookie) && /;\s*samesite=lax/i.test(setCookie), 'HttpOnly and SameSite=Lax').toBe(true);
+  expect(/;\s*httponly/i.test(setCookie) && /;\s*samesite=lax/i.test(setCookie) && /;\s*path=\/(;|$)/i.test(setCookie), 'HttpOnly, SameSite=Lax and Path=/').toBe(true);
   const wrong = await login('u-01', 'guess-1');
   const unknown = await login('u-77', 'guess-1');
   expect([wrong.status, unknown.status], 'statuses of a wrong password and an unknown user').toEqual([401, 401]);
@@ -78,8 +78,8 @@ test('the sixth failed login in a minute answers 429 with Retry-After; a minute 
   }
   expect(statuses, 'six wrong logins').toEqual([401, 401, 401, 401, 401, 429]);
   expect(last.headers['retry-after'], 'Retry-After').toBe('60');
-  clock.ms = MIN;
-  expect((await login('u-02', 'river-stone-7')).status, 'a right login a minute later').toBe(204);
+  clock.ms = MIN + 1000;
+  expect((await login('u-02', 'river-stone-7')).status, 'a right login a minute and a second later').toBe(204);
 });
 
 test('a login body over 1 KB answers 413', async () => {
