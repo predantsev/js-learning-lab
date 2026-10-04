@@ -1,4 +1,4 @@
-// Question 4: a planner home screen that reports due tasks when the app comes back (simulated AppState).
+// Question 3: a planner home screen that reports due tasks when the app comes back (simulated AppState).
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { AppState } from './appStateSim.jsx';
