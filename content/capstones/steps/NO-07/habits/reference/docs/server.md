@@ -136,19 +136,19 @@ $ npm run check:server
 ## NO-04 — the /v1 records API
 
 Node.js v25.2.1, curl 8.7.1 (macOS). The server was started with `npm start` in one terminal (fresh
-`server/data/`), `sh try-api` ran in another, then Ctrl+C. Request ids and the idempotency key are
+`server/data/`), `node try-api.mjs` ran in another, then Ctrl+C. Request ids and the idempotency key are
 random and shortened to `…` here. The idempotency keys live in the server's memory: a restart forgets them.
 
 ```text
-$ sh try-api
+$ node try-api.mjs
 == 1. POST /v1/records (Idempotency-Key: …)
-{"id":"h-07","name":"Ранкова зарядка 2","frequency":"weekly","active":true,"completions":[]} → 201
+{"id":"h-07","name":"%%fixture1Name%% 2","frequency":"weekly","active":true,"completions":[]} → 201
 == 2. the same POST retried with the same key
-{"id":"h-07","name":"Ранкова зарядка 2","frequency":"weekly","active":true,"completions":[]} → 201
+{"id":"h-07","name":"%%fixture1Name%% 2","frequency":"weekly","active":true,"completions":[]} → 201
 == 3. PATCH /v1/records/h-01 with invalid fields
 {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"name":"required","completions":"not-unique-ascending"},"requestId":"…"}} → 400
 == 4. GET /v1/records?sort=name&limit=3
-{"items":[{"id":"h-07","name":"Ранкова зарядка 2","frequency":"weekly","active":true,"completions":[]},{"id":"h-03","name":"%%fixture3Name%%","frequency":"daily","active":true,"completions":["2026-03-01"]},{"id":"h-06","name":"%%fixture6Name%%","frequency":"daily","active":true,"completions":[]}],"nextCursor":"h-06"}
+{"items":[{"id":"h-07","name":"%%fixture1Name%% 2","frequency":"weekly","active":true,"completions":[]},{"id":"h-03","name":"%%fixture3Name%%","frequency":"daily","active":true,"completions":["2026-03-01"]},{"id":"h-06","name":"%%fixture6Name%%","frequency":"daily","active":true,"completions":[]}],"nextCursor":"h-06"}
 == 5. GET /v1/records?sort=name&limit=3&cursor=h-06
 {"items":[{"id":"h-05","name":"%%fixture5Name%%","frequency":"daily","active":false,"completions":["2026-02-20"]},{"id":"h-01","name":"%%fixture1Name%%","frequency":"daily","active":true,"completions":["2026-02-27","2026-02-28","2026-03-01"]},{"id":"h-02","name":"%%fixture2Name%%","frequency":"daily","active":true,"completions":["2026-02-26","2026-02-28","2026-03-01"]}],"nextCursor":"h-02"} → 200
 == 6. POST /v1/records/h-03/completions twice with the same day
@@ -201,7 +201,7 @@ habits.json is already schemaVersion 2: nothing to migrate.
 $ npm run backup
 Backup: backups/habits.<stamp>.json — 7 habits, 11 completion days, streaks on 2026-03-01 h-01:3,h-02:2,h-03:1,h-04:1,h-05:0,h-06:0,h-07:0, sha256 …
 Verified by a restore into a scratch folder: 7 habits, the same sha256, ids, completion days and streaks.
-$ npm start + sh try-api
+$ npm start + node try-api.mjs
 == 1. POST /v1/records (Idempotency-Key: …)
 {"id":"h-08","name":"%%fixture1Name%% 2","frequency":"weekly","active":true,"completions":[]} → 201
 == 2. the same POST retried with the same key

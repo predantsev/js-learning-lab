@@ -32,7 +32,6 @@ Node.js v25.2.1 (macOS). The data file `server/data/` is not in Git (`.gitignore
 flushed, before the rename. `npm run check` repeats these checks in `server/.check/`.
 
 ```text
-rehearse:export: bad option: -n
 $ npm run summary
 Created the data file with the starting wishes: ~/js-course/wishlist/server/data/wishlist.json
 Wishes: 6
@@ -125,19 +124,19 @@ $ npm run check:server
 ## NO-04 — the /v1 records API
 
 Node.js v25.2.1, curl 8.7.1 (macOS). The server was started with `npm start` in one terminal (fresh
-`server/data/`), `sh try-api` ran in another, then Ctrl+C. Request ids and the idempotency key are
+`server/data/`), `node try-api.mjs` ran in another, then Ctrl+C. Request ids and the idempotency key are
 random and shortened to `…` here. The idempotency keys live in the server's memory: a restart forgets them.
 
 ```text
-$ sh try-api
+$ node try-api.mjs
 == 1. POST /v1/records (Idempotency-Key: …)
-{"id":"w-07","name":"Навушники 2","price":30,"acquired":false,"category":"Дім"} → 201
+{"id":"w-07","name":"%%fixture1Name%% 2","price":30,"acquired":false,"category":"%%homeCategory%%"} → 201
 == 2. the same POST retried with the same key
-{"id":"w-07","name":"Навушники 2","price":30,"acquired":false,"category":"Дім"} → 201
+{"id":"w-07","name":"%%fixture1Name%% 2","price":30,"acquired":false,"category":"%%homeCategory%%"} → 201
 == 3. PATCH /v1/records/w-01 with an invalid name and price
 {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"name":"required","price":"not-a-number"},"requestId":"…"}} → 400
 == 4. GET /v1/records?sort=price&limit=3
-{"items":[{"id":"w-06","name":"%%fixture6Name%%","price":18,"acquired":true,"category":"%%homeCategory%%"},{"id":"w-04","name":"%%fixture4Name%%","price":25,"acquired":true,"category":"%%booksCategory%%"},{"id":"w-07","name":"Навушники 2","price":30,"acquired":false,"category":"Дім"}],"nextCursor":"w-07"}
+{"items":[{"id":"w-06","name":"%%fixture6Name%%","price":18,"acquired":true,"category":"%%homeCategory%%"},{"id":"w-04","name":"%%fixture4Name%%","price":25,"acquired":true,"category":"%%booksCategory%%"},{"id":"w-07","name":"%%fixture1Name%% 2","price":30,"acquired":false,"category":"%%homeCategory%%"}],"nextCursor":"w-07"}
 == 5. GET /v1/records?sort=price&limit=3&cursor=w-07
 {"items":[{"id":"w-02","name":"%%fixture2Name%%","price":45,"acquired":false,"category":"%%homeCategory%%"},{"id":"w-01","name":"%%fixture1Name%%","price":80,"acquired":false,"category":"%%firstCategory%%"},{"id":"w-03","name":"%%fixture3Name%%","price":240,"acquired":false,"category":"%%sportCategory%%"}],"nextCursor":"w-03"} → 200
 --- the server terminal:

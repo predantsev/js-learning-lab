@@ -132,19 +132,19 @@ $ npm run check:server
 ## NO-04 — the /v1 records API
 
 Node.js v25.2.1, curl 8.7.1 (macOS). The server was started with `npm start` in one terminal (fresh
-`server/data/`), `sh try-api` ran in another, then Ctrl+C. Request ids and the idempotency key are
+`server/data/`), `node try-api.mjs` ran in another, then Ctrl+C. Request ids and the idempotency key are
 random and shortened to `…` here. The idempotency keys live in the server's memory: a restart forgets them.
 
 ```text
-$ sh try-api
+$ node try-api.mjs
 == 1. POST /v1/records (Idempotency-Key: …)
-{"id":"e-07","label":"Продукти на тиждень 2","amountMinor":6500,"date":"2026-03-03","category":"food"} → 201
+{"id":"e-07","label":"%%fixture1Name%% 2","amountMinor":6500,"date":"2026-03-03","category":"food"} → 201
 == 2. the same POST retried with the same key
-{"id":"e-07","label":"Продукти на тиждень 2","amountMinor":6500,"date":"2026-03-03","category":"food"} → 201
+{"id":"e-07","label":"%%fixture1Name%% 2","amountMinor":6500,"date":"2026-03-03","category":"food"} → 201
 == 3. PATCH /v1/records/e-01 with invalid fields
 {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"label":"required","amountMinor":"not-positive-integer"},"requestId":"…"}} → 400
 == 4. GET /v1/records?sort=amountMinor&limit=3
-{"items":[{"id":"e-07","label":"Продукти на тиждень 2","amountMinor":6500,"date":"2026-03-03","category":"food"},{"id":"e-04","label":"%%fixture4Name%%","amountMinor":9990,"date":"2026-02-27","category":"home"},{"id":"e-03","label":"%%fixture3Name%%","amountMinor":18000,"date":"2026-02-28","category":"fun"}],"nextCursor":"e-03"}
+{"items":[{"id":"e-07","label":"%%fixture1Name%% 2","amountMinor":6500,"date":"2026-03-03","category":"food"},{"id":"e-04","label":"%%fixture4Name%%","amountMinor":9990,"date":"2026-02-27","category":"home"},{"id":"e-03","label":"%%fixture3Name%%","amountMinor":18000,"date":"2026-02-28","category":"fun"}],"nextCursor":"e-03"}
 == 5. GET /v1/records?sort=amountMinor&limit=3&cursor=e-03
 {"items":[{"id":"e-06","label":"%%fixture6Name%%","amountMinor":21050,"date":"2026-03-02","category":"food"},{"id":"e-05","label":"%%fixture5Name%%","amountMinor":30000,"date":"2026-02-27","category":"fun"},{"id":"e-02","label":"%%fixture2Name%%","amountMinor":52000,"date":"2026-03-01","category":"transport"}],"nextCursor":"e-02"} → 200
 --- the server terminal:

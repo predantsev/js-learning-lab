@@ -123,21 +123,21 @@ $ npm run check:server
 ## NO-04 — the /v1 records API
 
 Node.js v25.2.1, curl 8.7.1 (macOS). The server was started with `npm start` in one terminal (fresh
-`server/data/`), `sh try-api` ran in another, then Ctrl+C. Request ids and the idempotency key are
+`server/data/`), `node try-api.mjs` ran in another, then Ctrl+C. Request ids and the idempotency key are
 random and shortened to `…` here. The idempotency keys live in the server's memory: a restart forgets them.
 
 ```text
-$ sh try-api
+$ node try-api.mjs
 == 1. POST /v1/records (Idempotency-Key: …)
-{"id":"t-07","title":"Полити квіти 2","dueDate":"2026-03-04","done":false,"priority":"high"} → 201
+{"id":"t-07","title":"%%fixture1Name%% 2","dueDate":"2026-03-04","done":false,"priority":"high"} → 201
 == 2. the same POST retried with the same key
-{"id":"t-07","title":"Полити квіти 2","dueDate":"2026-03-04","done":false,"priority":"high"} → 201
+{"id":"t-07","title":"%%fixture1Name%% 2","dueDate":"2026-03-04","done":false,"priority":"high"} → 201
 == 3. PATCH /v1/records/t-01 with invalid fields
 {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"title":"required","dueDate":"bad-date"},"requestId":"…"}} → 400
 == 4. GET /v1/records?sort=dueDate&limit=3
 {"items":[{"id":"t-04","title":"%%fixture4Name%%","dueDate":"2026-02-27","done":true,"priority":"high"},{"id":"t-02","title":"%%fixture2Name%%","dueDate":"2026-03-01","done":false,"priority":"high"},{"id":"t-01","title":"%%fixture1Name%%","dueDate":"2026-03-02","done":false,"priority":"normal"}],"nextCursor":"t-01"}
 == 5. GET /v1/records?sort=dueDate&limit=3&cursor=t-01
-{"items":[{"id":"t-07","title":"Полити квіти 2","dueDate":"2026-03-04","done":false,"priority":"high"},{"id":"t-06","title":"%%fixture6Name%%","dueDate":"2026-03-05","done":true,"priority":"low"},{"id":"t-05","title":"%%fixture5Name%%","dueDate":"2026-03-10","done":false,"priority":"normal"}],"nextCursor":"t-05"} → 200
+{"items":[{"id":"t-07","title":"%%fixture1Name%% 2","dueDate":"2026-03-04","done":false,"priority":"high"},{"id":"t-06","title":"%%fixture6Name%%","dueDate":"2026-03-05","done":true,"priority":"low"},{"id":"t-05","title":"%%fixture5Name%%","dueDate":"2026-03-10","done":false,"priority":"normal"}],"nextCursor":"t-05"} → 200
 --- the server terminal:
 Created the data file with the starting tasks: ~/js-course/planner/server/data/planner.json
 Records server listening on http://127.0.0.1:4311
@@ -183,7 +183,7 @@ planner.json is already schemaVersion 2: nothing to migrate.
 $ npm run backup
 Backup: backups/planner.<stamp>.json — 7 tasks, 2 pending due on or before 2026-03-02, sha256 …
 Verified by a restore into a scratch folder: 7 tasks, the same sha256, ids and pending-due count for 2026-03-02.
-$ npm start + sh try-api
+$ npm start + node try-api.mjs
 == 1. POST /v1/records (Idempotency-Key: …)
 {"id":"t-08","title":"%%fixture1Name%% 2","dueDate":"2026-03-04","done":false,"priority":"high"} → 201
 == 2. the same POST retried with the same key
