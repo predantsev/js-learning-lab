@@ -1,0 +1,418 @@
+id: no-03-02-methods-status-headers-server
+unit: NO-03
+title:
+  uk: "Методи, статуси й заголовки на боці сервера"
+  en: "Methods, status and headers on the server"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Явно задавати код статусу й Content-Type для успіху, відсутньої адреси, недозволеного методу й збою сервера та передбачати, який статус отримає кожен запит."
+    en: "Set the status code and Content-Type explicitly for success, not-found, wrong-method and server-error cases, and predict the status each request receives."
+  - uk: "Відповідати на недозволений метод статусом 405 із заголовком Allow і читати заголовки запиту незалежно від регістру їхніх літер."
+    en: "Answer a wrong method with 405 and an Allow header, and read request headers without depending on their letter case."
+prerequisites: [no-03-01-http-server-lifecycle]
+subskills:
+  - { family: B-03, skill: "methods/status/headers", depth: intro }
+glossary: [method-not-allowed, headers-sent-error]
+selfCheck: [predict-four, send-json]
+
+blocks:
+  - id: status-is-yours
+    kind: explanation
+    title:
+      uk: "Статус — твоє рішення, а не значення за замовчуванням"
+      en: "The status is your decision, not a default"
+    body:
+      uk: |
+        Якщо обробник не задав статус, Node надсилає **200**. Тож гілка, що пише `{"error":"not found"}`, але статус не задає, повідомляє клієнтові «усе гаразд»: `response.ok` — `true`, і код клієнта спокійно покаже помилку як дані.
+
+        Тому кожна гілка обирає статус свідомо:
+
+        | Випадок | Статус | Що ще |
+        |---|---|---|
+        | успіх | `200` | `Content-Type: application/json` |
+        | такої адреси немає | `404` | тіло-помилка теж у JSON |
+        | адреса є, метод — ні | `405` | заголовок `Allow: GET` — які методи можна |
+        | збій на сервері | `500` | без подробиць збою в тілі |
+
+        [[method-not-allowed|405]] відрізняється від 404: адреса існує, не підходить лише метод, а `Allow` підказує клієнтові, який підійде.
+
+        Назви заголовків нечутливі до регістру. Node приводить заголовки запиту до малих літер: пиши `req.headers["content-type"]`, бо `req.headers["Content-Type"]` завжди `undefined`. А в `res.setHeader` регістр неважливий.
+      en: |
+        If the handler sets no status, Node sends **200**. So a branch that writes `{"error":"not found"}` but sets no status tells the client “all is well”: `response.ok` is `true`, and the client code calmly shows the error as data.
+
+        That is why every branch picks its status on purpose:
+
+        | Case | Status | What else |
+        |---|---|---|
+        | success | `200` | `Content-Type: application/json` |
+        | no such address | `404` | the error body is JSON too |
+        | the address exists, the method does not | `405` | an `Allow: GET` header — which methods work |
+        | a failure on the server | `500` | no details of the failure in the body |
+
+        [[method-not-allowed|405]] differs from 404: the address exists, only the method does not fit, and `Allow` tells the client which one will.
+
+        Header names are case-insensitive. Node lowercases the request headers: write `req.headers["content-type"]`, because `req.headers["Content-Type"]` is always `undefined`. In `res.setHeader` the case does not matter.
+
+  - id: headers-first
+    kind: explanation
+    title:
+      uk: "Спершу заголовки, потім тіло — і жодного кидка без `catch`"
+      en: "Headers first, then the body — and no throw without a `catch`"
+    body:
+      uk: |
+        Рядок статусу й заголовки йдуть клієнтові **перед** тілом. Щойно перший `res.write` чи `res.end` їх надіслав, змінити їх неможливо: `res.setHeader` після цього кидає [[headers-sent-error|ERR_HTTP_HEADERS_SENT]] («Cannot set headers after they are sent to the client»), а нове значення `res.statusCode` просто ігнорується. `res.headersSent` каже, чи заголовки вже пішли.
+
+        Тепер про помилки. Якщо обробник **кидає** помилку і її ніхто не ловить, падає не один запит, а **весь процес** — разом з усіма іншими клієнтами. Клієнт, що чекав, отримує обірване з’єднання: `fetch` відхиляється з `TypeError: fetch failed`. Тож тіло обробника загортають у `try`/`catch`: у `catch` записують подробиці в журнал сервера, а клієнтові відповідають `500` і коротким JSON без подробиць.
+      en: |
+        The status line and the headers travel to the client **before** the body. Once the first `res.write` or `res.end` has sent them, they cannot be changed: `res.setHeader` then throws [[headers-sent-error|ERR_HTTP_HEADERS_SENT]] (“Cannot set headers after they are sent to the client”), and a new `res.statusCode` value is simply ignored. `res.headersSent` tells whether the headers have gone.
+
+        Now about errors. If a handler **throws** and nobody catches it, it is not one request that fails but **the whole process** — along with every other client. The client that was waiting gets a broken connection: `fetch` rejects with `TypeError: fetch failed`. So the body of a handler is wrapped in `try`/`catch`: the `catch` writes the details to the server’s log and answers the client `500` with a short JSON without details.
+
+  - id: status-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Чотири запити — чотири статуси, і пізній заголовок"
+      en: "Four requests, four statuses, and a late header"
+    textEquivalent:
+      uk: "Клієнт надсилає серверу планувальника запити по черзі. На GET /records сервер відповідає 200 із Content-Type: application/json і списком справ. На DELETE /records відповідає 405 і заголовком Allow: GET: адреса є, але приймає лише GET. На GET /nope відповідає 404 з JSON-помилкою. Коли під час GET /records сховище кидає помилку, catch записує її в журнал сервера й відповідає 500 з коротким JSON. Остання сцена: обробник уже надіслав тіло через res.end, а потім викликає res.setHeader. У цю мить Node кидає ERR_HTTP_HEADERS_SENT, бо рядок статусу й заголовки вже пішли клієнтові разом із першими байтами відповіді."
+      en: "The client sends the planner server requests in turn. To GET /records the server answers 200 with Content-Type: application/json and the task list. To DELETE /records it answers 405 with the header Allow: GET: the address exists but accepts only GET. To GET /nope it answers 404 with a JSON error. When the storage throws during GET /records, the catch writes the error to the server’s log and answers 500 with a short JSON. The last scene: the handler has already sent the body with res.end and then calls res.setHeader. At that moment Node throws ERR_HTTP_HEADERS_SENT, because the status line and the headers already went to the client together with the first bytes of the answer."
+    spec:
+      actors:
+        - { id: client, label: { uk: "Клієнт", en: "Client" } }
+        - { id: server, label: { uk: "Сервер планувальника", en: "Planner server" } }
+      intro:
+        uk: "Клієнт і сервер планувальника. Біля кожної відповіді — її статус і найважливіші заголовки."
+        en: "The client and the planner server. Next to every answer: its status and the most important headers."
+      messages:
+        - from: client
+          to: server
+          kind: async
+          label: "GET /records"
+          caption:
+            uk: "Звичайне читання списку."
+            en: "An ordinary read of the list."
+        - from: server
+          to: client
+          kind: return
+          label: "200 OK"
+          note: { uk: "Content-Type: application/json", en: "Content-Type: application/json" }
+          caption:
+            uk: "Успіх: статус `200`, і Content-Type чесно каже, що в тілі JSON."
+            en: "Success: status `200`, and the Content-Type honestly says the body is JSON."
+        - from: client
+          to: server
+          kind: async
+          label: "DELETE /records"
+          caption:
+            uk: "Адреса відома, але видаляти список цілком тут не можна."
+            en: "The address is known, but deleting the whole list is not allowed here."
+        - from: server
+          to: client
+          kind: return
+          label: "405 Method Not Allowed"
+          note: { uk: "Allow: GET", en: "Allow: GET" }
+          caption:
+            uk: "`405` замість `404`: адреса існує. Заголовок `Allow` перелічує методи, які підійдуть."
+            en: "`405` instead of `404`: the address exists. The `Allow` header lists the methods that will work."
+        - from: client
+          to: server
+          kind: async
+          label: "GET /nope"
+          caption:
+            uk: "Адреса, якої сервер не знає."
+            en: "An address the server does not know."
+        - from: server
+          to: client
+          kind: return
+          label: "404 Not Found"
+          note: { uk: "тіло: {\"error\":\"not found\"}", en: "body: {\"error\":\"not found\"}" }
+          caption:
+            uk: "`404` і помилка в JSON. Якби статус не було задано, клієнт отримав би `200` з тим самим тілом — і `ok: true`."
+            en: "`404` and an error in JSON. Had the status not been set, the client would get `200` with the same body — and `ok: true`."
+        - from: server
+          to: server
+          kind: note
+          label: { uk: "сховище кидає помилку → catch", en: "the storage throws → catch" }
+          caption:
+            uk: "Під час `GET /records` сховище кинуло помилку. `catch` записує подробиці в журнал сервера."
+            en: "During `GET /records` the storage threw. The `catch` writes the details to the server’s log."
+        - from: server
+          to: client
+          kind: return
+          label: "500 Internal Server Error"
+          note: { uk: "тіло: {\"error\":\"internal error\"}", en: "body: {\"error\":\"internal error\"}" }
+          caption:
+            uk: "Клієнт отримує `500` і короткий JSON, а процес живе далі й обслуговує інших. Без `catch` упав би весь процес."
+            en: "The client gets `500` and a short JSON, and the process lives on and serves others. Without the `catch` the whole process would crash."
+        - from: server
+          to: server
+          kind: note
+          label: "res.end(…) → res.setHeader(…)"
+          note: { uk: "ERR_HTTP_HEADERS_SENT", en: "ERR_HTTP_HEADERS_SENT" }
+          caption:
+            uk: "Тіло вже надіслано, а код ще пробує додати заголовок. Node кидає `ERR_HTTP_HEADERS_SENT`: заголовки пішли разом із першими байтами."
+            en: "The body has been sent, and the code still tries to add a header. Node throws `ERR_HTTP_HEADERS_SENT`: the headers left together with the first bytes."
+
+  - id: predict-four
+    kind: prediction
+    prompt:
+      uk: "Сервер планувальника отримує чотири запити: `GET /records`, `DELETE /records`, `GET /nope` і `GET /broken`. Які твердження правдиві? Обери всі."
+      en: "The planner server receives four requests: `GET /records`, `DELETE /records`, `GET /nope` and `GET /broken`. Which statements are true? Choose all that are."
+    code: |
+      http.createServer((req, res) => {
+        try {
+          res.setHeader("content-type", "application/json; charset=utf-8");
+          if (req.url === "/records" && req.method === "GET") {
+            res.end(JSON.stringify(tasks));
+          } else if (req.url === "/records") {
+            res.writeHead(405, { allow: "GET" });
+            res.end(JSON.stringify({ error: "method not allowed" }));
+          } else if (req.url === "/broken") {
+            throw new Error("storage is not ready");
+          } else {
+            res.end(JSON.stringify({ error: "not found" }));
+          }
+        } catch (error) {
+          res.statusCode = 500;
+          res.end(JSON.stringify({ error: "internal error" }));
+        }
+      });
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: get-200
+          text:
+            uk: "`GET /records` отримує `200`, хоч статус ніде не задано"
+            en: "`GET /records` gets `200`, although no status is set anywhere"
+        - id: delete-405
+          text:
+            uk: "`DELETE /records` отримує `405` і заголовок `Allow: GET`"
+            en: "`DELETE /records` gets `405` and the header `Allow: GET`"
+        - id: nope-404
+          text:
+            uk: "`GET /nope` отримує `404`: у тілі ж написано «not found»"
+            en: "`GET /nope` gets `404`: the body does say “not found”"
+          why:
+            uk: "Статус — окрема частина відповіді, і Node не читає тіло, щоб його вгадати. Ця гілка статус не задає, тож клієнт отримує `200` і `ok: true`."
+            en: "The status is a separate part of the answer, and Node does not read the body to guess it. This branch sets no status, so the client gets `200` and `ok: true`."
+        - id: nope-200
+          text:
+            uk: "`GET /nope` отримує `200`, і `response.ok` у клієнта — `true`"
+            en: "`GET /nope` gets `200`, and the client’s `response.ok` is `true`"
+        - id: broken-crash
+          text:
+            uk: "`GET /broken` валить процес сервера, і клієнт отримує обірване з’єднання"
+            en: "`GET /broken` crashes the server process, and the client gets a broken connection"
+          why:
+            uk: "Так було б без `try`/`catch`. Тут кинута помилка потрапляє в `catch`, і той відповідає `500`; процес живе далі."
+            en: "That would happen without `try`/`catch`. Here the thrown error lands in the `catch`, which answers `500`; the process lives on."
+        - id: broken-500
+          text:
+            uk: "`GET /broken` отримує `500` з `{\"error\":\"internal error\"}`"
+            en: "`GET /broken` gets `500` with `{\"error\":\"internal error\"}`"
+      correct: [get-200, delete-405, nope-200, broken-500]
+    explanation:
+      uk: "Без явного статусу Node надсилає `200` — і для успіху, і для гілки «not found», тож клієнт сприймає помилку як дані. `writeHead(405, { allow: \"GET\" })` задає статус і додає `Allow` до вже встановленого Content-Type. Помилку з `/broken` ловить `catch` і відповідає `500`; без нього впав би весь процес. Перевір у прикладі нижче."
+      en: "Without an explicit status Node sends `200` — for success and for the “not found” branch alike, so the client takes the error for data. `writeHead(405, { allow: \"GET\" })` sets the status and adds `Allow` to the Content-Type already set. The error from `/broken` is caught by the `catch`, which answers `500`; without it the whole process would crash. Check it in the example below."
+
+  - id: four-requests
+    kind: example
+    runtime: isolated-node
+    dir: four-requests
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      task1: { uk: "Полити квіти", en: "Water the plants" }
+      task2: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+    title:
+      uk: "Чотири запити до справжнього сервера"
+      en: "Four requests to a real server"
+    body:
+      uk: |
+        Той самий сервер, що й у передбаченні, плюс журнал: рядки `[server]` друкує сервер, решту — клієнт. Кожен запит несе заголовок `X-Request-Id`, а сервер читає його як `req.headers["x-request-id"]`.
+
+        Натисни **Запустити** й порівняй статуси з тим, що ти передбачив.
+      en: |
+        The same server as in the prediction, plus a log: the `[server]` lines come from the server, the rest from the client. Every request carries an `X-Request-Id` header, and the server reads it as `req.headers["x-request-id"]`.
+
+        Press **Run** and compare the statuses with what you predicted.
+    tryIt:
+      uk: |
+        1. В останній гілці (`else`) перед `res.end(…)` додай `res.statusCode = 404;` і запусти: `GET /nope` тепер `404`, `ok: false`.
+        2. У першому рядку обробника заміни `req.headers['x-request-id']` на `req.headers['X-Request-Id']`: замість ідентифікаторів сервер друкує `undefined`. Поверни малі літери.
+        3. У гілці `GET` переставь рядок `res.setHeader('x-total-count', …)` нижче за `res.end(…)`. Сервер друкує `ERR_HTTP_HEADERS_SENT: Cannot set headers after they are sent to the client`, а клієнт однаково отримує `200` і список: статус уже пішов, і `catch` бачить це через `res.headersSent`. Поверни рядок на місце.
+        4. Переміни рядок `throw new Error('storage is not ready');` з гілки `/broken` на місце одразу під першим `console.log` обробника, поза `try`. Тепер падає вже перший запит: з’являється картка помилки `Error: storage is not ready`, і решта запитів не відбувається — процес завершився разом із сервером. Поверни рядок назад.
+      en: |
+        1. In the last branch (`else`) add `res.statusCode = 404;` before `res.end(…)` and run: `GET /nope` is now `404`, `ok: false`.
+        2. In the first line of the handler replace `req.headers['x-request-id']` with `req.headers['X-Request-Id']`: instead of the ids the server prints `undefined`. Put the lowercase back.
+        3. In the `GET` branch move the `res.setHeader('x-total-count', …)` line below `res.end(…)`. The server prints `ERR_HTTP_HEADERS_SENT: Cannot set headers after they are sent to the client`, and the client still gets `200` and the list: the status has already gone, and the `catch` sees it through `res.headersSent`. Move the line back.
+        4. Move the line `throw new Error('storage is not ready');` from the `/broken` branch to just below the handler’s first `console.log`, outside the `try`. Now the very first request crashes: an error card `Error: storage is not ready` appears and the remaining requests never happen — the process ended together with the server. Move the line back.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: що клієнт робить із класом статусу"
+      en: "Recall: what a client does with the status class"
+    items:
+      - id: status-classes
+        from: js-16-02-http-methods-status-headers
+        prompt:
+          uk: "Клієнтський код робить `const response = await fetch(url)` і перевіряє лише `response.ok`. Для яких статусів він вирішить, що все вдалося? Обери всі."
+          en: "Client code does `const response = await fetch(url)` and checks only `response.ok`. For which statuses will it decide that all went well? Choose all that apply."
+        answer:
+          type: multi
+          options:
+            - id: s200
+              text: { uk: "`200`", en: "`200`" }
+            - id: s201
+              text: { uk: "`201`", en: "`201`" }
+            - id: s204
+              text: { uk: "`204`", en: "`204`" }
+            - id: s404
+              text: { uk: "`404`", en: "`404`" }
+              why:
+                uk: "`4xx` — проблема із запитом. `ok` тут `false`."
+                en: "`4xx` is a problem with the request. `ok` is `false` here."
+            - id: s500
+              text: { uk: "`500`", en: "`500`" }
+              why:
+                uk: "`5xx` — збій сервера. `ok` тут `false`."
+                en: "`5xx` is a server failure. `ok` is `false` here."
+          correct: [s200, s201, s204]
+        explanation:
+          uk: "`ok` — це лише «статус від 200 до 299». Тому сервер, що відповідає `200` на помилку, обманює кожного клієнта, який довіряє `ok`, — а саме так зазвичай і пишуть клієнтський код."
+          en: "`ok` only means “the status is between 200 and 299”. So a server that answers an error with `200` deceives every client that trusts `ok` — which is exactly how client code is usually written."
+
+  - id: send-json
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: send-json
+    entry: index.js
+    editable: [app.js]
+    capabilities: { network: loopback }
+    strings:
+      task1: { uk: "Полити квіти", en: "Water the plants" }
+      task2: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      task3: { uk: "Написати бабусі", en: "Write to grandma" }
+      brokenNote: { uk: "(сховище зламане)", en: "(storage broken)" }
+      gaveUp: { uk: "Клієнт перестав чекати:", en: "Client stopped waiting:" }
+    title:
+      uk: "sendJson для кожної відповіді"
+      en: "sendJson for every answer"
+    instructions:
+      uk: |
+        У `app.js` дві частини.
+
+        **1. `sendJson(res, status, value)`** надсилає `value` як повну JSON-відповідь:
+
+        - статус `status`;
+        - `Content-Type`, що починається з `application/json`;
+        - `Content-Length` — довжина тексту JSON **у байтах**, а не в символах (у назвах справ є українські літери);
+        - сам текст JSON, і відповідь завершена.
+
+        **2. `handle(req, res)`** уже кличе `sendJson` у кожній гілці, але скрізь зі статусом 200. Виправ статуси:
+
+        - `GET /records` — `200` і список справ;
+        - будь-який інший метод на `/records` — `405` із заголовком `Allow: GET`;
+        - будь-яка інша адреса — `404`;
+        - коли `repository.list()` кидає помилку — `500`.
+
+        `repository.js` лише для читання: перевірки вмикають у ньому `repository.broken`, щоб `list()` кинув помилку. **Запустити** надсилає чотири запити і друкує статус і заголовки кожної відповіді. **Перевірити** надсилає справжні запити: окремо до сервера, що лише кличе твій `sendJson`, і окремо до `handle`; одна з перевірок порівнює `Content-Length` із кількістю байтів тексту JSON.
+      en: |
+        `app.js` has two parts.
+
+        **1. `sendJson(res, status, value)`** sends `value` as a complete JSON answer:
+
+        - the status `status`;
+        - a `Content-Type` starting with `application/json`;
+        - `Content-Length` — the length of the JSON text **in bytes**, not in characters (task titles can contain non-English letters);
+        - the JSON text itself, with the answer finished.
+
+        **2. `handle(req, res)`** already calls `sendJson` in every branch, but always with status 200. Fix the statuses:
+
+        - `GET /records` — `200` and the task list;
+        - any other method on `/records` — `405` with the header `Allow: GET`;
+        - any other address — `404`;
+        - when `repository.list()` throws — `500`.
+
+        `repository.js` is read-only: the checks switch on `repository.broken` in it to make `list()` throw. **Run** sends four requests and prints the status and headers of each answer. **Check** sends real requests: separately to a server that only calls your `sendJson`, and separately to `handle`; one of the checks compares `Content-Length` with the number of bytes of the JSON text.
+    testTitles:
+      "sendJson sends the given status":
+        uk: "`sendJson` надсилає переданий статус (`201`, `404`)"
+        en: "`sendJson` sends the given status (`201`, `404`)"
+      "sendJson labels the body as JSON":
+        uk: "`sendJson` позначає тіло як JSON (`Content-Type: application/json`)"
+        en: "`sendJson` labels the body as JSON (`Content-Type: application/json`)"
+      "sendJson sets Content-Length in bytes":
+        uk: "`sendJson` задає `Content-Length` у байтах"
+        en: "`sendJson` sets `Content-Length` in bytes"
+      "sendJson sends the value as JSON text and finishes":
+        uk: "`sendJson` надсилає значення текстом JSON і завершує відповідь"
+        en: "`sendJson` sends the value as JSON text and finishes the answer"
+      "GET /records answers 200":
+        uk: "`GET /records` відповідає `200`"
+        en: "`GET /records` answers `200`"
+      "another method on /records answers 405 with Allow: GET":
+        uk: "Інший метод на `/records` отримує `405` і `Allow: GET`"
+        en: "Another method on `/records` gets `405` and `Allow: GET`"
+      "an unknown address answers 404":
+        uk: "Невідома адреса отримує `404`"
+        en: "An unknown address gets `404`"
+      "a failing repository answers 500":
+        uk: "Збій сховища дає `500`"
+        en: "A failing storage gives `500`"
+    hints:
+      nudge:
+        uk: "Почни з `sendJson`: що має бути задано до того, як `res.end` надішле тіло? Потім пройди гілки `handle` і для кожної спитай: що тут сталося з погляду клієнта?"
+        en: "Start with `sendJson`: what must be set before `res.end` sends the body? Then walk through the branches of `handle` and ask for each: what happened here from the client’s point of view?"
+      explanation:
+        uk: "Статус і заголовки задаються до першого байта тіла: через `res.statusCode` і `res.setHeader(назва, значення)` або одним `res.writeHead(статус, { … })`. `\"ї\".length` — `1`, а `Buffer.byteLength(\"ї\")` — `2`: у UTF-8 українська літера займає два байти, а `Content-Length` рахує саме байти. Заголовок, заданий через `res.setHeader` перед викликом `sendJson`, потрапить у ту саму відповідь."
+        en: "The status and the headers are set before the first byte of the body: through `res.statusCode` and `res.setHeader(name, value)`, or with a single `res.writeHead(status, { … })`. `\"ї\".length` is `1`, while `Buffer.byteLength(\"ї\")` is `2`: in UTF-8 a Ukrainian letter takes two bytes, and `Content-Length` counts bytes. A header set with `res.setHeader` before `sendJson` is called ends up in the same answer."
+    solutionNote:
+      uk: "`sendJson` готує текст один раз, задає статус, `Content-Type` і `Content-Length` через `Buffer.byteLength(text)` і завершує відповідь через `res.end(text)`. У `handle` гілка `405` спершу додає `res.setHeader(\"allow\", \"GET\")` — `sendJson` лише доповнює вже задані заголовки. Якщо `Content-Length` рахувати в символах, клієнт отримає обрізане тіло: Node надішле рівно стільки байтів, скільки заявлено. (Коли все тіло йде одним `res.end(text)` без заданої довжини, Node рахує `Content-Length` сам — але щойно ти задаєш її власноруч, відповідальність за байти твоя.)"
+      en: "`sendJson` builds the text once, sets the status, `Content-Type` and `Content-Length` via `Buffer.byteLength(text)`, and finishes with `res.end(text)`. In `handle` the `405` branch first adds `res.setHeader(\"allow\", \"GET\")` — `sendJson` only adds to the headers already set. If `Content-Length` were counted in characters, the client would get a cut-off body: Node sends exactly as many bytes as were declared. (When the whole body goes in one `res.end(text)` with no length set, Node computes `Content-Length` itself — but as soon as you set it by hand, the bytes are your responsibility.)"
+    feedback:
+      - when: { test: "sendJson sends the given status" }
+        message:
+          uk: "Ця перевірка кличе `sendJson(res, 201, …)` і `sendJson(res, 404, …)` і чекає саме ці статуси. Статус має прийти з параметра `status`, а не бути записаним у функції числом."
+          en: "This check calls `sendJson(res, 201, …)` and `sendJson(res, 404, …)` and expects exactly those statuses. The status must come from the `status` parameter, not be written into the function as a number."
+      - when: { test: "sendJson labels the body as JSON" }
+        message:
+          uk: "Ця перевірка чекає заголовок `Content-Type`, що починається з `application/json`. Задай його до `res.end`."
+          en: "This check expects a `Content-Type` header starting with `application/json`. Set it before `res.end`."
+      - when: { test: "sendJson sets Content-Length in bytes" }
+        message:
+          uk: "Ця перевірка чекає `Content-Length`, що дорівнює кількості **байтів** тексту JSON. `text.length` рахує символи, а `✓` чи українська літера займають у UTF-8 кілька байтів. Порахуй байти через `Buffer.byteLength(text)`."
+          en: "This check expects a `Content-Length` equal to the number of **bytes** of the JSON text. `text.length` counts characters, while `✓` or a non-English letter takes several bytes in UTF-8. Count the bytes with `Buffer.byteLength(text)`."
+      - when: { test: "sendJson sends the value as JSON text and finishes" }
+        message:
+          uk: "Ця перевірка читає тіло до кінця, розбирає його як JSON і дивиться на сервері, чи відповідь завершена (`res.writableEnded`). Тіло має бути `JSON.stringify(value)`, а завершує відповідь лише `res.end`. Зі слушним `Content-Length` клієнт може дочитати тіло й без `res.end` — тому перевірка дивиться ще й на бік сервера, де така відповідь лишається відкритою."
+          en: "This check reads the body to the end, parses it as JSON and looks on the server whether the answer is finished (`res.writableEnded`). The body must be `JSON.stringify(value)`, and only `res.end` finishes the answer. With a correct `Content-Length` the client can read the whole body even without `res.end` — which is why the check also looks at the server side, where such an answer stays open."
+      - when: { test: "GET /records answers 200" }
+        message:
+          uk: "`GET /records` має отримати `200`, поки сховище працює."
+          en: "`GET /records` must get `200` while the storage works."
+      - when: { test: "another method on /records answers 405 with Allow: GET" }
+        message:
+          uk: "Ця перевірка надсилає `DELETE /records` і чекає `405` разом із заголовком `Allow`, що містить `GET`. Задай заголовок через `res.setHeader` перед викликом `sendJson`."
+          en: "This check sends `DELETE /records` and expects `405` together with an `Allow` header that contains `GET`. Set the header with `res.setHeader` before calling `sendJson`."
+      - when: { test: "an unknown address answers 404" }
+        message:
+          uk: "Ця перевірка надсилає `GET /tasks` і чекає `404`. Повідомлення «not found» у тілі статусу не змінює: його задає перший аргумент після `res`."
+          en: "This check sends `GET /tasks` and expects `404`. A “not found” message in the body does not change the status: the argument right after `res` sets it."
+      - when: { test: "a failing repository answers 500" }
+        message:
+          uk: "Ця перевірка вмикає `repository.broken`, надсилає `GET /records` і чекає `500`. Відповідь із `catch` має бути `500`, а не `200` з текстом помилки."
+          en: "This check switches on `repository.broken`, sends `GET /records` and expects `500`. The answer from the `catch` must be `500`, not `200` with an error text."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-03
+    body:
+      uk: "Сервер твого проєкту відповідатиме лише через одну функцію на зразок `sendJson`: так кожна відповідь — і записи, і помилки `404`/`405` — матиме чесний статус, Content-Type і правильну довжину, навіть коли в назвах записів українські літери."
+      en: "Your project’s server will answer only through one function like `sendJson`: that way every answer — the records and the `404`/`405` errors alike — gets an honest status, Content-Type and the right length, even when record names contain non-English letters."
