@@ -1,4 +1,4 @@
-// Preview plumbing for questions 1, 2 and 4. Everything "device-like" here is SIMULATED:
+// Preview plumbing for questions 1, 2 and 3. Everything "device-like" here is SIMULATED:
 // native-store.js stands in for an async key-value store (AsyncStorage), navSim.jsx for a
 // React Navigation 7 native stack, appStateSim.jsx for React Native's AppState.
 import { useState } from 'react';
