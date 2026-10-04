@@ -1,12 +1,12 @@
 // A jump in the build numbers is fine: they only have to go up.
 export const first = {
   version: '1.0.0',
-  android: { package: 'com.example.jsll.planner', versionCode: 1 },
-  ios: { bundleIdentifier: 'com.example.jsll.planner', buildNumber: '1' },
+  android: { package: 'com.example.jsll.planner', versionCode: 3 },
+  ios: { bundleIdentifier: 'com.example.jsll.planner', buildNumber: '3' },
 };
 
 export const second = {
-  version: '1.1.0',
+  version: '1.0.1',
   android: { package: 'com.example.jsll.planner', versionCode: 10 },
   ios: { bundleIdentifier: 'com.example.jsll.planner', buildNumber: '10' },
 };

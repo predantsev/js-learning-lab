@@ -3,12 +3,15 @@ import { shipOutcome } from './simulated-store.js';
 
 const ID = 'com.example.jsll.planner';
 
-test('the first release is 1.0.0, build 1, on both platforms', () => {
+// Builds 1 and 2 already went to testers on both platforms.
+const TESTER_BUILD = 2;
+
+test('the first release is 1.0.0, with build numbers above the testers builds', () => {
   expect(first.version, 'first.version').toBe('1.0.0');
   expect(first.android.package, 'first.android.package').toBe(ID);
   expect(first.ios.bundleIdentifier, 'first.ios.bundleIdentifier').toBe(ID);
-  expect(Number(first.android.versionCode), 'first.android.versionCode').toBe(1);
-  expect(Number(first.ios.buildNumber), 'first.ios.buildNumber').toBe(1);
+  expect(Number(first.android.versionCode), 'first.android.versionCode').toBeGreaterThan(TESTER_BUILD);
+  expect(Number(first.ios.buildNumber), 'first.ios.buildNumber').toBeGreaterThan(TESTER_BUILD);
 });
 
 test('the second release keeps the app identity', () => {
@@ -16,8 +19,8 @@ test('the second release keeps the app identity', () => {
   expect(second.ios.bundleIdentifier, 'second.ios.bundleIdentifier').toBe(ID);
 });
 
-test('the second release shows users version 1.1.0', () => {
-  expect(second.version, 'second.version').toBe('1.1.0');
+test('the bug-fix release shows users version 1.0.1', () => {
+  expect(second.version, 'second.version').toBe('1.0.1');
 });
 
 test('the second release ships as an update on both platforms', () => {

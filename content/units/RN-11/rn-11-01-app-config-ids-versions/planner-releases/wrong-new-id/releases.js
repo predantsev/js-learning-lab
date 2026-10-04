@@ -1,14 +1,14 @@
 // Misconception: "changing the package id is a harmless rename".
 export const first = {
   version: '1.0.0',
-  android: { package: 'com.example.jsll.planner', versionCode: 1 },
-  ios: { bundleIdentifier: 'com.example.jsll.planner', buildNumber: '1' },
+  android: { package: 'com.example.jsll.planner', versionCode: 3 },
+  ios: { bundleIdentifier: 'com.example.jsll.planner', buildNumber: '3' },
 };
 
 export const second = {
-  version: '1.1.0',
-  android: { package: 'com.example.jsll.planner2', versionCode: 2 },
-  ios: { bundleIdentifier: 'com.example.jsll.planner2', buildNumber: '2' },
+  version: '1.0.1',
+  android: { package: 'com.example.jsll.planner2', versionCode: 4 },
+  ios: { bundleIdentifier: 'com.example.jsll.planner2', buildNumber: '4' },
 };
 
 export const rules = {
