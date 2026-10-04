@@ -1,0 +1,199 @@
+# Capstone step of unit NO-12 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of NO-12 from this file.
+# A local step: done in the learner's editor and terminal; no platform checks. The project page shows only the
+# intro of a local step, so the intro carries the whole procedure.
+# Teaching order: …, NO-11, NO-06, NO-12 — this step continues the NO-06 reference.
+# Every command was run on macOS in a scratch home on all four projects, continuing the NO-06 references, in a
+# Ukrainian and an English workspace, on Node.js 25.2.1 (npm 11.6.2) and on Node.js 22.13.1 (npm 10.9.2, with
+# NODE_OPTIONS=--experimental-strip-types for the .ts scripts; the built artifact itself also started on 22.13.1
+# with no flag): npm test, npm run check, npm run check:server, npm run typecheck, and the whole rehearsal of
+# the runbook by a script (CI → artifact and record, sha256 check, unpack, an invalid start, the start in
+# production mode, /livez, /readyz, load, /metrics, SIGTERM under load, records on disk against the confirmed
+# 201s, backup, the restore drill into a new folder, the same artifact on the drill folder and check:deploy of
+# both, a CPU profile under load, an upgrade 1.1.0 with a defect: CI stops, a pack by hand, deploy,
+# check:deploy ✖, the data check, the rollback by checksum, check:deploy ✔). Deliberately wrong variants were run
+# against npm test on all four (listed in the task files' headers and in the hand-back). Quoted output is from
+# the wishlist run in the Ukrainian workspace on Node.js 25.2.1. Not run: Linux, Windows, a process manager,
+# another computer.
+# reference/ is the NO-06 reference plus the files of this step (without node_modules/, package-lock.json and
+# the runtime folders server/data/, server/.check/, server/release/, server/artifacts/, server/profiles/).
+unit: NO-12
+mode: local
+entry: index.html
+title:
+  uk: "Сервер у локальному production-режимі: артефакт, health, метрики, відновлення й відкат"
+  en: "The server in local production mode: an artifact, health, metrics, restore and rollback"
+intro:
+  uk: |
+    Досі сервер запускався з `src/` через `npm start`, як під час розробки. Тепер — як сервіс: із перевіреного **артефакту** (`.tgz` з контрольною сумою), з конфігурацією, що відмовляє на хибному значенні, з `/livez` і `/readyz`, метриками за маршрутами й коректним завершенням за `SIGTERM`. І з **runbook** — інструкцією, за якою ти (чи будь-хто) запускаєш, зупиняєш, відновлюєш і відкочуєш. Усе на цьому комп’ютері, на loopback.
+
+    | Проєкт | Що порівнює відновлення | Що ламає оновлення 1.1.0 |
+    |---|---|---|
+    | Список бажань | кількість, `id`, сума цін бажаних речей | фільтр `acquired` |
+    | Планувальник | кількість, невиконані й з терміном до заданого дня | сортування за `priority` |
+    | Трекер звичок | виконання й серія кожної звички на заданий день | фільтр `active` |
+    | Трекер витрат | загальна сума й суми за категоріями в `amountMinor` | фільтр `category` |
+
+    Перевірено на macOS на всіх чотирьох проєктах в українському й англійському проєктах — на Node.js 25.2.1 і 22.13.1 (скрипти `.ts` — з `NODE_OPTIONS=--experimental-strip-types`; зібраний артефакт стартує й без прапорця). Нижче — «Список бажань» в українському проєкті на 25.2.1. На Linux, Windows, з менеджером процесів чи на іншому комп’ютері не перевірялося.
+
+    **1. Стан на початку.** `cd ~/js-course/<проєкт>/server`, `git status` — чисто, останній commit — `Connect the web app to the records server: an HTTP source behind the data-source module, a shared v1 contract, CORS for the dev origin`.
+
+    **2. Конфігурація — `src/config.ts`.** Кожна змінна, яку читає сервер, — в одному `loadConfig`, усі проблеми разом, і старт з кодом 1: нові `SHUTDOWN_DEADLINE_MS` (100–30 000, типово 5000) і `NODE_ENV` (`production`, `development` чи `test`; Node.js сам його не читає, а наш код ніколи за ним не розгалужується — лише показує в рядку старту).
+
+    **3. Health і метрики — `src/server.ts`, `src/metrics.ts`.** `GET /livez` — `200 {"status":"alive"}`, поки процес відповідає. `GET /readyz` — `200 {"status":"ready"}`, лише коли сховище читається й завершення ще не почалося; інакше `503`. `GET /metrics` — текст: на маршрут — `http_requests_total{route,status}`, `http_errors_total{route}` (усі `5xx`), `http_request_duration_ms{route,quantile="0.5"|"0.95"|"0.99"}` і `_count`. Тривалості — гістограма `createHistogram` з `node:perf_hooks`: її пам’ять не росте з кількістю запитів, а percentile — найближчий ранг. Мітка — шаблон маршруту (`/v1/records/:id`), невідома адреса — `(other)`, інакше кожен випадковий запит додавав би мітку.
+
+    **4. Коректне завершення.** `SIGTERM` і `SIGINT` — одне завершення: `/readyz` одразу `503`, нові з’єднання не приймаються (`server.close()`), простійні keep-alive закриваються, кожна відповідь іде з `connection: close`, а запити в польоті завершуються — і код `0`. Не встигли до дедлайну — з’єднання обриваються (`closeAllConnections()`) і код `1`: менеджер процесів убив би сервер `SIGKILL` після свого дедлайну без сліду, тож сервер виходить раніше. Пастка, яку ми впіймали тестом: запит, що вже йшов у момент сигналу, лишає своє keep-alive-з’єднання відкритим — і `close()` чекає його до дедлайну. Тому після кожної відповіді під час завершення — `server.closeIdleConnections()` ще раз.
+
+    **5. Збірка й артефакт — `scripts/build.mjs`, `scripts/pack.mjs`, `scripts/ci.mjs`.** `npm run build` пише `release/` — сервер як звичайний JavaScript: кожен `.ts` з `src/` і все, що він імпортує поза `server/` (домен, модель даних, спільний контракт), — через `stripTypeScriptTypes` з `node:module` (типи стають пробілами, тож рядки й колонки збігаються з кодом), імпорти `./x.ts` — `./x.js`; стартові записи, які `src/fixtures.ts` читає за шляхом, — окремим списком; перевірки `check-*.ts` у реліз не йдуть. Типи перевіряє `tsc`, не збірка. `npm run pack` — `npm pack ./release` у `artifacts/<name>-<version>.tgz` і запис `<artifact>.release.json`: `name`, `version`, `commit`, `node`, `ci`, `artifact`, `bytes`, `sha256`, `verify`. Артефакт не перезбирається: той самий commit, запакований іншою версією Node чи npm, дає інші байти — тому версія зростає, а старий артефакт лишається. `npm run ci` — `typecheck`, `test`, артефакт; перша помилка — `✖ CI stopped at …` і жодного артефакту. Етапу lint немає: ESLint проєкту перевіряє `.js` вебпроєкту, а сервер — `.ts`, його перевіряє `tsc`. Версія сервера — `1.0.0` (`server/package.json`); `release/`, `artifacts/`, `profiles/` — у `.gitignore`, а `server/release/` і `server/.check/` — в `ignores` файлу `eslint.config.mjs`: збірка й тести пишуть туди `.js`, і `npm run lint` вебпроєкту інакше перевіряв би згенерований код (у нас — `✖ 188 problems (188 errors, 0 warnings)`, зокрема 148 разів `'process' is not defined`).
+
+    **6. Інструменти — `scripts/load.mjs`, `src/check-deploy.ts`, `src/restore-drill.ts`, `scripts/top-self-time.mjs`.** `npm run load -- <адреса> <секунди>` — 4 потоки запитів, кожен десятий створює запис з `Idempotency-Key`; підсумок за статусами, `refused`, `broken`, кількість `201` і p50/p95. `npm run check:deploy -- <адреса>` питає запущений сервер лише через `GET`: готовий, кожна сторінка тримає контракт v1, фільтри й сортування кажуть правду про ці дані, і рядок `summary:` — ті самі числа, що показує вебзастосунок. `npm run restore-drill -- <нова тека>` бере найновіший перевірений backup і відновлює його в **нову порожню** теку — ніколи поверх живої — і питає живе й відновлене сховища те саме (кількість, `id`, похідні значення), розмірів не порівнює. `npm run profile:top -- <файл>` — п’ять функцій з найбільшим власним часом у профілі `--cpu-prof`.
+
+    **7. Тести — `tests/ops.test.ts`.** `/livez`, `/readyz` і `503`, коли сховище не читається; під час завершення — `503` і `connection: close`; `/metrics` за шаблоном маршруту, `5xx` як помилки, p95; справжній процес: `SIGTERM` із запитом у польоті — відповідь `201`, запис на диску, нові з’єднання відхилено, код `0`; запит, що не встиг до дедлайну, — обрив і код `1`; хибна конфігурація — усі проблеми й код `1`; збірка — звичайний JavaScript, що стартує й відповідає `/readyz`; restore drill — збіг, відмова на непорожній теці, різниця після запису; латентність на 20 000 синтетичних записах — p95 у межах бюджету. Бюджет ми виміряли: у «Списку бажань» p95 41–58 мс на нашому комп’ютері, бюджет — 250 мс, тож повільніший комп’ютер проходить, а сортування, повторене для кожного запису сторінки, — ні.
+
+    **8. Runbook — `server/RUNBOOK.md`.** Розділи: випуск, старт (спершу контрольна сума), зупинка (що означають коди 0 і 1), спостереження (`/livez`, `/readyz`, `/metrics`, поріг тривоги, профіль — лише локально, ніколи `--inspect` на сервері, яким користуються), backup і restore drill, оновлення, і один інцидент від симптому: сигнал, перевірки по черзі (нічого не змінюючи), рішення, **перевірка даних перед відкатом** (`schemaVersion`, який знає попередня версія; відкат коду не відкочує даних), відкат, підтвердження відновлення.
+
+    **9. Репетиція — все за runbook-ом.** Дані — у новій теці `~/js-course/<проєкт>-data`, артефакт — у `~/js-course/<проєкт>-run/<версія>`. У нас («Список бажань»; `…` — шлях, pid, час):
+
+    ```text
+    $ npm run ci
+    ✔ artifacts/js-learning-lab-wishlist-server-1.0.0.tgz (36933 bytes, commit 187cb8c, ci passed)
+      sha256 207a8fffe084c3f800f3c40d7e925a43946770e9db92edfadb358a9e5919af1b
+    ✔ CI passed.
+    $ shasum -a 256 artifacts/js-learning-lab-wishlist-server-1.0.0.tgz
+    207a8fffe084c3f800f3c40d7e925a43946770e9db92edfadb358a9e5919af1b  artifacts/js-learning-lab-wishlist-server-1.0.0.tgz
+    $ mkdir -p ~/js-course/wishlist-run/1.0.0 && tar -xzf artifacts/js-learning-lab-wishlist-server-1.0.0.tgz -C ~/js-course/wishlist-run/1.0.0
+    $ cd ~/js-course/wishlist-run/1.0.0/package
+    $ PORT=99999 SHUTDOWN_DEADLINE_MS=5 node server/src/server.js; echo "exit $?"
+    PORT must be a whole number from 1 to 65535, got "99999"
+    SHUTDOWN_DEADLINE_MS must be a whole number from 100 to 30000, got "5"
+    exit 1
+    $ NODE_ENV=production PORT=4311 DATA_DIR=$HOME/js-course/wishlist-data node server/src/server.js
+    js-learning-lab-wishlist-server 1.0.0 (pid …, NODE_ENV=production) listening on http://127.0.0.1:4311
+    (у другому терміналі, у ~/js-course/wishlist/server)
+    $ curl -sS http://127.0.0.1:4311/readyz
+    {"status":"ready"}
+    $ npm run -s load -- http://127.0.0.1:4311 3
+    answered {"200":3714,"201":412}, refused 0, broken 0; created (201) 412; p50 1.8 ms, p95 7.6 ms
+    $ curl -sS http://127.0.0.1:4311/metrics | grep 'route="/v1/records"'
+    http_requests_total{route="/v1/records",status="200"} 3714
+    http_requests_total{route="/v1/records",status="201"} 412
+    http_errors_total{route="/v1/records"} 0
+    http_request_duration_ms{route="/v1/records",quantile="0.5"} 1.1
+    http_request_duration_ms{route="/v1/records",quantile="0.95"} 6.6
+    …
+    ```
+
+    Потім `SIGTERM` під навантаженням: ще один `npm run -s load -- http://127.0.0.1:4311 4` і через півтори секунди `kill -TERM <pid>`. Сервер: `SIGTERM received: closing the server, waiting at most 5000 ms for the requests in flight…`, `Server closed. Bye.`, код `0`. Навантаження: `answered {"200":1104,"201":122}, refused 104, broken 3; created (201) 122`. На диску — 540 записів = 6 стартових + 412 + 122: кожен підтверджений `201` збережено. Далі, без записів: `DATA_DIR=$HOME/js-course/wishlist-data npm run -s backup`, `… npm run -s restore-drill -- $HOME/js-course/wishlist-drill` — `live: 540 wishes, wanted total 5705, ids e42b5e440f48`, `restored:` те саме, `✔ the restored store answers the same as the live one`; той самий артефакт на теці відновлення з `PORT=4312` — `check:deploy` обох дає однаковий `summary: 540 wishes, wanted total 5705, without a price 1`. Профіль під навантаженням (`node --cpu-prof --cpu-prof-dir=…/profiles server/src/server.js`, навантаження, `SIGTERM`, `npm run -s profile:top -- profiles/*.cpuprofile`): найбільший власний час — `writeSync node:fs` (рядок логу пишеться синхронно на кожен запит) і компаратор сортування за назвою в `src/list.js`.
+
+    **10. Відкат.** На гілці — 1.1.0 з дефектом твого проєкту (`npm version minor --no-git-tag-version`, commit). `npm run ci` — `✖ CI stopped at "test" (exit code 1). No artifact was produced.`: охорона працює. Щоб відрепетирувати інцидент, запакуй 1.1.0 вручну, як поспішний hotfix: `npm run -s pack` — запис каже `ci skipped`. Розгорни (зупини 1.0.0, розпакуй і запусти 1.1.0 на тих самих даних) і одразу `npm run -s check:deploy`:
+
+    ```text
+    ✔ GET /readyz answers 200
+    ✔ every page of /v1/records keeps the v1 contract (735 wishes)
+    ✖ ?acquired=false answers only wanted wishes — w-04, w-06
+    ✖ ?acquired=true answers only acquired wishes — w-03, w-05, w-01, w-02, w-07 and 728 more
+    ```
+
+    Далі — розділ інциденту runbook-у: перевірка даних (`schemaVersion 2`, який 1.0.0 знає: відновлення не потрібне), `kill -TERM` 1.1.0 (код `0`), `shasum -a 256` артефакту 1.0.0 дорівнює його запису, старт 1.0.0 з його теки, `/readyz` — `{"status":"ready"}`, `check:deploy` — усі `✔`. Поверни гілку (`git switch -`, `git branch -D …`); обидва артефакти лишаються в `artifacts/`.
+
+    **11. Спробуй зламати.** Прибери `server.closeIdleConnections()` після відповіді під час завершення — `✖ SIGTERM with a request in flight: it is answered and saved, new connections are refused, exit code 0` (код 1 після дедлайну). Мітка — сирий шлях замість шаблону — `✖ /metrics counts requests per route pattern and status, 5xx as errors, with p50 and p95 of each route`. `/readyz`, що не читає сховища, — `✖ /livez answers 200, /readyz 200 while the store reads and 503 when it cannot`. Збірка без заміни `.ts` на `.js` в імпортах — `✖ the build is plain JavaScript that starts with node and answers /readyz`. Назви тестів твого проєкту — у завданні. Поверни код.
+
+    **12. Доказ і commit.** `npm run typecheck` — жодного рядка; `npm test`, `npm run check`, `npm run check:server` — усе зелене. Спершу commit коду: `git add -A`, `git commit -m "Run the server in local production mode: a built artifact, validated config, health, metrics, graceful shutdown, a restore drill and a runbook"` — CI записує цей commit в артефакт. Після репетиції — розділ «NO-12» у `docs/server.md` і `git commit -am "Record the production-mode rehearsal: CI, start, SIGTERM under load, restore drill, profile, rollback"`.
+
+    **Самоперевірка:** сервер стартує з артефакту, чия сума збігається із записом, на `127.0.0.1`; хибна змінна — усі проблеми й код 1; `/readyz` і `/metrics` кажуть правду; `SIGTERM` під навантаженням — код 0 і кожен `201` на диску; відновлення в нову теку відповідає так само, як живе сховище; дефектне оновлення не проходить CI, а якщо його все ж розгорнули — `check:deploy` бачить дефект, і відкат за runbook-ом за контрольною сумою повертає `✔`.
+
+    **Якщо щось не так:** `Command failed: npm pack ./release --pack-destination artifacts` — немає теки `artifacts`: `npm pack` її не створює, тож `scripts/pack.mjs` створює її сам перед пакуванням. `exists already: an artifact is never rebuilt` — підніми версію. Сервер не виходить після `SIGTERM` до дедлайну — крок 4, `closeIdleConnections()` після відповіді. `ERR_MODULE_NOT_FOUND … .ts` у реліз-теці — збірка не замінила імпорт `.ts`. `Created the data file with the starting wishes` там, де чекав своїх даних, — `DATA_DIR` вказує не на ту теку.
+
+    Референс кроку — `Завантажити: NO-12 — Сервер у локальному production-режимі: артефакт, health, метрики, відновлення й відкат` після експорту; відкрий його після власної спроби.
+  en: |
+    Until now the server started from `src/` through `npm start`, as in development. Now it runs as a service: from a verified **artifact** (a `.tgz` with a checksum), with configuration that refuses a wrong value, with `/livez` and `/readyz`, per-route metrics and a graceful shutdown on `SIGTERM`. And with a **runbook** — the instructions by which you (or anyone) start, stop, restore and roll back. All on this computer, on loopback.
+
+    | Project | What the restore compares | What upgrade 1.1.0 breaks |
+    |---|---|---|
+    | Wishlist | the count, the `id`s, the total price of wanted things | the `acquired` filter |
+    | Planner | the count, the pending ones and those due by a given day | sorting by `priority` |
+    | Habit tracker | each habit's completions and streak for a given day | the `active` filter |
+    | Expense tracker | the overall total and the per-category totals in `amountMinor` | the `category` filter |
+
+    Checked on macOS on all four projects in a Ukrainian and an English project — on Node.js 25.2.1 and 22.13.1 (the `.ts` scripts with `NODE_OPTIONS=--experimental-strip-types`; the built artifact starts without the flag). Below is the Wishlist in a Ukrainian project on 25.2.1. Not checked on Linux, Windows, with a process manager or on another computer.
+
+    **1. The starting state.** `cd ~/js-course/<project>/server`, `git status` — clean, the last commit is `Connect the web app to the records server: an HTTP source behind the data-source module, a shared v1 contract, CORS for the dev origin`.
+
+    **2. Configuration — `src/config.ts`.** Every variable the server reads is in one `loadConfig`, all problems together, and a start with exit code 1: the new `SHUTDOWN_DEADLINE_MS` (100–30,000, 5000 by default) and `NODE_ENV` (`production`, `development` or `test`; Node.js itself does not read it, and our code never branches on it — it only shows it in the start line).
+
+    **3. Health and metrics — `src/server.ts`, `src/metrics.ts`.** `GET /livez` — `200 {"status":"alive"}` while the process answers. `GET /readyz` — `200 {"status":"ready"}` only when the store reads and no shutdown has begun; otherwise `503`. `GET /metrics` — text: per route `http_requests_total{route,status}`, `http_errors_total{route}` (every `5xx`), `http_request_duration_ms{route,quantile="0.5"|"0.95"|"0.99"}` and `_count`. The durations are a `createHistogram` from `node:perf_hooks`: its memory does not grow with the number of requests, and its percentile is the nearest rank. The label is the route's pattern (`/v1/records/:id`), an unknown address is `(other)` — otherwise every random request would add a label.
+
+    **4. A graceful shutdown.** `SIGTERM` and `SIGINT` are one shutdown: `/readyz` is `503` at once, no new connection is accepted (`server.close()`), idle keep-alive connections are closed, every answer goes with `connection: close`, the requests in flight finish — and exit code `0`. Not finished by the deadline — the connections are cut (`closeAllConnections()`) and exit code `1`: a process manager would kill the server with `SIGKILL` after its own deadline without a trace, so the server leaves first. A trap our test caught: a request that was already on its way at the signal keeps its keep-alive connection open — and `close()` waits for it until the deadline. So after every answer during a shutdown, `server.closeIdleConnections()` once more.
+
+    **5. The build and the artifact — `scripts/build.mjs`, `scripts/pack.mjs`, `scripts/ci.mjs`.** `npm run build` writes `release/` — the server as plain JavaScript: every `.ts` of `src/` and everything it imports outside `server/` (the domain, the data model, the shared contract) through `stripTypeScriptTypes` from `node:module` (the types become spaces, so lines and columns match the code), imports of `./x.ts` become `./x.js`; the starting records that `src/fixtures.ts` reads by path come from a separate list; the `check-*.ts` checks stay out of the release. `tsc` checks the types, not the build. `npm run pack` — `npm pack ./release` into `artifacts/<name>-<version>.tgz` and a record `<artifact>.release.json`: `name`, `version`, `commit`, `node`, `ci`, `artifact`, `bytes`, `sha256`, `verify`. An artifact is never rebuilt: the same commit packed by another Node or npm gives other bytes — so the version goes up and the old artifact stays. `npm run ci` — `typecheck`, `test`, the artifact; the first failure is `✖ CI stopped at …` and no artifact. There is no lint stage: the project's ESLint checks the web project's `.js`, and the server is `.ts`, checked by `tsc`. The server's version is `1.0.0` (`server/package.json`); `release/`, `artifacts/`, `profiles/` go into `.gitignore`, and `server/release/` and `server/.check/` into the `ignores` of `eslint.config.mjs`: the build and the tests write `.js` there, and the web project's `npm run lint` would otherwise check generated code (for us `✖ 188 problems (188 errors, 0 warnings)`, 148 of them `'process' is not defined`).
+
+    **6. Tools — `scripts/load.mjs`, `src/check-deploy.ts`, `src/restore-drill.ts`, `scripts/top-self-time.mjs`.** `npm run load -- <address> <seconds>` — 4 streams of requests, every tenth creates a record with an `Idempotency-Key`; a summary by status, `refused`, `broken`, the number of `201`s and p50/p95. `npm run check:deploy -- <address>` asks a running server through `GET` only: ready, every page keeps the v1 contract, the filters and the sorting tell the truth about this data, and a `summary:` line — the same numbers the web app shows. `npm run restore-drill -- <new folder>` takes the newest verified backup and restores it into a **new, empty** folder — never over the live one — and asks the live and the restored store the same questions (the count, the `id`s, the derived values); sizes are never compared. `npm run profile:top -- <file>` — the five functions with the most self time in a `--cpu-prof` profile.
+
+    **7. Tests — `tests/ops.test.ts`.** `/livez`, `/readyz` and `503` when the store does not read; during a shutdown `503` and `connection: close`; `/metrics` by route pattern, `5xx` as errors, p95; the real process: `SIGTERM` with a request in flight — the answer `201`, the record on disk, new connections refused, exit code `0`; a request that missed the deadline — cut and exit code `1`; an invalid configuration — every problem and exit code `1`; the build — plain JavaScript that starts and answers `/readyz`; the restore drill — a match, a refusal of a non-empty folder, a difference after a write; latency on 20,000 synthetic records — p95 within the budget. We measured the budget: in the Wishlist p95 was 41–58 ms on our computer, the budget is 250 ms, so a slower computer passes, and a sort repeated for every record of the page does not.
+
+    **8. The runbook — `server/RUNBOOK.md`.** Sections: release, start (the checksum first), stop (what exit codes 0 and 1 mean), watch (`/livez`, `/readyz`, `/metrics`, the alert threshold, a profile — local only, never `--inspect` on a server people use), backup and the restore drill, upgrade, and one incident from its symptom: the signal, the checks in order (changing nothing), the decision, **the data check before the rollback** (a `schemaVersion` the previous version knows; rolling the code back does not roll the data back), the rollback, the confirmation of recovery.
+
+    **9. The rehearsal — all by the runbook.** The data in a new folder `~/js-course/<project>-data`, the artifact in `~/js-course/<project>-run/<version>`. For us (the Wishlist; `…` is a path, a pid, a time):
+
+    ```text
+    $ npm run ci
+    ✔ artifacts/js-learning-lab-wishlist-server-1.0.0.tgz (36933 bytes, commit 187cb8c, ci passed)
+      sha256 207a8fffe084c3f800f3c40d7e925a43946770e9db92edfadb358a9e5919af1b
+    ✔ CI passed.
+    $ shasum -a 256 artifacts/js-learning-lab-wishlist-server-1.0.0.tgz
+    207a8fffe084c3f800f3c40d7e925a43946770e9db92edfadb358a9e5919af1b  artifacts/js-learning-lab-wishlist-server-1.0.0.tgz
+    $ mkdir -p ~/js-course/wishlist-run/1.0.0 && tar -xzf artifacts/js-learning-lab-wishlist-server-1.0.0.tgz -C ~/js-course/wishlist-run/1.0.0
+    $ cd ~/js-course/wishlist-run/1.0.0/package
+    $ PORT=99999 SHUTDOWN_DEADLINE_MS=5 node server/src/server.js; echo "exit $?"
+    PORT must be a whole number from 1 to 65535, got "99999"
+    SHUTDOWN_DEADLINE_MS must be a whole number from 100 to 30000, got "5"
+    exit 1
+    $ NODE_ENV=production PORT=4311 DATA_DIR=$HOME/js-course/wishlist-data node server/src/server.js
+    js-learning-lab-wishlist-server 1.0.0 (pid …, NODE_ENV=production) listening on http://127.0.0.1:4311
+    (in a second terminal, in ~/js-course/wishlist/server)
+    $ curl -sS http://127.0.0.1:4311/readyz
+    {"status":"ready"}
+    $ npm run -s load -- http://127.0.0.1:4311 3
+    answered {"200":3714,"201":412}, refused 0, broken 0; created (201) 412; p50 1.8 ms, p95 7.6 ms
+    $ curl -sS http://127.0.0.1:4311/metrics | grep 'route="/v1/records"'
+    http_requests_total{route="/v1/records",status="200"} 3714
+    http_requests_total{route="/v1/records",status="201"} 412
+    http_errors_total{route="/v1/records"} 0
+    http_request_duration_ms{route="/v1/records",quantile="0.5"} 1.1
+    http_request_duration_ms{route="/v1/records",quantile="0.95"} 6.6
+    …
+    ```
+
+    Then `SIGTERM` under load: one more `npm run -s load -- http://127.0.0.1:4311 4` and, a second and a half into it, `kill -TERM <pid>`. The server: `SIGTERM received: closing the server, waiting at most 5000 ms for the requests in flight…`, `Server closed. Bye.`, exit code `0`. The load: `answered {"200":1104,"201":122}, refused 104, broken 3; created (201) 122`. On disk — 540 records = 6 starting + 412 + 122: every confirmed `201` was saved. Next, with no writes going on: `DATA_DIR=$HOME/js-course/wishlist-data npm run -s backup`, `… npm run -s restore-drill -- $HOME/js-course/wishlist-drill` — `live: 540 wishes, wanted total 5705, ids e42b5e440f48`, `restored:` the same, `✔ the restored store answers the same as the live one`; the same artifact on the drill folder with `PORT=4312` — `check:deploy` of both gives the same `summary: 540 wishes, wanted total 5705, without a price 1`. A profile under load (`node --cpu-prof --cpu-prof-dir=…/profiles server/src/server.js`, load, `SIGTERM`, `npm run -s profile:top -- profiles/*.cpuprofile`): the most self time is `writeSync node:fs` (the log line is written synchronously for every request) and the name comparator of the sort in `src/list.js`.
+
+    **10. The rollback.** On a branch — 1.1.0 with your project's defect (`npm version minor --no-git-tag-version`, a commit). `npm run ci` — `✖ CI stopped at "test" (exit code 1). No artifact was produced.`: the guard works. To rehearse the incident, pack 1.1.0 by hand, like a hurried hotfix: `npm run -s pack` — the record says `ci skipped`. Deploy it (stop 1.0.0, unpack and start 1.1.0 on the same data) and right away `npm run -s check:deploy`:
+
+    ```text
+    ✔ GET /readyz answers 200
+    ✔ every page of /v1/records keeps the v1 contract (735 wishes)
+    ✖ ?acquired=false answers only wanted wishes — w-04, w-06
+    ✖ ?acquired=true answers only acquired wishes — w-03, w-05, w-01, w-02, w-07 and 728 more
+    ```
+
+    Then the runbook's incident section: the data check (`schemaVersion 2`, which 1.0.0 knows: no restore needed), `kill -TERM` 1.1.0 (exit code `0`), `shasum -a 256` of the 1.0.0 artifact equals its record, 1.0.0 started from its folder, `/readyz` — `{"status":"ready"}`, `check:deploy` — every line `✔`. Put the branch away (`git switch -`, `git branch -D …`); both artifacts stay in `artifacts/`.
+
+    **11. Try to break it.** Remove `server.closeIdleConnections()` after an answer during the shutdown — `✖ SIGTERM with a request in flight: it is answered and saved, new connections are refused, exit code 0` (exit code 1 after the deadline). A raw path as the label instead of the pattern — `✖ /metrics counts requests per route pattern and status, 5xx as errors, with p50 and p95 of each route`. A `/readyz` that does not read the store — `✖ /livez answers 200, /readyz 200 while the store reads and 503 when it cannot`. A build that keeps `.ts` in the imports — `✖ the build is plain JavaScript that starts with node and answers /readyz`. The test names of your project are in the task. Put the code back.
+
+    **12. Evidence and the commits.** `npm run typecheck` — not a single line; `npm test`, `npm run check`, `npm run check:server` — all green. First the commit of the code: `git add -A`, `git commit -m "Run the server in local production mode: a built artifact, validated config, health, metrics, graceful shutdown, a restore drill and a runbook"` — CI writes this commit into the artifact. After the rehearsal — a section "NO-12" in `docs/server.md` and `git commit -am "Record the production-mode rehearsal: CI, start, SIGTERM under load, restore drill, profile, rollback"`.
+
+    **Self-check:** the server starts from an artifact whose sum matches its record, on `127.0.0.1`; a wrong variable — every problem and exit code 1; `/readyz` and `/metrics` tell the truth; `SIGTERM` under load — exit code 0 and every `201` on disk; a restore into a new folder answers the same as the live store; a defective upgrade does not pass CI, and if it is deployed anyway, `check:deploy` sees the defect, and the rollback by the runbook, by checksum, brings back `✔`.
+
+    **If something goes wrong:** `Command failed: npm pack ./release --pack-destination artifacts` — no `artifacts` folder: `npm pack` does not create it, so `scripts/pack.mjs` creates it before packing. `exists already: an artifact is never rebuilt` — raise the version. The server does not exit after `SIGTERM` until the deadline — step 4, `closeIdleConnections()` after an answer. `ERR_MODULE_NOT_FOUND … .ts` in the release folder — the build did not rewrite a `.ts` import. `Created the data file with the starting wishes` where you expected your data — `DATA_DIR` points at the wrong folder.
+
+    The step's reference is `Download: NO-12 — The server in local production mode: an artifact, health, metrics, restore and rollback` after the export; open it after your own attempt.
+purpose:
+  uk: "Це крок твого проєкту: метрики й трасування, профіль, типізовані контракти в тестах, збірку з перевіреною конфігурацією, CI з артефактом і записом випуску, health і коректне завершення, runbook, backup і відновлення та відкат із цього розділу ти застосовуєш до власного сервера. Платформа цей крок не перевіряє: доказ — тести, вивід репетиції, `RUNBOOK.md`, `docs/server.md` і commit."
+  en: "This is a step of your project: you apply this unit's metrics and traces, the profile, typed contracts in tests, a build with validated configuration, CI with an artifact and a release record, health and a graceful shutdown, a runbook, backup and restore, and a rollback to your own server. The platform does not check this step: the evidence is the tests, the output of the rehearsal, `RUNBOOK.md`, `docs/server.md` and the commit."
+objectives:
+  - uk: "Запустити сервер проєкту із зібраного й перевіреного за контрольною сумою артефакту на loopback з перевіреною конфігурацією, `/livez`, `/readyz`, метриками за маршрутами й коректним завершенням, що не губить підтверджених записів."
+    en: "Run the project's server from a built artifact verified by its checksum, on loopback, with validated configuration, `/livez`, `/readyz`, per-route metrics and a graceful shutdown that loses no confirmed write."
+  - uk: "Відрепетирувати за runbook-ом відновлення backup у нову теку з порівнянням відповідей і відкат дефектного оновлення до попереднього артефакту з перевіркою даних перед ним."
+    en: "Rehearse by the runbook a restore of a backup into a new folder with a comparison of the answers, and a rollback of a defective upgrade to the previous artifact with the data check before it."
+transfer:
+  uk: "Цей крок виконується в редакторі й терміналі на твоєму комп’ютері: що зробити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor and a terminal on your computer: what to do, the expected output and the self-check list are above and on the step's page in your project."
