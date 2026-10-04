@@ -48,8 +48,9 @@ console.log('file, overlapping:   ', show(await fileRepo.all()));
 
 // The same file repository behind a single-writer queue: each update starts after the previous one ended.
 started = 0;
+// Kept short: a failed update would also stop every update queued after it.
 let queue = Promise.resolve();
-const queued = (work) => (queue = queue.then(work, work));
+const queued = (work) => (queue = queue.then(work));
 await writeAtomic('tasks.json', tasks);
 await Promise.all([
   queued(() => fileRepo.update('t-01', { done: true })),
