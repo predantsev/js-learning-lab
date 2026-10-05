@@ -42,14 +42,42 @@ async function exists(p) {
   return fs.access(p).then(() => true, () => false);
 }
 export async function assertBuilt() {
+  // A build running elsewhere in this checkout removes these files for a few seconds: wait for it.
   for (const file of ['app/index.html', 'sandbox/frame.html', 'content/index.json']) {
-    if (!(await exists(path.join(DIST, file)))) throw new Error(`dist/${file} is missing: run "npm run build" before the end-to-end suite (npm run test:e2e does it).`);
+    let present = await exists(path.join(DIST, file));
+    for (let waited = 0; !present && waited < 30_000; waited += 500) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      present = await exists(path.join(DIST, file));
+    }
+    if (!present) throw new Error(`dist/${file} is missing: run "npm run build" before the end-to-end suite (npm run test:e2e does it).`);
   }
 }
 
 /**
- * Compile the fixture content root into a temporary dist directory that reuses the built app and
- * sandbox (directory links), so the server serves fixtures without touching dist/content.
+ * Copy the built app and sandbox into `dir`: a snapshot, so that a build started elsewhere in this
+ * checkout while the tests run (vite empties dist/app first) cannot change the files under a test —
+ * with links, a concurrent rebuild made pages fail with "not built" or with half-written bundles.
+ * Clones on file systems that support it (APFS), copies elsewhere; a snapshot taken in the middle of
+ * a build (an asset of index.html missing) is taken again.
+ */
+async function snapshotBuild(dir) {
+  for (let attempt = 1; ; attempt += 1) {
+    await fs.rm(path.join(dir, 'app'), { recursive: true, force: true });
+    await fs.rm(path.join(dir, 'sandbox'), { recursive: true, force: true });
+    await fs.cp(path.join(DIST, 'app'), path.join(dir, 'app'), { recursive: true, mode: fs.constants?.COPYFILE_FICLONE ?? 2 });
+    await fs.cp(path.join(DIST, 'sandbox'), path.join(dir, 'sandbox'), { recursive: true, mode: fs.constants?.COPYFILE_FICLONE ?? 2 });
+    const html = await fs.readFile(path.join(dir, 'app', 'index.html'), 'utf8').catch(() => '');
+    const assets = [...html.matchAll(/(?:src|href)="\/?(assets\/[^"]+)"/g)].map((m) => m[1]);
+    const complete = html !== '' && (await Promise.all([...assets.map((a) => exists(path.join(dir, 'app', a))), exists(path.join(dir, 'sandbox', 'frame.html'))])).every(Boolean);
+    if (complete) return;
+    if (attempt >= 20) throw new Error('dist/ stayed incomplete while it was copied: is a build running in this checkout? Wait for it and run the tests again.');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+/**
+ * Compile the fixture content root into a temporary dist directory with a snapshot of the built app
+ * and sandbox, so the server serves fixtures without touching dist/content.
  */
 export async function buildFixtureDist() {
   await assertBuilt();
@@ -59,9 +87,7 @@ export async function buildFixtureDist() {
   assert.equal(lib.CONTENT_DIR, FIXTURE_CONTENT, 'content compiler must read the fixture root');
   const { issues } = await lib.buildContent({ outDir: path.join(dir, 'content'), quiet: true });
   assert.deepEqual(issues, [], 'fixture content compiles without issues');
-  const type = process.platform === 'win32' ? 'junction' : 'dir';
-  await fs.symlink(path.join(DIST, 'app'), path.join(dir, 'app'), type);
-  await fs.symlink(path.join(DIST, 'sandbox'), path.join(dir, 'sandbox'), type);
+  await snapshotBuild(dir);
   return dir;
 }
 
