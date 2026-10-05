@@ -28,7 +28,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ROOT } from '../../server/config.mjs';
 import { consoleLines, localizeFiles, localizeText, runInputForBlock } from '../../shared/exercise.js';
-import { NODE_RUN_PATH, isLearnerSyntaxError, nodeRunRequest, parseUncaughtError, readNdjson, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
+import { NODE_RUN_PATH, isLearnerSyntaxError, isModuleLinkMessage, nodeRunRequest, parseUncaughtError, readNdjson, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
 import { unitOfLesson } from '../../shared/content-schema.js';
 import { localeArg, localeOptions } from './browser-locale.mjs';
 import { CONTENT_DIR, buildContent, exerciseFileSets } from './lib.mjs';
@@ -216,7 +216,7 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
         // to link (that counts as failing); a passing fixture may not, and no fixture may stop the
         // checks in another way (time limit, crash, an error in tests.js).
         const harness = outcome.harnessError;
-        const compileLike = isLearnerSyntaxError(harness) || (harness.name === 'SyntaxError' && /does not provide an export named/.test(harness.message)) || harness.code === 'ERR_MODULE_NOT_FOUND';
+        const compileLike = isLearnerSyntaxError(harness) || (harness.name === 'SyntaxError' && isModuleLinkMessage(harness.message)) || harness.code === 'ERR_MODULE_NOT_FOUND';
         const bad = shouldPass || !compileLike || r.failure;
         trace(where, `${bad ? '✖' : '✔'} ${name} (${lang}, isolated-node): ${r.failure ?? `tests could not start: ${harness.name}: ${oneLine(harness.message)}`}${bad ? '' : ' (counts as failing)'}`);
         if (bad) error(where, `${name} (${lang}): ${r.failure ?? `tests could not start: ${harness.name}: ${harness.message}`}`);

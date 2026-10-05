@@ -4,7 +4,7 @@
 // tests.js through the server harness. Every outcome keeps the learner's code and says plainly what
 // happened: time limit, output limit, busy, lost connection, unavailable (REQ-022, REQ-023, REQ-032).
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NODE_RUN_PATH, NODE_STOP_PATH, isLearnerSyntaxError, nodeRunRequest, parseUncaughtError, testsOutcome, workspaceShortener } from '@shared/node-run.js';
+import { NODE_RUN_PATH, NODE_STOP_PATH, isLearnerSyntaxError, isModuleLinkMessage, nodeRunRequest, parseUncaughtError, testsOutcome, workspaceShortener } from '@shared/node-run.js';
 import { api, boot } from '../lib/api';
 import type { Key } from '../lib/i18n';
 import type { ConsoleEntry, RunError, TestResult } from '../lib/types';
@@ -34,7 +34,7 @@ export function nodeGuidanceKey(error: RunError): Key | null {
   if (error.code === 'ERR_ACCESS_DENIED') return 'err.guide.node.access';
   if (error.code === 'ERR_JSLL_POLICY') return 'err.guide.node.policy';
   if (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ERR_UNSUPPORTED_DIR_IMPORT' || error.code === 'ERR_UNKNOWN_FILE_EXTENSION') return 'err.guide.node.import';
-  if (NODE_PHASES.has(error.phase ?? '') && /does not provide an export named|require is not defined in ES module scope/.test(error.message ?? '')) return 'err.guide.node.import';
+  if (NODE_PHASES.has(error.phase ?? '') && (isModuleLinkMessage(error.message) || /require is not defined in ES module scope/.test(error.message ?? ''))) return 'err.guide.node.import';
   return null;
 }
 

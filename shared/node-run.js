@@ -173,7 +173,7 @@ export function parseUncaughtError(stderr, cwd) {
       frame = `${lines[caret - 1]}\n${lines[caret]}`;
     }
   }
-  const kind = name === 'SyntaxError' && where === null && atBlock !== null && !/does not provide an export named/.test(message) ? 'syntax' : undefined;
+  const kind = name === 'SyntaxError' && where === null && atBlock !== null && !isModuleLinkMessage(message) ? 'syntax' : undefined;
   where = where ?? atBlock;
   if (frame === undefined && propLines.length > 0) frame = shorten(propLines.map((l) => l.replace(/,$/, '')).join('\n'));
   return {
@@ -201,12 +201,23 @@ export function harnessErrorView(error, shorten = (t) => t, phase = 'load') {
 }
 
 /**
+ * The message of a module-linking SyntaxError: an import names an export the module does not have.
+ * Node words it in two ways (measured on 22.13.1, 22.23.3 and 25.2.1): "The requested module './x.js'
+ * does not provide an export named 'y'" for an ES module, and "Named export 'y' not found. The
+ * requested module './x.cjs' is a CommonJS module, …" for a CommonJS module — on Node 22 always, on
+ * Node 25 when the import sits in the entry file (an imported module gets the first wording there).
+ */
+export function isModuleLinkMessage(message) {
+  return /does not provide an export named|^Named export '[^']*' not found\. The requested module /.test(String(message ?? ''));
+}
+
+/**
  * A parse error in a learner file (not in the checks): the code could not start, which the browser
  * runner reports before running ("compile error"). A missing export is a link problem, not a parse
  * error, and stays a load error.
  */
 export function isLearnerSyntaxError(error) {
-  return Boolean(error) && error.name === 'SyntaxError' && typeof error.file === 'string' && error.file !== TESTS_PATH && !/does not provide an export named/.test(error.message ?? '');
+  return Boolean(error) && error.name === 'SyntaxError' && typeof error.file === 'string' && error.file !== TESTS_PATH && !isModuleLinkMessage(error.message);
 }
 
 /**
