@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import path from 'node:path';
 import * as visuals from '../../shared/visuals/index.js';
 import { STAGE_REQUIRED_RUNTIMES, STAGE_RUNTIMES, validateLessonSource } from '../../shared/content-schema.js';
-import { CONTENT_DIR, compileLesson, createMarkdown, gitIgnoredLessonFiles, glossaryLinkProblems, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
+import { CONTENT_DIR, compileLesson, createMarkdown, gitIgnoredLessonFiles, glossaryLinkProblems, quotedPlaceholderProblems, rawLineSeparators, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
 
 const md = createMarkdown(new Map([['closure', { id: 'closure', term: 'closure' }]]));
 const ctx = { md, glossary: new Map([['closure', { id: 'closure', term: 'closure' }]]), syllabus: new Map(), lessonOrder: null, competencies: { families: null }, release: false };
@@ -57,6 +57,42 @@ test('a question can run in isolated-node where the stage allows it, with its ow
   assert.match(issues('no-01-09-sample', question({ runtime: 'isolated-node', code: undefined, verify: undefined })).join('\n'), /runs its own "code" field/);
   assert.deepEqual(issues('no-01-09-sample', question({ runtime: 'isolated-node', capabilities: { packages: ['react-dom'] } })), []);
   assert.match(issues('no-01-09-sample', question({ runtime: 'isolated-node', capabilities: { packages: ['express'] } })).join('\n'), /packages: must list npm packages the platform provides: react, react-dom/);
+});
+
+test('validator checks: table-row glossary links, raw line separators, quoted placeholders, unwritten lessons', () => {
+  // A glossary link in a table row needs its bar escaped; outside a table it does not.
+  assert.equal(glossaryLinkProblems('| | [[linter|Linter]] |\n|---|---|').length, 1);
+  assert.deepEqual(glossaryLinkProblems('| | [[linter\\|Linter]] |\n|---|---|'), []);
+  assert.deepEqual(glossaryLinkProblems('A [[linter|linter]] reads code.'), []);
+  assert.deepEqual(glossaryLinkProblems('| `[[k|v]]` |'), [], 'code spans are skipped');
+  // Raw U+2028 / U+2029 with their line numbers.
+  assert.deepEqual(rawLineSeparators('a\nb\u2028c\u2029'), [{ char: 'U+2028', line: 2 }, { char: 'U+2029', line: 2 }]);
+  assert.deepEqual(rawLineSeparators('const s = "\\u2028";'), [], 'an escape is fine');
+  // %%key%% in a quoted string whose text in one language holds that quote.
+  const strings = { day: pair("П'ятниця", "It's Friday"), name: pair('Лампа', 'Lamp') };
+  assert.deepEqual(quotedPlaceholderProblems("console.log('%%day%%');", strings), [{ key: 'day', lang: 'uk', quote: "'" }, { key: 'day', lang: 'en', quote: "'" }]);
+  assert.deepEqual(quotedPlaceholderProblems('console.log(`%%day%%`, "%%day%%", \'%%name%%\');', strings), []);
+  const example = { id: 'show', kind: 'example', runtime: 'browser-js', dir: 'show', entry: 'index.js', title: pair('Т'), body: pair('Б'), strings };
+  const warnings = (block, assets, extraCtx = {}) => staticIssuesForLesson(lessonWith([block], assets), { ...ctx, ...extraCtx }).filter((i) => i.level === 'warning').map((i) => i.message);
+  assert.match(warnings(example, { show: { files: { 'index.js': "console.log('%%day%%');\n" } } }).join('\n'), /%%day%% sits inside a single-quoted string in index\.js/);
+  assert.deepEqual(warnings({ ...example, expectError: true }, { show: { files: { 'index.js': "console.log('%%day%%');\n" } } }), [], 'an example that shows the error on purpose');
+  assert.match(warnings(example, { show: { files: { 'index.js': 'console.log(1);\u2028\n' } } }).join('\n'), /raw U\+2028 in show\/index\.js \(line 1\)/);
+  // A prerequisite or a review question that points to a lesson planned but not written yet.
+  const order = [{ id: 'js-01-01-intro', authored: true }, { id: 'js-01-05-later', authored: false }];
+  const review = { id: 'recall', kind: 'review', title: pair('Т'), items: [{ id: 'q', from: 'js-01-05-later', prompt: pair('П'), answer: { type: 'text', accept: ['1'] }, explanation: pair('Е') }] };
+  const lesson = { ...lessonWith([review]), source: { ...lessonWith([review]).source, prerequisites: ['js-01-05-later'] } };
+  const unwritten = (release) => staticIssuesForLesson(lesson, { ...ctx, order, release }).filter((i) => /planned in the syllabus but not authored yet/.test(i.message)).map((i) => i.level ?? 'error');
+  assert.deepEqual(unwritten(false), ['warning', 'warning']);
+  assert.deepEqual(unwritten(true), ['error', 'error']);
+});
+
+test('a debug exercise may come without hints only on a gate (assessment: true or an assessment lesson)', () => {
+  const debug = (extra = {}) => ({ id: 'fix', kind: 'exercise', mode: 'debug', runtime: 'browser-js', dir: 'fix', entry: 'index.js', title: pair('Т'), instructions: pair('І'), solutionNote: pair('Р'), testTitles: { t: pair('Т') }, ...extra });
+  const issues = (block, kind = 'review') => validateLessonSource({ ...lessonWith([block]).source, kind }).list.map((i) => i.message).join('\n');
+  assert.doesNotMatch(issues(debug({ assessment: true })), /hints/);
+  assert.doesNotMatch(issues(debug(), 'assessment'), /hints/);
+  assert.match(issues(debug()), /hints\.nudge|missing bilingual text/);
+  assert.match(issues(debug({ mode: 'guided', assessment: true })), /missing bilingual text/, 'a guided exercise keeps its hints');
 });
 
 test('%%key%% placeholders are resolved in every text of a local task: confirmed items and commands too', async () => {

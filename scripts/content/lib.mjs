@@ -65,6 +65,12 @@ export function glossaryLinkProblems(source) {
     if (!text.startsWith('[[', i)) continue;
     const attempt = /^\[\[([a-z0-9-]+)\\?\|/.exec(text.slice(i));
     if (!attempt) continue;
+    // In a table row the cells are split at every unescaped "|" before links are read, so
+    // [[id|text]] there breaks the row (marked then shows the whole table as text).
+    const lineStart = text.lastIndexOf('\n', i) + 1;
+    if (/^\s*\|/.test(text.slice(lineStart, i + 1)) && !attempt[0].endsWith('\\|')) {
+      problems.push(`the glossary link "${text.slice(i, i + 50).split('\n')[0].replace(/\]\].*$/, ']]')}" sits in a table row with an unescaped "|": the table splits its cells there and is shown as plain text. Escape the bar: [[${attempt[1]}\\|…]] (content/README.md, "Language rules")`);
+    }
     const link = GLOSSARY_TOKEN.exec(text.slice(i));
     const excerpt = text.slice(i, i + 50).split('\n')[0];
     if (!link) problems.push(`the glossary link "${excerpt}…" does not close: its shown text ends at the first "]" (a code span such as \`items[0]\` included), so the learner sees the raw [[…]] text. Rephrase the shown text without "]" (content/README.md, rule 46)`);
@@ -73,6 +79,36 @@ export function glossaryLinkProblems(source) {
   }
   return problems;
 }
+
+/** Raw U+2028 / U+2029 characters in a text: [{ char: 'U+2028', line }]. */
+export function rawLineSeparators(text) {
+  const out = [];
+  const source = String(text);
+  for (let i = source.search(/[\u2028\u2029]/); i !== -1; i = source.slice(i + 1).search(/[\u2028\u2029]/) === -1 ? -1 : i + 1 + source.slice(i + 1).search(/[\u2028\u2029]/)) {
+    out.push({ char: source[i] === '\u2028' ? 'U+2028' : 'U+2029', line: source.slice(0, i).split('\n').length });
+  }
+  return out;
+}
+const separatorMessage = (where, hits) => `raw ${[...new Set(hits.map((h) => h.char))].join(' and ')} in ${where} (line ${hits.map((h) => h.line).join(', ')}): an invisible line separator — in code it ends a regular expression or a comment, in text it is not what the author typed. Write the escape (\\u2028 in code, "\\u2028" in a YAML double-quoted string) or the character meant (content/README.md, rule 75)`;
+
+const CODE_FILE = /\.(m|c)?[jt]sx?$/;
+/**
+ * `%%key%%` inside a single- or double-quoted string of a code file whose text in some language
+ * contains that quote: that language's run gets a broken string (rule 74). [{ key, lang, quote }].
+ */
+export function quotedPlaceholderProblems(code, strings) {
+  const out = [];
+  for (const m of String(code).matchAll(/(['"])((?:\\.|(?!\1)[^\\\n])*)\1/g)) {
+    for (const p of m[2].matchAll(/%%([a-zA-Z][a-zA-Z0-9_]*)%%/g)) {
+      for (const lang of LANGS) {
+        const value = strings?.[p[1]]?.[lang];
+        if (typeof value === 'string' && value.includes(m[1]) && !out.some((o) => o.key === p[1] && o.lang === lang)) out.push({ key: p[1], lang, quote: m[1] });
+      }
+    }
+  }
+  return out;
+}
+const quotedPlaceholderMessage = (file, { key, lang, quote }) => `%%${key}%% sits inside a ${quote === "'" ? 'single' : 'double'}-quoted string in ${file}, and its ${lang} text contains ${quote}: the ${lang} run gets a broken string (a SyntaxError). Put it in a template literal (\`…%%${key}%%…\`) or quote it with the other mark (content/README.md, rule 74)`;
 
 /** Markdown renderer with glossary links, callouts and build-time syntax highlighting. */
 export function createMarkdown(glossary) {
@@ -354,6 +390,29 @@ export function staticIssuesForLesson(lesson, ctx) {
     const missing = new Set();
     for (const text of texts) for (const m of String(text).matchAll(STRING_PLACEHOLDER)) if (!(block.strings && m[1] in block.strings)) missing.add(m[1]);
     for (const key of missing) add(`block "${block.id}"`, `placeholder %%${key}%% has no entry in strings${block.kind === 'review' ? ' (the review block\'s strings: its questions share one table)' : ''}`);
+    // Code files and question code with %%key%% in a quoted string whose value holds that quote.
+    const namedFiles = block.kind === 'example' ? Object.entries(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.entries(a.starter), ...Object.entries(a.solution).map(([f, t]) => [`solution/${f}`, t]), ['tests.js', a.tests ?? ''], ...Object.entries(a.variants).flatMap(([v, fs]) => Object.entries(fs).map(([f, t]) => [`${v}/${f}`, t]))] : [];
+    // Fixtures that may fail on purpose (starter, wrong*), an example that shows an error and a question
+    // whose point is the SyntaxError are left out: a broken string can be what they teach.
+    const failsOnPurpose = (f) => /^(wrong[^/]*|starter)\//.test(f) || (block.kind === 'exercise' && !f.includes('/') && f !== 'tests.js');
+    const exerciseStarter = block.kind === 'exercise' && a ? Object.keys(a.starter) : [];
+    const questions = block.kind === 'prediction' || block.kind === 'review' ? [block, ...(block.items ?? [])].filter((q) => q.verify?.error !== 'SyntaxError') : [];
+    // Answer options are not run (a wrong option may be broken on purpose): only the question's code.
+    const questionTexts = questions.map((q) => q.code).filter((t) => typeof t === 'string');
+    const codeTexts = [...namedFiles.filter(([f]) => CODE_FILE.test(f) && !(block.kind === 'example' && block.expectError === true) && !(block.kind === 'exercise' && (failsOnPurpose(f) || exerciseStarter.includes(f) && !f.includes('/')))), ...questionTexts.map((t) => ['the question code', t])];
+    if (block.strings) for (const [file, code] of codeTexts) for (const problem of quotedPlaceholderProblems(code, block.strings)) warn(`block "${block.id}"`, quotedPlaceholderMessage(file, problem));
+    // Raw line separators anywhere in the block: its text fields and every file it reads.
+    for (const [file, text] of namedFiles) { const hits = rawLineSeparators(text); if (hits.length > 0) warn(`block "${block.id}"`, separatorMessage(`${block.dir ?? block.id}/${file}`, hits)); }
+    const blockHits = rawLineSeparators(JSON.stringify(block));
+    if (blockHits.length > 0) warn(`block "${block.id}"`, separatorMessage(lesson.synthesized ? 'step.yaml' : 'lesson.yaml', blockHits).replace(/ \(line [^)]*\)/, ''));
+  }
+  // References to lessons that are planned but not written yet: the learner would be sent to an empty
+  // page (prerequisites) or asked about a lesson that does not exist (review "from").
+  if (ctx.order) {
+    const unauthored = new Set(ctx.order.filter((o) => !o.authored).map((o) => o.id));
+    const flag = (at, message) => (ctx.release ? add : warn)(at, message);
+    for (const pre of source?.prerequisites ?? []) if (unauthored.has(pre)) flag('prerequisites', `"${pre}" is planned in the syllabus but not authored yet (an error with --release)`);
+    for (const block of source?.blocks ?? []) for (const [i, item] of (block?.items ?? []).entries()) if (unauthored.has(item?.from)) flag(`block "${block.id}".items[${i}].from`, `"${item.from}" is planned in the syllabus but not authored yet: the question retrieves a lesson the learner cannot read (an error with --release)`);
   }
   // Glossary links that would stay raw text (rule 46) — also in fields the smoke test never shows
   // (hints, feedback, review questions, solution notes).
@@ -558,8 +617,8 @@ export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content')
   await fs.writeFile(path.join(outDir, 'glossary.json'), glossaryText);
   await fs.writeFile(path.join(outDir, 'capstones', 'domains.json'), JSON.stringify(all.domains));
   // Capstone projects (CP-START + steps): content/capstones/README.md, scripts/content/capstones.mjs.
-  const capstoneBuild = compileCapstones(all.capstones, { md, domains: all.domains, syllabus: all.syllabus });
-  issues.push(...capstoneBuild.issues);
+  const capstoneBuild = compileCapstones(all.capstones, { md, domains: all.domains, syllabus: all.syllabus, checks: { quotedPlaceholderProblems, quotedPlaceholderMessage, rawLineSeparators, separatorMessage, CODE_FILE } });
+  for (const i of capstoneBuild.issues) (i.level === 'warning' ? warnings : issues).push(i);
   for (const text of Object.values(await writeCapstones(path.join(outDir, 'capstones'), capstoneBuild.capstones))) hash.update(text);
   all.capstoneBuild = capstoneBuild;
   let redirects = {};

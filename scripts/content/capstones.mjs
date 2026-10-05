@@ -153,7 +153,7 @@ export const stepLessonId = (syllabus, unit) => (syllabus.get(unit)?.lessons ?? 
  * Static checks and compilation. Returns { capstones: Record<id, json>, issues }.
  * `md` is the markdown renderer of lib.mjs (block / inline / plain).
  */
-export function compileCapstones(sources, { md, domains, syllabus }) {
+export function compileCapstones(sources, { md, domains, syllabus, checks = null }) {
   const issues = [];
   const add = (where, message, file) => issues.push({ path: where, message, ...(file ? { file: rel(file) } : {}) });
   const capstones = {};
@@ -237,6 +237,19 @@ export function compileCapstones(sources, { md, domains, syllabus }) {
       }
       const texts = [...Object.values(v.reference), ...localizedTexts([task.instructions, task.nudge, task.testTitles, (task.feedback ?? []).map((f) => f?.message)])];
       for (const text of texts) for (const key of placeholders(text)) if (!(key in strings)) add(at, `placeholder %%${key}%% is not defined in the strings up to this step`, v.dir);
+      // Warnings shared with the lesson checks (scripts/content/lib.mjs): a %%key%% whose text breaks
+      // the quotes around it — a local step's reference never runs, so nothing else would notice —
+      // and raw line separators in the step's texts and files.
+      if (checks) {
+        const warn = (message) => issues.push({ path: at, message, file: rel(v.dir), level: 'warning' });
+        for (const [file, text] of Object.entries(v.reference)) {
+          if (checks.CODE_FILE.test(file)) for (const problem of checks.quotedPlaceholderProblems(text, strings)) warn(checks.quotedPlaceholderMessage(`reference/${file}`, problem));
+          const hits = checks.rawLineSeparators(text);
+          if (hits.length > 0) warn(checks.separatorMessage(`reference/${file}`, hits));
+        }
+        const taskHits = checks.rawLineSeparators(JSON.stringify(task));
+        if (taskHits.length > 0) warn(checks.separatorMessage('task.yaml', taskHits).replace(/ \(line [^)]*\)/, ''));
+      }
 
       const render = (value, kind) => (isLocalized(value) ? Object.fromEntries(LANGS.map((l) => [l, md[kind](value[l])])) : null);
       steps.push({
