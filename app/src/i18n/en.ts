@@ -534,6 +534,7 @@ export const en: Dict = {
   'project.after.diffPair': 'Compare',
   'project.after.diffNote': 'This shows only changes between references. It does not describe your own local edits.',
   'project.after.diffNone': 'There are no changes between these references.',
+  'project.after.diffNewProject': '{name} starts a project of its own (entry file {entry}), so it is not compared with the references before it.',
   'project.after.mergeTitle': 'How to move changes by hand',
   'project.after.merge1': 'Back up your project folder or make a Git commit.',
   'project.after.merge2': 'Download the reference of the step you need and unpack it into a separate folder — not into your project.',

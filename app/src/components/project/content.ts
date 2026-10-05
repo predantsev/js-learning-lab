@@ -70,9 +70,12 @@ export function referenceFiles(capstone: Capstone, unit: string | null, lang: La
   return localizeFiles(step.reference, { strings: step.strings }, lang) as Record<string, string>;
 }
 
-/** References available for download/diff: CP-START, then every step that has one, in order. */
-export function referenceList(capstone: Capstone): { unit: string | null; step: CapstoneStep | null }[] {
-  return [{ unit: null, step: null }, ...capstone.steps.filter((s) => s.reference).map((s) => ({ unit: s.unit, step: s }))];
+/**
+ * References available for download/diff: CP-START, then every step that has one, in order. `entry`
+ * names the project a reference belongs to (shared/capstone.js previousReferenceIndex).
+ */
+export function referenceList(capstone: Capstone): { unit: string | null; step: CapstoneStep | null; entry: string }[] {
+  return [{ unit: null, step: null, entry: capstone.entry }, ...capstone.steps.filter((s) => s.reference).map((s) => ({ unit: s.unit, step: s, entry: s.entry }))];
 }
 
 const escapeHtml = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

@@ -119,6 +119,7 @@ const TEXT = {
     referenceSteps: 'Що змінилося на цьому кроці',
     referenceDiff: 'Різниця з попереднім еталоном ({previous})',
     referenceNoDiff: 'Це перший еталон, порівнювати немає з чим.',
+    referenceNewProject: 'Цей еталон починає окремий проєкт (його вхідний файл — `{entry}`), тож порівнювати його з попередніми еталонами іншого проєкту немає сенсу.',
     referenceNote: 'Різниця описує лише зміни між еталонами, а не твої власні правки.',
   },
   en: {
@@ -185,6 +186,7 @@ const TEXT = {
     referenceSteps: 'What changes in this step',
     referenceDiff: 'Difference from the previous reference ({previous})',
     referenceNoDiff: 'This is the first reference; there is nothing to compare it with.',
+    referenceNewProject: 'This reference starts a project of its own (its entry file is `{entry}`), so there is no earlier reference of it to compare with.',
     referenceNote: 'The diff only shows changes between references, not your own edits.',
   },
 };
@@ -526,7 +528,11 @@ export async function buildProjectExport({ workspace, title, contentVersion, pla
 }
 
 /** A post-export reference archive for one checkpoint (REQ-013): files, manifest and a change guide. */
-export async function buildReferenceArchive({ capstoneId, projectTitle, unit, stepTitle, instructionsMd, files, previous, lang, contentVersion }) {
+/**
+ * `previous`: the earlier reference of the same project ({ name, files }) or null. `startsProject`: the
+ * entry file when this reference starts a project of its own (nothing earlier to compare with).
+ */
+export async function buildReferenceArchive({ capstoneId, projectTitle, unit, stepTitle, instructionsMd, files, previous, startsProject = /** @type {string | null} */ (null), lang, contentVersion }) {
   const T = TEXT[lang] ?? TEXT.en;
   const name = unit === null ? 'CP-START' : unit;
   const when = unit === null ? T.referenceStart : fill(T.referenceAfter, { unit });
@@ -537,7 +543,7 @@ ${fill(T.referenceIntro, { project: projectTitle, when })}
 
 ${instructionsMd ? `## ${T.referenceSteps}\n\n${instructionsMd.trim()}\n\n` : ''}## ${previous ? fill(T.referenceDiff, { previous: previous.name }) : T.referenceDiff.replace(/\s*\(.*\)/, '')}
 
-${previous ? `${T.referenceNote}\n\n\`\`\`diff\n${diff.trim()}\n\`\`\`` : T.referenceNoDiff}
+${previous ? `${T.referenceNote}\n\n\`\`\`diff\n${diff.trim()}\n\`\`\`` : startsProject ? fill(T.referenceNewProject, { entry: startsProject }) : T.referenceNoDiff}
 `;
   const entries = [];
   for (const path of Object.keys(files).sort()) entries.push({ path, bytes: byteLength(files[path]), sha256: await sha256Hex(files[path]) });

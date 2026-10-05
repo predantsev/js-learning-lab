@@ -12,7 +12,7 @@ import { compileCapstones } from '../../scripts/content/capstones.mjs';
 import { createMarkdown } from '../../scripts/content/lib.mjs';
 import { pathProblem as serverPathProblem } from '../../server/api/lib/project-files.mjs';
 import {
-  START_BASE, changedPaths, coveredByBase, currentStep, filesProblem, isStepConfirmed, isStepDone, isStepNotPerformed, isStepSkipped, missingBefore, newFileProblem, nextOpenStep, passCounts, pathProblem, starterChanges, starterCovers, startingReference, stepNeedsDevice, unifiedDiff,
+  START_BASE, changedPaths, coveredByBase, currentStep, filesProblem, isStepConfirmed, isStepDone, isStepNotPerformed, isStepSkipped, missingBefore, newFileProblem, nextOpenStep, passCounts, previousReferenceIndex, pathProblem, starterChanges, starterCovers, startingReference, stepNeedsDevice, unifiedDiff,
 } from '../../shared/capstone.js';
 import { MANIFEST_PATH, buildProjectExport, placeGenerated, relativeUrl, sha256Hex } from '../../shared/project-export.js';
 import { api, rawRequest, startTestServer } from './helpers.mjs';
@@ -79,6 +79,12 @@ test('local steps: confirmed by the learner or not performed, never "checked", a
   assert.equal(currentStep(steps, records), 'JS-03', 'the current in-platform step is unchanged');
   assert.equal(nextOpenStep(steps, { ...records, 'JS-15': confirmed }), 'JS-03');
   assert.equal(nextOpenStep(steps, { ...records, 'JS-15': confirmed, 'JS-03': { state: 'done', source: 'platform-check' } }), null);
+});
+
+test('a reference is compared with the previous reference of the same project, found by its entry file', () => {
+  const refs = [{ entry: 'index.html' }, { entry: 'index.html' }, { entry: 'App.tsx' }, { entry: 'App.tsx' }, { entry: 'index.html' }];
+  // CP-START, RE-12 (web), RN-01, RN-11 (native), NO-01 (the web project again).
+  assert.deepEqual(refs.map((_, i) => previousReferenceIndex(refs, i)), [-1, 0, -1, 2, 1]);
 });
 
 test('a starter covers the undone steps up to its reference and never their real evidence', () => {
@@ -245,4 +251,8 @@ test('the compiler rejects incomplete capstone content with actionable messages'
   assert.match(text, /placeholder %%missing%% is not defined/);
   assert.match(text, /tests\.js reads L\.projectTitle/);
   assert.match(text, /test "untitled" has no bilingual title/);
+  // A local step's reference must hold its entry file: it tells which project the reference belongs to.
+  const local = { ...step, unit: 'RN-01', source: { ...step.source, unit: 'RN-01', mode: 'local', entry: 'App.tsx', intro: { uk: 'І', en: 'I' } }, variants: { wishlist: { ...step.variants.wishlist, task: { instructions: { uk: 'Н', en: 'W' } }, tests: null } } };
+  const localText = compileCapstones({ start, steps: [local] }, { md, domains: { capstones: {} }, syllabus: new Map() }).issues.map((i) => i.message).join('\n');
+  assert.match(localText, /reference\/ has no entry file "App\.tsx"/);
 });

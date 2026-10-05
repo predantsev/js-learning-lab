@@ -533,6 +533,7 @@ export const uk = {
   'project.after.diffPair': 'Порівняти',
   'project.after.diffNote': 'Тут лише зміни між еталонами. Твоїх власних локальних правок ця різниця не описує.',
   'project.after.diffNone': 'Між цими еталонами немає змін.',
+  'project.after.diffNewProject': '{name} починає окремий проєкт (вхідний файл {entry}), тож його не порівнюють з еталонами перед ним.',
   'project.after.mergeTitle': 'Як перенести зміни вручну',
   'project.after.merge1': 'Збережи копію своєї теки проєкту або зроби commit у Git.',
   'project.after.merge2': 'Завантаж еталон потрібного кроку й розпакуй його в окрему теку — не у свій проєкт.',

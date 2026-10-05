@@ -10,7 +10,7 @@ import YAML from 'yaml';
 import { ROOT } from '../../server/config.mjs';
 import { CAPSTONES, GLOSSARY_LINK, Issues, LANGS, STAGES, paginate, unitOfLesson, validateGlossaryTerm, validateLessonSource } from '../../shared/content-schema.js';
 import { STRING_PLACEHOLDER, localizePair, localizeText } from '../../shared/exercise.js';
-import { CAPSTONES_DIR, compileCapstones, loadCapstoneSources, synthesizeStepLessons, writeCapstones } from './capstones.mjs';
+import { CAPSTONES_DIR, TEXT_EXT, compileCapstones, loadCapstoneSources, synthesizeStepLessons, writeCapstones } from './capstones.mjs';
 
 // JSLL_CONTENT_ROOT points the compiler/validator at another content tree with the same layout
 // (the end-to-end suite uses tests/fixtures/content). Read once, when this module is imported.
@@ -20,7 +20,6 @@ export const CONTENT_DIR = process.env.JSLL_CONTENT_ROOT ? path.resolve(process.
 const INLINE_KEYS = new Set(['title', 'text', 'why', 'label', 'name', 'problem', 'note', 'objectives']);
 const PLAIN_KEYS = new Set(['title', 'name', 'placeholder', 'version']);
 const RAW_KEYS = new Set(['strings', 'spec', 'command']);
-const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.xml', '.env', '.gitignore', '']);
 
 const exists = (p) => fs.access(p).then(() => true, () => false);
 const readYaml = async (file) => YAML.parse(await fs.readFile(file, 'utf8'));

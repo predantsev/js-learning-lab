@@ -548,6 +548,22 @@ test('after export the project explains local authority and offers reference dow
   await panel.locator('.diff-pairs .segment', { hasText: 'CP-START → JS-01' }).click();
   assert.match(await panel.locator('.reference-diff', { hasText: 'index.html' }).innerText(), /index\.html/);
   assert.ok((await panel.locator('.reference-diff .diff-add').count()) > 0);
+  // At the stage boundaries a reference is compared with the earlier one of the same project: the
+  // React Native app starts a project of its own, and NO-01 continues the web project of RE-12.
+  const pairs = await panel.locator('.diff-pairs .segment').allInnerTexts();
+  assert.ok(pairs.includes('RE-12 → NO-01'), pairs.join(', '));
+  assert.ok(pairs.includes('RN-01 → RN-02'));
+  assert.ok(!pairs.some((p) => p.endsWith('→ RN-01') || /^RN-\d+ → (?!RN-)/.test(p)), `no pair across the two projects: ${pairs.join(', ')}`);
+  assert.match(await panel.locator('.diff-new-project').innerText(), /^RN-01 починає окремий проєкт \(вхідний файл App\.tsx\)/);
+  await panel.locator('.diff-pairs .segment', { hasText: 'RE-12 → NO-01' }).click();
+  assert.ok(await panel.locator('.reference-diff', { hasText: 'server/' }).count() > 0, 'the diff shows the new server files');
+  assert.equal(await panel.locator('.reference-diff .diff-del', { hasText: 'App.tsx' }).count(), 0);
+  const rn = unzip((await downloadFrom(page, () => panel.locator('.reference-list button', { hasText: 'RN-01' }).click())).bytes);
+  const rnRoot = 'js-learning-lab-planner-reference-rn-01/';
+  assert.equal(JSON.parse(rn[`${rnRoot}jsll-reference.json`]).previous, null);
+  assert.match(rn[`${rnRoot}JSLL-REFERENCE.md`], /починає окремий проєкт \(його вхідний файл — `App\.tsx`\)/);
+  const no = unzip((await downloadFrom(page, () => panel.locator('.reference-list button', { hasText: 'NO-01' }).click())).bytes);
+  assert.equal(JSON.parse(no['js-learning-lab-planner-reference-no-01/jsll-reference.json']).previous, 'RE-12');
 });
 
 /**

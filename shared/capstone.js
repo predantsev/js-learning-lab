@@ -206,6 +206,18 @@ export function unifiedDiff(before, after, { fromLabel = 'a', toLabel = 'b' } = 
   return parts.join('\n');
 }
 
+/**
+ * The reference a reference is compared with: the latest earlier one of the same project, which is
+ * the one with the same entry file (the web project starts from index.html, the React Native project
+ * from App.tsx). -1 when the reference starts a project (CP-START, the first React Native step):
+ * comparing it with another project would show that project as removed.
+ * @param {{ entry: string }[]} refs references in course order (CP-START first)
+ */
+export function previousReferenceIndex(refs, index) {
+  for (let j = index - 1; j >= 0; j -= 1) if (refs[j].entry === refs[index].entry) return j;
+  return -1;
+}
+
 /** Which files differ between two file sets: { added, removed, modified } path lists. */
 export function changedPaths(before, after) {
   const added = Object.keys(after).filter((p) => !(p in before)).sort();

@@ -28,7 +28,9 @@ Steps are ordered by the course teaching order (`docs/competencies.json` → `un
 ```yaml
 unit: JS-01                    # = folder name
 mode: in-platform              # in-platform (checked in the platform) | local (VS Code; checked statically)
-entry: index.html              # page the project starts from (default index.html)
+entry: index.html              # file the project starts from (default index.html; the React Native
+                               #   project: App.tsx). Local steps too: the reference must contain it, and
+                               #   references are compared with the earlier ones of the same entry
 title: { uk, en }              # step name
 intro: { uk, en }              # Markdown: what this step is about (shown in the project and in the lesson)
 purpose: { uk, en }            # why the step-lesson exists (see "Capstone-step lesson")
@@ -69,7 +71,13 @@ capabilities: {}               # optional, as for lesson exercises (network: lab
 
 - `reference/` is the whole project after the step (every file, unchanged ones included). It is the
   starting state of the next in-platform step, the "skip this step" offer and the post-export
-  download of that checkpoint.
+  download of that checkpoint. It is read like a lesson block folder: text files by extension plus
+  files without one (a shell script, `LICENSE`), with their line endings kept; binary files (images,
+  `.png` assets of a native template) are skipped (content/README.md, "Layout").
+- After the export, each reference is compared with the latest earlier reference of the **same
+  project** — the one with the same `entry` — in the downloads (`JSLL-REFERENCE.md`) and on the
+  project page: NO-01 with RE-12, not with the React Native app; RN-01 starts a project of its own and
+  is compared with nothing.
 - The starter for step N is the reference of the previous **in-platform** step (CP-START for the first).
 - `tests.js` uses the lesson test API (`content/README.md` → tests.js): `screen`, `user`, `expect`,
   `waitFor`, `logs()`, `storage`, `L`, … Test names are stable ids; the learner sees `testTitles`.
