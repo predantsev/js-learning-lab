@@ -1,0 +1,345 @@
+id: no-05-05-corruption-recovery
+unit: NO-05
+title:
+  uk: "Пошкодження і відновлення"
+  en: "Corruption and recovery"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Виявляти пошкоджене сховище під час запуску (JSON, що не розбирається, порушення контракту, невдалий `PRAGMA integrity_check`), а не падати й не починати тихо з порожнього."
+    en: "Detect corrupted storage on start (unparsable JSON, contract violations, a failing `PRAGMA integrity_check`) instead of crashing or silently starting empty."
+  - uk: "Відновлюватися: відкласти пошкоджене сховище в карантин, відновити найновіший перевірений backup і повідомити, що втрачено, не знищуючи доказів."
+    en: "Recover by quarantining the damaged store, restoring the latest verified backup and reporting what was lost, without destroying the evidence."
+prerequisites: [no-05-04-backup-restore-verification]
+subskills:
+  - { family: B-05, skill: "corruption/recovery", depth: intro }
+glossary: [data-quarantine, integrity-check]
+selfCheck: [predict-start, notes-recover]
+
+blocks:
+  - id: never-start-empty
+    kind: explanation
+    title:
+      uk: "Порожнє сховище — не відновлення"
+      en: "An empty store is not a recovery"
+    body:
+      uk: |
+        Сервер запускається, а сховище пошкоджене: JSON обірвано, у записі ціна текстом, база SQLite не проходить [[integrity-check|перевірку цілісності]]. Дві спокусливі реакції — обидві погані:
+
+        - **почати з порожнього** — сервер працює, але всі дані «зникли», а перше ж збереження перезапише пошкоджений файл, з якого ще можна було щось урятувати;
+        - **видалити поганий файл** — те саме, тільки ще й без доказу, що сталося.
+
+        Правильний порядок:
+
+        1. **Виявити**: розібрати JSON, перевірити контрактом; для SQLite — `PRAGMA integrity_check`.
+        2. **Знайти найновіший перевірений backup** — до того, як щось чіпати. Немає жодного — **відмовитися запускатися** й лишити файл на місці.
+        3. **[[data-quarantine|Карантин]]**: перейменувати пошкоджений файл (`wishlist.db.corrupt-<час>`), не видаляти.
+        4. **Відновити** backup і **повідомити**: що пошкоджено, звідки відновлено, що втрачено з моменту backup.
+
+        Відсутнє сховище — не пошкодження: це перший запуск, і його обробляє ініціалізація.
+      en: |
+        The server starts, and the store is damaged: the JSON is cut off, a record holds a price as text, the SQLite database fails an [[integrity-check]]. There are two tempting reactions — both bad:
+
+        - **start empty** — the server runs, but all the data has “vanished”, and the very first save overwrites the damaged file that something could still have been rescued from;
+        - **delete the bad file** — the same, only without the evidence of what happened.
+
+        The right order:
+
+        1. **Detect**: parse the JSON, check it with the contract; for SQLite, `PRAGMA integrity_check`.
+        2. **Find the newest verified backup** — before touching anything. If there is none, **refuse to start** and leave the file where it is.
+        3. **[[data-quarantine|Quarantine]]**: rename the damaged file (`wishlist.db.corrupt-<time>`), do not delete it.
+        4. **Restore** the backup and **report**: what was damaged, where it was restored from, what was lost since the backup.
+
+        A missing store is not damage: it is the first start, and initialization handles it.
+
+  - id: predict-start
+    kind: prediction
+    prompt:
+      uk: "Наївний завантажувач і завантажувач із відновленням отримують три файли сховища бажань. Що надрукує програма?"
+      en: "A naive loader and a recovering loader get three wish store files. What does the program print?"
+    code: |
+      const backupCount = 5; // the newest verified backup holds 5 wishes
+      const files = {
+        torn: '{"schemaVersion":1,"records":[{"id":"w-01","pri',
+        badPrice: '{"schemaVersion":1,"records":[{"id":"w-01","price":"80"}]}',
+        missing: undefined,
+      };
+      const valid = (store) => store.records.every((wish) => wish.price === null || typeof wish.price === "number");
+
+      function naive(text) {
+        try {
+          return `${JSON.parse(text ?? '{"records":[]}').records.length} wishes`;
+        } catch {
+          return "0 wishes";
+        }
+      }
+      function recovering(text) {
+        if (text === undefined) return "first start: seed";
+        try {
+          const store = JSON.parse(text);
+          if (valid(store)) return `${store.records.length} wishes`;
+        } catch {}
+        return `quarantine + restore: ${backupCount} wishes`;
+      }
+
+      for (const [name, text] of Object.entries(files)) console.log(name, "|", naive(text), "|", recovering(text));
+    verify:
+      logs:
+        - "torn | 0 wishes | quarantine + restore: 5 wishes"
+        - "badPrice | 1 wishes | quarantine + restore: 5 wishes"
+        - "missing | 0 wishes | first start: seed"
+    answer:
+      type: choice
+      options:
+        - id: right
+          code: "torn | 0 wishes | quarantine + restore: 5 wishes\nbadPrice | 1 wishes | quarantine + restore: 5 wishes\nmissing | 0 wishes | first start: seed"
+        - id: naive-safe
+          code: "torn | 0 wishes | 0 wishes\nbadPrice | 1 wishes | 1 wishes\nmissing | 0 wishes | first start: seed"
+          why:
+            uk: "Так поводився б завантажувач, який вважає «0 бажань» безпечним відновленням. Але `recovering` після невдалого `JSON.parse` чи невдалої перевірки йде до backup — і повертає 5 бажань."
+            en: "That is how a loader would behave if it took “0 wishes” for a safe recovery. But after a failed `JSON.parse` or a failed check `recovering` goes to the backup — and returns 5 wishes."
+        - id: missing-restored
+          code: "torn | 0 wishes | quarantine + restore: 5 wishes\nbadPrice | 1 wishes | quarantine + restore: 5 wishes\nmissing | 0 wishes | quarantine + restore: 5 wishes"
+          why:
+            uk: "Відсутній файл — це перший запуск, а не пошкодження: `recovering` перевіряє `text === undefined` першим і передає справу ініціалізації."
+            en: "A missing file is a first start, not damage: `recovering` checks `text === undefined` first and hands over to initialization."
+        - id: naive-crash
+          code: "torn | SyntaxError | quarantine + restore: 5 wishes\nbadPrice | 1 wishes | quarantine + restore: 5 wishes\nmissing | 0 wishes | first start: seed"
+          why:
+            uk: "`naive` ловить `SyntaxError` і мовчки повертає порожнє сховище — саме це й небезпечно: сервер працює далі, а дані «зникли»."
+            en: "`naive` catches the `SyntaxError` and silently returns an empty store — that is exactly the danger: the server keeps working while the data has “vanished”."
+      correct: [right]
+    explanation:
+      uk: "Наївний завантажувач перетворює обірваний файл на «0 бажань», а запис із ціною текстом пропускає як є. Завантажувач із відновленням в обох випадках повертає 5 бажань із backup, а відсутній файл віддає ініціалізації. Останнього бажання, доданого після backup, немає в жодному варіанті — тому звіт про відновлення має сказати, що втрачено."
+      en: "The naive loader turns a cut-off file into “0 wishes” and lets the record with a text price through as it is. The recovering loader returns 5 wishes from the backup in both cases and hands the missing file to initialization. The last wish, added after the backup, is in neither result — which is why the recovery report must say what was lost."
+
+  - id: recovery-tree
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Рішення під час запуску"
+      en: "The decision on start"
+    textEquivalent:
+      uk: "Під час запуску сервер читає сховище. Якщо файла немає — це перший запуск, і його обробляє ініціалізація із seed. Якщо файл є, його розбирають, перевіряють контрактом, а для SQLite — PRAGMA integrity_check. Якщо все пройдено, сервер працює з даними. Якщо будь-яка перевірка не пройдена, сервер шукає найновіший перевірений backup. Якщо його немає, сервер відмовляється запускатися й лишає файл на місці. Якщо він є, пошкоджений файл перейменовують у карантин, backup відновлюють, а звіт каже, що втрачено. Жодна гілка не веде до порожнього сховища."
+      en: "On start the server reads the store. If there is no file, it is the first start, and initialization with seeding handles it. If the file exists, it is parsed, checked with the contract, and for SQLite with PRAGMA integrity_check. If everything passes, the server works with the data. If any check fails, the server looks for the newest verified backup. If there is none, the server refuses to start and leaves the file in place. If there is one, the damaged file is renamed into quarantine, the backup is restored, and a report says what was lost. No branch leads to an empty store."
+    spec:
+      layout: grid
+      nodes:
+        - { id: read, label: { uk: "читання", en: "read" }, col: 1, row: 1 }
+        - { id: init, label: "init + seed", shape: round, col: 0, row: 2 }
+        - { id: check, label: { uk: "перевірки", en: "checks" }, col: 1, row: 2 }
+        - { id: ok, label: { uk: "працювати", en: "serve" }, shape: round, col: 0, row: 3 }
+        - { id: backup, label: { uk: "є backup?", en: "backup?" }, col: 1, row: 3 }
+        - { id: refuse, label: { uk: "відмова", en: "refuse" }, shape: round, col: 0, row: 4 }
+        - { id: restore, label: { uk: "карантин, restore", en: "quarantine, restore" }, shape: round, col: 1, row: 4 }
+      edges:
+        - { from: read, to: init, label: "ENOENT" }
+        - { from: read, to: check }
+        - { from: check, to: ok, label: { uk: "усе гаразд", en: "all pass" } }
+        - { from: check, to: backup, label: { uk: "провал", en: "fails" } }
+        - { from: backup, to: refuse, label: { uk: "немає", en: "none" } }
+        - { from: backup, to: restore, label: { uk: "є", en: "found" } }
+      steps:
+        - caption:
+            uk: "Під час запуску сервер читає сховище. Якщо файла немає (`ENOENT`) — це перший запуск, і далі працює ініціалізація."
+            en: "On start the server reads the store. If there is no file (`ENOENT`), it is the first start, and initialization takes over."
+          highlight: [read, init, read->init]
+        - caption:
+            uk: "Файл є: його розбирають, перевіряють контрактом, а базу SQLite — `PRAGMA integrity_check`. Усе пройдено — сервер працює з даними."
+            en: "The file exists: it is parsed and checked with the contract, an SQLite database with `PRAGMA integrity_check`. Everything passes — the server works with the data."
+          highlight: [check, ok, read->check, check->ok]
+        - caption:
+            uk: "Будь-яка перевірка не пройдена — і сервер шукає найновіший **перевірений** backup, ще нічого не чіпаючи."
+            en: "Any check fails — and the server looks for the newest **verified** backup, before touching anything."
+          highlight: [check, backup, check->backup]
+        - caption:
+            uk: "Перевіреного backup немає: сервер відмовляється запускатися, а пошкоджений файл лишається на місці. Наступний запуск відмовиться знову, доки людина не втрутиться."
+            en: "There is no verified backup: the server refuses to start, and the damaged file stays where it is. The next start refuses again until a person steps in."
+          highlight: [backup, refuse, backup->refuse]
+        - caption:
+            uk: "Backup є: пошкоджений файл іде в карантин (перейменування), backup відновлюється, звіт каже, що втрачено. Жодна гілка не веде до порожнього сховища."
+            en: "There is a backup: the damaged file goes into quarantine (a rename), the backup is restored, and the report says what was lost. No branch leads to an empty store."
+          highlight: [backup, restore, backup->restore]
+
+  - id: recover-on-start
+    kind: example
+    runtime: isolated-node
+    dir: recover-on-start
+    entry: index.js
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      intact: { uk: "ціла база", en: "intact database" }
+      damagedPage: { uk: "пошкоджена сторінка", en: "damaged page" }
+      notADb: { uk: "не база взагалі", en: "not a database at all" }
+      missing: { uk: "бази немає", en: "no database" }
+      notADatabase: { uk: "тут був текст замість бази", en: "text where a database used to be" }
+    title:
+      uk: "Відновлення бази SQLite під час запуску"
+      en: "Recovering an SQLite database on start"
+    body:
+      uk: |
+        Тут сховище бажань — база SQLite, а `openDatabase` з `recovery.js` виконує всі кроки з пояснення. `index.js` робить два backup з маніфестом (`2026-03-01` — 5 бажань, `2026-03-02` — 6) і ще один зламаний, найновіший (`2026-03-03` — порожній файл). Потім запускає базу чотири рази:
+
+        - ціла база;
+        - у файлі бази перезаписано 600 байтів сторінки з рядками;
+        - замість бази — звичайний текст;
+        - бази немає.
+
+        Натисни **Запустити** й подивись на поле `restoredFrom`: найновіший backup не пройшов перевірку, тож відновлено з `2026-03-02`. Останній рядок показує теку `data/`: пошкоджені файли лежать у карантині, а не зникли.
+      en: |
+        Here the wish store is an SQLite database, and `openDatabase` from `recovery.js` performs every step of the explanation. `index.js` takes two backups with a manifest (`2026-03-01` — 5 wishes, `2026-03-02` — 6) and one more, the newest, that is broken (`2026-03-03` — an empty file). Then it starts the database four times:
+
+        - an intact database;
+        - 600 bytes of the page with the rows overwritten in the database file;
+        - plain text instead of a database;
+        - no database.
+
+        Press **Run** and look at the `restoredFrom` field: the newest backup failed verification, so the restore came from `2026-03-02`. The last line shows the folder `data/`: the damaged files lie in quarantine instead of being gone.
+    tryIt:
+      uk: "Зміни `const KEEP_BACKUPS = true` на `false` і запусти. Тепер для обох пошкоджень сервер відмовляється запускатися (`refusing to start: … and no verified backup`), а в теці `data/` немає жодного файла `corrupt-…`: без backup пошкоджений файл не чіпають — це єдине, що лишилося від даних. Поверни `true`."
+      en: "Change `const KEEP_BACKUPS = true` to `false` and run. Now for both kinds of damage the server refuses to start (`refusing to start: … and no verified backup`), and the folder `data/` has no `corrupt-…` file at all: without a backup the damaged file is not touched — it is all that is left of the data. Put `true` back."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: зіпсовані дані в браузері"
+      en: "Recall: invalid data in the browser"
+    items:
+      - id: browser-recovery
+        from: js-07-10-independent-modules-recovery
+        prompt:
+          uk: "Застосунок у браузері читає свій ключ у `localStorage`, а там обірваний JSON. Яка поведінка правильна?"
+          en: "A browser app reads its key in `localStorage`, and it holds cut-off JSON. Which behaviour is right?"
+        answer:
+          type: choice
+          options:
+            - id: tell-and-keep
+              text:
+                uk: "Не падати: скопіювати зіпсований текст під окремий ключ резервної копії, сказати людині, що збережені дані пошкоджено, і лише тоді показати початкові записи"
+                en: "Do not crash: copy the damaged text under a separate backup key, tell the person that the saved data is damaged, and only then show the starting records"
+            - id: clear
+              text:
+                uk: "Видалити ключ і почати з порожнього списку — так застосунок знову працює"
+                en: "Delete the key and start with an empty list — that way the app works again"
+              why:
+                uk: "Застосунок працює, але дані людини зникли без пояснення, а доказ того, що сталося, знищено. На сервері це ще гірше: там дані багатьох запитів."
+                en: "The app works, but the person’s data vanished without an explanation, and the evidence of what happened is destroyed. On a server it is even worse: the data of many requests lives there."
+            - id: throw
+              text:
+                uk: "Нехай `SyntaxError` зупинить застосунок — так помилку точно помітять"
+                en: "Let the `SyntaxError` stop the app — that way the error is sure to be noticed"
+              why:
+                uk: "Аварія без пояснення не допомагає людині й не відновлює даних. Помилку треба виявити, пояснити й обробити."
+                en: "A crash without an explanation helps nobody and restores no data. The error must be detected, explained and handled."
+          correct: [tell-and-keep]
+        explanation:
+          uk: "Окремий ключ резервної копії в браузері — це той самий карантин: зіпсований текст не зникає, і людина знає, що сталося. На сервері інструменти більші: тут є перевірені backup, тож замість початкових записів можна відновити останні справжні дані."
+          en: "A separate backup key in the browser is the same quarantine: the damaged text does not vanish, and the person knows what happened. On the server the tools are bigger: there are verified backups, so instead of the starting records the last real data can be restored."
+
+  - id: notes-recover
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: notes-recover
+    entry: index.js
+    editable: [app.js]
+    strings:
+      shopping: { uk: "Покупки", en: "Shopping" }
+      ideas: { uk: "Ідеї на вихідні", en: "Weekend ideas" }
+      plan: { uk: "План на тиждень", en: "Plan for the week" }
+      call: { uk: "Подзвонити бабусі", en: "Call grandma" }
+    title:
+      uk: "recoverStore для нотаток"
+      en: "recoverStore for notes"
+    instructions:
+      uk: |
+        Напиши в `app.js` функцію `recoverStore(file, backupsDir, stamp)`, яку сервер нотаток викликає під час запуску. Backup лежать у `backupsDir` під назвами `notes.<дата>.json` (поруч — маніфести); більша дата — новіший backup. `isVerified(path)` з `verify.js` каже, чи backup пройшов перевірку, а `parseStore(text)` з `contract.js` розбирає й перевіряє сховище (кидає `SyntaxError` або помилку з `problems`).
+
+        - Файла немає → повертає `{ action: 'missing' }` і нічого не пише.
+        - Сховище проходить `parseStore` → `{ action: 'ok', count }` і нічого не змінює.
+        - Інакше сховище пошкоджене:
+          - знайти **найновіший backup, що проходить `isVerified`**;
+          - якщо такого немає — **відхилитися** (кинути помилку) й лишити `file` на місці, байт у байт;
+          - якщо є — перейменувати `file` на `` `${file}.corrupt-${stamp}` `` (карантин, не видалення), скопіювати backup на місце `file` і повернути `{ action: 'restored', quarantined, restoredFrom, count, notInBackup }`: `quarantined` — повний шлях карантинного файла, `restoredFrom` — назва файла backup, `count` — кількість відновлених нотаток, `notInBackup` — відсортовані `id` нотаток, що є в пошкодженому сховищі, але немає в backup (якщо пошкоджений файл не розбирається як JSON — `null`).
+      en: |
+        In `app.js`, write `recoverStore(file, backupsDir, stamp)`, which the notes server calls on start. Backups lie in `backupsDir` named `notes.<date>.json` (with manifests next to them); a later date is a newer backup. `isVerified(path)` from `verify.js` says whether a backup passes verification, and `parseStore(text)` from `contract.js` parses and checks a store (it throws a `SyntaxError` or an error with `problems`).
+
+        - No file → returns `{ action: 'missing' }` and writes nothing.
+        - The store passes `parseStore` → `{ action: 'ok', count }` and changes nothing.
+        - Otherwise the store is damaged:
+          - find the **newest backup that passes `isVerified`**;
+          - if there is none — **reject** (throw an error) and leave `file` in place, byte for byte;
+          - if there is one — rename `file` to `` `${file}.corrupt-${stamp}` `` (quarantine, not deletion), copy the backup into the place of `file` and return `{ action: 'restored', quarantined, restoredFrom, count, notInBackup }`: `quarantined` is the full path of the quarantined file, `restoredFrom` the backup’s file name, `count` the number of restored notes, `notInBackup` the sorted `id`s of the notes that are in the damaged store but not in the backup (when the damaged file does not parse as JSON — `null`).
+    testTitles:
+      "a valid store is reported as ok and left alone":
+        uk: "Правильне сховище — `ok`, і його не чіпають"
+        en: "A valid store is reported as `ok` and left alone"
+      "a missing store is reported as missing and nothing is written":
+        uk: "Відсутнє сховище — `missing`, і нічого не записано"
+        en: "A missing store is reported as `missing` and nothing is written"
+      "a torn store is quarantined with its bytes, not deleted":
+        uk: "Обірване сховище в карантині з усіма байтами, а не видалене"
+        en: "A torn store is quarantined with its bytes, not deleted"
+      "the newest verified backup is restored":
+        uk: "Відновлено найновіший перевірений backup"
+        en: "The newest verified backup is restored"
+      "a newest backup that fails verification is skipped":
+        uk: "Найновіший backup, що не пройшов перевірку, пропущено"
+        en: "A newest backup that fails verification is skipped"
+      "a store that breaks the contract is recovered too":
+        uk: "Сховище, що порушує контракт, теж відновлюється"
+        en: "A store that breaks the contract is recovered too"
+      "the report lists the notes missing from the backup":
+        uk: "Звіт перелічує нотатки, яких немає в backup"
+        en: "The report lists the notes missing from the backup"
+      "without a verified backup it refuses and leaves the store in place":
+        uk: "Без перевіреного backup — відмова, а сховище лишається на місці"
+        en: "Without a verified backup it refuses and leaves the store in place"
+    hints:
+      nudge:
+        uk: "Розклади функцію на питання в такому порядку: чи є файл? чи він правильний? який backup найновіший серед перевірених? Лише після відповіді на третє можна щось перейменовувати."
+        en: "Split the function into questions in this order: is there a file? is it valid? which backup is the newest of the verified ones? Only after the third answer may anything be renamed."
+      explanation:
+        uk: "Для схожого сховища подій: `(await readdir(dir)).filter((name) => /^events\\..+\\.json$/.test(name)).sort().reverse()` дає назви backup від найновішого (дати `YYYY-MM-DD` сортуються як текст). Перший, для якого `await isVerified(path.join(dir, name))` дає `true`, — твій. Карантин — `rename(старий, новий)`, а не `rm`. Щоб знайти втрачене, спробуй `JSON.parse` пошкодженого тексту окремо від `parseStore`: розібраний, але неправильний файл ще має `records` з `id`."
+        en: "For a similar event store: `(await readdir(dir)).filter((name) => /^events\\..+\\.json$/.test(name)).sort().reverse()` gives the backup names from the newest (`YYYY-MM-DD` dates sort as text). The first one for which `await isVerified(path.join(dir, name))` is `true` is yours. Quarantine is `rename(old, new)`, not `rm`. To find what was lost, try `JSON.parse` of the damaged text separately from `parseStore`: a parsed but invalid file still has `records` with `id`s."
+    solutionNote:
+      uk: "Головне — порядок. Перевірений backup шукають до карантину: якби файл спершу перейменували, а backup не знайшовся, наступний запуск побачив би «файла немає» й заповнив би сховище фікстурами поверх втрачених даних. Карантин — перейменування, тож пошкоджені байти лишаються для розслідування. `notInBackup` чесно каже людині, що відновлення повернуло не все. Варіант, що спершу збирає список перевірених backup, а потім бере перший, теж правильний."
+      en: "The key is the order. The verified backup is found before the quarantine: had the file been renamed first and no backup been found, the next start would see “no file” and seed fixtures over the lost data. Quarantine is a rename, so the damaged bytes remain for investigation. `notInBackup` honestly tells the person that the restore did not bring everything back. A version that first collects the list of verified backups and then takes the first is correct too."
+    feedback:
+      - when: { test: "a torn store is quarantined with its bytes, not deleted" }
+        message:
+          uk: "Ця перевірка обриває `notes.json` і очікує файл `` `${file}.corrupt-${stamp}` `` із тими самими обірваними байтами. Пошкоджений файл перейменовують, а не видаляють і не перезаписують."
+          en: "This check cuts `notes.json` off and expects a file `` `${file}.corrupt-${stamp}` `` with the same cut-off bytes. The damaged file is renamed, not deleted or overwritten."
+      - when: { test: "the newest verified backup is restored" }
+        message:
+          uk: "Ця перевірка кладе два правильні backup (`notes.2026-03-01.json` і `notes.2026-03-02.json`) і очікує, що `file` стане байт у байт копією новішого, а `restoredFrom` — його назвою."
+          en: "This check puts two valid backups (`notes.2026-03-01.json` and `notes.2026-03-02.json`) and expects `file` to become a byte-for-byte copy of the newer one, with `restoredFrom` as its name."
+      - when: { test: "a newest backup that fails verification is skipped" }
+        message:
+          uk: "Ця перевірка додає найновіший backup `notes.2026-03-03.json`, що не проходить `isVerified`, і очікує відновлення з `notes.2026-03-02.json`. Перевіряй кожен backup, перш ніж його взяти."
+          en: "This check adds a newest backup `notes.2026-03-03.json` that fails `isVerified` and expects the restore from `notes.2026-03-02.json`. Verify each backup before taking it."
+      - when: { test: "a store that breaks the contract is recovered too" }
+        message:
+          uk: "Ця перевірка дає правильний JSON, де в нотатки `title` — число, і очікує `action: 'restored'`. Пошкодження — це не лише `SyntaxError`: перевіряй сховище через `parseStore`."
+          en: "This check gives valid JSON where a note’s `title` is a number and expects `action: 'restored'`. Damage is not only a `SyntaxError`: check the store with `parseStore`."
+      - when: { test: "the report lists the notes missing from the backup" }
+        message:
+          uk: "Ця перевірка дає розбірне, але неправильне сховище з `n-01`…`n-04` і backup з `n-01`, `n-02` та очікує `notInBackup: ['n-03', 'n-04']`; для обірваного JSON — `null`."
+          en: "This check gives a parsable but invalid store with `n-01`…`n-04` and a backup with `n-01`, `n-02` and expects `notInBackup: ['n-03', 'n-04']`; for cut-off JSON, `null`."
+      - when: { test: "without a verified backup it refuses and leaves the store in place" }
+        message:
+          uk: "Ця перевірка не дає жодного перевіреного backup і очікує, що `recoverStore` відхилиться, `file` лишиться тим самим, а карантинного файла не буде. Шукай backup до перейменування."
+          en: "This check gives no verified backup and expects `recoverStore` to reject, `file` to stay the same and no quarantine file to appear. Look for the backup before renaming."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-05
+    body:
+      uk: "У кроці проєкту цього розділу `initStore` на кожному старті викликає `recoverStore`: цілий файл лишається, пошкоджений перейменовується на `….corrupt-<stamp>` (не видаляється) й замінюється найновішою перевіреною копією, а звіт називає записи, яких у копії немає; без перевіреної копії сервер відмовляється стартувати. Перевір усі гілки так само, як тут: зіпсуй сховище, перезапусти сервер і прочитай звіт (`Not in the backup: …`); потім відклади `data/backups` убік, зіпсуй сховище ще раз і переконайся, що `npm start` закінчується `refusing to start` та `exit 1`, а не стартує з порожнього."
+      en: "In this unit’s project step `initStore` calls `recoverStore` on every start: a whole file stays, a damaged one is renamed to `….corrupt-<stamp>` (never deleted) and replaced by the newest verified backup, and the report names the records the backup lacks; without a verified backup the server refuses to start. Check every branch as here: damage the store, restart the server and read the report (`Not in the backup: …`); then move `data/backups` aside, damage the store again and make sure `npm start` ends with `refusing to start` and `exit 1` instead of starting empty."

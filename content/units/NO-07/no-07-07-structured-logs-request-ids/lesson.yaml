@@ -1,0 +1,327 @@
+id: no-07-07-structured-logs-request-ids
+unit: NO-07
+title:
+  uk: "Структуровані логи й request id"
+  en: "Structured logs and request ids"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Писати один JSON-рядок журналу на запит із часом, рівнем, request id, методом, маршрутом, статусом і тривалістю — без тіл і секретів."
+    en: "Emit one JSON log line per request with time, level, request id, method, route, status and duration, and without bodies or secrets."
+  - uk: "Знаходити один невдалий запит серед перемішаних рядків журналу за його request id і повертати той самий id у заголовку відповіді."
+    en: "Follow one failing request across interleaved log lines by its request id and return the same id in a response header."
+prerequisites: [no-07-06-api-tests-real-http, no-07-03-safe-errors-redaction]
+subskills:
+  - { family: B-09, skill: "structured logs/redaction/request IDs", depth: intro }
+glossary: [structured-log, request-id]
+selfCheck: [predict-log-fields, log-request]
+
+blocks:
+  - id: lines-that-mix
+    kind: explanation
+    title:
+      uk: "Рядки, що перемішуються"
+      en: "Lines that get mixed up"
+    body:
+      uk: |
+        Сервер обробляє багато запитів **одночасно**: поки один чекає на диск, інший уже відповідає. Тож рядки `console.log("start")`, `console.log("done 500")` від різних запитів лягають у журнал упереміш, і «який запит упав?» стає загадкою. Більше `console.log` тут не допоможе — лише більше шуму.
+
+        Допомагають дві речі:
+
+        - [[request-id|request id]] — унікальний ідентифікатор, що з’являється на межі сервера, стоїть у **кожному** рядку журналу цього запиту й повертається клієнтові в заголовку `X-Request-Id`. Користувач, що повідомив про помилку, називає id — і ти знаходиш саме його рядки.
+        - [[structured-log|структурований журнал]] — рядок як JSON-об’єкт із постійними полями, а не речення. Програма може відфільтрувати `requestId`, порахувати `status: 500` чи середню `durationMs`.
+
+        Рядок підсумку запиту має сталий набір полів: `time`, `level`, `requestId`, `method`, `route`, `status`, `durationMs`. Рівень визначає статус: до 399 — `info`, 4xx — `warn`, 5xx — `error`.
+      en: |
+        A server handles many requests **at the same time**: while one waits for the disk, another already answers. So lines like `console.log("start")` and `console.log("done 500")` from different requests land in the log mixed together, and “which request failed?” becomes a puzzle. More `console.log` does not help here — just more noise.
+
+        Two things help:
+
+        - a [[request-id]] — a unique identifier that appears at the server's edge, sits in **every** log line of that request and goes back to the client in the `X-Request-Id` header. A user who reports an error names the id — and you find exactly its lines.
+        - a [[structured-log]] — a line as a JSON object with fixed fields, not a sentence. A program can filter by `requestId`, count `status: 500` or the average `durationMs`.
+
+        The summary line of a request has a fixed set of fields: `time`, `level`, `requestId`, `method`, `route`, `status`, `durationMs`. The status sets the level: up to 399 is `info`, 4xx is `warn`, 5xx is `error`.
+
+  - id: what-not-to-log
+    kind: explanation
+    title:
+      uk: "Чого в журналі не буває"
+      en: "What never goes into the log"
+    body:
+      uk: |
+        «Залогую весь `request` — нічого не пропущу». Але тоді в журналі опиняться заголовок `authorization`, cookies, тіло з особистими даними й query на кшталт `?token=…`. Журнал не має бути найцікавішим файлом для зловмисника.
+
+        Тому в рядку запиту:
+
+        - `route` — це лише `pathname`, **без** query: `/habits`, а не `/habits?token=…`;
+        - немає заголовків і тіл — усе, що справді треба для налагодження, додається окремим полем після `redact` з уроку про помилки;
+        - вхідний `X-Request-Id` від клієнта — теж недовірений ввід. Його беруть лише тоді, коли він має правильну форму (наприклад, 8–64 символи з літер, цифр і дефіса); інакше генерують свій через `crypto.randomUUID()`. Без цієї перевірки клієнт міг би вписати в журнал що завгодно.
+      en: |
+        “I will log the whole `request` — I will not miss anything.” But then the log ends up holding the `authorization` header, cookies, a body with personal data and a query like `?token=…`. The log must not be the most interesting file for an attacker.
+
+        So in a request's line:
+
+        - `route` is the `pathname` only, **without** the query: `/habits`, not `/habits?token=…`;
+        - there are no headers and no bodies — whatever is really needed for debugging is added as a separate field after the `redact` from the lesson on errors;
+        - an incoming `X-Request-Id` from the client is untrusted input too. It is taken only when it has the right shape (for example, 8–64 characters of letters, digits and hyphens); otherwise the server makes its own with `crypto.randomUUID()`. Without that check a client could write anything it likes into the log.
+
+  - id: id-through-layers
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Один id крізь увесь запит"
+      en: "One id through the whole request"
+    textEquivalent:
+      uk: "Запит надходить на межу сервера. Межа бере вхідний X-Request-Id, якщо він правильної форми, або створює новий через crypto.randomUUID(). Цей id передається маршрутизатору й обробнику, і кожен рядок журналу, який вони пишуть, містить його. Перед записом рядок проходить через redact, що прибирає заголовок Authorization, а route лишається без query. Коли відповідь завершено, межа пише один JSON-рядок підсумку із часом, рівнем, id, методом, маршрутом, статусом і тривалістю. Той самий id іде клієнтові в заголовку X-Request-Id."
+      en: "A request arrives at the server's edge. The edge takes the incoming X-Request-Id if it has the right shape, or creates a new one with crypto.randomUUID(). The id is passed to the router and the handler, and every log line they write contains it. Before it is written, a line goes through redact, which removes the Authorization header, and the route stays without the query. When the response has finished, the edge writes one JSON summary line with the time, level, id, method, route, status and duration. The same id goes to the client in the X-Request-Id header."
+    spec:
+      layout: grid
+      nodes:
+        - { id: request, label: { uk: "запит", en: "request" }, shape: note, w: 150, col: 0, row: 0 }
+        - { id: edge, label: { uk: "межа: requestId", en: "edge: requestId" }, w: 170, col: 0, row: 1 }
+        - { id: router, label: { uk: "маршрутизатор", en: "router" }, w: 170, col: 0, row: 2 }
+        - { id: handler, label: { uk: "обробник", en: "handler" }, w: 170, col: 0, row: 3 }
+        - { id: redact, label: "redact", shape: round, w: 150, col: 1, row: 2 }
+        - { id: line, label: { uk: "JSON-рядок", en: "JSON line" }, shape: cylinder, w: 150, col: 1, row: 3 }
+        - { id: header, label: "X-Request-Id", shape: note, w: 150, col: 1, row: 1 }
+      edges:
+        - { id: e-in, from: request, to: edge }
+        - { id: e-router, from: edge, to: router, label: "requestId" }
+        - { id: e-handler, from: router, to: handler, label: "requestId" }
+        - { id: e-redact, from: handler, to: redact, kind: dashed }
+        - { id: e-line, from: redact, to: line }
+        - { id: e-header, from: edge, to: header, label: { uk: "відповідь", en: "answer" } }
+      steps:
+        - caption:
+            uk: "Запит приходить на межу. Його `X-Request-Id`, якщо є, — недовірений текст."
+            en: "The request arrives at the edge. Its `X-Request-Id`, if any, is untrusted text."
+          highlight: [request, edge, e-in]
+        - caption:
+            uk: "Межа бере вхідний id, якщо він правильної форми, інакше створює новий через `crypto.randomUUID()`."
+            en: "The edge takes the incoming id if it has the right shape, otherwise it creates a new one with `crypto.randomUUID()`."
+          highlight: [edge]
+          annotate:
+            - { id: edge, text: "5f0c…" }
+        - caption:
+            uk: "Id іде до маршрутизатора й обробника: кожен рядок, що вони пишуть, містить `requestId`."
+            en: "The id travels to the router and the handler: every line they write contains `requestId`."
+          highlight: [router, handler, e-router, e-handler]
+        - caption:
+            uk: "Перед записом рядок проходить `redact`: заголовка `Authorization` у журналі немає, а `route` — без query."
+            en: "Before it is written, a line goes through `redact`: the `Authorization` header is not in the log, and `route` has no query."
+          highlight: [redact, line, e-redact, e-line]
+        - caption:
+            uk: "Той самий id іде клієнтові в заголовку `X-Request-Id` — з ним клієнт може повідомити про помилку."
+            en: "The same id goes to the client in the `X-Request-Id` header — with it the client can report an error."
+          highlight: [edge, header, e-header]
+
+  - id: predict-log-fields
+    kind: prediction
+    prompt:
+      uk: "Ось рядок журналу API звичок. Які поля **не повинні** в ньому бути, бо видають секрет чи особисті дані? Вибери всі."
+      en: "Here is a log line of the habits API. Which fields **must not** be in it because they give away a secret or personal data? Pick all."
+    code: |
+      {"time":"2026-03-01T09:12:44.120Z","level":"error","requestId":"5f0c2a9e-…",
+       "method":"POST","route":"/habits?invite=tk_demo_8812","status":500,"durationMs":37,
+       "authorization":"Bearer demo-session-7f3a","body":{"name":"%%secretHabit%%","email":"olena@example.com"}}
+    lang: json
+    runnable: false
+    strings:
+      secretHabit: { uk: "Пити ліки о 9:00", en: "Take medicine at 9:00" }
+    answer:
+      type: multi
+      options:
+        - id: route-query
+          text: { uk: "`route` у такому вигляді — з query `invite=…`", en: "`route` in this form — with the `invite=…` query" }
+        - id: authorization
+          text: { uk: "`authorization`", en: "`authorization`" }
+        - id: body
+          text: { uk: "`body`", en: "`body`" }
+        - id: request-id
+          text: { uk: "`requestId`", en: "`requestId`" }
+          why:
+            uk: "`requestId` — випадковий ідентифікатор, нічого не розкриває, а саме за ним знаходять рядки запиту."
+            en: "`requestId` is a random identifier that reveals nothing, and it is exactly what finds the request's lines."
+        - id: status-duration
+          text: { uk: "`status` і `durationMs`", en: "`status` and `durationMs`" }
+          why:
+            uk: "Статус і тривалість — головне для налагодження: вони кажуть, що запит упав і скільки тривав, нічого не розкриваючи."
+            en: "Status and duration are the core of debugging: they say that the request failed and how long it took, revealing nothing."
+      correct: [route-query, authorization, body]
+    explanation:
+      uk: "Query може нести токени, `authorization` — це сесія користувача, а тіло — особисті дані й назва звички, що може бути чутливою. Для налагодження досить `requestId`, `route` без query, `status` і `durationMs`; деталі — лише після `redact`."
+      en: "The query may carry tokens, `authorization` is the user's session, and the body holds personal data and a habit name that may be sensitive. For debugging, `requestId`, `route` without the query, `status` and `durationMs` are enough; details only after `redact`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: error-event
+        from: no-01-05-eventemitter-errors
+        prompt:
+          uk: "Обгортка журналу підписується на подію `'finish'` відповіді через `response.on(…)`. А що станеться, якщо будь-який `EventEmitter` викличе `emit('error', err)`, коли слухача `'error'` немає?"
+          en: "A logging wrapper subscribes to the response's `'finish'` event with `response.on(…)`. And what happens if any `EventEmitter` calls `emit('error', err)` while there is no `'error'` listener?"
+        answer:
+          type: choice
+          options:
+            - id: throws
+              text:
+                uk: "`emit` кидає цю помилку; якщо її ніхто не впіймає, процес Node.js падає"
+                en: "`emit` throws that error; if nobody catches it, the Node.js process crashes"
+            - id: ignored
+              text:
+                uk: "Подію без слухачів просто пропущено, як будь-яку іншу"
+                en: "An event with no listeners is simply skipped, like any other"
+              why:
+                uk: "Так поводяться всі події, крім `'error'`. Для неї немає слухача — значить, помилку нікому обробити, і `emit` її кидає."
+                en: "That is how every event behaves except `'error'`. With no listener for it nobody can handle the error, so `emit` throws it."
+            - id: logged
+              text:
+                uk: "Node.js пише попередження в журнал і працює далі"
+                en: "Node.js writes a warning to the log and carries on"
+              why:
+                uk: "Попередження з’являється для забагатьох слухачів (`MaxListenersExceededWarning`). `'error'` без слухача — не попередження, а кинута помилка."
+                en: "A warning appears for too many listeners (`MaxListenersExceededWarning`). `'error'` with no listener is not a warning but a thrown error."
+          correct: [throws]
+        explanation:
+          uk: "Подія `'error'` особлива: без слухача `emit('error', …)` кидає помилку. Тому сервер, що пише журнал у потік, слухає і його `'error'`, щоб збій журналу не поклав увесь процес."
+          en: "The `'error'` event is special: with no listener `emit('error', …)` throws. So a server that writes its log to a stream also listens for that stream's `'error'`, so that a failure of the log does not take down the whole process."
+
+  - id: interleaved-logs
+    kind: example
+    runtime: isolated-node
+    dir: interleaved-logs
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      failedRequest: { uk: "Невдалий запит", en: "Failed request" }
+      noMatch: { uk: "(у текстових рядках немає request id — знайти рядки цього запиту не вдалося)", en: "(the text lines have no request id — the lines of this request could not be found)" }
+    title:
+      uk: "Три запити одночасно"
+      en: "Three requests at once"
+    body:
+      uk: |
+        `index.js` надсилає API звичок три запити одночасно. Обробник пише три кроки кожного запиту, а читання триває різний час (`READ_MS`), тож кроки перемішуються. Один запит падає з `500`. Наприкінці програма бере `x-request-id` невдалої відповіді й шукає рядки журналу з ним.
+
+        Натисни **Запустити**. Видно `ERROR end 500`, але який з трьох `start` йому належить? Пошук за id нічого не знаходить: у текстових рядках id немає.
+      en: |
+        `index.js` sends the habits API three requests at once. The handler writes three steps of each request, and the reads take different times (`READ_MS`), so the steps get mixed. One request fails with `500`. At the end the program takes the `x-request-id` of the failed answer and searches the log lines for it.
+
+        Press **Run**. You see `ERROR end 500`, but which of the three `start` lines does it belong to? The search by id finds nothing: the text lines have no id.
+    tryIt:
+      uk: |
+        1. Зміни в `index.js` `FORMAT = 'text'` на `FORMAT = 'json'` і запусти. Тепер кожен рядок — JSON із `requestId`, і пошук знаходить рівно три рядки невдалого запиту: `start GET /habits/h-07`, читання й `end 500`.
+        2. Подивись на порядок: рядки `h-03` закінчуються раніше за `h-01`, бо його читання коротше. Порядок у журналі — це порядок подій, а не запитів.
+      en: |
+        1. In `index.js` change `FORMAT = 'text'` to `FORMAT = 'json'` and run. Now every line is JSON with `requestId`, and the search finds exactly three lines of the failed request: `start GET /habits/h-07`, the read and `end 500`.
+        2. Look at the order: the `h-03` lines finish earlier than those of `h-01`, because its read is shorter. The order in a log is the order of events, not of requests.
+
+  - id: log-request
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: log-request
+    entry: index.js
+    editable: [log-request.js]
+    capabilities: { network: loopback }
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+      client: { uk: "клієнт:", en: "client:" }
+    title:
+      uk: "logRequest: id і один рядок на запит"
+      en: "logRequest: an id and one line per request"
+    instructions:
+      uk: |
+        Напиши в `log-request.js` функцію `logRequest(handler, { log })`. Вона повертає обробник запитів для `http.createServer`, який:
+
+        - бере `requestId` із заголовка `x-request-id`, якщо той складається з 8–64 символів `A–Z`, `a–z`, `0–9` і `-`; інакше створює новий через `randomUUID()`;
+        - ставить відповіді заголовок `x-request-id` із цим id і викликає `handler(request, response, { requestId })`;
+        - коли відповідь завершено (подія `'finish'` у `response`), викликає `log(entry)` **один раз** з об’єктом рівно з полями `time` (ISO-рядок), `level`, `requestId`, `method`, `route`, `status`, `durationMs` (число мілісекунд);
+        - `route` — шлях без query; `level` — `info`, для статусів 400–499 — `warn`, від 500 — `error`;
+        - якщо `handler` кидає помилку, відповідає `500` з тілом `{ "error": { "code": "INTERNAL", "requestId": … } }`.
+
+        Жодних заголовків чи тіл у `entry`.
+      en: |
+        Write the function `logRequest(handler, { log })` in `log-request.js`. It returns a request listener for `http.createServer` that:
+
+        - takes `requestId` from the `x-request-id` header if it consists of 8–64 characters `A–Z`, `a–z`, `0–9` and `-`; otherwise it creates a new one with `randomUUID()`;
+        - sets the `x-request-id` header of the response to that id and calls `handler(request, response, { requestId })`;
+        - when the response has finished (the `'finish'` event of `response`), calls `log(entry)` **once** with an object that has exactly the fields `time` (an ISO string), `level`, `requestId`, `method`, `route`, `status`, `durationMs` (a number of milliseconds);
+        - `route` is the path without the query; `level` is `info`, `warn` for statuses 400–499 and `error` from 500;
+        - if `handler` throws, it answers `500` with the body `{ "error": { "code": "INTERNAL", "requestId": … } }`.
+
+        No headers or bodies in `entry`.
+    testTitles:
+      "every request writes exactly one entry with the agreed fields":
+        uk: "Кожен запит пише рівно один запис з узгодженими полями"
+        en: "Every request writes exactly one entry with the agreed fields"
+      "the route is logged without the query string":
+        uk: "`route` пишеться без query"
+        en: "The route is logged without the query string"
+      "a well-formed incoming X-Request-Id is reused":
+        uk: "Правильний вхідний `X-Request-Id` використовується"
+        en: "A well-formed incoming `X-Request-Id` is reused"
+      "a malformed incoming X-Request-Id is replaced with a new UUID":
+        uk: "Неправильний вхідний `X-Request-Id` замінюється новим UUID"
+        en: "A malformed incoming `X-Request-Id` is replaced with a new UUID"
+      "the response carries the same id in X-Request-Id":
+        uk: "Відповідь несе той самий id у `X-Request-Id`"
+        en: "The response carries the same id in `X-Request-Id`"
+      "the level follows the status: info, warn for 4xx, error for 5xx":
+        uk: "Рівень іде за статусом: `info`, `warn` для 4xx, `error` для 5xx"
+        en: "The level follows the status: `info`, `warn` for 4xx, `error` for 5xx"
+      "a handler that throws gets 500 INTERNAL with the request id, logged once as error":
+        uk: "Обробник, що кидає помилку, дає `500 INTERNAL` з id, записаний один раз як `error`"
+        en: "A handler that throws gets `500 INTERNAL` with the request id, logged once as `error`"
+    hints:
+      nudge:
+        uk: "Відповідь — це `EventEmitter`: `response.on('finish', …)` спрацює, коли вона вже надіслана й статус відомий (`response.statusCode`). Час початку запам’ятай одразу, як прийшов запит."
+        en: "The response is an `EventEmitter`: `response.on('finish', …)` fires once it has been sent and the status is known (`response.statusCode`). Remember the start time as soon as the request arrives."
+      explanation:
+        uk: "Вхідний id перевіряється як будь-який недовірений ввід — за точним шаблоном. Шлях без query дає властивість `pathname` об’єкта `URL`, як у маршрутизаторах з NO-03. Обробник асинхронний, тож його помилку ловить `try`/`catch` навколо `await`. Схожа обгортка, що лише міряє час, виглядала б так: `const t0 = performance.now(); response.on('finish', () => report(performance.now() - t0));`."
+        en: "The incoming id is checked like any untrusted input — against an exact pattern. The `pathname` property of a `URL` object gives the path without the query, as in the routers of NO-03. The handler is async, so a `try`/`catch` around `await` catches its error. A similar wrapper that only measures time would look like this: `const t0 = performance.now(); response.on('finish', () => report(performance.now() - t0));`."
+    solutionNote:
+      uk: "Id з’являється один раз на межі й іде всюди: у заголовок, обробнику, у рядок журналу. Рядок пишеться з `'finish'`, коли статус уже остаточний, тож і помилка обробника дає рівно один запис — з `500` і рівнем `error`."
+      en: "The id appears once at the edge and goes everywhere: into the header, to the handler, into the log line. The line is written from `'finish'`, when the status is final, so a handler error also gives exactly one entry — with `500` and the level `error`."
+    feedback:
+      - when: { test: "every request writes exactly one entry with the agreed fields" }
+        message:
+          uk: "Ця перевірка чекає після одного запиту рівно один виклик `log` з об’єктом рівно з полями `time`, `level`, `requestId`, `method`, `route`, `status`, `durationMs`. Заголовки, тіло чи зайві поля в запис не потрапляють."
+          en: "After one request this check expects exactly one call of `log` with an object that has exactly the fields `time`, `level`, `requestId`, `method`, `route`, `status`, `durationMs`. Headers, the body or extra fields do not go into the entry."
+      - when: { test: "the route is logged without the query string" }
+        message:
+          uk: "Ця перевірка надсилає `/habits?token=demo-secret&page=2` і чекає `route: \"/habits\"`. `request.url` містить query — візьми лише `pathname`."
+          en: "This check sends `/habits?token=demo-secret&page=2` and expects `route: \"/habits\"`. `request.url` contains the query — take the `pathname` only."
+      - when: { test: "a well-formed incoming X-Request-Id is reused" }
+        message:
+          uk: "Ця перевірка надсилає `X-Request-Id: checkout-1234` і чекає саме цей id у записі журналу."
+          en: "This check sends `X-Request-Id: checkout-1234` and expects exactly that id in the log entry."
+      - when: { test: "a malformed incoming X-Request-Id is replaced with a new UUID" }
+        message:
+          uk: "Ця перевірка надсилає id коротший за 8 символів, довший за 64, з пробілами й із `<script>` і чекає замість кожного новий UUID. Перевіряй вхідний id за точним шаблоном."
+          en: "This check sends ids shorter than 8 characters, longer than 64, with spaces and with `<script>`, and expects a new UUID instead of each. Check the incoming id against an exact pattern."
+      - when: { test: "the response carries the same id in X-Request-Id" }
+        message:
+          uk: "Ця перевірка чекає у відповіді заголовок `x-request-id`, рівний id із запису журналу, і різні id для двох запитів. Постав заголовок до виклику `handler`."
+          en: "This check expects an `x-request-id` header in the answer equal to the id in the log entry, and different ids for two requests. Set the header before calling `handler`."
+      - when: { test: "the level follows the status: info, warn for 4xx, error for 5xx" }
+        message:
+          uk: "Ця перевірка чекає `info` для `200`, `warn` для `404` і `error` для `503`. Рівень визначай за `response.statusCode` у момент `'finish'`."
+          en: "This check expects `info` for `200`, `warn` for `404` and `error` for `503`. Decide the level from `response.statusCode` at the moment of `'finish'`."
+      - when: { test: "a handler that throws gets 500 INTERNAL with the request id, logged once as error" }
+        message:
+          uk: "Ця перевірка викликає `/broken`, де обробник кидає помилку, і чекає `500` з `{ error: { code: \"INTERNAL\", requestId } }` та один запис `[500, \"error\"]`. Огорни `await handler(…)` у `try`/`catch`."
+          en: "This check calls `/broken`, where the handler throws, and expects `500` with `{ error: { code: \"INTERNAL\", requestId } }` and one entry `[500, \"error\"]`. Wrap `await handler(…)` in `try`/`catch`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-07
+    body:
+      uk: "У кроці проєкту цього розділу `src/log.ts` пише один JSON-рядок на завершений запит із рівно сімома полями — `time`, `level`, `requestId`, `method`, `route` (шлях без `?…`), `status`, `durationMs`, — а `requestIdOf(req)` лишає вхідний `X-Request-Id`, лише коли він відповідає `^[A-Za-z0-9-]{8,64}$`, інакше бере `randomUUID()`. Кожна відповідь несе id у `x-request-id`, а тіло помилки — той самий `requestId`. Чого твій проєкт ніколи не пише в журнал (назви, суми, тіла), сказано в таблиці кроку."
+      en: "In this unit’s project step `src/log.ts` writes one JSON line per finished request with exactly seven fields — `time`, `level`, `requestId`, `method`, `route` (the path without `?…`), `status`, `durationMs` — and `requestIdOf(req)` keeps an incoming `X-Request-Id` only when it matches `^[A-Za-z0-9-]{8,64}$`, otherwise it takes `randomUUID()`. Every answer carries the id in `x-request-id`, and an error body has the same `requestId`. What your project never writes to the log (names, amounts, bodies) is in the step’s table."

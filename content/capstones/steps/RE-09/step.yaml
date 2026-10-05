@@ -1,0 +1,93 @@
+# Capstone step of unit RE-09 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of RE-09 from this file.
+# A local step: done in the learner's editor, terminal and browser; no platform checks. The project page
+# shows only the intro of a local step, so the intro carries the whole procedure.
+# Every command was run on macOS (Node.js 25.2.1, npm 11.6.2, Git 2.51.0, Chrome) in a scratch home on all
+# four projects, continuing the RE-07 scratch projects. The tsc messages are from a copy of the wishlist with
+# the narrowing removed; tests.html ran in headless Chrome. Quoted output is from the wishlist run.
+# reference/ holds the same file set as RE-07 (export- and npm-generated files excluded) plus data/model.ts
+# and tests/model.test.js.
+unit: RE-09
+mode: local
+entry: index.html
+title:
+  uk: "Схема на межі API"
+  en: "A schema at the API boundary"
+intro:
+  uk: |
+    `tsc` перевіряє код, а не дані, що приходять, коли код уже працює. Відповідь API — саме такі дані, тож у цьому кроці вона стає `unknown`, і в кеш потрапляє лише те, що пройшло схему `data/model.ts`. Зламана відповідь стає доступним станом помилки, що називає поле. `domain/`, `storage/` і reducer не змінюються.
+
+    | Проєкт | Схема | Зламана відповідь у тесті | Рядок стану |
+    |---|---|---|---|
+    | Список бажань | `parseItemList` | `price: 12.5` | `1.price: notWholeNonNegative` |
+    | Планувальник | `parseTaskList` | `priority: "urgent"` | `1.priority: unknown` |
+    | Трекер звичок | `parseHabitList` | дві однакові дати в `completions` | `1.completions: duplicateDate` |
+    | Трекер витрат | `parseExpenseList` | `amountMinor: 12.5` | `1.amountMinor: notPositiveWhole` |
+
+    Нижче — «Список бажань»; перевірено на macOS (Node.js 25.2.1, React 19.3.0, TypeScript 7.0.2, esbuild 0.28.2, Chrome) на всіх чотирьох проєктах.
+
+    **1. Стан на початку.** `cd ~/js-course/wishlist`, `git status` — чисто, `git log --oneline -1` — commit кроку про клавіатуру й Profiler.
+
+    **2. Схема — `data/model.ts`.** Тип результату: `type ParseResult<T> = { ok: true; value: T } | { ok: false; errors: Record<string, string> }`. `parseItem(input: unknown)` спершу звужує `input` до об’єкта (`typeof value === "object" && value !== null && !Array.isArray(value)`), потім перевіряє кожне поле й записує код помилки: `name` 1–80 символів (`length1to80`), `price` — невід’ємне ціле або `null` (`notWholeNonNegative`), `acquired` — boolean (`notBoolean`), `category` до 30 символів або `null` (`upTo30`). `parseItemList(input: unknown)` вимагає масив (`notArray`), додає до ключа позицію запису (`"2.price"`) і відхиляє однакові `id` (`errors.id = "duplicate"`). Жодного `as` чи `any`: типи звужують `typeof` і предикати з `domain/` (для планувальника — `isPriority`, `isCalendarDate`; звичок — `isFrequency`; витрат — `isCategoryId`). Без звуження `tsc` каже `error TS2339: Property 'price' does not exist on type 'unknown'.`
+
+    **3. API віддає `unknown`.** У `data/api.ts` `listItems` тепер `Promise<unknown>` і повертає копію через `JSON.parse(JSON.stringify(...))` — так, як прийшла б відповідь мережі. Для тестів `settings.nextListAnswer` один раз підміняє відповідь (і `resetApi` скидає його).
+
+    **4. Межа — кеш.** У `ui/itemsCache.tsx` відповідь іде через `parseItemList(answer)`: `ok` — `cache.put(key, parsed.value)`; інакше стан помилки `Список не завантажився (дані пошкоджені: 1.price: notWholeNonNegative)` у тому самому `role="status"`, кнопка «Завантажити ще раз» і лічильник невдач, тож межа повторних спроб працює й тут. Якщо покласти відповідь у кеш без схеми, `tsc` не дасть: `error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'Wish[]'.`
+
+    **5. Типізований reducer і відкат — перевір, що вони є.** Типізований reducer (`ui/itemsReducer.ts`, union дій) і контекст кешу з’явилися раніше, тест відкату «a failed acquired toggle rolls back that wish…» — у кроці про асинхронні дані. Тут вони не змінюються; переконайся, що тест відкату проходить і після зміни API.
+
+    **6. Тести.** `tests/model.test.js` — чотири тести Node.js (правильний запис проходить і зберігає значення; зламане поле назване з позицією; неправильна `category`, відсутній `id` і текст замість запису відхилено; однакові `id` і об’єкт замість масиву відхилено); додай `import "./tests/model.test.js";` у `run-tests.js`. У `tests/ui.test.tsx` — тест: `settings.nextListAnswer = [{ ...START[0], price: 12.5 }]`, і рядок стану містить `1.price: notWholeNonNegative`, а кнопка «Завантажити ще раз» є.
+
+    **7. Перевірка.** `npm run typecheck`, `npm run lint` — лише рядки заголовка; `npm test` — `Пройшли: 37 · не пройшли: 0`; `npm start`, `http://127.0.0.1:4310/tests.html` — вісім рядків `✓` і `Пройшли: 8 · не пройшли: 0`. Ми перевірили, що тести ловлять три хибні версії: приведення `answer as Wish[]` замість схеми (✗ у `tests.html`), поблажливу перевірку ціни (✗ в обох) і схему без перевірки однакових `id` (✗ у `npm test`).
+
+    **8. Commit.** `git status --short` — ` M data/api.ts`, ` M run-tests.js`, ` M tests/ui.test.tsx`, ` M ui/itemsCache.tsx`, `?? data/model.ts`, `?? tests/model.test.js`. `git add -A`, `git commit -m "Check every API answer with a runtime schema"` — `[main fde0717] Check every API answer with a runtime schema` і `6 files changed, 135 insertions(+), 8 deletions(-)`.
+
+    **Самоперевірка:** у `data/model.ts` немає `as` і `any`; `listItems` повертає `Promise<unknown>`; кожен код помилки в рядку стану має позицію запису; тест відкату з кроку про асинхронні дані проходить; `tests.html` — `не пройшли: 0`.
+
+    **Якщо щось пішло не так:** `npm test` пише `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '…/data/model.js'` — імпорт має закінчуватися на `.ts`, як і для reducer. Тест UI чекає 2000 мс і пише «так і не з’явилося» — схема пропустила зламане поле: перевір, чи перевірка ціни має `Number.isInteger`.
+
+    Еталон кроку — `Завантажити: RE-09 — Схема на межі API` після експорту. Команди виконано лише на macOS; у Linux і Windows (Git Bash) їх не запускали.
+  en: |
+    `tsc` checks the code, not the data that arrives while the code runs. An API answer is exactly such data, so in this step it becomes `unknown`, and only what passes the schema of `data/model.ts` reaches the cache. A broken answer becomes an accessible error state that names the field. `domain/`, `storage/` and the reducer do not change.
+
+    | Project | Schema | Broken answer in the test | Status line |
+    |---|---|---|---|
+    | Wishlist | `parseItemList` | `price: 12.5` | `1.price: notWholeNonNegative` |
+    | Planner | `parseTaskList` | `priority: "urgent"` | `1.priority: unknown` |
+    | Habit tracker | `parseHabitList` | two equal dates in `completions` | `1.completions: duplicateDate` |
+    | Expense tracker | `parseExpenseList` | `amountMinor: 12.5` | `1.amountMinor: notPositiveWhole` |
+
+    Below is the wishlist; checked on macOS (Node.js 25.2.1, React 19.3.0, TypeScript 7.0.2, esbuild 0.28.2, Chrome) on all four projects.
+
+    **1. The starting state.** `cd ~/js-course/wishlist`, `git status` — clean, `git log --oneline -1` — the commit of the keyboard and Profiler step.
+
+    **2. The schema — `data/model.ts`.** The result type: `type ParseResult<T> = { ok: true; value: T } | { ok: false; errors: Record<string, string> }`. `parseItem(input: unknown)` first narrows `input` to an object (`typeof value === "object" && value !== null && !Array.isArray(value)`), then checks every field and records an error code: `name` 1–80 characters (`length1to80`), `price` a non-negative whole number or `null` (`notWholeNonNegative`), `acquired` a boolean (`notBoolean`), `category` up to 30 characters or `null` (`upTo30`). `parseItemList(input: unknown)` requires an array (`notArray`), puts the record's position into the key (`"2.price"`) and refuses equal ids (`errors.id = "duplicate"`). No `as` and no `any`: `typeof` and the predicates of `domain/` narrow the types (for the planner `isPriority`, `isCalendarDate`; habits `isFrequency`; expenses `isCategoryId`). Without the narrowing `tsc` says `error TS2339: Property 'price' does not exist on type 'unknown'.`
+
+    **3. The API answers with `unknown`.** In `data/api.ts`, `listItems` is now `Promise<unknown>` and returns a copy through `JSON.parse(JSON.stringify(...))` — the way a network answer would arrive. For the tests, `settings.nextListAnswer` replaces the answer once (and `resetApi` clears it).
+
+    **4. The boundary — the cache.** In `ui/itemsCache.tsx` the answer goes through `parseItemList(answer)`: `ok` — `cache.put(key, parsed.value)`; otherwise the error state `The list did not load (the data is damaged: 1.price: notWholeNonNegative)` in the same `role="status"`, the “Load again” button and the failure counter, so the retry limit works here too. Putting the answer in the cache without the schema does not pass `tsc`: `error TS2345: Argument of type 'unknown' is not assignable to parameter of type 'Wish[]'.`
+
+    **5. The typed reducer and the rollback — check that they are there.** The typed reducer (`ui/itemsReducer.ts`, a union of actions) and the cache context came earlier, the rollback test “a failed acquired toggle rolls back that wish…” in the async data step. They do not change here; make sure the rollback test still passes after the API change.
+
+    **6. Tests.** `tests/model.test.js` — four Node.js tests (a valid record passes and keeps its values; a broken field is named with its position; a wrong `category`, a missing `id` and a text instead of a record are refused; equal ids and an object instead of an array are refused); add `import "./tests/model.test.js";` to `run-tests.js`. In `tests/ui.test.tsx` — a test: `settings.nextListAnswer = [{ ...START[0], price: 12.5 }]`, and the status line contains `1.price: notWholeNonNegative` while the “Load again” button is there.
+
+    **7. Check.** `npm run typecheck`, `npm run lint` — only the header lines; `npm test` — `Passed: 37 · failed: 0`; `npm start`, `http://127.0.0.1:4310/tests.html` — eight `✓` lines and `Passed: 8 · failed: 0`. We checked that the tests catch three wrong versions: the cast `answer as Wish[]` instead of the schema (✗ in `tests.html`), a lenient price check (✗ in both) and a schema without the equal-id check (✗ in `npm test`).
+
+    **8. Commit.** `git status --short` — ` M data/api.ts`, ` M run-tests.js`, ` M tests/ui.test.tsx`, ` M ui/itemsCache.tsx`, `?? data/model.ts`, `?? tests/model.test.js`. `git add -A`, `git commit -m "Check every API answer with a runtime schema"` — `[main 31aa5f6] Check every API answer with a runtime schema` and `6 files changed, 135 insertions(+), 8 deletions(-)`.
+
+    **Self-check:** `data/model.ts` has no `as` and no `any`; `listItems` returns `Promise<unknown>`; every error code in the status line carries the record's position; the rollback test of the async data step passes; `tests.html` — `failed: 0`.
+
+    **If something goes wrong:** `npm test` prints `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '…/data/model.js'` — the import must end in `.ts`, as for the reducer. The UI test waits 2000 ms and prints “never appeared” — the schema let the broken field through: check that the price check has `Number.isInteger`.
+
+    The step's reference is `Download: RE-09 — A schema at the API boundary` after the export. The commands were run on macOS only; they were not run on Linux or Windows (Git Bash).
+purpose:
+  uk: "Це крок твого проєкту: перевірку під час виконання, звуження `unknown` і доступну модель помилок з цього розділу ти застосовуєш до власного застосунку. Платформа цей крок не перевіряє: доказ — тести, хибні версії, які вони ловлять, і commit."
+  en: "This is a step of your project: you apply this unit's runtime validation, the narrowing of `unknown` and the accessible error model to your own app. The platform does not check this step: the evidence is the tests, the wrong versions they catch and the commit."
+objectives:
+  - uk: "Перевірити кожну відповідь API схемою без `as` і `any` і показати зламане поле доступним станом помилки."
+    en: "Check every API answer with a schema without `as` or `any` and show a broken field as an accessible error state."
+  - uk: "Покрити схему тестами Node.js, а межу — тестом дії користувача, і переконатися, що відкат з попереднього кроку проходить."
+    en: "Cover the schema with Node.js tests and the boundary with a user-action test, and make sure the rollback of the earlier step still passes."
+transfer:
+  uk: "Цей крок виконується в редакторі, терміналі й браузері на твоєму комп’ютері: що змінити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor, a terminal and a browser on your computer: what to change, the expected output and the self-check list are above and on the step's page in your project."

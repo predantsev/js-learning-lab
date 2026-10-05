@@ -1,0 +1,390 @@
+id: no-03-01-http-server-lifecycle
+unit: NO-03
+title:
+  uk: "Справжній HTTP-сервер: життєвий цикл запиту й відповіді"
+  en: "A real HTTP server: request/response lifecycle"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Запустити сервер `node:http` на 127.0.0.1 з явним портом, надіслати йому запит і простежити об’єкти `req` і `res` від надходження запиту до `res.end()`."
+    en: "Start a node:http server on 127.0.0.1 with an explicit port, send it a request and trace the req and res objects from arrival to res.end()."
+  - uk: "Передбачити, що побачить клієнт, коли обробник не викликає `res.end()`, і пояснити, чому `return` з обробника нічого не надсилає."
+    en: "Predict what the client sees when a handler never calls res.end(), and why returning from the handler sends nothing."
+  - uk: "Зупинити сервер через `server.close()` і пояснити, чому процес живе, доки сервер слухає."
+    en: "Stop the server with server.close() and explain why the process stays alive while the server listens."
+prerequisites: [no-01-04-event-loop-phases, js-16-02-http-methods-status-headers]
+subskills:
+  - { family: B-03, skill: "request/response lifecycle", depth: intro }
+glossary: [http-server, request-handler, bind-address]
+selfCheck: [predict-no-end, method-url-server]
+
+blocks:
+  - id: other-side
+    kind: explanation
+    title:
+      uk: "Тепер ти — той, хто відповідає"
+      en: "Now you are the one who answers"
+    body:
+      uk: |
+        Досі ти надсилав запити через `fetch`, а відповідав хтось інший. [[http-server|HTTP-сервер]] — це програма, яка чекає на запити й відповідає на них. У Node.js його дає вбудований модуль `node:http`:
+
+        ```js
+        const server = http.createServer((req, res) => {
+          res.statusCode = 200;
+          res.setHeader("content-type", "text/plain; charset=utf-8");
+          res.end("ok");
+        });
+        server.listen(4321, "127.0.0.1");
+        ```
+
+        Функцію, яку ти передаєш у `createServer`, називають [[request-handler|обробником запиту]]. Node викликає її **для кожного запиту** з двома об’єктами:
+
+        - `req` — що прийшло: `req.method`, `req.url` (шлях разом із query), `req.headers`;
+        - `res` — відповідь, яку ти будуєш: статус (`res.statusCode`), заголовки (`res.setHeader`), шматки тіла (`res.write`) і **завершення** — `res.end()`.
+
+        `listen(порт, адреса)` відкриває порт. Адреса `127.0.0.1` — це [[bind-address|адреса прив’язки]] «лише цей комп’ютер»: інші машини в мережі до сервера не дістануться.
+      en: |
+        So far you sent requests with `fetch`, and someone else answered. An [[http-server]] is a program that waits for requests and answers them. In Node.js the built-in `node:http` module provides one:
+
+        ```js
+        const server = http.createServer((req, res) => {
+          res.statusCode = 200;
+          res.setHeader("content-type", "text/plain; charset=utf-8");
+          res.end("ok");
+        });
+        server.listen(4321, "127.0.0.1");
+        ```
+
+        The function you pass to `createServer` is the [[request-handler]]. Node calls it **for every request** with two objects:
+
+        - `req` — what arrived: `req.method`, `req.url` (the path together with the query), `req.headers`;
+        - `res` — the answer you build: the status (`res.statusCode`), headers (`res.setHeader`), pieces of the body (`res.write`) and the **finish** — `res.end()`.
+
+        `listen(port, address)` opens the port. The address `127.0.0.1` is a [[bind-address]] meaning “this computer only”: other machines on the network cannot reach the server.
+
+  - id: lifecycle-rules
+    kind: explanation
+    title:
+      uk: "Відповідь закінчує `res.end()`, а не `return`"
+      en: "`res.end()` finishes the answer, not `return`"
+    body:
+      uk: |
+        Обробник — не функція, яка «повертає відповідь». Node не дивиться, що він повертає. Відповідь іде клієнтові шматками:
+
+        1. Перший `res.write(…)` (або `res.end(…)`) надсилає рядок статусу й заголовки, а за ними — перший шматок тіла.
+        2. Кожен наступний `res.write` дописує тіло.
+        3. `res.end()` каже: «більше нічого не буде». Лише тепер клієнт знає, що тіло повне.
+
+        Якщо `res.end()` так і не викликано, клієнт чекає — секунди, хвилини, доки сам не здасться. Сервер про це не дізнається й помилки не покаже. (Є виняток: коли заголовок `Content-Length` наперед сказав, скільки байтів буде, клієнт може дочитати тіло й так — але відповідь на сервері лишається незавершеною. Про цей заголовок — у наступному уроці.)
+
+        І ще одне: доки сервер слухає порт, процес Node **не завершується**, хоч останній рядок модуля давно виконано. Слухання — це відкритий ресурс, на кшталт таймера. `server.close()` перестає приймати нові з’єднання й чекає, поки відкриті закінчаться; `server.closeAllConnections()` обриває ті, що лишилися. Коли не лишається нічого, процес виходить.
+      en: |
+        A handler is not a function that “returns the answer”. Node ignores whatever it returns. The answer travels to the client in pieces:
+
+        1. The first `res.write(…)` (or `res.end(…)`) sends the status line and the headers, followed by the first piece of the body.
+        2. Every further `res.write` adds to the body.
+        3. `res.end()` says “nothing more is coming”. Only now does the client know the body is complete.
+
+        If `res.end()` is never called, the client waits — seconds, minutes, until it gives up on its own. The server never learns about it and shows no error. (One exception: when a `Content-Length` header said in advance how many bytes are coming, the client can read the whole body anyway — but the answer on the server stays unfinished. That header comes in the next lesson.)
+
+        One more thing: while the server listens on a port, the Node process **does not exit**, even though the last line of the module ran long ago. Listening is an open resource, like a timer. `server.close()` stops accepting new connections and waits for the open ones to finish; `server.closeAllConnections()` drops those that are left. When nothing is left, the process exits.
+
+  - id: lifecycle-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Один запит від з’єднання до `server.close()`"
+      en: "One request from connection to `server.close()`"
+    textEquivalent:
+      uk: "Сервер викликає listen(0, '127.0.0.1') і починає слухати вільний порт лише на цьому комп’ютері; відтепер процес не завершується сам. Клієнт відкриває з’єднання й надсилає GET /wishes. Сервер створює об’єкти req і res і викликає обробник. Обробник задає статус 200 і заголовок Content-Type, а перший res.write надсилає клієнтові рядок статусу, заголовки й перший шматок тіла — у цю мить fetch уже має статус. Тіло ще не закінчене: клієнт чекає. Лише res.end() завершує відповідь, і тоді response.text() отримує весь текст. Наостанок server.close() перестає приймати нові з’єднання, відкриті з’єднання закриваються, і процес може завершитися."
+      en: "The server calls listen(0, '127.0.0.1') and starts listening on a free port on this computer only; from now on the process does not exit by itself. The client opens a connection and sends GET /wishes. The server creates the req and res objects and calls the handler. The handler sets status 200 and the Content-Type header, and the first res.write sends the client the status line, the headers and the first piece of the body — at this moment fetch already has the status. The body is not finished yet: the client waits. Only res.end() completes the response, and then response.text() gets the whole text. Finally server.close() stops accepting new connections, the open connections close and the process can exit."
+    spec:
+      actors:
+        - { id: client, label: { uk: "Клієнт (fetch)", en: "Client (fetch)" } }
+        - { id: server, label: "node:http" }
+        - { id: handler, label: { uk: "Обробник", en: "Handler" } }
+      intro:
+        uk: "Троє учасників: клієнт, сервер `node:http` і твій обробник. Кожен рядок — одна подія в часі."
+        en: "Three participants: the client, the `node:http` server and your handler. Each row is one event in time."
+      messages:
+        - from: server
+          to: server
+          kind: note
+          label: "listen(0, '127.0.0.1')"
+          caption:
+            uk: "Сервер слухає вільний порт лише на цьому комп’ютері. Відтепер процес не завершиться сам."
+            en: "The server listens on a free port on this computer only. From now on the process will not exit by itself."
+        - from: client
+          to: server
+          kind: async
+          label: "GET /wishes"
+          note: { uk: "нове з’єднання", en: "a new connection" }
+          caption:
+            uk: "Клієнт відкриває з’єднання й надсилає запит."
+            en: "The client opens a connection and sends the request."
+        - from: server
+          to: handler
+          label: "handler(req, res)"
+          caption:
+            uk: "Сервер створює `req` (метод, адреса, заголовки) і `res` і викликає обробник. Так буде для кожного запиту."
+            en: "The server creates `req` (method, URL, headers) and `res` and calls the handler. This happens for every request."
+        - from: handler
+          to: client
+          kind: async
+          label: "200 + headers"
+          note: { uk: "перший res.write", en: "the first res.write" }
+          caption:
+            uk: "Перший `res.write` надсилає рядок статусу й заголовки. `fetch` уже виконався: статус відомий."
+            en: "The first `res.write` sends the status line and the headers. `fetch` has already resolved: the status is known."
+        - from: handler
+          to: client
+          kind: async
+          label: { uk: "шматок тіла", en: "a piece of the body" }
+          caption:
+            uk: "Шматок тіла прийшов, але відповідь ще не закінчена: `response.text()` чекає далі."
+            en: "A piece of the body has arrived, but the answer is not finished: `response.text()` keeps waiting."
+        - from: handler
+          to: client
+          kind: return
+          label: "res.end()"
+          caption:
+            uk: "`res.end()` завершує відповідь. Лише тепер `response.text()` отримує весь текст."
+            en: "`res.end()` completes the answer. Only now does `response.text()` get the whole text."
+        - from: server
+          to: server
+          kind: note
+          label: "server.close()"
+          caption:
+            uk: "Сервер більше не приймає нових з’єднань, відкриті закриваються — і процес може завершитися."
+            en: "The server accepts no new connections, the open ones close — and the process can exit."
+
+  - id: predict-no-end
+    kind: prediction
+    strings:
+      wish: { uk: "Навушники", en: "Headphones" }
+    prompt:
+      uk: "Обробник задає статус, пише текст через `res.write`, але `res.end()` не викликає. Клієнт чекає щонайбільше 1,5 с. Що станеться на боці клієнта?"
+      en: "The handler sets the status and writes text with `res.write`, but never calls `res.end()`. The client waits 1.5 s at most. What happens on the client side?"
+    code: |
+      const server = http.createServer((req, res) => {
+        res.statusCode = 200;
+        res.write("%%wish%%");
+      });
+      // … server.listen(0, "127.0.0.1") …
+      const response = await fetch(url, { signal: AbortSignal.timeout(1500) });
+      console.log(response.status);
+      console.log(await response.text());
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: status-then-timeout
+          text:
+            uk: "Друкується `200`, а читання тіла через 1,5 с закінчується помилкою `TimeoutError`"
+            en: "`200` is printed, and reading the body ends with a `TimeoutError` after 1.5 s"
+        - id: full-answer
+          text:
+            uk: "Друкується `200` і «%%wish%%»: обробник закінчився, отже, відповідь готова"
+            en: "`200` and “%%wish%%” are printed: the handler finished, so the answer is ready"
+          why:
+            uk: "Кінець функції-обробника для Node нічого не означає. Відповідь закінчує лише `res.end()`; без нього клієнт не знає, чи буде ще текст."
+            en: "The end of the handler function means nothing to Node. Only `res.end()` finishes the answer; without it the client cannot know whether more text is coming."
+        - id: immediate-error
+          text:
+            uk: "`fetch` одразу відхиляється: сервер повідомляє, що відповідь неповна"
+            en: "`fetch` rejects at once: the server reports that the answer is incomplete"
+          why:
+            uk: "Сервер нічого такого не повідомляє — він просто більше нічого не надсилає. Клієнт чекає, доки не спрацює його власний тайм-аут."
+            en: "The server reports nothing of the kind — it simply sends nothing more. The client waits until its own timeout fires."
+        - id: no-status
+          text:
+            uk: "Нічого не друкується: без `res.end()` статус і заголовки не надсилаються, тож `fetch` чекає до тайм-ауту"
+            en: "Nothing is printed: without `res.end()` the status and headers are not sent, so `fetch` waits until the timeout"
+          why:
+            uk: "Перший `res.write` уже надсилає рядок статусу й заголовки. Тож `fetch` виконується зі статусом `200`, а чекати доводиться тілу. Так було б, якби обробник не писав узагалі нічого."
+            en: "The first `res.write` already sends the status line and the headers. So `fetch` resolves with status `200`, and it is the body that keeps waiting. That would happen if the handler wrote nothing at all."
+      correct: [status-then-timeout]
+    explanation:
+      uk: "`fetch` виконується, щойно прийшли статус і заголовки, — їх надіслав перший `res.write`. Тіло ж не закінчене, бо `res.end()` немає, тож `response.text()` чекає й через 1,5 с відхиляється з `TimeoutError`. Сервер при цьому не бачить жодної помилки. Перевір це в прикладі цього уроку."
+      en: "`fetch` resolves as soon as the status and the headers arrive — the first `res.write` sent them. The body is not finished because there is no `res.end()`, so `response.text()` waits and rejects with a `TimeoutError` after 1.5 s. The server sees no error at all. Check it in this lesson’s example."
+
+  - id: predict-stays-alive
+    kind: prediction
+    prompt:
+      uk: "Модуль Node.js створює сервер, викликає `server.listen(4321, \"127.0.0.1\")` і друкує «ready». Більше в модулі нічого немає, запитів ніхто не надсилає. Що буде з процесом після «ready»?"
+      en: "A Node.js module creates a server, calls `server.listen(4321, \"127.0.0.1\")` and prints “ready”. There is nothing else in the module and nobody sends requests. What happens to the process after “ready”?"
+    answer:
+      type: choice
+      options:
+        - id: keeps-running
+          text:
+            uk: "Процес працює далі й чекає на запити, доки його не зупинять або не викличуть `server.close()`"
+            en: "The process keeps running and waits for requests until it is stopped or `server.close()` is called"
+        - id: exits
+          text:
+            uk: "Процес завершується: останній рядок модуля виконано"
+            en: "The process exits: the last line of the module has run"
+          why:
+            uk: "Процес Node живе, доки є відкриті ресурси: таймери, з’єднання, порт, який слухає сервер. Порт відкритий — отже, роботи ще може бути багато."
+            en: "A Node process lives while there are open resources: timers, connections, a port a server listens on. The port is open — so there may be plenty of work left."
+        - id: exits-after-timeout
+          text:
+            uk: "Процес чекає кілька секунд і завершується, бо запитів немає"
+            en: "The process waits a few seconds and exits because there are no requests"
+          why:
+            uk: "Сервер `node:http` не має тайм-ауту простою для слухання: без запитів він чекатиме скільки завгодно."
+            en: "A `node:http` server has no idle timeout for listening: without requests it waits as long as you like."
+      correct: [keeps-running]
+    explanation:
+      uk: "Після останнього рядка модуля Node перевіряє, чи лишилися відкриті ресурси. Сервер, що слухає порт, — такий ресурс, тож процес живе. Щоб він завершився, виклич `server.close()` (і обірви відкриті з’єднання), або зупини процес ззовні — у терміналі це Ctrl+C."
+      en: "After the last line of the module Node checks whether any resources are still open. A server listening on a port is such a resource, so the process lives on. For it to exit, call `server.close()` (and drop the open connections), or stop the process from outside — in a terminal that is Ctrl+C."
+
+  - id: lifecycle
+    kind: example
+    runtime: isolated-node
+    dir: lifecycle
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      serverGot: { uk: "Сервер отримав:", en: "Server got:" }
+      wish: { uk: "Навушники", en: "Headphones" }
+      listening: { uk: "Слухаю", en: "Listening on" }
+      clientStatus: { uk: "Клієнт отримав статус", en: "Client got status" }
+      clientBody: { uk: "Клієнт отримав тіло:", en: "Client got body:" }
+      clientGaveUp: { uk: "Клієнт перестав чекати:", en: "Client stopped waiting:" }
+      closed: { uk: "Сервер закрито", en: "Server closed" }
+    title:
+      uk: "Сервер, запит і зупинка — у справжньому Node.js"
+      en: "A server, a request and a stop — in real Node.js"
+    body:
+      uk: |
+        Цей модуль запускає сервер на вільному порту 127.0.0.1, сам надсилає йому `GET /wishes` через `fetch` і закриває сервер. Порт `0` означає «дай будь-який вільний», а `server.address().port` каже, який саме дісталося.
+
+        Натисни **Запустити**. Подивись, у якому порядку з’являються рядки: сервер отримав запит, клієнт отримав статус — і чекає на тіло, доки не спрацює тайм-аут.
+      en: |
+        This module starts a server on a free 127.0.0.1 port, sends it `GET /wishes` with `fetch` by itself and closes the server. Port `0` means “give me any free one”, and `server.address().port` tells which one it got.
+
+        Press **Run**. Watch the order of the lines: the server got the request, the client got the status — and waits for the body until the timeout fires.
+    tryIt:
+      uk: |
+        1. Прибери `//` перед `res.end();` і запусти знову: тепер клієнт друкує тіло, а рядка про тайм-аут немає.
+        2. Додай `//` перед рядком `res.write(…)` і поверни `//` перед `res.end();`. Тепер обробник не надсилає нічого: рядка зі статусом немає взагалі, бо `fetch` не отримав навіть заголовків. Поверни обидва рядки, з `res.end();` без `//`.
+        3. Видали два рядки з `server.closeAllConnections()` і `server.close(…)` у блоці `finally`. Клієнт отримає відповідь, але програма не завершиться: сервер далі слухає порт. Приблизно через 10 с платформа зупинить процес із повідомленням «Програма працювала довше за 10 с, тому процес зупинено». Поверни ці рядки.
+      en: |
+        1. Remove the `//` before `res.end();` and run again: now the client prints the body, and there is no timeout line.
+        2. Put `//` before the `res.write(…)` line and put the `//` back before `res.end();`. Now the handler sends nothing: there is no status line at all, because `fetch` did not get even the headers. Restore both lines, with `res.end();` without `//`.
+        3. Delete the two lines with `server.closeAllConnections()` and `server.close(…)` in the `finally` block. The client gets its answer, but the program does not end: the server keeps listening on the port. After about 10 s the platform stops the process with the message “The program ran longer than 10 s, so the process was stopped”. Put those lines back.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: закрити на кожному шляху"
+      en: "Recall: close on every path"
+    items:
+      - id: close-every-path
+        from: no-02-06-errors-handle-cleanup
+        prompt:
+          uk: "Функція відкриває файл через `FileHandle`, читає його й може вийти трьома шляхами: успіх, помилка читання, ранній `return`, коли файл порожній. Де має стояти `handle.close()`, щоб файл закрився на кожному з них?"
+          en: "A function opens a file through a `FileHandle`, reads it and can leave by three paths: success, a read error, an early `return` when the file is empty. Where must `handle.close()` go so the file is closed on each of them?"
+        answer:
+          type: choice
+          options:
+            - id: finally
+              text:
+                uk: "У блоці `finally` після `try`, який охоплює все, що йде після відкриття"
+                en: "In a `finally` block after a `try` that covers everything after opening"
+            - id: after-read
+              text:
+                uk: "Останнім рядком функції, після читання"
+                en: "As the last line of the function, after the read"
+              why:
+                uk: "До останнього рядка не дійдуть ні ранній `return`, ні помилка — на цих шляхах файл лишиться відкритим."
+                en: "Neither the early `return` nor the error reaches the last line — on those paths the file stays open."
+            - id: catch
+              text:
+                uk: "У блоці `catch`"
+                en: "In the `catch` block"
+              why:
+                uk: "`catch` виконується лише після помилки. Успіх і ранній `return` пройдуть повз нього."
+                en: "`catch` runs only after an error. Success and the early `return` go past it."
+          correct: [finally]
+        explanation:
+          uk: "`finally` виконується після `try` за будь-якого виходу: звичайного кінця, `return` чи кинутої помилки. Сервер — такий самий відкритий ресурс, тому приклад цього уроку закриває його в `finally`: навіть коли клієнт не дочекався відповіді, програма завершується."
+          en: "`finally` runs after `try` whatever the exit: the normal end, a `return` or a thrown error. A server is the same kind of open resource, so this lesson’s example closes it in `finally`: even when the client did not get its answer, the program ends."
+
+  - id: method-url-server
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: method-url-server
+    entry: index.js
+    editable: [app.js]
+    capabilities: { network: loopback }
+    strings:
+      notListening: { uk: "Сервер не слухає: startServer ще не викликає listen().", en: "The server is not listening: startServer does not call listen() yet." }
+      gaveUp: { uk: "Клієнт перестав чекати:", en: "Client stopped waiting:" }
+    title:
+      uk: "Сервер, що називає метод і адресу"
+      en: "A server that names the method and the URL"
+    instructions:
+      uk: |
+        Допиши `startServer(config)` у `app.js`. Сервер відповідає на **будь-який** запит:
+
+        - статусом 200;
+        - заголовком `Content-Type` зі значенням `text/plain; charset=utf-8`;
+        - текстом із методу, пробілу й адреси запиту разом із query, наприклад `GET /records?sort=name`.
+
+        Сервер слухає порт `config.port` на адресі `config.host`, а проміс, який повертає `startServer`, виконується із самим сервером, коли той уже слухає.
+
+        Файл `config.js` — готовий `loadConfig`: він перетворює рядки на кшталт `process.env` на `{ host, port }`. Драйвер `index.js` просить у нього порт `0` (будь-який вільний), запускає твій сервер, надсилає `GET /records?sort=name` і `POST /records` і закриває сервер. **Перевірити** запускає сервер із різними `config` і надсилає йому справжні HTTP-запити, на кожен чекаючи щонайбільше 1 с. Сервер без адреси в `listen(port)` платформа не запустить: вона просить явну адресу 127.0.0.1.
+      en: |
+        Finish `startServer(config)` in `app.js`. The server answers **any** request with:
+
+        - status 200;
+        - the `Content-Type` header with the value `text/plain; charset=utf-8`;
+        - text made of the method, a space and the request URL including its query, for example `GET /records?sort=name`.
+
+        The server listens on port `config.port` at the address `config.host`, and the promise `startServer` returns resolves with the server itself once it is listening.
+
+        `config.js` is a ready-made `loadConfig`: it turns `process.env`-like strings into `{ host, port }`. The driver `index.js` asks it for port `0` (any free port), starts your server, sends `GET /records?sort=name` and `POST /records` and closes the server. **Check** starts the server with different `config` values and sends it real HTTP requests, waiting at most 1 s for each. The platform will not start a server with no address in `listen(port)`: it asks for the explicit address 127.0.0.1.
+    testTitles:
+      "answers with its method and URL as plain text":
+        uk: "Відповідає 200 і текстом «метод адреса», наприклад `GET /records?sort=name`"
+        en: "Answers 200 with the text “method URL”, for example `GET /records?sort=name`"
+      "says the answer is plain text":
+        uk: "Позначає відповідь як простий текст (`Content-Type: text/plain`)"
+        en: "Labels the answer as plain text (`Content-Type: text/plain`)"
+      "listens on the port and the host from config":
+        uk: "Слухає порт і адресу з `config`"
+        en: "Listens on the port and the host from `config`"
+    hints:
+      nudge:
+        uk: "Обробник отримує все потрібне в `req`, а відповідь будується через `res`. Що із цього закінчує відповідь?"
+        en: "The handler gets everything it needs in `req`, and the answer is built through `res`. Which of these finishes the answer?"
+      explanation:
+        uk: "Метод лежить у `req.method`, адреса з query — у `req.url`. Статус задає `res.statusCode`, заголовок — `res.setHeader(назва, значення)`, а `res.end(текст)` надсилає останній шматок тіла й завершує відповідь (`return` з обробника нічого не надсилає). Щоб дочекатися слухання, загорни `listen` у проміс: `listen(порт, адреса, колбек)` викликає колбек, коли порт відкрито, — так само, як `setTimeout` викликає свій колбек пізніше."
+        en: "The method is in `req.method`, the URL with its query in `req.url`. `res.statusCode` sets the status, `res.setHeader(name, value)` a header, and `res.end(text)` sends the last piece of the body and finishes the answer (`return` from the handler sends nothing). To wait for listening, wrap `listen` in a promise: `listen(port, address, callback)` calls the callback once the port is open — just as `setTimeout` calls its callback later."
+    solutionNote:
+      uk: "Обробник задає статус і `Content-Type` і закінчує відповідь через `res.end(\\`${req.method} ${req.url}\\`)`. `listen(config.port, config.host, колбек)` викликає колбек, коли порт відкрито, — там проміс і виконується із сервером. Порт `0` з драйвера дає будь-який вільний порт, а Перевірка передає конкретний."
+      en: "The handler sets the status and the `Content-Type` and finishes the answer with `res.end(\\`${req.method} ${req.url}\\`)`. `listen(config.port, config.host, callback)` calls the callback once the port is open — that is where the promise resolves with the server. Port `0` from the driver gives any free port, while Check passes a specific one."
+    feedback:
+      - when: { test: "answers with its method and URL as plain text" }
+        message:
+          uk: "Ця перевірка надсилає `GET /records?sort=name` і `POST /habits/h-02` і чекає статус 200 і рівно текст `GET /records?sort=name` (метод, пробіл і `req.url` разом із query). Текст має потрапити в `res.end(…)`: те, що обробник повертає, клієнт не отримує. Якщо перевірка повідомляє про тайм-аут, відповідь не було завершено."
+          en: "This check sends `GET /records?sort=name` and `POST /habits/h-02` and expects status 200 and exactly the text `GET /records?sort=name` (the method, a space and `req.url` including its query). The text has to go into `res.end(…)`: what the handler returns never reaches the client. If the check reports a timeout, the answer was never finished."
+      - when: { test: "says the answer is plain text" }
+        message:
+          uk: "Ця перевірка читає заголовок `Content-Type` відповіді й чекає значення, що починається з `text/plain`. Задай його через `res.setHeader` (або `res.writeHead`) до того, як надсилаєш тіло."
+          en: "This check reads the answer’s `Content-Type` header and expects a value starting with `text/plain`. Set it with `res.setHeader` (or `res.writeHead`) before you send the body."
+      - when: { test: "listens on the port and the host from config" }
+        message:
+          uk: "Ця перевірка передає в `config.port` конкретний вільний порт і чекає, що сервер слухатиме саме його на адресі `config.host` (127.0.0.1). Якщо ти взяв `listen(0, …)` із прикладу, бери порт і адресу з `config`."
+          en: "This check passes a specific free port in `config.port` and expects the server to listen on exactly that port at the address `config.host` (127.0.0.1). If you took `listen(0, …)` from the example, take the port and the address from `config` instead."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-03
+    body:
+      uk: "У кроці проєкту цього розділу в `server/src/server.ts` з’явиться справжній сервер для твоїх записів. Він стартує так само: `createRecordsServer(repository, log)` створює `http.Server` з одним обробником, `npm start` слухає на `127.0.0.1` і порті з `loadConfig` (типово `4311`), а відповідає сервер лише тому, що кожна гілка обробника закінчується `sendJson`, яка викликає `res.end()`."
+      en: "In this unit’s project step a real server for your records appears in `server/src/server.ts`. It starts the same way: `createRecordsServer(repository, log)` creates an `http.Server` with one handler, `npm start` listens on `127.0.0.1` and the port from `loadConfig` (`4311` by default), and the server answers only because every branch of the handler ends with `sendJson`, which calls `res.end()`."

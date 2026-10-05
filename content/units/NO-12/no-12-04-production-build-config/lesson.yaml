@@ -1,0 +1,361 @@
+id: no-12-04-production-build-config
+unit: NO-12
+title:
+  uk: "Production-збірка, конфігурація та env"
+  en: "Production build, config and env"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Збирати сервер у придатний до запуску артефакт і запускати його з production-конфігурацією, взятою лише зі змінних середовища та явних значень за замовчуванням."
+    en: "Build the server into a runnable artifact and start it with production configuration taken only from environment variables and explicit defaults."
+  - uk: "Перевіряти конфігурацію під час запуску й відмовлятися стартувати через відсутнє чи неправильне значення, а не падати на першому запиті."
+    en: "Validate configuration at startup and refuse to start on a missing or invalid value instead of failing on the first request."
+prerequisites: [no-12-03-typed-contracts-tests, re-12-01-production-build-env]
+subskills:
+  - { family: B-10, skill: "production build/config/env", depth: intro }
+glossary: [node-env]
+selfCheck: [predict-three-starts, load-config]
+
+blocks:
+  - id: server-artifact
+    kind: explanation
+    title:
+      uk: "Що таке збірка сервера"
+      en: "What building a server means"
+    body:
+      uk: |
+        У RE-12 [[production-build]] клієнта — це тека `dist` для браузера. Сервер на Node теж збирають, хоча й з інших причин:
+
+        - вихідні файли — TypeScript (`src/*.ts`), а збірка дає звичайний JavaScript (тут — у теці `release/`). Такий [[build-artifact|артефакт]] запускається командою `node release/server.js` на будь-якому Node від 22.13, без вилучення типів і без dev-залежностей;
+        - разом із кодом іде запис про збірку (`build-info.json`: назва, версія, Node), щоб на будь-якій машині було видно, **що саме** запущено.
+
+        А що з `NODE_ENV=production`? Сам Node.js цю змінну не читає — документація Node прямо каже, що різниці між «development» і «production» у Node немає. [[node-env|`NODE_ENV`]] — домовленість: її читають бібліотеки (Express, наприклад, кешує шаблони) і npm (`npm install` за `NODE_ENV=production` типово не ставить devDependencies). Та сама сторінка документації радить запускати Node з `NODE_ENV=production` і не робити так, щоб твій код поводився інакше залежно від цієї змінної: тоді тести перевіряють не той код, що працює в production. Production-готовим сервер роблять перевірена збірка, правильна конфігурація, health-перевірки й коректне завершення — це наступні уроки.
+
+        Джерела: [Node.js — the difference between development and production](https://nodejs.org/en/learn/getting-started/nodejs-the-difference-between-development-and-production), [npm config `omit`](https://docs.npmjs.com/cli/v10/using-npm/config#omit), [Express: set NODE_ENV to “production”](https://expressjs.com/en/advanced/best-practice-performance.html#set-node_env-to-production).
+      en: |
+        In RE-12 the client’s [[production-build]] is the `dist` folder for the browser. A Node server is built too, although for other reasons:
+
+        - the source files are TypeScript (`src/*.ts`), and the build produces plain JavaScript (here in the folder `release/`). Such an [[build-artifact|artifact]] starts with `node release/server.js` on any Node from 22.13, with no type stripping and no dev dependencies;
+        - a record of the build goes with the code (`build-info.json`: name, version, Node), so that on any machine you can see **what exactly** is running.
+
+        And what about `NODE_ENV=production`? Node.js itself does not read this variable — the Node documentation says outright that there is no difference between “development” and “production” in Node. [[node-env|`NODE_ENV`]] is a convention: libraries read it (Express, for example, caches templates) and so does npm (`npm install` with `NODE_ENV=production` skips devDependencies by default). The same documentation page advises running Node with `NODE_ENV=production` and not making your own code behave differently depending on this variable: otherwise the tests check different code from what runs in production. What makes a server production-ready is a verified build, correct configuration, health checks and a graceful shutdown — the next lessons.
+
+        Sources: [Node.js — the difference between development and production](https://nodejs.org/en/learn/getting-started/nodejs-the-difference-between-development-and-production), [npm config `omit`](https://docs.npmjs.com/cli/v10/using-npm/config#omit), [Express: set NODE_ENV to “production”](https://expressjs.com/en/advanced/best-practice-performance.html#set-node_env-to-production).
+
+  - id: config-boundary
+    kind: explanation
+    title:
+      uk: "Конфігурацію читають один раз — на вході"
+      en: "Configuration is read once — at the entrance"
+    body:
+      uk: |
+        Найпростіше — читати `process.env.DATA_DIR` там, де він потрібен. Але тоді:
+
+        - помилка в значенні проявиться не під час запуску, а на першому запиті, що дійде до цього рядка, — можливо, за годину й у користувача;
+        - щоб дізнатися, які змінні потрібні сервісу, доведеться перечитати весь код;
+        - тест не може передати сервісу іншу конфігурацію, не змінюючи глобальний `process.env`.
+
+        Тому `process.env` читають **один раз**, у `loadConfig(process.env)` на самому початку запуску. Вона перевіряє **всі** змінні разом (як [[fail-fast]] у NO-01), повертає заморожений об’єкт `config` і лише потім сервер викликає `listen()`. Решта коду отримує `config` аргументом і `process.env` не бачить.
+
+        Для production-сервісу варто перевіряти й безпеку: `HOST` цього сервісу — лише loopback (`127.0.0.1` або `::1`), а шлях до даних — абсолютний, щоб не залежати від того, з якої теки запустили процес.
+      en: |
+        The simplest way is to read `process.env.DATA_DIR` where it is needed. But then:
+
+        - a wrong value shows up not at startup but at the first request that reaches that line — maybe in an hour, and for a user;
+        - to find out which variables the service needs, you have to reread the whole code;
+        - a test cannot give the service another configuration without changing the global `process.env`.
+
+        So `process.env` is read **once**, in `loadConfig(process.env)` at the very start. It checks **every** variable together (like [[fail-fast]] in NO-01), returns a frozen `config` object, and only then does the server call `listen()`. The rest of the code receives `config` as an argument and never sees `process.env`.
+
+        For a production service also check safety: this service’s `HOST` is loopback only (`127.0.0.1` or `::1`), and the data path is absolute, so it does not depend on the folder the process was started from.
+
+  - id: config-flow
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Від src до артефакту й від env до config"
+      en: "From src to the artifact and from env to config"
+    textEquivalent:
+      uk: "Вихідні файли src/*.ts проходять крок збірки й стають артефактом release/ зі звичайним JavaScript і build-info.json. Під час запуску змінні середовища PORT, HOST, DATA_DIR і NODE_ENV потрапляють в одну функцію loadConfig. Якщо всі значення правильні, вона повертає заморожений config, і лише тоді сервер викликає listen(). Якщо PORT дорівнює abc або DATA_DIR немає, loadConfig кидає одну помилку з переліком усіх проблем, процес завершується з ненульовим кодом, і listen() не викликається взагалі."
+      en: "The source files src/*.ts go through the build step and become the release/ artifact with plain JavaScript and build-info.json. At startup the environment variables PORT, HOST, DATA_DIR and NODE_ENV flow into one function, loadConfig. If every value is valid, it returns a frozen config, and only then does the server call listen(). If PORT is abc or DATA_DIR is missing, loadConfig throws one error listing every problem, the process ends with a non-zero code, and listen() is never called."
+    spec:
+      layout: grid
+      nodes:
+        - { id: src, label: "src/*.ts", shape: note, w: 140, col: 0, row: 0 }
+        - { id: build, label: { uk: "збірка", en: "build" }, shape: pill, w: 140, col: 0, row: 1 }
+        - { id: release, label: "release/", shape: cylinder, w: 160, col: 0, row: 2 }
+        - { id: env, label: "PORT HOST DATA_DIR", shape: note, w: 170, col: 1, row: 0 }
+        - { id: load, label: "loadConfig(env)", w: 170, col: 1, row: 1 }
+        - { id: config, label: { uk: "config (заморожений)", en: "config (frozen)" }, w: 170, col: 1, row: 2 }
+        - { id: listen, label: "listen()", shape: pill, w: 170, col: 1, row: 3 }
+        - { id: refuse, label: { uk: "вихід, код 1", en: "exit, code 1" }, shape: note, w: 140, col: 0, row: 3 }
+      edges:
+        - { id: s1, from: src, to: build }
+        - { id: s2, from: build, to: release }
+        - { id: e1, from: env, to: load }
+        - { id: e2, from: load, to: config, label: { uk: "усе правильно", en: "all valid" } }
+        - { id: e3, from: config, to: listen }
+        - { id: bad, from: load, to: refuse, kind: dashed, label: "PORT=abc" }
+      hidden: [refuse, bad]
+      steps:
+        - caption:
+            uk: "Збірка перетворює `src/*.ts` на звичайний JavaScript у `release/` і додає `build-info.json`. Саме цю теку запускають і переносять."
+            en: "The build turns `src/*.ts` into plain JavaScript in `release/` and adds `build-info.json`. This folder is what gets started and moved around."
+          highlight: [src, build, release, s1, s2]
+        - caption:
+            uk: "Під час запуску змінні середовища потрапляють в **одне** місце — `loadConfig`. Більше ніхто в коді `process.env` не читає."
+            en: "At startup the environment variables reach **one** place — `loadConfig`. Nobody else in the code reads `process.env`."
+          highlight: [env, load, e1]
+        - caption:
+            uk: "Усе правильно: `loadConfig` повертає заморожений `config`, і лише тепер сервер викликає `listen()`."
+            en: "Everything is valid: `loadConfig` returns a frozen `config`, and only now does the server call `listen()`."
+          highlight: [load, config, listen, e2, e3]
+        - caption:
+            uk: "`PORT=abc` і немає `DATA_DIR`: `loadConfig` кидає одну помилку з обома проблемами, процес виходить із кодом 1, а `listen()` не викликається зовсім — жоден запит не встигне впасти."
+            en: "`PORT=abc` and no `DATA_DIR`: `loadConfig` throws one error with both problems, the process exits with code 1, and `listen()` is never called — no request gets the chance to fail."
+          show: [refuse, bad]
+          highlight: [load, refuse, bad]
+          dim: [config, listen, e2, e3]
+
+  - id: predict-three-starts
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Зібраний сервіс планувальника читає `process.env` там, де значення потрібне: `Number(process.env.PORT ?? 7372)` перед `listen()` і `path.join(process.env.DATA_DIR, 'tasks.json')` в обробнику запиту. Його запускають тричі: (1) з `PORT=abc`, (2) без `DATA_DIR`, (3) без `NODE_ENV`. Що правда? Обери все правильне."
+      en: "The built planner service reads `process.env` where a value is needed: `Number(process.env.PORT ?? 7372)` before `listen()` and `path.join(process.env.DATA_DIR, 'tasks.json')` in the request handler. It is started three times: (1) with `PORT=abc`, (2) without `DATA_DIR`, (3) without `NODE_ENV`. What is true? Pick everything that is."
+    answer:
+      type: multi
+      options:
+        - id: port-fails-at-start
+          text:
+            uk: "(1) не стартує: `listen()` кидає `RangeError` про порт `NaN`"
+            en: "(1) does not start: `listen()` throws a `RangeError` about the port `NaN`"
+        - id: data-dir-fails-later
+          text:
+            uk: "(2) стартує, а перший запит `GET /tasks` отримує 500"
+            en: "(2) starts, and the first request `GET /tasks` gets 500"
+        - id: node-env-nothing
+          text:
+            uk: "(3) працює так само, як із `NODE_ENV=production`"
+            en: "(3) works exactly as with `NODE_ENV=production`"
+        - id: data-dir-fails-at-start
+          text:
+            uk: "(2) не стартує: Node перевіряє змінні середовища під час запуску"
+            en: "(2) does not start: Node checks environment variables at startup"
+          why:
+            uk: "Node не знає, які змінні потрібні твоєму коду. Відсутній `DATA_DIR` — це просто `undefined`, і помилка з’явиться лише тоді, коли обробник викличе `path.join(undefined, …)`, тобто на першому запиті."
+            en: "Node does not know which variables your code needs. A missing `DATA_DIR` is just `undefined`, and the error appears only when the handler calls `path.join(undefined, …)`, that is, on the first request."
+        - id: node-env-dev-mode
+          text:
+            uk: "(3) запускає сервер у повільному режимі розробки"
+            en: "(3) starts the server in a slow development mode"
+          why:
+            uk: "У Node немає «режиму розробки»: він сам `NODE_ENV` не читає. Значення має лише для коду й бібліотек, які його перевіряють, — у цьому сервісі таких немає."
+            en: "Node has no “development mode”: it does not read `NODE_ENV` itself. The value matters only to code and libraries that check it — this service has none."
+      correct: [port-fails-at-start, data-dir-fails-later, node-env-nothing]
+    explanation:
+      uk: "Ці три запуски легко відтворити зі зібраним артефактом. На Node v25.2.1 і v22.23.3 `listen(NaN)` кидає `RangeError [ERR_SOCKET_BAD_PORT]`, а `path.join(undefined, …)` — `TypeError [ERR_INVALID_ARG_TYPE]`, але лише в обробнику. Небезпечний випадок — другий: сервер виглядає здоровим, доки не прийде запит."
+      en: "These three starts are easy to reproduce with the built artifact. On Node v25.2.1 and v22.23.3 `listen(NaN)` throws `RangeError [ERR_SOCKET_BAD_PORT]`, and `path.join(undefined, …)` throws `TypeError [ERR_INVALID_ARG_TYPE]`, but only in the handler. The dangerous case is the second one: the server looks healthy until a request arrives."
+
+  - id: planner-build
+    kind: example
+    runtime: isolated-node
+    dir: planner-build
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      notStarted: { uk: "не стартував", en: "did not start" }
+      listening: { uk: "слухає", en: "listening" }
+    title:
+      uk: "Збірка й три запуски артефакту"
+      en: "A build and three starts of the artifact"
+    body:
+      uk: |
+        Натисни **Запустити**. `build.js` вилучає типи з `src/*.ts` (функцією `stripTypeScriptTypes` з `node:module`, вона є з Node 22.13) і пише звичайний JavaScript у `release/` разом із `build-info.json`. Документація Node 22 позначає цю функцію як ще не стабільну (Stability 1.2, release candidate). Пісочниця платформи ховає такі попередження, а в терміналі той самий `build.js` друкує червоний рядок `ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time` — це попередження, не помилка (так на v25.2.1 і v22.13.1). Потім `index.js` тричі запускає **артефакт** — `release/server.js`, а не `src`.
+
+        Пісочниця курсу дає процесу порожнє середовище, тож `index.js` перед кожним запуском сам заповнює `process.env`. У терміналі це робить оболонка: `PORT=abc node release/server.js`. `PORT=0` просить у системи вільний порт.
+      en: |
+        Press **Run**. `build.js` strips the types from `src/*.ts` (with the function `stripTypeScriptTypes` from `node:module`, available from Node 22.13) and writes plain JavaScript into `release/` together with `build-info.json`. The Node 22 documentation marks this function as not stable yet (Stability 1.2, release candidate). The platform’s sandbox hides such warnings, while in a terminal the same `build.js` prints a red line `ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time` — a warning, not an error (so on v25.2.1 and v22.13.1). Then `index.js` starts the **artifact** three times — `release/server.js`, not `src`.
+
+        The course sandbox gives the process an empty environment, so `index.js` fills in `process.env` itself before each start. In a terminal the shell does it: `PORT=abc node release/server.js`. `PORT=0` asks the system for a free port.
+    tryIt:
+      uk: |
+        1. Подивись на вивід: перший запуск не стартував (`RangeError`), другий слухає, але `GET /tasks` дає 500 (у консолі червоний рядок `500: The "path" argument must be of type string. Received undefined`), третій відповідає 200.
+        2. Додай першим рядком функції `start()` у `src/server.ts` перевірку `if (!process.env.DATA_DIR) throw new Error('DATA_DIR is required');` і запусти. Збірка запускається щоразу, тож артефакт уже з новим рядком: другий запуск тепер не стартує з `Error DATA_DIR is required` — помилку видно під час запуску, а не на першому запиті. Повноцінну перевірку всіх змінних ти напишеш у вправі.
+        3. Порівняй рядки `src/server.ts` і `release/server.js` (у пісочниці файл з’являється лише під час запуску, тож надрукуй його: додай у кінець `index.js` рядок `console.log((await import('node:fs')).readFileSync('release/server.js', 'utf8'))`). Типи замінено пробілами, тож номери рядків і колонок у стеках помилок артефакту збігаються з `src`.
+      en: |
+        1. Look at the output: the first start did not start (`RangeError`), the second is listening but `GET /tasks` gives 500 (the console shows a red line `500: The "path" argument must be of type string. Received undefined`), the third answers 200.
+        2. Add as the first line of the function `start()` in `src/server.ts` the check `if (!process.env.DATA_DIR) throw new Error('DATA_DIR is required');` and run. The build runs every time, so the artifact already has the new line: the second start now does not start, with `Error DATA_DIR is required` — the error shows at startup, not on the first request. You write a complete check of every variable in the exercise.
+        3. Compare the lines of `src/server.ts` and `release/server.js` (in the sandbox the file appears only during a run, so print it: add the line `console.log((await import('node:fs')).readFileSync('release/server.js', 'utf8'))` at the end of `index.js`). The types are replaced with spaces, so line and column numbers in the artifact’s stack traces match `src`.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: що потрапляє в збірку і що дає процес"
+      en: "Recall: what reaches a build and what a process receives"
+    items:
+      - id: client-env
+        from: re-12-01-production-build-env
+        prompt:
+          uk: "У `.env` клієнта на Vite є рядки `VITE_API_URL=http://127.0.0.1:7372` і `DB_PASSWORD=…`, і код клієнта читає обидва через `import.meta.env`. Що з них опиниться в зібраному JS?"
+          en: "A Vite client’s `.env` has the lines `VITE_API_URL=http://127.0.0.1:7372` and `DB_PASSWORD=…`, and the client code reads both through `import.meta.env`. Which of them ends up in the built JS?"
+        answer:
+          type: choice
+          options:
+            - id: only-vite
+              text:
+                uk: "Лише `VITE_API_URL` — і його побачить будь-хто в DevTools"
+                en: "Only `VITE_API_URL` — and anyone can see it in DevTools"
+            - id: both
+              text:
+                uk: "Обидва: збірка бере весь `.env`"
+                en: "Both: the build takes the whole `.env`"
+              why:
+                uk: "Vite вписує в збірку лише значення з префіксом `VITE_`, які код читає; `import.meta.env.DB_PASSWORD` стає `undefined`. А справжньому паролю в клієнтському коді не місце взагалі — він живе на сервері."
+                en: "Vite writes into the build only `VITE_`-prefixed values the code reads; `import.meta.env.DB_PASSWORD` becomes `undefined`. And a real password does not belong in client code at all — it lives on the server."
+            - id: none
+              text:
+                uk: "Жодне: `.env` читається лише під час запуску"
+                en: "Neither: `.env` is read only at run time"
+              why:
+                uk: "Для клієнта навпаки: значення `VITE_` вписуються в текст JS **під час збірки**. Сервер на Node, навпаки, читає змінні під час запуску, з `process.env`."
+                en: "For a client it is the opposite: `VITE_` values are written into the JS text **at build time**. A Node server, on the contrary, reads its variables at run time, from `process.env`."
+          correct: [only-vite]
+        explanation:
+          uk: "Клієнтська збірка «запікає» вибрані значення в публічні файли, тож секретів там бути не може. Серверний артефакт значень у собі не несе: ті самі файли запускаються з різними `PORT` і `DATA_DIR`, а секрети живуть у середовищі процесу."
+          en: "A client build “bakes” selected values into public files, so there can be no secrets there. A server artifact carries no values: the same files start with different `PORT` and `DATA_DIR`, and secrets live in the process environment."
+      - id: env-is-text
+        from: no-01-02-scripts-process-env
+        prompt:
+          uk: "Сервер запустили командою `PORT=8080 node release/server.js`. Що поверне `typeof process.env.PORT`?"
+          en: "A server was started with `PORT=8080 node release/server.js`. What does `typeof process.env.PORT` return?"
+        answer:
+          type: text
+          accept: ["string", "\"string\"", "'string'"]
+          placeholder: { uk: "тип", en: "type" }
+        explanation:
+          uk: "`\"string\"`: кожне значення в `process.env` — текст. Тому `loadConfig` перетворює `PORT` на число й перевіряє його, а не довіряє тексту."
+          en: "`\"string\"`: every value in `process.env` is text. That is why `loadConfig` turns `PORT` into a number and checks it instead of trusting the text."
+
+  - id: load-config
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: load-config
+    entry: index.js
+    editable: [config.js]
+    strings:
+      wouldListen: { uk: "Сервер слухав би на", en: "The server would listen on" }
+      refused: { uk: "Сервер відмовився стартувати:", en: "The server refused to start:" }
+    title:
+      uk: "loadConfig для production-запуску"
+      en: "loadConfig for a production start"
+    instructions:
+      uk: |
+        У `config.js` напиши `loadConfig(env)` для сервісу планувальника. Вона читає **лише** переданий об’єкт `env` (не `process.env`) і перевіряє п’ять змінних:
+
+        | Змінна | За замовчуванням | Правило |
+        |---|---|---|
+        | `PORT` | `7372` | лише цифри, ціле від 1 до 65535 → число |
+        | `HOST` | `127.0.0.1` | лише `127.0.0.1` або `::1` |
+        | `DATA_DIR` | — (обов’язкова) | непорожній **абсолютний** шлях |
+        | `NODE_ENV` | `development` | `production`, `development` або `test` |
+        | `LOG_LEVEL` | `info` | `error`, `warn`, `info` або `debug` |
+
+        - Усе правильно → повертає **заморожений** (`Object.freeze`) об’єкт `{ port, host, dataDir, nodeEnv, logLevel }`. Інші змінні в `env` ігноруються.
+        - Щось неправильно → кидає **одну** помилку, у тексті якої названо **кожну** неправильну змінну.
+      en: |
+        In `config.js`, write `loadConfig(env)` for the planner service. It reads **only** the given `env` object (not `process.env`) and checks five variables:
+
+        | Variable | Default | Rule |
+        |---|---|---|
+        | `PORT` | `7372` | digits only, a whole number from 1 to 65535 → a number |
+        | `HOST` | `127.0.0.1` | only `127.0.0.1` or `::1` |
+        | `DATA_DIR` | — (required) | a non-empty **absolute** path |
+        | `NODE_ENV` | `development` | `production`, `development` or `test` |
+        | `LOG_LEVEL` | `info` | `error`, `warn`, `info` or `debug` |
+
+        - Everything is valid → returns a **frozen** (`Object.freeze`) object `{ port, host, dataDir, nodeEnv, logLevel }`. Other variables in `env` are ignored.
+        - Something is invalid → throws **one** error whose text names **every** invalid variable.
+    testTitles:
+      "reads every value from the env object it is given":
+        uk: "Читає кожне значення з переданого об’єкта `env`"
+        en: "Reads every value from the `env` object it is given"
+      "uses the defaults for PORT, HOST, NODE_ENV and LOG_LEVEL":
+        uk: "Бере значення за замовчуванням для `PORT`, `HOST`, `NODE_ENV` і `LOG_LEVEL`"
+        en: "Uses the defaults for `PORT`, `HOST`, `NODE_ENV` and `LOG_LEVEL`"
+      "returns a frozen object":
+        uk: "Повертає заморожений об’єкт"
+        en: "Returns a frozen object"
+      "PORT must be a whole number from 1 to 65535":
+        uk: "`PORT` — ціле число від 1 до 65535"
+        en: "`PORT` must be a whole number from 1 to 65535"
+      "HOST must be a loopback address":
+        uk: "`HOST` — лише loopback-адреса"
+        en: "`HOST` must be a loopback address"
+      "DATA_DIR is required and absolute":
+        uk: "`DATA_DIR` обов’язковий і абсолютний"
+        en: "`DATA_DIR` is required and absolute"
+      "NODE_ENV and LOG_LEVEL accept only their listed values":
+        uk: "`NODE_ENV` і `LOG_LEVEL` приймають лише перелічені значення"
+        en: "`NODE_ENV` and `LOG_LEVEL` accept only their listed values"
+      "one error lists every invalid variable":
+        uk: "Одна помилка називає кожну неправильну змінну"
+        en: "One error lists every invalid variable"
+      "process.env is not read":
+        uk: "`process.env` не читається"
+        en: "`process.env` is not read"
+    hints:
+      nudge:
+        uk: "Заведи масив `problems`. Для кожної змінної: візьми значення або значення за замовчуванням (`??`), перевір правило й за порушення додай текст із назвою змінної. Кидай лише в кінці, якщо масив не порожній."
+        en: "Start an array `problems`. For each variable: take the value or the default (`??`), check the rule and on a violation add a text with the variable’s name. Throw only at the end, if the array is not empty."
+      explanation:
+        uk: "Та сама схема на іншій змінній — `MAX_ITEMS` від 1 до 500 за замовчуванням 100: `const text = env.MAX_ITEMS ?? '100'; const value = Number(text); if (!/^\\d+$/.test(text) || value < 1 || value > 500) problems.push('MAX_ITEMS …')`. Регулярний вираз потрібен, бо `Number('1e3')` — це 1000, а `Number('')` — 0. Для шляху є `path.isAbsolute(text)` з `node:path`. Нарешті `Object.freeze({ … })`: у модулі (а модулі завжди працюють у strict-режимі) спроба змінити такий об’єкт кидає `TypeError`."
+        en: "The same pattern on another variable — `MAX_ITEMS` from 1 to 500 with a default of 100: `const text = env.MAX_ITEMS ?? '100'; const value = Number(text); if (!/^\\d+$/.test(text) || value < 1 || value > 500) problems.push('MAX_ITEMS …')`. The regular expression is needed because `Number('1e3')` is 1000 and `Number('')` is 0. For a path there is `path.isAbsolute(text)` from `node:path`. Finally `Object.freeze({ … })`: in a module (and modules always run in strict mode) an attempt to change such an object throws a `TypeError`."
+    solutionNote:
+      uk: "Сервіс тепер починається так: `const config = loadConfig(process.env);` — і лише потім `listen(config.port, config.host)`. Якщо `loadConfig` кидає, сервер друкує повідомлення в stderr і виходить із кодом 1, тож помилку конфігурації видно одразу під час запуску й в одному місці. Порівняно з NO-01 тут дві нові ідеї: заморожений результат (ніхто випадково не змінить конфігурацію під час роботи) і правила безпеки (`HOST` лише loopback, абсолютний `DATA_DIR`). Зверни увагу: `nodeEnv` перевірено, але сам сервіс за ним поводиться однаково — так радить документація Node.js. Варіант, що описує кожну змінну правилом у масиві, теж правильний."
+      en: "The service now starts like this: `const config = loadConfig(process.env);` — and only then `listen(config.port, config.host)`. If `loadConfig` throws, the server prints the message to stderr and exits with code 1, so a configuration error is visible right at startup and in one place. Compared with NO-01 there are two new ideas here: a frozen result (nobody changes the configuration by accident while running) and safety rules (`HOST` loopback only, an absolute `DATA_DIR`). Note that `nodeEnv` is checked, but the service itself behaves the same whatever it is — as the Node.js documentation advises. A version that describes every variable as a rule in an array is correct too."
+    feedback:
+      - when: { test: "reads every value from the env object it is given" }
+        message:
+          uk: "Ця перевірка передає всі п’ять змінних і ще `EDITOR: 'vim'` та очікує рівно `{ port: 8081, host: '::1', dataDir, nodeEnv: 'test', logLevel: 'warn' }`: `port` — число, не текст, а зайвих полів (як `EDITOR`) у результаті немає."
+          en: "This check passes all five variables plus `EDITOR: 'vim'` and expects exactly `{ port: 8081, host: '::1', dataDir, nodeEnv: 'test', logLevel: 'warn' }`: `port` is a number, not text, and the result has no extra fields (such as `EDITOR`)."
+      - when: { test: "uses the defaults for PORT, HOST, NODE_ENV and LOG_LEVEL" }
+        message:
+          uk: "Ця перевірка передає лише `DATA_DIR` і очікує `{ port: 7372, host: '127.0.0.1', dataDir, nodeEnv: 'development', logLevel: 'info' }`. `port` має бути числом, не текстом."
+          en: "This check passes only `DATA_DIR` and expects `{ port: 7372, host: '127.0.0.1', dataDir, nodeEnv: 'development', logLevel: 'info' }`. `port` must be a number, not text."
+      - when: { test: "returns a frozen object" }
+        message:
+          uk: "Ця перевірка очікує, що `Object.isFrozen(config)` дорівнює `true`. Поверни `Object.freeze({ … })`."
+          en: "This check expects `Object.isFrozen(config)` to be `true`. Return `Object.freeze({ … })`."
+      - when: { test: "PORT must be a whole number from 1 to 65535" }
+        message:
+          uk: "Ця перевірка очікує помилку з `PORT` для `abc`, `0`, `65536`, `80.5`, `1e3`, `-1` і порожнього тексту. Зверни увагу: `Number('1e3')` — це 1000, тож перевір, що текст складається лише із цифр."
+          en: "This check expects an error naming `PORT` for `abc`, `0`, `65536`, `80.5`, `1e3`, `-1` and empty text. Note that `Number('1e3')` is 1000, so check that the text consists of digits only."
+      - when: { test: "HOST must be a loopback address" }
+        message:
+          uk: "Ця перевірка очікує помилку з `HOST` для `0.0.0.0` та інших адрес, крім `127.0.0.1` і `::1`. `0.0.0.0` відкриває сервіс для всієї мережі."
+          en: "This check expects an error naming `HOST` for `0.0.0.0` and any address other than `127.0.0.1` and `::1`. `0.0.0.0` opens the service to the whole network."
+      - when: { test: "DATA_DIR is required and absolute" }
+        message:
+          uk: "Ця перевірка очікує помилку з `DATA_DIR`, коли його немає, коли він порожній і коли шлях відносний (`data`)."
+          en: "This check expects an error naming `DATA_DIR` when it is missing, when it is empty and when the path is relative (`data`)."
+      - when: { test: "one error lists every invalid variable" }
+        message:
+          uk: "Ця перевірка передає неправильні `PORT`, `HOST`, `NODE_ENV` і не передає `DATA_DIR` та очікує всі чотири назви в **одній** помилці. Збирай проблеми в масив і кидай один раз наприкінці."
+          en: "This check passes invalid `PORT`, `HOST`, `NODE_ENV` and no `DATA_DIR` and expects all four names in **one** error. Collect the problems in an array and throw once at the end."
+      - when: { test: "process.env is not read" }
+        message:
+          uk: "Ця перевірка ставить у `process.env` `PORT=1234` і `NODE_ENV=production`, а `loadConfig` передає лише `DATA_DIR` — і очікує `port` 7372 та `nodeEnv` `'development'`. Читай тільки аргумент `env`."
+          en: "This check puts `PORT=1234` and `NODE_ENV=production` into `process.env` but passes only `DATA_DIR` to `loadConfig` — and expects `port` 7372 and `nodeEnv` `'development'`. Read only the `env` argument."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-12
+    body:
+      uk: "У кроці проєкту цього розділу кожна змінна, яку читає твій сервер, — в одному `loadConfig` з `src/config.ts`, тепер і `SHUTDOWN_DEADLINE_MS` (100–30 000) та `NODE_ENV`: хибні значення — усі проблеми разом і код 1 (`PORT=99999 SHUTDOWN_DEADLINE_MS=5` друкує обидві). `npm run build` (`scripts/build.mjs`) пише в `release/` звичайний JavaScript через `stripTypeScriptTypes`, і сервер стартує з розпакованого артефакту як `node server/src/server.js`, а не з `src/`."
+      en: "In this unit’s project step every variable your server reads is in one `loadConfig` of `src/config.ts`, now also `SHUTDOWN_DEADLINE_MS` (100–30,000) and `NODE_ENV`: invalid values give every problem at once and exit code 1 (`PORT=99999 SHUTDOWN_DEADLINE_MS=5` prints both). `npm run build` (`scripts/build.mjs`) writes plain JavaScript into `release/` through `stripTypeScriptTypes`, and the server starts from the unpacked artifact as `node server/src/server.js`, not from `src/`."

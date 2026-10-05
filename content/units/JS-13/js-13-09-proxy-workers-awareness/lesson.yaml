@@ -1,0 +1,391 @@
+id: js-13-09-proxy-workers-awareness
+unit: JS-13
+title:
+  uk: "Ознайомлення: Proxy/Reflect і паралельність із workers"
+  en: "Awareness: Proxy/Reflect and worker concurrency"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Прочитати `Proxy`, чиї пастки `get` і `set` передають дію далі через `Reflect`, і передбачити, що надрукує логований доступ до властивості."
+    en: "Read a `Proxy` whose `get` and `set` traps forward through `Reflect`, and predict what a logged property access prints."
+  - uk: "Пояснити, що Web Worker виконує код в іншому потоці й обмінюється копіями повідомлень, а `SharedArrayBuffer` з `Atomics` — виняток зі спільною пам’яттю, що вимагає cross-origin isolation."
+    en: "Explain that a Web Worker runs code on another thread and exchanges copied messages, and that `SharedArrayBuffer` with `Atomics` is the shared-memory exception that needs cross-origin isolation."
+  - uk: "Назвати ознаки того, що задача потребує окремого спайку з одним із цих API, а не використання за замовчуванням."
+    en: "Name the signs that a task needs a separate spike for one of these APIs instead of using it by default."
+prerequisites: [js-13-08-module-cycles, js-11-06-getters-setters-descriptors, js-08-01-timers-and-the-event-loop]
+subskills:
+  - { family: J-14, skill: "Proxy/Reflect/metaprogramming awareness", depth: intro }
+  - { family: J-14, skill: "shared memory/Atomics/workers concurrency concepts", depth: intro }
+glossary: [proxy, reflect, web-worker, shared-array-buffer, atomics]
+selfCheck: [predict-proxy, read-only]
+
+blocks:
+  - id: proxy-intro
+    kind: explanation
+    title:
+      uk: "Proxy — посередник, а не копія"
+      en: "A Proxy is a go-between, not a copy"
+    body:
+      uk: |
+        [[proxy|Proxy]] обгортає об’єкт і перехоплює дії з ним: читання, запис, `in`, `delete`. Функції-перехоплювачі звуться **пастками** (traps):
+
+        ```js
+        const view = new Proxy(target, {
+          get(target, key, receiver) {          // a trap for reading
+            return Reflect.get(target, key, receiver);
+          },
+        });
+        ```
+
+        [[reflect|Reflect]] — набір функцій, що роблять **звичайну** дію: `Reflect.get` читає так, як читав би сам об’єкт (разом із getter-ами), `Reflect.set` — записує. Пастка робить щось своє (логує, перевіряє) і передає дію далі через `Reflect`.
+
+        Важливо: проксі **не копіює** об’єкт. Записи через нього потрапляють у той самий `target`, а зміни `target` видно крізь проксі. Пастки, яких ти не написав, просто передають дію об’єкту.
+
+        Де це трапляється: реактивність у фреймворках (`reactive()` у Vue 3 стежить за читанням і записом саме через `Proxy`), логування, перевірка даних. Для власного коду проксі — рідкісний інструмент: кожен доступ стає викликом функції, а поведінка — неочевидною.
+      en: |
+        A [[proxy|Proxy]] wraps an object and intercepts what is done with it: reading, writing, `in`, `delete`. The intercepting functions are called **traps**:
+
+        ```js
+        const view = new Proxy(target, {
+          get(target, key, receiver) {          // a trap for reading
+            return Reflect.get(target, key, receiver);
+          },
+        });
+        ```
+
+        [[reflect|Reflect]] is a set of functions that do the **ordinary** action: `Reflect.get` reads the way the object itself would (getters included), `Reflect.set` writes. A trap does something of its own (logs, checks) and forwards the action through `Reflect`.
+
+        Important: a proxy **does not copy** the object. Writes through it land in the same `target`, and changes of `target` are visible through the proxy. Traps you did not write simply pass the action to the object.
+
+        Where you meet it: reactivity in frameworks (`reactive()` in Vue 3 tracks reads and writes exactly through `Proxy`), logging, data checks. In your own code a proxy is a rare tool: every access becomes a function call, and the behavior becomes non-obvious.
+
+  - id: predict-proxy
+    kind: prediction
+    prompt:
+      uk: "Проксі з пасткою `get`, що логує, обгортає бажання. Код читає дві властивості, перевіряє `in`, а потім змінює **сам об’єкт**. Що з’явиться в консолі?"
+      en: "A proxy with a logging `get` trap wraps a wish. The code reads two properties, checks `in`, then changes **the object itself**. What appears in the console?"
+    code: |
+      const wish = { id: "w-02", name: "lamp", price: 45 };
+      const logged = new Proxy(wish, {
+        get(target, key, receiver) {
+          console.log("get", String(key));
+          return Reflect.get(target, key, receiver);
+        },
+      });
+
+      console.log(logged.name);
+      console.log(logged.missing);
+      console.log("name" in logged);
+      wish.price = 50;
+      console.log(logged.price);
+    verify:
+      logs: ["get name", "lamp", "get missing", "undefined", "true", "get price", "50"]
+    answer:
+      type: choice
+      options:
+        - id: forwarded
+          code: "get name\nlamp\nget missing\nundefined\ntrue\nget price\n50"
+        - id: copy
+          code: "get name\nlamp\nget missing\nundefined\ntrue\nget price\n45"
+          why:
+            uk: "Проксі — не копія: він щоразу читає з того самого `wish`. Тому зміна `wish.price` видна крізь нього."
+            en: "A proxy is not a copy: it reads from the same `wish` every time. So the change of `wish.price` is visible through it."
+        - id: in-logged
+          code: "get name\nlamp\nget missing\nundefined\nget name\ntrue\nget price\n50"
+          why:
+            uk: "Оператор `in` — не читання: для нього є окрема пастка `has`. Її тут немає, тож `in` іде прямо до об’єкта без логу."
+            en: "The `in` operator is not a read: it has its own trap, `has`. There is none here, so `in` goes straight to the object without a log."
+        - id: missing-skipped
+          code: "get name\nlamp\nundefined\ntrue\nget price\n50"
+          why:
+            uk: "Пастка `get` спрацьовує для будь-якого читання — і для властивості, якої немає. Вона логує `missing`, а `Reflect.get` повертає `undefined`."
+            en: "The `get` trap fires for any read — also for a property that does not exist. It logs `missing`, and `Reflect.get` returns `undefined`."
+      correct: [forwarded]
+    explanation:
+      uk: "Кожне читання проходить через `get` і логується, навіть `missing`. `in` має власну пастку `has`, якої немає, — без логу. А `wish.price = 50` змінює сам об’єкт, і проксі показує нове значення: він посередник, а не копія."
+      en: "Every read passes through `get` and is logged, even `missing`. `in` has its own trap `has`, which is absent — no log. And `wish.price = 50` changes the object itself, and the proxy shows the new value: it is a go-between, not a copy."
+
+  - id: watched
+    kind: example
+    runtime: browser-js
+    dir: watched
+    entry: index.js
+    strings:
+      reads: { uk: "прочитано:", en: "read:" }
+    title:
+      uk: "Навіщо Reflect.get — і перевірка можливостей пісочниці"
+      en: "Why Reflect.get — and a capability check of the sandbox"
+    body:
+      uk: |
+        Проксі записує кожну прочитану властивість. Getter `summary` усередині читає `this.currency` і `this.pageSize`. Натисни **Запустити**: прочитано `summary, currency, pageSize`. `Reflect.get(target, key, receiver)` викликає getter із `this`, що дорівнює проксі, тож і внутрішні читання проходять через пастку.
+
+        Унизу — перевірка можливостей. Тут вона виводить `Worker: function`, `SharedArrayBuffer: undefined` і `crossOriginIsolated: false`: workers є, а спільної пам’яті немає, бо сторінка не має cross-origin isolation.
+      en: |
+        The proxy records every property read. The getter `summary` reads `this.currency` and `this.pageSize` inside. Press **Run**: the reads are `summary, currency, pageSize`. `Reflect.get(target, key, receiver)` calls the getter with `this` equal to the proxy, so the inner reads pass through the trap too.
+
+        At the bottom is a capability check. Here it prints `Worker: function`, `SharedArrayBuffer: undefined` and `crossOriginIsolated: false`: workers exist, but shared memory does not, because the page has no cross-origin isolation.
+    tryIt:
+      uk: |
+        1. Заміни `return Reflect.get(target, key, receiver);` на `return target[key];`. Значення те саме, але прочитано лише `summary`: getter тепер отримує `this`, що дорівнює самому об’єкту, і його внутрішні читання обходять пастку. Поверни `Reflect.get`.
+        2. Прибери слово `return` перед `Reflect.get`. Тепер `watched.summary` — `undefined`: пастка, що нічого не повертає, «з’їдає» всі значення. Поверни `return`.
+        3. Подивись на рядки перевірки можливостей. Якщо колись побачиш іншу відповідь у своєму браузері чи на сервері, вір їй, а не таблиці з підручника: можливості залежать від середовища та його налаштувань.
+      en: |
+        1. Replace `return Reflect.get(target, key, receiver);` with `return target[key];`. The value is the same, but only `summary` was read: the getter now gets `this` equal to the object itself, and its inner reads bypass the trap. Put `Reflect.get` back.
+        2. Remove the word `return` before `Reflect.get`. Now `watched.summary` is `undefined`: a trap that returns nothing “swallows” every value. Put `return` back.
+        3. Look at the capability lines. If you ever see a different answer in your browser or on a server, trust it rather than a table in a textbook: capabilities depend on the environment and its settings.
+
+  - id: workers
+    kind: explanation
+    title:
+      uk: "Workers: інший потік і копії повідомлень"
+      en: "Workers: another thread and copied messages"
+    body:
+      uk: |
+        Твій код виконується в одному потоці: довгий цикл зупиняє і кліки, і таймери. [[web-worker|Web Worker]] — окремий потік зі своїм кодом. Головна сторінка й worker **не бачать змінних одне одного**: вони обмінюються повідомленнями через `postMessage`, і кожне повідомлення **копіюється** (structured clone, як у `structuredClone`). Тому одночасно змінити один масив вони не можуть — у кожного своя копія.
+
+        Виняток — [[shared-array-buffer|SharedArrayBuffer]]: буфер байтів, який справді бачать обидва потоки. Тоді з’являється справжня гонка: два потоки читають `5`, обидва пишуть `6` — і одне збільшення губиться. Від цього захищає [[atomics|Atomics]] (`Atomics.add(view, 0, 1)` робить «прочитати й записати» однією неподільною дією). А сам `SharedArrayBuffer` браузер дає лише сторінці з **cross-origin isolation**: її вмикають заголовки сервера з певними значеннями — `Cross-Origin-Opener-Policy: same-origin` разом із `Cross-Origin-Embedder-Policy: require-corp` (або `credentialless`), і лише на захищеній адресі (HTTPS чи `localhost`). Без цього, як у цій пісочниці, його просто немає. Це правило браузера: у Node.js `SharedArrayBuffer` є завжди.
+
+        **Коли потрібен окремий спайк** (невеликий експеримент перед рішенням), а не «просто взяти»: робота займає помітно довше за кадр і гальмує інтерфейс; потрібна спільна пам’ять (а з нею заголовки, що можуть зламати вбудований сторонній вміст); бібліотека, яку хочеш перенести у worker, використовує DOM; ти хочеш `Proxy` там, де вистачить звичайної функції.
+      en: |
+        Your code runs on one thread: a long loop stops clicks and timers alike. A [[web-worker|Web Worker]] is a separate thread with its own code. The main page and the worker **do not see each other's variables**: they exchange messages through `postMessage`, and every message is **copied** (a structured clone, as with `structuredClone`). So they cannot change one array at the same time — each has its own copy.
+
+        The exception is [[shared-array-buffer|SharedArrayBuffer]]: a byte buffer that both threads really see. Then a real race appears: two threads read `5`, both write `6` — and one increment is lost. [[atomics|Atomics]] protects against that (`Atomics.add(view, 0, 1)` does “read and write” as one indivisible step). And the browser gives `SharedArrayBuffer` only to a page with **cross-origin isolation**: it is switched on by server headers with particular values — `Cross-Origin-Opener-Policy: same-origin` together with `Cross-Origin-Embedder-Policy: require-corp` (or `credentialless`), and only on a secure address (HTTPS or `localhost`). Without that, as in this sandbox, it simply does not exist. This is a browser rule: Node.js always has `SharedArrayBuffer`.
+
+        **When a separate spike** (a small experiment before deciding) is needed rather than “just using it”: the work takes noticeably longer than a frame and slows the interface; shared memory is needed (and with it headers that may break embedded third-party content); a library you want to move into a worker uses the DOM; you want a `Proxy` where an ordinary function would do.
+
+  - id: two-boundaries
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Через пастку до об’єкта; між потоками — копії"
+      en: "Through a trap to the object; between threads — copies"
+    textEquivalent:
+      uk: "Верхня частина: код читає record.name; читання потрапляє в пастку get проксі, пастка викликає Reflect.get, і той читає властивість самого об’єкта target. Об’єкт один — проксі лише посередник. Нижня частина: головний потік і worker. postMessage(ids) передає в worker копію масиву, а відповідь повертається теж копією; змінна в одному потоці не змінює змінної в іншому. Окремо намальовано SharedArrayBuffer — єдину пам’ять, яку бачать обидва потоки; поруч підпис, що він доступний лише сторінці з cross-origin isolation, а одночасні зміни в ньому роблять через Atomics."
+      en: "Top part: code reads record.name; the read lands in the proxy's get trap, the trap calls Reflect.get, and that reads the property of the target object itself. There is one object — the proxy is only a go-between. Bottom part: the main thread and a worker. postMessage(ids) passes a copy of the array to the worker, and the answer comes back as a copy too; a variable in one thread does not change a variable in the other. SharedArrayBuffer is drawn separately — the only memory both threads see; next to it a label says it is available only to a page with cross-origin isolation, and simultaneous changes in it are made with Atomics."
+    spec:
+      layout: grid
+      nodes:
+        - { id: code, label: "record.name", col: 0, row: 0, w: 140 }
+        - { id: trap, label: "get → Reflect.get", col: 0, row: 1, w: 150 }
+        - { id: target, label: "target", col: 0, row: 2, w: 140 }
+        - { id: main, label: { uk: "головний потік", en: "main thread" }, col: 1, row: 0, w: 150 }
+        - { id: worker, label: "worker", col: 1, row: 1, w: 150 }
+        - { id: sab, label: "SharedArrayBuffer", col: 1, row: 2, shape: cylinder, w: 150 }
+      edges:
+        - { id: c-t, from: code, to: trap }
+        - { id: t-g, from: trap, to: target }
+        - { id: m-w, from: main, to: worker, label: { uk: "копія", en: "copy" }, kind: both }
+        - { id: m-s, from: main, to: sab, kind: dashed }
+        - { id: w-s, from: worker, to: sab, kind: dashed }
+      hidden: [sab, m-s, w-s]
+      steps:
+        - caption:
+            uk: "Читання `record.name` проходить через пастку `get`, а `Reflect.get` читає з **того самого** `target`. Копії немає."
+            en: "Reading `record.name` goes through the `get` trap, and `Reflect.get` reads from **the same** `target`. There is no copy."
+          highlight: [code, trap, target, c-t, t-g]
+          dim: [main, worker, m-w]
+        - caption:
+            uk: "Головний потік і worker обмінюються повідомленнями, і кожне **копіюється**. Змінних одне одного вони не бачать."
+            en: "The main thread and a worker exchange messages, and each one is **copied**. They do not see each other's variables."
+          highlight: [main, worker, m-w]
+          dim: [code, trap, target]
+        - caption:
+            uk: "`SharedArrayBuffer` — єдина спільна пам’ять. Доступний лише з cross-origin isolation; одночасні зміни в ньому — через `Atomics`."
+            en: "`SharedArrayBuffer` is the only shared memory. Available only with cross-origin isolation; simultaneous changes in it go through `Atomics`."
+          show: [sab, m-s, w-s]
+          highlight: [sab, m-s, w-s]
+          annotate:
+            - { id: sab, text: { uk: "потрібна cross-origin isolation", en: "needs cross-origin isolation" } }
+
+  - id: predict-worker-copy
+    kind: prediction
+    prompt:
+      uk: "Головна сторінка передає масив у worker. Worker додає до нього елемент і повертає довжину свого масиву. Що надрукує сторінка?"
+      en: "The main page passes an array to a worker. The worker adds an item to it and sends back the length of its array. What does the page print?"
+    code: |
+      const source = "onmessage = (event) => { event.data.push('w-09'); postMessage(event.data.length); };";
+      const worker = new Worker(URL.createObjectURL(new Blob([source], { type: "text/javascript" })));
+      const ids = ["w-01", "w-02"];
+      worker.postMessage(ids);
+      const answer = await new Promise((resolve) => {
+        worker.onmessage = (event) => resolve(event.data);
+      });
+      console.log(answer, ids.length);
+      worker.terminate();
+    verify:
+      logs: ["3 2"]
+    answer:
+      type: choice
+      options:
+        - id: copied
+          code: "3 2"
+        - id: shared
+          code: "3 3"
+          why:
+            uk: "Worker отримав **копію** масиву. Його `push` змінює копію, а масив `ids` на сторінці лишається з двома елементами."
+            en: "The worker received a **copy** of the array. Its `push` changes the copy, and the array `ids` on the page keeps two items."
+        - id: no-access
+          code: "2 2"
+          why:
+            uk: "Worker може змінювати те, що отримав: копія належить йому, і в ній уже три елементи."
+            en: "The worker can change what it received: the copy belongs to it, and it already has three items."
+      correct: [copied]
+    explanation:
+      uk: "`postMessage` копіює дані. У worker масив із трьох елементів, на сторінці — з двох. Тому два потоки не можуть зіпсувати одні дані, змінюючи їх одночасно, — доки ти не візьмеш `SharedArrayBuffer`."
+      en: "`postMessage` copies the data. The worker has an array of three items, the page one of two. That is why two threads cannot spoil the same data by changing it at the same time — until you take a `SharedArrayBuffer`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: один потік і черга"
+      en: "Recall: one thread and the queue"
+    items:
+      - id: loop-blocks
+        from: js-08-01-timers-and-the-event-loop
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          setTimeout(() => console.log("timer"), 0);
+          const start = Date.now();
+          while (Date.now() - start < 100) {}
+          console.log("loop done");
+        verify:
+          logs: ["loop done", "timer"]
+        answer:
+          type: choice
+          options:
+            - id: loop-first
+              code: "loop done\ntimer"
+            - id: timer-first
+              code: "timer\nloop done"
+              why:
+                uk: "Таймер із 0 мс не перериває код, що виконується: його функція чекає в черзі, доки потік звільниться."
+                en: "A 0 ms timer does not interrupt running code: its function waits in the queue until the thread is free."
+          correct: [loop-first]
+        explanation:
+          uk: "Один потік робить одну справу за раз: 100 мс циклу — це 100 мс, коли сторінка не реагує ні на що. Саме таку роботу виносять у worker, якщо вона довга й регулярна."
+          en: "One thread does one thing at a time: 100 ms of looping are 100 ms when the page reacts to nothing. That is exactly the kind of work moved into a worker when it is long and regular."
+
+  - id: read-only
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: read-only
+    entry: index.js
+    strings:
+      changed: { uk: "змінено", en: "changed" }
+    title:
+      uk: "Налаштування лише для читання"
+      en: "Read-only settings"
+    instructions:
+      uk: |
+        Напиши `readOnly(settings)`, яка повертає **вигляд лише для читання** на об’єкт налаштувань:
+
+        - читання через вигляд працює як зазвичай (і `in` теж);
+        - будь-яке присвоєння — наявній чи новій властивості — і будь-який `delete` через вигляд кидають `TypeError`, а `settings` лишається без змін;
+        - вигляд — не копія: якщо змінити сам `settings`, нове значення видно крізь вигляд.
+
+        Унизу файла готовий код: у консолі мають з’явитися `UAH 5`, три `TypeError` і `5 UAH`.
+      en: |
+        Write `readOnly(settings)` that returns a **read-only view** of a settings object:
+
+        - reading through the view works as usual (and so does `in`);
+        - any assignment — to an existing or a new property — and any `delete` through the view throw a `TypeError`, and `settings` stays unchanged;
+        - the view is not a copy: if `settings` itself is changed, the new value is visible through the view.
+
+        At the bottom of the file there is ready code: the console must show `UAH 5`, three `TypeError` lines and `5 UAH`.
+    testTitles:
+      "the program prints the values, three TypeErrors and the unchanged settings":
+        uk: "Програма друкує значення, три TypeError і незмінені налаштування"
+        en: "The program prints the values, three TypeErrors and the unchanged settings"
+      "reading through the view gives the values":
+        uk: "Читання через вигляд дає значення"
+        en: "Reading through the view gives the values"
+      "assigning an existing key throws a TypeError and changes nothing":
+        uk: "Присвоєння наявній властивості кидає TypeError і нічого не змінює"
+        en: "Assigning an existing key throws a TypeError and changes nothing"
+      "assigning a new key throws a TypeError and adds nothing":
+        uk: "Присвоєння новій властивості кидає TypeError і нічого не додає"
+        en: "Assigning a new key throws a TypeError and adds nothing"
+      "deleting a key throws a TypeError and keeps it":
+        uk: "`delete` кидає TypeError і лишає властивість"
+        en: "Deleting a key throws a TypeError and keeps it"
+      "the view is not a copy: changes to the original show through it":
+        uk: "Вигляд — не копія: зміни оригіналу видно крізь нього"
+        en: "The view is not a copy: changes to the original show through it"
+    hints:
+      nudge:
+        uk: "Які дії треба перехопити — читання, запис, видалення? Для яких із них потрібні пастки, а які проксі й так передасть об’єкту?"
+        en: "Which actions must be intercepted — reading, writing, deleting? Which of them need traps, and which does the proxy pass to the object anyway?"
+      explanation:
+        uk: |
+          Пастка, якої ти не написав, передає дію об’єкту — тож читання працюватиме само. Запис перехоплює пастка `set(target, key, value)`, видалення — `deleteProperty(target, key)`. Пастка може кинути помилку замість того, щоб виконати дію. Ось схожий прийом для іншої задачі — проксі, що не дає читати відсутні властивості:
+
+          ```js
+          const strict = new Proxy(config, {
+            get(target, key, receiver) {
+              if (!(key in target)) {
+                throw new RangeError("no setting " + String(key));
+              }
+              return Reflect.get(target, key, receiver);
+            },
+          });
+          ```
+
+          `Object.freeze` теж кидає `TypeError` при записі, але заморожена **копія** не побачить подальших змін оригіналу.
+        en: |
+          A trap you did not write passes the action to the object — so reading will work by itself. Writing is intercepted by the trap `set(target, key, value)`, deleting by `deleteProperty(target, key)`. A trap may throw an error instead of doing the action. Here is a similar technique for another task — a proxy that refuses to read missing properties:
+
+          ```js
+          const strict = new Proxy(config, {
+            get(target, key, receiver) {
+              if (!(key in target)) {
+                throw new RangeError("no setting " + String(key));
+              }
+              return Reflect.get(target, key, receiver);
+            },
+          });
+          ```
+
+          `Object.freeze` throws a `TypeError` on writing too, but a frozen **copy** will not see later changes of the original.
+    solutionNote:
+      uk: "Пастки `set` і `deleteProperty` кидають `TypeError`, а пастки `get` немає — читання йде прямо до об’єкта. Проксі не копіює `settings`, тож зміни оригіналу видно. Інший робочий варіант: пастки повертають `false` — у строгому коді (а модулі завжди строгі) це теж дає `TypeError`."
+      en: "The `set` and `deleteProperty` traps throw a `TypeError`, and there is no `get` trap — reading goes straight to the object. The proxy does not copy `settings`, so changes of the original are visible. Another working version: the traps return `false` — in strict code (and modules are always strict) that also gives a `TypeError`."
+    feedback:
+      - when: { test: "the program prints the values, three TypeErrors and the unchanged settings" }
+        message:
+          uk: "Ця перевірка очікує п’ять рядків: `UAH 5`, тричі `TypeError` (жодного «змінено») і `5 UAH` — налаштування після спроб лишилися ті самі."
+          en: "This check expects five lines: `UAH 5`, `TypeError` three times (no “changed”) and `5 UAH` — the settings stayed the same after the attempts."
+      - when: { test: "reading through the view gives the values" }
+        message:
+          uk: "Ця перевірка читає через вигляд `currency`, `pageSize`, відсутню властивість і `\"currency\" in view` і очікує значення оригіналу. Якщо пише `get` — пастка має повертати значення."
+          en: "This check reads `currency`, `pageSize`, a missing property and `\"currency\" in view` through the view and expects the original's values. If you wrote `get`, the trap must return the value."
+      - when: { test: "assigning an existing key throws a TypeError and changes nothing" }
+        message:
+          uk: "Ця перевірка присвоює `view.pageSize = 99` і очікує `TypeError`, а в `settings.pageSize` — і далі 10."
+          en: "This check assigns `view.pageSize = 99` and expects a `TypeError`, with `settings.pageSize` still 10."
+      - when: { test: "assigning a new key throws a TypeError and adds nothing" }
+        message:
+          uk: "Ця перевірка присвоює нову властивість `view.theme` і очікує `TypeError`, а в `settings` її не має з’явитися."
+          en: "This check assigns a new property `view.theme` and expects a `TypeError`, and it must not appear in `settings`."
+      - when: { test: "deleting a key throws a TypeError and keeps it" }
+        message:
+          uk: "Ця перевірка виконує `delete view.currency` і очікує `TypeError`, а `settings.currency` має лишитися."
+          en: "This check runs `delete view.currency` and expects a `TypeError`, and `settings.currency` must remain."
+      - when: { test: "the view is not a copy: changes to the original show through it" }
+        message:
+          uk: "Ця перевірка змінює сам `settings.pageSize` на 25 і очікує 25 крізь вигляд; вигляд не має бути тим самим об’єктом, що й `settings`. Заморожена копія цю перевірку не пройде."
+          en: "This check changes `settings.pageSize` itself to 25 and expects 25 through the view; the view must not be the same object as `settings`. A frozen copy does not pass this check."
+      - when: { error: TypeError }
+        message:
+          uk: "Якщо повідомлення `Cannot read properties of undefined`, `readOnly` поки нічого не повертає — програма впала ще під час завантаження. Якщо `TypeError` вилітає з рядка читання, перевір, що пастка `get` (якщо вона є) повертає значення."
+          en: "If the message is `Cannot read properties of undefined`, `readOnly` returns nothing yet — the program crashed while loading. If a `TypeError` comes from a reading line, check that the `get` trap (if you have one) returns the value."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-13
+    body:
+      uk: "У твоєму проєкті ні `Proxy`, ні workers не потрібні: записів сотні, а не мільйони, і кожна дія займає мілісекунди. Це теж професійне рішення — знати інструмент і свідомо не брати його без спайку."
+      en: "Your project needs neither `Proxy` nor workers: there are hundreds of records, not millions, and every action takes milliseconds. That is a professional decision too — knowing a tool and deliberately not taking it without a spike."

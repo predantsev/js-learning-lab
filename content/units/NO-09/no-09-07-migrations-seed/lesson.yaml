@@ -1,0 +1,348 @@
+id: no-09-07-migrations-seed
+unit: NO-09
+title:
+  uk: "Міграції та seed"
+  en: "Migrations and seed"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Застосовувати впорядковані нумеровані міграції, що просувають схему на одну версію за раз, записуючи версію через `PRAGMA user_version` і додаючи нову міграцію замість редагування вже застосованої."
+    en: "Apply ordered, numbered migrations that move the schema forward one version at a time, recording the version with `PRAGMA user_version` and adding a new migration instead of editing an applied one."
+  - uk: "Перевіряти міграцію на копії з даними: кількість рядків і інваріанти зберігаються, а повторний запуск мігратора нічого не змінює."
+    en: "Test a migration on a seeded copy: row counts and invariants hold, and rerunning the migrator changes nothing."
+  - uk: "Заповнювати базу початковими даними (seed) так, щоб ініціалізація порожньої й наявної бази закінчувалася в тому самому стані."
+    en: "Seed a database so that initializing an empty or an existing database ends in the same state."
+prerequisites: [no-09-06-indexes-query-plans, no-09-05-transactions-isolation]
+subskills:
+  - { family: B-04, skill: "migrations/seed", depth: intro }
+  - { family: B-05, skill: "migration/versioning", depth: intro }
+  - { family: B-05, skill: "initialization", depth: intro }
+glossary: [migration-history, seed-data, forward-only-migration]
+selfCheck: [predict-migrate, planner-migrate]
+
+blocks:
+  - id: why-migrations
+    kind: explanation
+    title:
+      uk: "Базу не перестворюють — її просувають"
+      en: "A database is not recreated — it is moved forward"
+    body:
+      uk: |
+        Треба додати до видач термін повернення `dueOn`. Перша думка — дописати стовпець у `CREATE TABLE` і створити базу заново. Але на ноутбуці, на сервері й у колеги вже лежать бази з даними; «заново» означає «без даних».
+
+        Тому зміни схеми пишуть як **міграції** — нумеровані кроки, кожен з яких переводить базу з версії N на N + 1:
+
+        ```text
+        001  CREATE TABLE members / books / loans
+        002  ALTER TABLE loans ADD COLUMN dueOn TEXT
+        003  CREATE INDEX loans_member ON loans (memberId)
+        ```
+
+        Це той самий ланцюжок міграцій, що й у RN-05 для JSON-знімків, лише кроки тепер — інструкції SQL. Список кроків у коді — це [[migration-history|історія міграцій]].
+
+        Кожна база пам’ятає, скільки кроків пройшла. У SQLite для цього є число в заголовку файла бази — `PRAGMA user_version` (у новій базі ми бачили 0; [документація SQLite](https://www.sqlite.org/pragma.html#pragma_user_version)). Мігратор читає його, виконує лише новіші кроки по черзі й після кожного записує новий номер — **в одній транзакції із самим кроком**: якщо крок упав, відкочуються і зміни, і номер.
+      en: |
+        Loans need a due date, `dueOn`. The first idea is to add the column to `CREATE TABLE` and create the database anew. But a laptop, a server and a colleague already hold databases with data; “anew” means “without the data”.
+
+        So schema changes are written as **migrations** — numbered steps, each taking the database from version N to N + 1:
+
+        ```text
+        001  CREATE TABLE members / books / loans
+        002  ALTER TABLE loans ADD COLUMN dueOn TEXT
+        003  CREATE INDEX loans_member ON loans (memberId)
+        ```
+
+        It is the same migration chain as in RN-05 for JSON snapshots, only the steps are now SQL statements. The list of steps in the code is the [[migration-history]].
+
+        Every database remembers how many steps it has passed. SQLite has a number in the database file’s header for that — `PRAGMA user_version` (we saw 0 in a new database; [SQLite documentation](https://www.sqlite.org/pragma.html#pragma_user_version)). The migrator reads it, runs only the newer steps in order and after each one writes the new number — **in one transaction with the step itself**: if a step fails, both the changes and the number roll back.
+
+  - id: predict-migrate
+    kind: prediction
+    prompt:
+      uk: "Мігратор із трьома міграціями (001 створює таблиці, 002 додає стовпець `loans.dueOn`, 003 — індекс) запускають на порожній базі, а потім одразу ще раз. Що дадуть два запуски?"
+      en: "The migrator with three migrations (001 creates the tables, 002 adds the column `loans.dueOn`, 003 an index) runs on an empty database, and then once more right away. What do the two runs give?"
+    code: |
+      const db = new DatabaseSync(':memory:');
+      console.log(migrate(db));   // first run
+      console.log(migrate(db));   // second run
+      console.log(db.prepare('PRAGMA user_version').get().user_version);
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: once
+          code: "[ 1, 2, 3 ]\n[]\n3"
+        - id: twice
+          code: "[ 1, 2, 3 ]\n[ 1, 2, 3 ]\n3"
+          why:
+            uk: "Після першого запуску `user_version` — 3. Другий запуск порівнює кожну міграцію із цим числом і пропускає всі: жодна не новіша за 3."
+            en: "After the first run `user_version` is 3. The second run compares every migration with that number and skips them all: none is newer than 3."
+        - id: error
+          code: "[ 1, 2, 3 ]\nError: table members already exists\n3"
+          why:
+            uk: "Так було б із мігратором, що щоразу виконує всі кроки. Цей пропускає те, що вже застосовано, тому повторний запуск безпечний."
+            en: "That would happen with a migrator that runs every step each time. This one skips what is already applied, so a rerun is safe."
+        - id: zero
+          code: "[ 1, 2, 3 ]\n[]\n0"
+          why:
+            uk: "Мігратор записує `user_version` після кожного кроку, у тій самій транзакції. Після 003 там 3."
+            en: "The migrator writes `user_version` after every step, in the same transaction. After 003 it holds 3."
+      correct: [once]
+    explanation:
+      uk: "Перший запуск застосовує 001, 002, 003 і лишає `user_version` 3. Другий не знаходить нічого новішого й повертає порожній список. Повторний запуск безпечний — тому мігратор можна викликати під час кожного старту сервера. Приклад «Мігратор на порожній і на старішій базі» друкує саме це."
+      en: "The first run applies 001, 002, 003 and leaves `user_version` at 3. The second finds nothing newer and returns an empty list. A rerun is safe — which is why the migrator can be called on every server start. The example “A migrator on an empty and on an older database” prints exactly that."
+
+  - id: forward-only
+    kind: explanation
+    title:
+      uk: "Лише вперед; seed — окремо"
+      en: "Forward only; seed separately"
+    body:
+      uk: |
+        Міграцію, яку вже застосовано хоч до однієї бази, **не редагують**. Та база вже має `user_version` 2 і ніколи не виконає 002 вдруге — виправлення до неї не дійде, і бази тихо розійдуться. Потрібна зміна — нова міграція 004. Такий підхід називають [[forward-only-migration|міграціями лише вперед]].
+
+        Перевіряють міграцію не на порожній базі, а на **копії з даними**: кількість рядків до й після, правила на кшталт «кожна видача має учасника», і повторний запуск, що нічого не змінює. Наприклад, `ALTER TABLE … ADD COLUMN x INTEGER NOT NULL` без `DEFAULT` на порожній таблиці проходить, а на таблиці з рядками SQLite відмовляє: `Cannot add a NOT NULL column with default value NULL`.
+
+        [[seed-data|Початкові дані (seed)]] — це не міграція. Міграція змінює **будову**; seed додає **рядки**, з якими програма стартує (довідник, демо-записи). Seed додає їх лише в порожню таблицю, тож ініціалізація порожньої й наявної бази закінчується однаково: схема останньої версії, і ніщо не задвоєно.
+      en: |
+        A migration already applied to even one database is **not edited**. That database already has `user_version` 2 and will never run 002 again — the fix never reaches it, and the databases quietly drift apart. A needed change is a new migration 004. This approach is called [[forward-only-migration|forward-only migrations]].
+
+        A migration is tested not on an empty database but on a **copy with data**: the row counts before and after, rules such as “every loan has a member”, and a rerun that changes nothing. For example, `ALTER TABLE … ADD COLUMN x INTEGER NOT NULL` without a `DEFAULT` passes on an empty table, while on a table with rows SQLite refuses: `Cannot add a NOT NULL column with default value NULL`.
+
+        [[seed-data|Seed data]] is not a migration. A migration changes the **structure**; a seed adds the **rows** the program starts with (a reference list, demo records). A seed adds them only to an empty table, so initializing an empty and an existing database ends the same way: the latest schema, and nothing doubled.
+
+  - id: migration-graph
+    kind: visual
+    visual: git-graph
+    title:
+      uk: "Історія міграцій і версія кожної бази"
+      en: "The migration history and each database’s version"
+    textEquivalent:
+      uk: "Тут кожен commit — один файл міграції в історії проєкту, а назва гілки — база даних і те, до якої міграції вона дійшла (її user_version). Спершу є лише міграція 001, і база ноутбука laptop-db застосовує її: user_version 1. Потім до історії додають 002 (стовпець dueOn) і 003 (індекс). Мігратор на ноутбуці застосовує лише нові кроки, 002 і 003, по черзі, і laptop-db доходить до версії 3 — так само, як git просуває гілку вперед без нових комітів. Наостанок хтось редагує вже застосовану 002, замість того щоб додати 004: від 001 відходить інша гілка з іншою 002. laptop-db, що вже має версію 3, цієї зміни ніколи не отримає, бо мігратор не виконує кроків, номер яких не більший за версію бази, — бази розійшлися."
+      en: "Here each commit is one migration file in the project’s history, and a branch name is a database and the migration it has reached (its user_version). At first there is only migration 001, and the laptop database laptop-db applies it: user_version 1. Then 002 (the dueOn column) and 003 (an index) are added to the history. The migrator on the laptop applies only the new steps, 002 and 003, in order, and laptop-db reaches version 3 — just as git moves a branch forward without new commits. Finally someone edits the already applied 002 instead of adding 004: another branch with a different 002 leaves 001. laptop-db, already at version 3, will never receive that change, because the migrator does not run steps whose number is not above the database’s version — the databases have drifted apart."
+    spec:
+      steps:
+        - op: init
+          args: "-b main"
+          caption:
+            uk: "Модель: кожен commit — файл міграції в історії проєкту, а гілка — база даних і її `user_version`."
+            en: "The model: each commit is a migration file in the project’s history, and a branch is a database and its `user_version`."
+        - op: commit
+          id: c1
+          message: "001 create tables"
+          files: [migrations/001.sql]
+          caption:
+            uk: "Міграція 001 створює таблиці."
+            en: "Migration 001 creates the tables."
+        - op: branch
+          name: laptop-db
+          checkout: false
+          caption:
+            uk: "База ноутбука застосувала 001: її `user_version` — 1."
+            en: "The laptop database has applied 001: its `user_version` is 1."
+        - op: commit
+          id: c2
+          message: "002 add loans.dueOn"
+          files: [migrations/002.sql]
+          caption:
+            uk: "До історії додають 002 — новий файл, а не правку 001."
+            en: "002 is added to the history — a new file, not an edit of 001."
+        - op: commit
+          id: c3
+          message: "003 index loans by member"
+          files: [migrations/003.sql]
+          caption:
+            uk: "І 003. Ноутбук ще на версії 1."
+            en: "And 003. The laptop is still at version 1."
+        - op: checkout
+          name: laptop-db
+          caption:
+            uk: "Сервер на ноутбуці стартує, і мігратор бере цю базу."
+            en: "The server on the laptop starts, and the migrator takes this database."
+        - op: merge
+          from: main
+          caption:
+            uk: "Мігратор застосовує лише нові кроки, 002 і 003, по черзі — як git просуває гілку вперед. `user_version` тепер 3."
+            en: "The migrator applies only the new steps, 002 and 003, in order — like git moving a branch forward. `user_version` is now 3."
+        - op: checkout
+          commit: c1
+          caption:
+            uk: "Хтось вирішує «просто виправити» 002 і повертається до стану після 001…"
+            en: "Someone decides to “just fix” 002 and goes back to the state after 001…"
+        - op: branch
+          name: edited-002
+          caption:
+            uk: "…і починає іншу історію."
+            en: "…and starts another history."
+        - op: commit
+          id: c4
+          message: "002 add loans.dueOn (edited)"
+          files: [migrations/002.sql]
+          caption:
+            uk: "Відредагована 002 — інший крок із тим самим номером. `laptop-db` уже на версії 3 і ніколи її не виконає: бази розійшлися. Правильно було додати 004."
+            en: "The edited 002 is a different step with the same number. `laptop-db` is already at version 3 and will never run it: the databases have drifted apart. The right move was to add 004."
+
+  - id: migrator
+    kind: example
+    runtime: isolated-node
+    dir: migrator
+    entry: index.js
+    strings:
+      marta: { uk: "Марта", en: "Marta" }
+      oleh: { uk: "Олег", en: "Oleh" }
+      borys: { uk: "Борис", en: "Borys" }
+      taras: { uk: "Тарас", en: "Taras" }
+      anna: { uk: "Анна", en: "Anna" }
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+      stars: { uk: "Карта зоряного неба", en: "A map of the night sky" }
+    title:
+      uk: "Мігратор на порожній і на старішій базі"
+      en: "A migrator on an empty and on an older database"
+    body:
+      uk: "Натисни **Запустити**. Програма двічі мігрує й заповнює порожню базу, а потім мігрує базу, створену колись лише міграцією 001, у якій уже є учасники й видачі. Порівняй версію, кількість учасників і стовпці `loans` до й після."
+      en: "Press **Run**. The program migrates and seeds an empty database twice, then migrates a database once created by migration 001 only, which already holds members and loans. Compare the version, the number of members and the columns of `loans` before and after."
+    tryIt:
+      uk: "Додай у список `migrations` після 003 четверту: `{ version: 4, name: '004 add loans.renewals', up: 'ALTER TABLE loans ADD COLUMN renewals INTEGER NOT NULL DEFAULT 0' },` і запусти. Порожня база тепер отримує `[ 1, 2, 3, 4 ]`, старіша — `[ 2, 3, 4 ]`, обидві доходять до версії 4, а кількість учасників не змінюється. Старі видачі отримали `renewals` 0 зі значення `DEFAULT`."
+      en: "Add a fourth migration after 003 to the `migrations` list: `{ version: 4, name: '004 add loans.renewals', up: 'ALTER TABLE loans ADD COLUMN renewals INTEGER NOT NULL DEFAULT 0' },` and run. The empty database now gets `[ 1, 2, 3, 4 ]`, the older one `[ 2, 3, 4 ]`, both reach version 4, and the number of members does not change. The old loans got `renewals` 0 from the `DEFAULT` value."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: лінійна історія комітів"
+      en: "Recall: a linear history of commits"
+    items:
+      - id: shared-history
+        from: js-15-08-branches-history
+        prompt:
+          uk: "Ти вже надіслав коміт `c2` колегам, а потім змінив його й отримав новий коміт `c2′`. Що станеться в репозиторії колеги, який будував свою роботу на `c2`?"
+          en: "You already shared commit `c2` with colleagues, then changed it and got a new commit `c2′`. What happens in the repository of a colleague who built their work on `c2`?"
+        answer:
+          type: choice
+          options:
+            - id: diverge
+              text: { uk: "У нього лишається старий `c2`; історії розійшлися, і їх доведеться зводити вручну", en: "They keep the old `c2`; the histories have diverged and have to be brought together by hand" }
+            - id: auto
+              text: { uk: "Його `c2` оновиться сам під час наступного `pull`", en: "Their `c2` updates itself on the next `pull`" }
+              why:
+                uk: "Комміт не змінюється: `c2′` — інший коміт з іншим id. Git бачить дві різні історії, а не нову версію тієї самої."
+                en: "A commit does not change: `c2′` is a different commit with a different id. Git sees two different histories, not a new version of the same one."
+            - id: nothing
+              text: { uk: "Нічого: зміст `c2` і `c2′` майже однаковий", en: "Nothing: the contents of `c2` and `c2′` are almost the same" }
+              why:
+                uk: "Git порівнює коміти за id, а не за схожістю змісту. Будь-яка зміна дає новий коміт, і гілки розходяться."
+                en: "Git compares commits by id, not by how similar their contents are. Any change gives a new commit, and the branches diverge."
+          correct: [diverge]
+        explanation:
+          uk: "Спільну історію не переписують, до неї додають нові коміти. З міграціями так само: застосовану міграцію не редагують, а додають наступну — інакше бази, що вже пройшли старий крок, розійдуться з новими."
+          en: "A shared history is not rewritten; new commits are added to it. Migrations work the same way: an applied migration is not edited, a next one is added — otherwise databases that passed the old step drift apart from new ones."
+
+  - id: planner-migrate
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: planner-migrate
+    entry: index.js
+    editable: [app.js]
+    strings:
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+    title:
+      uk: "Мігратор і seed для планувальника"
+      en: "A migrator and a seed for the planner"
+    instructions:
+      uk: |
+        Планувальник зберігає справи в SQLite. `migrations.js` містить три міграції (третя потребує стовпця з другої) і початкові справи `fixtures`. Зараз `migrate` в `app.js` щоразу виконує всі кроки, а `seed` щоразу вставляє справи. Перепиши обидві:
+
+        - `migrate(db, migrations)` застосовує в порядку `version` лише міграції, новіші за `PRAGMA user_version` бази, і повертає масив застосованих версій;
+        - кожна міграція виконується в транзакції разом із записом нового `user_version`; якщо вона падає, `migrate` кидає помилку, а база лишається на попередній версії без змін від цього кроку;
+        - повторний `migrate` нічого не застосовує й повертає `[]`;
+        - `seed(db, fixtures)` вставляє справи лише в порожню таблицю `tasks` і повертає, скільки вставлено.
+
+        Перевірки запускають `migrate` на порожній базі й на старішій (версія 1 з двома справами), подають міграції не по порядку й підкидають міграцію, що падає посередині.
+      en: |
+        The planner keeps tasks in SQLite. `migrations.js` holds three migrations (the third needs the column from the second) and the starting tasks `fixtures`. Right now `migrate` in `app.js` runs every step each time, and `seed` inserts the tasks each time. Rewrite both:
+
+        - `migrate(db, migrations)` applies, in `version` order, only the migrations newer than the database’s `PRAGMA user_version`, and returns an array of the versions applied;
+        - each migration runs in a transaction together with writing the new `user_version`; if it fails, `migrate` throws and the database stays at the previous version without this step’s changes;
+        - a repeated `migrate` applies nothing and returns `[]`;
+        - `seed(db, fixtures)` inserts the tasks only into an empty `tasks` table and returns how many it inserted.
+
+        The checks run `migrate` on an empty database and on an older one (version 1 with two tasks), pass the migrations out of order and slip in a migration that fails half-way.
+    testTitles:
+      "an empty database gets every migration, version 3":
+        uk: "Порожня база отримує всі міграції, версія 3"
+        en: "An empty database gets every migration, version 3"
+      "running migrate again applies nothing":
+        uk: "Повторний `migrate` нічого не застосовує"
+        en: "Running `migrate` again applies nothing"
+      "a database at version 1 gets only 2 and 3 and keeps its rows":
+        uk: "База на версії 1 отримує лише 2 і 3 й зберігає рядки"
+        en: "A database at version 1 gets only 2 and 3 and keeps its rows"
+      "migrations listed out of order are applied in version order":
+        uk: "Міграції, подані не по порядку, застосовано в порядку версій"
+        en: "Migrations listed out of order are applied in version order"
+      "a failing migration is rolled back and the version stays":
+        uk: "Міграцію, що впала, відкочено, версія не змінилася"
+        en: "A failing migration is rolled back and the version stays"
+      "seed fills an empty table once":
+        uk: "`seed` заповнює порожню таблицю один раз"
+        en: "`seed` fills an empty table once"
+      "seed leaves a table that already has rows alone":
+        uk: "`seed` не чіпає таблицю, де вже є рядки"
+        en: "`seed` leaves a table that already has rows alone"
+    hints:
+      nudge:
+        uk: "Що мігратор має прочитати з бази, перш ніж вирішити, які кроки виконувати? І що має статися із цим числом, якщо крок упав?"
+        en: "What must the migrator read from the database before deciding which steps to run? And what must happen to that number if a step fails?"
+      explanation:
+        uk: |
+          `db.prepare('PRAGMA user_version').get().user_version` дає поточну версію. `PRAGMA` не приймає параметрів `?`, тож номер вставляють у текст — це безпечно лише тому, що він береться з твого власного списку і є цілим числом (`Number.isInteger`). Скопіюй масив і відсортуй копію за `version`, щоб не міняти чужий масив.
+
+          Кожен крок — це схема з уроку про транзакції: `BEGIN`, сам крок і новий номер, `COMMIT`; у `catch` — `ROLLBACK` і `throw`. Для seed спершу порахуй рядки: якщо `COUNT(*)` більше за 0, нічого не вставляй.
+        en: |
+          `db.prepare('PRAGMA user_version').get().user_version` gives the current version. `PRAGMA` takes no `?` parameters, so the number goes into the text — safe only because it comes from your own list and is an integer (`Number.isInteger`). Copy the array and sort the copy by `version`, so you do not change someone else’s array.
+
+          Each step is the shape from the transactions lesson: `BEGIN`, the step itself and the new number, `COMMIT`; in `catch`, `ROLLBACK` and `throw`. For the seed, count the rows first: if `COUNT(*)` is above 0, insert nothing.
+    solutionNote:
+      uk: "`migrate` сортує копію списку, для кожного кроку читає `user_version` і пропускає застосовані; крок і новий номер ідуть в одну транзакцію, тож невдача відкочує обидва. `seed` вставляє лише в порожню таблицю. Варіант, що спершу відбирає всі новіші кроки через `filter` і `toSorted`, з допоміжною `inTransaction` та іменованими параметрами в `seed`, теж правильний."
+      en: "`migrate` sorts a copy of the list, reads `user_version` for each step and skips the applied ones; the step and the new number go into one transaction, so a failure rolls both back. `seed` inserts only into an empty table. A version that first picks every newer step with `filter` and `toSorted`, with a helper `inTransaction` and named parameters in `seed`, is correct too."
+    feedback:
+      - when: { test: "an empty database gets every migration, version 3" }
+        message:
+          uk: "Ця перевірка мігрує порожню базу й очікує `[1, 2, 3]`, `user_version` 3 і стовпець `done`. Якщо версія 0, номер після кроку не записано. Якщо всі перевірки не проходять разом, прочитай першу помилку в консолі після **Запустити**."
+          en: "This check migrates an empty database and expects `[1, 2, 3]`, `user_version` 3 and the column `done`. If the version is 0, the number is not written after a step. If every check fails at once, read the first error in the console after **Run**."
+      - when: { test: "running migrate again applies nothing" }
+        message:
+          uk: "Ця перевірка запускає `migrate` двічі й очікує, що другий раз поверне `[]` без помилки. `table tasks already exists` означає, що кроки не порівнюються з `user_version`."
+          en: "This check runs `migrate` twice and expects the second run to return `[]` without an error. `table tasks already exists` means the steps are not compared with `user_version`."
+      - when: { test: "a database at version 1 gets only 2 and 3 and keeps its rows" }
+        message:
+          uk: "Ця перевірка бере базу на версії 1 з двома справами й очікує `[2, 3]`, дві справи після міграції й `done` 0 в обох."
+          en: "This check takes a database at version 1 with two tasks and expects `[2, 3]`, two tasks after the migration and `done` 0 in both."
+      - when: { test: "migrations listed out of order are applied in version order" }
+        message:
+          uk: "Ця перевірка подає міграції в порядку 3, 1, 2 й очікує `[1, 2, 3]`. Помилка `no such table` чи `no such column` означає, що крок виконано раніше за той, від якого він залежить: відсортуй копію списку за `version`."
+          en: "This check passes the migrations in the order 3, 1, 2 and expects `[1, 2, 3]`. An error such as `no such table` or `no such column` means a step ran before the one it depends on: sort a copy of the list by `version`."
+      - when: { test: "a failing migration is rolled back and the version stays" }
+        message:
+          uk: "Ця перевірка подає міграцію 2, перша інструкція якої додає стовпець `priority`, а друга падає. Очікується помилка, `user_version` 1 і жодного стовпця `priority`: крок і номер мають бути в одній транзакції з `ROLLBACK` на шляху помилки."
+          en: "This check passes a migration 2 whose first statement adds a column `priority` and whose second one fails. It expects an error, `user_version` 1 and no `priority` column: the step and the number belong in one transaction with a `ROLLBACK` on the error path."
+      - when: { test: "seed fills an empty table once" }
+        message:
+          uk: "Ця перевірка викликає `seed` двічі для порожньої таблиці й очікує спершу кількість справ, потім 0, і без дублікатів у таблиці."
+          en: "This check calls `seed` twice on an empty table and expects first the number of tasks, then 0, and no duplicates in the table."
+      - when: { test: "seed leaves a table that already has rows alone" }
+        message:
+          uk: "Ця перевірка викликає `seed` для таблиці з двома справами й очікує 0 і ті самі дві справи. `INSERT OR IGNORE` пропускає лише повтори `id`, а не вирішує, чи таблиця порожня."
+          en: "This check calls `seed` on a table with two tasks and expects 0 and the same two tasks. `INSERT OR IGNORE` skips only repeated `id`s; it does not decide whether the table is empty."
+
+  - id: to-project
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-09 немає. За планом курсу саме в NO-05 сервер проєкту отримує ініціалізацію, seed і міграції на старті — для того сховища, яке ти обереш. Підхід звідси переноситься на будь-яке: номер версії в самих даних, кроки лише вперед, кожен крок «все або нічого», і запуск на наявних даних, що нічого не задвоює."
+      en: "Your project does not change in this unit: NO-09 has no project step. In the course plan it is in NO-05 that the project’s server gets initialization, seed and migrations on start — for whichever storage you choose. The approach here carries over to any of them: a version number inside the data itself, forward-only steps, each step all-or-nothing, and a start on existing data that doubles nothing."

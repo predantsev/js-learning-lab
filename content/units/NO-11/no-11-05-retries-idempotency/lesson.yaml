@@ -1,0 +1,380 @@
+id: no-11-05-retries-idempotency
+unit: NO-11
+title:
+  uk: "Повтори та ідемпотентність"
+  en: "Retries and idempotency"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Повторювати крок задачі, що впав, з обмеженою кількістю спроб, експоненційною паузою й jitter, і зупинятися одразу на помилках, які повтор не виправить."
+    en: "Retry a failing job step with a bounded number of attempts, exponential backoff and jitter, and stop at once on non-retryable errors."
+  - uk: "Робити крок задачі ідемпотентним за допомогою id задачі, щоб повтор після збою не застосував той самий імпорт двічі."
+    en: "Make a job step idempotent with a job id so that a retry after a crash does not apply the same import twice."
+prerequisites: [no-11-04-bounded-queues-jobs, no-04-05-idempotency]
+subskills:
+  - { family: B-08, skill: "retries/idempotency", depth: intro }
+glossary: [retry-jitter, at-least-once-delivery]
+selfCheck: [predict-duplicates, retry-import]
+
+blocks:
+  - id: threw-but-wrote
+    kind: explanation
+    title:
+      uk: "Помилка не означає «нічого не сталося»"
+      en: "An error does not mean “nothing happened”"
+    body:
+      uk: |
+        Крок імпорту записав рядки й зафіксував транзакцію — а потім відповідь загубилася: таймаут, обрив з’єднання, процес упав одразу після `COMMIT`. Той, хто викликав, бачить лише помилку й не знає, чи запис відбувся.
+
+        Тому системи задач і черг повідомлень зазвичай обіцяють [[at-least-once-delivery|доставку «щонайменше один раз»]]: задача точно виконається, але може виконатися й двічі. «Рівно один раз» досягають не повторами, а [[idempotency|ідемпотентністю]] самого кроку — як `Idempotency-Key` у NO-04, тільки тепер ключ — **id задачі**:
+
+        - у тій самій транзакції, що й записи, крок зберігає `jobId` у таблиці виконаних задач;
+        - на початку крок перевіряє: якщо `jobId` уже є — задача виконана, нічого не робити.
+
+        Обидва записи в **одній** транзакції: або є і рядки, і позначка, або немає нічого.
+      en: |
+        An import step wrote its rows and committed the transaction — and then the answer got lost: a timeout, a dropped connection, the process crashed right after `COMMIT`. The caller sees only an error and does not know whether the write happened.
+
+        So job systems and message queues usually promise [[at-least-once-delivery]]: a job will surely run, but it may run twice. “Exactly once” is reached not with retries but with the [[idempotency]] of the step itself — like the `Idempotency-Key` in NO-04, only now the key is the **job id**:
+
+        - in the same transaction as the records, the step stores `jobId` in a table of processed jobs;
+        - at the start the step checks: if `jobId` is already there, the job is done — do nothing.
+
+        Both writes are in **one** transaction: either the rows and the mark are both there, or nothing is.
+
+  - id: predict-duplicates
+    kind: prediction
+    prompt:
+      uk: "Крок імпорту зберігає три записи, а на першій спробі після запису кидає `timeout`. Простий цикл повторює його до трьох разів. Скільки записів збережено без перевірки id задачі (`false`) і з нею (`true`)?"
+      en: "An import step stores three records, and on its first attempt it throws `timeout` after the write. A plain loop retries it up to three times. How many records are stored without the job-id check (`false`) and with it (`true`)?"
+    code: |
+      const stored = [];
+      const doneJobs = new Set();
+      let attempts = 0;
+
+      function importStep(jobId, rows, checkJobId) {
+        attempts += 1;
+        if (checkJobId && doneJobs.has(jobId)) return;
+        stored.push(...rows);
+        doneJobs.add(jobId);
+        if (attempts === 1) throw new Error("timeout");
+      }
+
+      for (const checkJobId of [false, true]) {
+        stored.length = 0;
+        doneJobs.clear();
+        attempts = 0;
+        for (let i = 1; i <= 3; i++) {
+          try {
+            importStep("job-1", ["e-1", "e-2", "e-3"], checkJobId);
+            break;
+          } catch {}
+        }
+        console.log(checkJobId, stored.length);
+      }
+    verify: { logs: ["false 6", "true 3"] }
+    answer:
+      type: choice
+      options:
+        - id: six-three
+          code: "false 6\ntrue 3"
+        - id: three-three
+          code: "false 3\ntrue 3"
+          why:
+            uk: "Перша спроба кинула помилку вже **після** `stored.push`: записи лишилися. Друга спроба без перевірки додає ті самі три записи вдруге."
+            en: "The first attempt threw **after** `stored.push`: the records stayed. The second attempt without the check adds the same three records again."
+        - id: nine-three
+          code: "false 9\ntrue 3"
+          why:
+            uk: "Помилка лише на першій спробі. Друга вдається, і `break` зупиняє цикл, тож третьої спроби немає."
+            en: "Only the first attempt fails. The second one succeeds, and `break` stops the loop, so there is no third attempt."
+      correct: [six-three]
+    explanation:
+      uk: "Без перевірки друга спроба повторює запис: 6 записів замість 3. З перевіркою друга спроба бачить `job-1` серед виконаних і нічого не робить. Помилка першої спроби не скасувала її запису."
+      en: "Without the check the second attempt repeats the write: 6 records instead of 3. With the check the second attempt finds `job-1` among the done jobs and does nothing. The error of the first attempt did not undo its write."
+
+  - id: duplicate-import
+    kind: example
+    runtime: isolated-node
+    dir: duplicate-import
+    entry: index.js
+    strings:
+      coffee: { uk: "Кава із собою", en: "Coffee to go" }
+      bus: { uk: "Квиток на автобус", en: "Bus ticket" }
+      bread: { uk: "Хліб і молоко", en: "Bread and milk" }
+      attempt: { uk: "спроба", en: "attempt" }
+      alreadyDone: { uk: "задачу вже виконано:", en: "job already done:" }
+      timeout: { uk: "таймаут після запису", en: "timeout after the write" }
+      ok: { uk: "успіх", en: "success" }
+      rows: { uk: "рядків", en: "rows" }
+      total: { uk: "сума", en: "total" }
+    title:
+      uk: "Справжня транзакція й загублена відповідь"
+      en: "A real transaction and a lost answer"
+    body:
+      uk: |
+        Натисни **Запустити**. Тут справжня база `node:sqlite` у пам’яті. Крок імпорту вставляє три витрати в транзакції й робить `COMMIT`, а на першій спробі після цього кидає «таймаут» — так виглядає загублена відповідь. Простий цикл повторює крок до трьох разів, на будь-яку помилку.
+
+        `node:sqlite` у Node.js 22 ще експериментальний (як у NO-05): платформа ховає попередження про це, а в терміналі Node.js v22.23.3 і v25.2.1 друкують червоний рядок `ExperimentalWarning: SQLite is an experimental feature…`.
+      en: |
+        Press **Run**. This is a real in-memory `node:sqlite` database. The import step inserts three expenses in a transaction and runs `COMMIT`, and on the first attempt it then throws a “timeout” — that is what a lost answer looks like. A plain loop retries the step up to three times, on any error.
+
+        `node:sqlite` is still experimental in Node.js 22 (as in NO-05): the platform hides the warning about it, while in a terminal Node.js v22.23.3 and v25.2.1 print a red line `ExperimentalWarning: SQLite is an experimental feature…`.
+    tryIt:
+      uk: "Зміни `CHECK_JOB_ID` на `true`: друга спроба знаходить `job-2026-03-01` у `processed_jobs`, і рядків знову 3. Потім `FAILS_AFTER_WRITE = 2` із `CHECK_JOB_ID = false`: рядків 9 — дві спроби записали дані й «загубили» відповідь, третя вдалася, і кожна додала ті самі три витрати. З `FAILS_AFTER_WRITE = 3` рядків теж 9, але цикл здається після трьох «таймаутів», хоч усі три спроби записали дані. Поверни `false` і `1`."
+      en: "Change `CHECK_JOB_ID` to `true`: the second attempt finds `job-2026-03-01` in `processed_jobs`, and there are 3 rows again. Then `FAILS_AFTER_WRITE = 2` with `CHECK_JOB_ID = false`: 9 rows — two attempts wrote the data and “lost” the answer, the third succeeded, and each added the same three expenses. With `FAILS_AFTER_WRITE = 3` there are 9 rows too, but the loop gives up after three “timeouts”, although all three attempts wrote data. Set them back to `false` and `1`."
+
+  - id: retry-well
+    kind: explanation
+    title:
+      uk: "Повтор з межами"
+      en: "A retry with limits"
+    body:
+      uk: |
+        Ти вже писав [[bounded-retry|обмежений повтор]] для `fetch` і бачив [[exponential-backoff|експоненційну паузу]]. Для задачі на сервері правила ті самі, плюс одне нове:
+
+        1. **Обмежена кількість спроб** (`maxAttempts`). Після останньої — віддати останню помилку.
+        2. **Повторювати лише те, що може минути.** Таймаут чи «забагато з’єднань» — так. `ValidationError` (від’ємна сума, зламаний рядок) — ні: повтор дасть ту саму помилку. Хто вирішує — функція `isRetryable(error)`.
+        3. **Пауза росте вдвічі:** `baseMs`, `2 × baseMs`, `4 × baseMs`…
+        4. **[[retry-jitter|Jitter]]** — нове. Якщо тисяча задач упала одночасно (база перезапустилася), то з однаковими паузами вони й повторять одночасно — і знову її покладуть. Тому паузу множать на випадкове число від 0 до 1: `random() × baseMs × 2^(n − 1)`. Спроби розсипаються в часі.
+        5. **Скасування** (`signal`) перериває і паузу, а не лише наступну спробу.
+      en: |
+        You already wrote a [[bounded-retry]] for `fetch` and saw [[exponential-backoff]]. For a job on a server the rules are the same, plus one new one:
+
+        1. **A limited number of attempts** (`maxAttempts`). After the last one — pass on the last error.
+        2. **Retry only what can pass.** A timeout or “too many connections” — yes. A `ValidationError` (a negative amount, a broken line) — no: a retry gives the same error. The function `isRetryable(error)` decides.
+        3. **The pause doubles:** `baseMs`, `2 × baseMs`, `4 × baseMs`…
+        4. **[[retry-jitter|Jitter]]** — the new one. If a thousand jobs failed at the same moment (the database restarted), with equal pauses they also retry at the same moment — and bring it down again. So the pause is multiplied by a random number from 0 to 1: `random() × baseMs × 2^(n − 1)`. The attempts scatter over time.
+        5. **Cancellation** (`signal`) interrupts the pause too, not just the next attempt.
+
+  - id: retry-timeline
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Повтор після загубленої відповіді"
+      en: "A retry after a lost answer"
+    textEquivalent:
+      uk: "Учасники: виконавець задач, крок імпорту і база даних. Спроба 1: виконавець запускає крок з job-7; крок у транзакції вставляє рядки й позначку job-7 і робить COMMIT; база підтверджує, але відповідь до виконавця не доходить — він бачить таймаут. Виконавець чекає випадкову паузу до 100 мс і запускає спробу 2. Крок у новій транзакції питає базу, чи є job-7 серед виконаних; база відповідає, що є, тож крок нічого не вставляє й повертає «уже виконано». Без перевірки друга спроба вставила б ті самі рядки вдруге. Якби й друга спроба впала, наступна пауза була б до 200 мс, потім до 400."
+      en: "Participants: the job runner, the import step and the database. Attempt 1: the runner starts the step with job-7; the step, in a transaction, inserts the rows and the mark job-7 and commits; the database confirms, but the answer never reaches the runner — it sees a timeout. The runner waits a random pause of up to 100 ms and starts attempt 2. The step, in a new transaction, asks the database whether job-7 is among the processed jobs; the database answers that it is, so the step inserts nothing and returns “already done”. Without the check the second attempt would insert the same rows again. Had the second attempt failed too, the next pause would be up to 200 ms, then up to 400."
+    spec:
+      actors:
+        - { id: runner, label: { uk: "Виконавець", en: "Job runner" } }
+        - { id: step, label: { uk: "Крок імпорту", en: "Import step" } }
+        - { id: db, label: "SQLite" }
+      messages:
+        - from: runner
+          to: step
+          label: { uk: "спроба 1 (job-7)", en: "attempt 1 (job-7)" }
+          caption:
+            uk: "Виконавець запускає крок імпорту для задачі `job-7`."
+            en: "The runner starts the import step for job `job-7`."
+        - from: step
+          to: db
+          label: "INSERT … + processed_jobs, COMMIT"
+          caption:
+            uk: "В одній транзакції — рядки й позначка `job-7`. `COMMIT` пройшов."
+            en: "In one transaction — the rows and the mark `job-7`. `COMMIT` went through."
+        - from: step
+          to: runner
+          kind: return
+          label: { uk: "таймаут", en: "timeout" }
+          caption:
+            uk: "Але відповідь загубилася: виконавець бачить **таймаут** і не знає, що запис уже є."
+            en: "But the answer got lost: the runner sees a **timeout** and does not know the write is already there."
+        - from: runner
+          to: runner
+          kind: note
+          label: { uk: "пауза: random() × 100 мс", en: "pause: random() × 100 ms" }
+          caption:
+            uk: "Помилка повторювана, спроба не остання: пауза з jitter — випадкова, до `baseMs` = 100 мс."
+            en: "The error is retryable and this is not the last attempt: a pause with jitter — random, up to `baseMs` = 100 ms."
+        - from: runner
+          to: step
+          label: { uk: "спроба 2 (job-7)", en: "attempt 2 (job-7)" }
+          caption:
+            uk: "Спроба 2 з тим самим id задачі."
+            en: "Attempt 2 with the same job id."
+        - from: step
+          to: db
+          label: "SELECT … processed_jobs"
+          caption:
+            uk: "Крок спершу питає, чи `job-7` уже виконано."
+            en: "The step first asks whether `job-7` is already done."
+        - from: db
+          to: step
+          kind: return
+          label: { uk: "так", en: "yes" }
+          caption:
+            uk: "Так — позначка зафіксована разом з рядками в спробі 1."
+            en: "Yes — the mark was committed together with the rows in attempt 1."
+        - from: step
+          to: runner
+          kind: return
+          label: { uk: "уже виконано", en: "already done" }
+          caption:
+            uk: "Крок нічого не вставляє. Без перевірки рядки з’явилися б удруге."
+            en: "The step inserts nothing. Without the check the rows would appear a second time."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: ключ ідемпотентності"
+      en: "Recall: the idempotency key"
+    items:
+      - id: key-reused
+        from: no-04-05-idempotency
+        prompt:
+          uk: "Клієнт надсилає `POST /expenses` з `Idempotency-Key`, який сервер уже бачив, і з **тим самим** тілом. Що має зробити сервер?"
+          en: "A client sends `POST /expenses` with an `Idempotency-Key` the server has already seen, and with the **same** body. What should the server do?"
+        answer:
+          type: choice
+          options:
+            - id: replay
+              text:
+                uk: "Повернути першу відповідь і нічого не створювати"
+                en: "Return the first answer and create nothing"
+            - id: create-again
+              text:
+                uk: "Створити витрату ще раз: це новий запит"
+                en: "Create the expense again: it is a new request"
+              why:
+                uk: "Той самий ключ з тим самим тілом — це повтор тієї самої дії, наприклад після обриву мережі. Створити вдруге — подвоїти витрату."
+                en: "The same key with the same body is a retry of the same action, for example after a dropped connection. Creating it again doubles the expense."
+            - id: reject-422
+              text:
+                uk: "Відповісти 422: ключ уже використано"
+                en: "Answer 422: the key has been used"
+              why:
+                uk: "422 — для того самого ключа з **іншим** тілом: це помилка клієнта. Справжній повтор має отримати ту саму відповідь, що й перша спроба."
+                en: "422 is for the same key with a **different** body: that is a client mistake. A real retry should get the same answer as the first attempt."
+          correct: [replay]
+        explanation:
+          uk: "Ключ дозволяє серверу впізнати повтор. Id задачі в імпорті робить те саме: другий запуск тієї самої задачі нічого не змінює."
+          en: "The key lets the server recognize a retry. A job id in the import does the same: a second run of the same job changes nothing."
+
+  - id: retry-import
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: retry-import
+    entry: index.js
+    editable: [retry.js, import.js]
+    strings:
+      coffee: { uk: "Кава із собою", en: "Coffee to go" }
+      bus: { uk: "Квиток на автобус", en: "Bus ticket" }
+      bread: { uk: "Хліб і молоко", en: "Bread and milk" }
+      attempt: { uk: "спроба", en: "attempt" }
+      at: { uk: "на", en: "at" }
+      ms: { uk: "мс", en: "ms" }
+      badAmount: { uk: "сума має бути додатною", en: "the amount must be positive" }
+      timeout: { uk: "таймаут після запису", en: "timeout after the write" }
+      ok: { uk: "готово", en: "done" }
+      rows: { uk: "рядків у базі", en: "rows in the database" }
+    title:
+      uk: "retry і importBatch: повтор, що не дублює"
+      en: "retry and importBatch: a retry that does not duplicate"
+    instructions:
+      uk: |
+        Зараз `retry` у `retry.js` робить одну спробу, а `importBatch` в `import.js` вставляє рядки, не дивлячись на `jobId`. Перероби обидві.
+
+        **`retry(fn, { maxAttempts, baseMs, isRetryable, signal, random })`:**
+
+        - викликає `fn(attempt)` (номер спроби від 1) і виконується першим успіхом;
+        - робить щонайбільше `maxAttempts` спроб, а потім відхиляється останньою помилкою;
+        - перед спробою `n + 1` чекає `random() × baseMs × 2^(n − 1)` мс (`random` типово `Math.random`);
+        - якщо `isRetryable(error)` повертає `false`, одразу відхиляється цією помилкою;
+        - якщо `signal` скасовано під час паузи, одразу відхиляється з `AbortError` і більше не пробує.
+
+        **`importBatch(db, jobId, rows)`:** ті самі `jobId` двічі зберігають рядки один раз; невдалий імпорт не позначає задачу виконаною, тож повтор з тим самим `jobId` зберігає рядки. У базі є таблиця `processed_jobs (jobId TEXT PRIMARY KEY)`.
+
+        `index.js`, `db.js` і `errors.js` лише для читання. Перевірки не міряють часу: вони передають свій `random` і записують, яку паузу код у `retry.js` просить у таймера — у `setTimeout` (глобального чи з `node:timers`) або в `setTimeout` з `node:timers/promises`.
+      en: |
+        Right now `retry` in `retry.js` makes one attempt, and `importBatch` in `import.js` inserts the rows without looking at `jobId`. Rework both.
+
+        **`retry(fn, { maxAttempts, baseMs, isRetryable, signal, random })`:**
+
+        - it calls `fn(attempt)` (the attempt number, from 1) and fulfills with the first success;
+        - it makes at most `maxAttempts` attempts and then rejects with the last error;
+        - before attempt `n + 1` it waits `random() × baseMs × 2^(n − 1)` ms (`random` defaults to `Math.random`);
+        - if `isRetryable(error)` returns `false`, it rejects with that error at once;
+        - if `signal` is aborted during a pause, it rejects with `AbortError` at once and makes no more attempts.
+
+        **`importBatch(db, jobId, rows)`:** the same `jobId` twice stores the rows once; a failed import does not mark the job done, so a retry with the same `jobId` stores the rows. The database has a table `processed_jobs (jobId TEXT PRIMARY KEY)`.
+
+        `index.js`, `db.js` and `errors.js` are read-only. The checks measure no time: they pass their own `random` and record the pause the code in `retry.js` asks a timer for — `setTimeout` (the global one or from `node:timers`) or `setTimeout` from `node:timers/promises`.
+    testTitles:
+      "resolves with the first success and passes the attempt number":
+        uk: "Виконується першим успіхом і передає номер спроби"
+        en: "Resolves with the first success and passes the attempt number"
+      "gives up after maxAttempts and rejects with the last error":
+        uk: "Здається після `maxAttempts` і відхиляється останньою помилкою"
+        en: "Gives up after `maxAttempts` and rejects with the last error"
+      "the wait doubles after every attempt":
+        uk: "Пауза подвоюється після кожної спроби"
+        en: "The wait doubles after every attempt"
+      "each wait is scaled by random() (jitter)":
+        uk: "Кожну паузу помножено на `random()` (jitter)"
+        en: "Each wait is scaled by `random()` (jitter)"
+      "a non-retryable error ends it after one attempt":
+        uk: "Неповторювана помилка завершує все після однієї спроби"
+        en: "A non-retryable error ends it after one attempt"
+      "an abort during a wait rejects with AbortError at once and makes no more attempts":
+        uk: "Скасування під час паузи одразу відхиляє з `AbortError`, нових спроб немає"
+        en: "An abort during a wait rejects with `AbortError` at once and makes no more attempts"
+      "the same jobId imported twice stores its rows once":
+        uk: "Той самий `jobId`, імпортований двічі, зберігає рядки один раз"
+        en: "The same `jobId` imported twice stores its rows once"
+      "a failed import marks nothing done, so a retry with the same jobId stores the rows":
+        uk: "Невдалий імпорт нічого не позначає, тож повтор з тим самим `jobId` зберігає рядки"
+        en: "A failed import marks nothing done, so a retry with the same `jobId` stores the rows"
+    hints:
+      nudge:
+        uk: "У `retry`: де вирішується «здатися чи чекати», і що саме має переривати `signal` — спробу чи паузу? В `importBatch`: де стоїть позначка «задачу виконано» відносно `BEGIN` і `COMMIT`?"
+        en: "In `retry`: where is “give up or wait” decided, and what exactly must `signal` interrupt — the attempt or the pause? In `importBatch`: where does the “job done” mark stand relative to `BEGIN` and `COMMIT`?"
+      explanation:
+        uk: "Пауза, яку можна скасувати, — це promise із `setTimeout`, що відхиляється із `signal.reason`, коли приходить подія `'abort'` (і прибирає таймер через `clearTimeout`). Те саме вміє `setTimeout` з `node:timers/promises` з опцією `{ signal }`. У `catch` спроби спершу перевір, чи це остання спроба і чи помилка повторювана, — і лише тоді чекай. В `importBatch` перевірка `SELECT … FROM processed_jobs` і вставка `jobId` мають бути між `BEGIN` і `COMMIT`, разом з рядками: тоді `ROLLBACK` прибирає і рядки, і позначку."
+        en: "A pause you can cancel is a promise around `setTimeout` that rejects with `signal.reason` when the `'abort'` event comes (and removes the timer with `clearTimeout`). `setTimeout` from `node:timers/promises` with the option `{ signal }` does the same. In an attempt’s `catch`, first check whether it is the last attempt and whether the error is retryable — and only then wait. In `importBatch` the `SELECT … FROM processed_jobs` check and the insert of `jobId` belong between `BEGIN` and `COMMIT`, together with the rows: then `ROLLBACK` removes both the rows and the mark."
+    solutionNote:
+      uk: "`retry` у циклі ловить помилку спроби, віддає її одразу, якщо спроба остання чи помилка неповторювана, а інакше чекає `random() × baseMs × 2^(n − 1)` мс у паузі, яку перериває `signal`. `importBatch` у тій самій транзакції перевіряє `processed_jobs`, вставляє рядки й позначку: після збою `ROLLBACK` прибирає все, тож повтор пройде; після успіху позначка не дасть записати ті самі рядки вдруге. Рівноцінно — `INSERT OR IGNORE` у `processed_jobs` першим кроком транзакції й перевірка `changes`."
+      en: "`retry` catches each attempt’s error in a loop, passes it on at once if the attempt is the last or the error is not retryable, and otherwise waits `random() × baseMs × 2^(n − 1)` ms in a pause that `signal` interrupts. `importBatch`, in one transaction, checks `processed_jobs` and inserts the rows and the mark: after a failure `ROLLBACK` removes everything, so a retry goes through; after success the mark keeps the same rows from being written twice. Equivalent: `INSERT OR IGNORE` into `processed_jobs` as the transaction’s first step and a check of `changes`."
+    feedback:
+      - when: { test: "resolves with the first success and passes the attempt number" }
+        message:
+          uk: "Ця перевірка дає `fn`, що двічі падає, а втретє повертає `'imported'`, з `maxAttempts` 5. Вона очікує результат `'imported'` і номери спроб `[1, 2, 3]`."
+          en: "This check gives an `fn` that fails twice and returns `'imported'` the third time, with `maxAttempts` 5. It expects the result `'imported'` and the attempt numbers `[1, 2, 3]`."
+      - when: { test: "gives up after maxAttempts and rejects with the last error" }
+        message:
+          uk: "Ця перевірка очікує рівно 3 виклики `fn` при `maxAttempts` 3 і відхилення помилкою третьої спроби (`attempt 3 failed`). Перевір умову, після якої `retry` здається."
+          en: "This check expects exactly 3 calls of `fn` with `maxAttempts` 3 and a rejection with the third attempt’s error (`attempt 3 failed`). Check the condition after which `retry` gives up."
+      - when: { test: "the wait doubles after every attempt" }
+        message:
+          uk: "Ця перевірка з `baseMs` 40 і `random` = 1 очікує, що `retry.js` попросить у таймера паузи 40, 80 і 160 мс — саме в такому порядку. Пауза перед спробою `n + 1` — `random() × baseMs × 2^(n − 1)`; якщо пауз немає зовсім, перевір, що чекаєш через `setTimeout`."
+          en: "This check with `baseMs` 40 and `random` = 1 expects `retry.js` to ask a timer for pauses of 40, 80 and 160 ms — in this order. The pause before attempt `n + 1` is `random() × baseMs × 2^(n − 1)`; if there are no pauses at all, check that you wait with `setTimeout`."
+      - when: { test: "each wait is scaled by random() (jitter)" }
+        message:
+          uk: "Ця перевірка з `baseMs` 200 і `random` = 0,25 очікує паузу 50 мс. Множ паузу на значення, яке повертає `random()` з опцій, а не на сталу."
+          en: "This check with `baseMs` 200 and `random` = 0.25 expects a pause of 50 ms. Multiply the pause by the value `random()` from the options returns, not by a constant."
+      - when: { test: "a non-retryable error ends it after one attempt" }
+        message:
+          uk: "Ця перевірка дає `fn`, що кидає `ValidationError`, і `isRetryable`, що для неї повертає `false`. Вона очікує один виклик `fn` і відхилення цією самою помилкою."
+          en: "This check gives an `fn` that throws a `ValidationError` and an `isRetryable` that returns `false` for it. It expects one call of `fn` and a rejection with that same error."
+      - when: { test: "an abort during a wait rejects with AbortError at once and makes no more attempts" }
+        message:
+          uk: "Ця перевірка скасовує `signal`, щойно `retry.js` почав секундну паузу, і очікує відхилення з назвою `AbortError` ще до кінця цієї паузи й лише одну спробу. Пауза має слухати `'abort'`, а не лише чекати свій таймер."
+          en: "This check aborts `signal` as soon as `retry.js` has started a one-second pause and expects a rejection named `AbortError` before that pause ends, and only one attempt. The pause has to listen for `'abort'`, not just wait for its timer."
+      - when: { test: "the same jobId imported twice stores its rows once" }
+        message:
+          uk: "Ця перевірка імпортує `job-a` двічі й очікує 2 рядки, а потім `job-b` — і 4. Перевір `processed_jobs` на початку транзакції й запиши туди `jobId` разом з рядками."
+          en: "This check imports `job-a` twice and expects 2 rows, then `job-b` — and 4. Check `processed_jobs` at the start of the transaction and write `jobId` there together with the rows."
+      - when: { test: "a failed import marks nothing done, so a retry with the same jobId stores the rows" }
+        message:
+          uk: "Ця перевірка спершу імпортує `job-c` з рядком `amountMinor: -1` (таблиця його не приймає) і очікує помилку й 0 рядків, а потім той самий `job-c` з правильними рядками — і 2 рядки. Позначка `jobId` має бути в тій самій транзакції, що й рядки, щоб `ROLLBACK` прибрав і її."
+          en: "This check first imports `job-c` with a row `amountMinor: -1` (the table refuses it) and expects an error and 0 rows, then the same `job-c` with valid rows — and 2 rows. The `jobId` mark has to be in the same transaction as the rows, so that `ROLLBACK` removes it too."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-11
+    body:
+      uk: "У кроці проєкту цього розділу повторений імпорт не дублює записів твого домену: `upsertMany` замінює запис із відомим `id` і додає новий, тож той самий файл, імпортований двічі, дає те саме сховище (правило злиття твого проєкту — у таблиці кроку). Оскільки такий upsert ідемпотентний, `importJsonLines` обгортає його в `retry(fn, { maxAttempts, baseMs, isRetryable, signal })` із `src/jobs.ts`: пауза `random() × baseMs × 2^(n − 1)`, і повторюються лише збої, що можуть минути, як-от `EBUSY`, а не помилки перевірки чи скасування."
+      en: "In this unit’s project step a repeated import never duplicates your domain’s records: `upsertMany` replaces a record with a known `id` and adds a new one, so the same file imported twice gives the same store (your project’s merge rule is in the step’s table). Because that upsert is idempotent, `importJsonLines` wraps it in `retry(fn, { maxAttempts, baseMs, isRetryable, signal })` from `src/jobs.ts`: a pause of `random() × baseMs × 2^(n − 1)`, and only failures that can pass, such as `EBUSY`, are retried — not a validation error or an abort."

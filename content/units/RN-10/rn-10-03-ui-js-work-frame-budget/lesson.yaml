@@ -1,0 +1,333 @@
+id: rn-10-03-ui-js-work-frame-budget
+unit: RN-10
+title:
+  uk: "Робота UI і JS та бюджет кадру"
+  en: "UI vs JS work and the frame budget"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Порахувати бюджет кадру для 60 Гц і 120 Гц і пояснити, що стається з анімацією, яку веде JS, поки обробник блокує потік JS на 200 мс."
+    en: "Compute the per-frame budget at 60 Hz and 120 Hz and explain what happens to a JS-driven animation while a handler blocks the JS thread for 200 ms."
+  - uk: "Перенести анімацію, керовану жестом, з потоку JS (native driver або worklet у потоці UI) і назвати, до чого цей код більше не має доступу."
+    en: "Move a gesture-driven animation off the JS thread (native driver or a UI-thread worklet) and name what that code can no longer access."
+prerequisites: [rn-10-02-animation-fundamentals, rn-03-05-touch-js-vs-ui]
+subskills:
+  - { family: N-08, skill: "UI/JS work limits", depth: intro }
+  - { family: N-04, skill: "frame budget", depth: intro }
+glossary: [frame-budget, dropped-frame, native-driver]
+selfCheck: [predict-dropped, swipe-budget]
+
+blocks:
+  - id: budget
+    kind: explanation
+    title:
+      uk: "16,67 мілісекунди на все"
+      en: "16.67 milliseconds for everything"
+    body:
+      uk: |
+        Екран телефона оновлюється щонайменше 60 разів на секунду. Документація React Native рахує просто: на один кадр лишається **1000 / 60 ≈ 16,67 мс** — це [[frame-budget|бюджет кадру]]. На екрані 120 Гц — **8,33 мс**.
+
+        Анімація, яку веде JavaScript (`useNativeDriver: false`), на кожен кадр просить потік JS порахувати нове значення. Якщо в цей кадр потік JS зайнятий чимось іншим — сортуванням, форматуванням сотні рядків, — значення не з’являється, і екран показує старе. Це [[dropped-frame|пропущений кадр]]: користувач бачить ривок.
+
+        «На моєму ноутбуці код швидкий» нічого не гарантує. Емулятор позичає процесор ноутбука, а телефон середнього класу може бути в рази повільнішим; до того ж у debug-збірці JavaScript працює помітно повільніше, ніж у release. Важить не «швидко», а **чи вкладається робота в один кадр на цільовому пристрої**.
+      en: |
+        A phone screen refreshes at least 60 times a second. The React Native docs do the simple maths: one frame leaves **1000 / 60 ≈ 16.67 ms** — the [[frame-budget]]. On a 120 Hz screen it is **8.33 ms**.
+
+        An animation driven by JavaScript (`useNativeDriver: false`) asks the JS thread to compute a new value for every frame. If in that frame the JS thread is busy with something else — a sort, formatting a hundred rows — the value does not arrive, and the screen shows the old one. That is a [[dropped-frame]]: the user sees a jerk.
+
+        “The code is fast on my laptop” guarantees nothing. An emulator borrows the laptop's processor, while a mid-range phone can be several times slower; and in a debug build JavaScript runs noticeably slower than in release. What matters is not “fast” but **whether the work fits into one frame on the target device**.
+
+  - id: predict-dropped
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Рядок звички згасає за 300 мс на екрані 60 Гц — це 18 кадрів. На 50-й мілісекунді обробник синхронно сортує список звичок рівно 200 мс. Скільки кадрів пропустить згасання, яке веде JS, і скільки — те саме згасання з native driver?"
+      en: "A habit row fades out over 300 ms on a 60 Hz screen — that is 18 frames. At the 50th millisecond a handler synchronously sorts the habit list for exactly 200 ms. How many frames does the fade drop when JS drives it, and how many does the same fade drop with the native driver?"
+    answer:
+      type: choice
+      options:
+        - id: twelve-zero
+          text:
+            uk: "З JS — 12, з native driver — 0"
+            en: "With JS — 12, with the native driver — 0"
+        - id: one-zero
+          text:
+            uk: "З JS — 1 (один довгий кадр), з native driver — 0"
+            en: "With JS — 1 (one long frame), with the native driver — 0"
+          why:
+            uk: "Екран не чекає на JavaScript: він показує кадр кожні 16,67 мс. 200 мс зайнятого потоку JS — це 12 цілих слотів, і в кожному екран повторює старе значення."
+            en: "The screen does not wait for JavaScript: it shows a frame every 16.67 ms. 200 ms of a busy JS thread is 12 whole slots, and in each one the screen repeats the old value."
+        - id: twelve-twelve
+          text:
+            uk: "По 12 обидва: сортування гальмує весь застосунок"
+            en: "12 each: the sort slows down the whole app"
+          why:
+            uk: "З native driver значення рахує потік UI, а сортування займає потік JS. Потік UI тим часом малює кадри далі."
+            en: "With the native driver the UI thread computes the values, while the sort occupies the JS thread. The UI thread keeps drawing frames meanwhile."
+        - id: zero-zero
+          text:
+            uk: "Жодного: 200 мс на сучасному процесорі — дрібниця"
+            en: "None: 200 ms on a modern processor is nothing"
+          why:
+            uk: "200 мс — це те, скільки сортування **триває**, а не скільки воно важить. Поки воно йде, потік JS не рахує кадрів анімації."
+            en: "200 ms is how long the sort **lasts**, not how heavy it is. While it runs, the JS thread computes no animation frames."
+      correct: [twelve-zero]
+    explanation:
+      uk: "Сортування займає потік JS від 50 до 250 мс. Кадри 4–15 (від 50 до 250 мс) цілком потрапляють у цей час, тож згасання з JS їх пропускає — 12 кадрів, а після сортування рядок стрибає одразу до значення для 250 мс. З native driver значення на кожен кадр рахує потік UI, і сортування його не зачіпає. На 120 Гц пропущених кадрів було б 24: бюджет удвічі менший."
+      en: "The sort occupies the JS thread from 50 to 250 ms. Frames 4–15 (from 50 to 250 ms) fall entirely inside that time, so the JS-driven fade drops them — 12 frames, and after the sort the row jumps straight to the value for 250 ms. With the native driver the UI thread computes every frame's value, and the sort does not touch it. At 120 Hz 24 frames would be dropped: the budget is half as big."
+
+  - id: two-lanes
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Дві доріжки під час сортування"
+      en: "Two lanes during the sort"
+    textEquivalent:
+      uk: "Ліворуч доріжка потоку JS, праворуч — потоку UI, згори донизу йдуть кадри по 16,67 мс. У кадрах 1–3 потік JS вільний, рахує значення згасання, і потік UI малює кожен кадр. З 50-ї мілісекунди потік JS синхронно сортує список звичок. Кадр 4 — перший, для якого JS не дав значення: потік UI повторює старе, це перший пропущений кадр. Так само пропадають кадри 5–15. На 250-й мілісекунді сортування закінчується, потік JS рахує значення для поточного часу, і рядок стрибає. Якщо згасання веде native driver, його значення рахує сам потік UI: кадри 4–15 малюються, хоч потік JS так само зайнятий сортуванням."
+      en: "On the left the JS thread lane, on the right the UI thread lane; frames of 16.67 ms go top to bottom. In frames 1–3 the JS thread is free, computes the fade's values, and the UI thread draws every frame. From the 50th millisecond the JS thread synchronously sorts the habit list. Frame 4 is the first one for which JS provided no value: the UI thread repeats the old one, the first dropped frame. Frames 5–15 are lost the same way. At the 250th millisecond the sort ends, the JS thread computes the value for the current time, and the row jumps. If the native driver drives the fade, the UI thread computes its values itself: frames 4–15 are drawn, although the JS thread is just as busy with the sort."
+    spec:
+      layout: grid
+      nodes:
+        - { id: js1, label: { uk: "JS: значення 1–3", en: "JS: values 1–3" }, col: 0, row: 0, w: 160 }
+        - { id: ui1, label: { uk: "UI: кадри 1–3 ✓", en: "UI: frames 1–3 ✓" }, col: 1, row: 0, w: 160 }
+        - { id: js4, label: { uk: "JS: сортування", en: "JS: sorting" }, col: 0, row: 1, w: 160 }
+        - { id: ui4, label: { uk: "UI: кадр 4 ✕ старе", en: "UI: frame 4 ✕ old" }, col: 1, row: 1, w: 160 }
+        - { id: js5, label: { uk: "JS: сортування…", en: "JS: sorting…" }, col: 0, row: 2, w: 160 }
+        - { id: ui5, label: { uk: "UI: кадри 5–15 ✕", en: "UI: frames 5–15 ✕" }, col: 1, row: 2, w: 160 }
+        - { id: js16, label: { uk: "JS: значення 250 мс", en: "JS: value for 250 ms" }, col: 0, row: 3, w: 160 }
+        - { id: ui16, label: { uk: "UI: кадр 16, стрибок", en: "UI: frame 16, jump" }, col: 1, row: 3, w: 160 }
+        - { id: native, label: { uk: "native driver: 4–15 ✓", en: "native driver: 4–15 ✓" }, col: 1, row: 4, w: 160 }
+      edges:
+        - { from: js1, to: ui1, label: { uk: "значення", en: "value" } }
+        - { from: js4, to: ui4, kind: dashed, label: { uk: "немає", en: "none" } }
+        - { from: js5, to: ui5, kind: dashed }
+        - { from: js16, to: ui16 }
+      hidden: [native]
+      steps:
+        - caption:
+            uk: "Кадри 1–3: потік JS вільний, на кожен кадр дає значення згасання, потік UI його малює."
+            en: "Frames 1–3: the JS thread is free, gives a fade value for every frame, the UI thread draws it."
+          highlight: [js1, ui1, js1->ui1]
+          dim: [js4, ui4, js5, ui5, js16, ui16]
+        - caption:
+            uk: "50 мс: починається сортування. Кадр 4 — **перший пропущений**: значення немає, екран повторює старе."
+            en: "50 ms: the sort begins. Frame 4 is the **first dropped** one: there is no value, the screen repeats the old one."
+          highlight: [js4, ui4, js4->ui4]
+          dim: [js1, ui1, js16, ui16]
+        - caption:
+            uk: "Кадри 5–15 так само пропадають: 200 мс зайнятого потоку JS — це 12 кадрів по 16,67 мс."
+            en: "Frames 5–15 are lost the same way: 200 ms of a busy JS thread is 12 frames of 16.67 ms."
+          highlight: [js5, ui5]
+          dim: [js1, ui1, js16, ui16]
+        - caption:
+            uk: "250 мс: сортування скінчилося. JS рахує значення для **поточного** часу — рядок стрибає далі, пропущене вже не повернеш."
+            en: "250 ms: the sort is over. JS computes the value for the **current** time — the row jumps ahead; what was skipped does not come back."
+          highlight: [js16, ui16, js16->ui16]
+          dim: [js1, ui1]
+        - caption:
+            uk: "З native driver значення на кожен кадр рахує потік UI: кадри 4–15 малюються, хоч потік JS так само зайнятий."
+            en: "With the native driver the UI thread computes each frame's value: frames 4–15 are drawn, although the JS thread is just as busy."
+          show: [native]
+          highlight: [native, js4, js5]
+          dim: [ui4, ui5]
+
+  - id: frame-lanes
+    kind: example
+    runtime: concept-preview
+    dir: frame-lanes
+    entry: main.jsx
+    strings:
+      title: { uk: "Згасання рядка звички під час сортування", en: "A habit row fading out during a sort" }
+      jsLane: { uk: "Потік JS (S — сортування)", en: "JS thread (S — sorting)" }
+      uiLane: { uk: "Кадри на екрані (✓ намальовано, ✕ пропущено)", en: "Frames on screen (✓ drawn, ✕ dropped)" }
+      legend: { uk: "Одна клітинка — один кадр.", en: "One cell is one frame." }
+      dropped: { uk: "Пропущено кадрів", en: "Dropped frames" }
+      first: { uk: "Перший пропущений кадр", en: "First dropped frame" }
+    title:
+      uk: "Доріжки кадрів"
+      en: "Frame lanes"
+    body:
+      uk: |
+        Модель тих самих 300 мс: верхня доріжка показує, коли потік JS зайнятий сортуванням, нижня — які кадри намальовано.
+
+        Натисни **Запустити**. У консолі — бюджет кадру й `Пропущено кадрів: 12 / 18`, на **Сторінці** — ті самі кадри клітинками.
+      en: |
+        A model of the same 300 ms: the upper lane shows when the JS thread is busy sorting, the lower one which frames were drawn.
+
+        Press **Run**. The console shows the frame budget and `Dropped frames: 12 / 18`, the **Page** shows the same frames as cells.
+    tryIt:
+      uk: |
+        1. Зміни `DRIVER` на `'native'` і запусти. Сортування на верхній доріжці лишилося, а пропущених кадрів — 0: значення рахує потік UI.
+        2. Поверни `'js'` і зміни `DEFER_SORT` на `true`. Сортування почнеться після згасання: пропущених знову 0 з 18. Відкласти важку роботу до кінця анімації — другий спосіб, і він працює навіть без native driver.
+        3. Поверни `DEFER_SORT` на `false` і зміни `HZ` на `120`. Кадрів стало 36, пропущених — 24: бюджет 8,33 мс.
+      en: |
+        1. Change `DRIVER` to `'native'` and run. The sort on the upper lane is still there, but there are 0 dropped frames: the UI thread computes the values.
+        2. Put `'js'` back and change `DEFER_SORT` to `true`. The sort starts after the fade: again 0 of 18 dropped. Deferring heavy work until the animation ends is the second way, and it works even without the native driver.
+        3. Put `DEFER_SORT` back to `false` and change `HZ` to `120`. There are 36 frames now, 24 of them dropped: the budget is 8.33 ms.
+    limits:
+      uk: "Це симуляція, а не вимірювання: у перегляді react-native-web немає окремих потоків JS і UI телефона, і все виконується в одному головному потоці браузера. Файл `frameLanes.js` лише рахує, які кадри повністю накриває зайнятий потік JS. Справжні пропущені кадри вимірюють на пристрої в release-збірці — цим займуться уроки профілювання."
+      en: "This is a simulation, not a measurement: the react-native-web preview has no separate phone JS and UI threads, and everything runs on the browser's one main thread. The file `frameLanes.js` only computes which frames a busy JS thread covers entirely. Real dropped frames are measured on a device in a release build — that is what the profiling lessons do."
+
+  - id: off-the-js-thread
+    kind: explanation
+    title:
+      uk: "Геть з потоку JS — і що за це платиш"
+      en: "Off the JS thread — and what it costs"
+    body:
+      uk: |
+        **[[native-driver|Native driver]].** З `useNativeDriver: true` React Native перед стартом передає весь опис анімації в нативний код, і кадри рахує потік UI. Обмеження з документації 0.86: лише властивості, що не змінюють розкладку, як-от `transform` і `opacity`; `width`, `height`, `top` так не анімуються. А `Animated.event` з native driver працює для `onScroll`, але не для `PanResponder`.
+
+        **Worklet у потоці UI.** Для жесту, за яким рядок має йти «під пальцем», беруть `react-native-reanimated` 4 разом з `react-native-gesture-handler`. Колбеки жесту й `useAnimatedStyle` стають worklet-функціями й виконуються в потоці UI:
+
+        ```js
+        const offset = useSharedValue(0);
+        const pan = Gesture.Pan()
+          .onUpdate((e) => { offset.value = e.translationX; })            // UI thread
+          .onEnd(() => { scheduleOnRN(saveOffset, offset.value); });      // back to JS
+        ```
+
+        Ціна: worklet **не бачить** звичайного світу JS. Він не може просто викликати твою функцію чи `setState` — для цього `scheduleOnRN` з `react-native-worklets`. Змінні ззовні він отримує **копією**, зробленою під час створення worklet.
+
+        І потік UI не всесильний: важка розкладка, сотні нових рядків чи декодування великого зображення в той самий кадр дають пропуски й там.
+      en: |
+        **The [[native-driver]].** With `useNativeDriver: true` React Native hands the whole description of the animation to native code before it starts, and the UI thread computes the frames. The limits from the 0.86 docs: only properties that do not change layout, such as `transform` and `opacity`; `width`, `height`, `top` cannot be animated this way. And `Animated.event` with the native driver works for `onScroll`, but not for `PanResponder`.
+
+        **A worklet on the UI thread.** For a gesture where the row must follow the finger, use `react-native-reanimated` 4 together with `react-native-gesture-handler`. The gesture callbacks and `useAnimatedStyle` become worklet functions and run on the UI thread:
+
+        ```js
+        const offset = useSharedValue(0);
+        const pan = Gesture.Pan()
+          .onUpdate((e) => { offset.value = e.translationX; })            // UI thread
+          .onEnd(() => { scheduleOnRN(saveOffset, offset.value); });      // back to JS
+        ```
+
+        The price: a worklet **does not see** the ordinary JS world. It cannot simply call your function or `setState` — that takes `scheduleOnRN` from `react-native-worklets`. Variables from outside reach it as a **copy** made when the worklet was created.
+
+        And the UI thread is not almighty: heavy layout, hundreds of new rows or decoding a large image in the same frame cause drops there too.
+
+  - id: recall-run-to-completion
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    strings:
+      tick: { uk: "кадр", en: "frame" }
+      sorted: { uk: "відсортовано", en: "sorted" }
+    items:
+      - id: timer-waits-for-loop
+        from: js-08-01-timers-and-the-event-loop
+        prompt:
+          uk: "Таймер на 10 мс поставлено перед циклом, що займає потік 100 мс. Що й у якому порядку надрукує код?"
+          en: "A 10 ms timer is set before a loop that occupies the thread for 100 ms. What does the code print, and in what order?"
+        code: |
+          setTimeout(() => console.log("%%tick%%"), 10);
+          const until = Date.now() + 100;
+          while (Date.now() < until) {} // busy for 100 ms
+          console.log("%%sorted%%");
+        verify:
+          logs: ["%%sorted%%", "%%tick%%"]
+        answer:
+          type: choice
+          options:
+            - id: after
+              text:
+                uk: "Спершу «%%sorted%%», потім «%%tick%%» — приблизно через 100 мс, а не через 10"
+                en: "First “%%sorted%%”, then “%%tick%%” — after about 100 ms, not 10"
+            - id: on-time
+              text:
+                uk: "«%%tick%%» на 10-й мілісекунді, посеред циклу, потім «%%sorted%%»"
+                en: "“%%tick%%” at the 10th millisecond, in the middle of the loop, then “%%sorted%%”"
+              why:
+                uk: "Колбек таймера — окреме завдання. Воно не перериває код, що виконується: чекає, доки цикл і решта скрипта звільнять потік."
+                en: "A timer callback is a separate task. It does not interrupt running code: it waits until the loop and the rest of the script free the thread."
+          correct: [after]
+        explanation:
+          uk: "Одне завдання виконується до кінця, перш ніж почнеться наступне. Анімація, яку веде JS, так само чекає: її кадр — теж робота потоку JS, і поки потік зайнятий, кадр пропадає."
+          en: "One task runs to completion before the next one starts. A JS-driven animation waits the same way: its frame is also work for the JS thread, and while the thread is busy, the frame is lost."
+
+  - id: swipe-budget
+    kind: exercise
+    mode: guided
+    runtime: concept-preview
+    dir: swipe-budget
+    entry: main.jsx
+    editable: [budget.js]
+    strings:
+      budget: { uk: "Бюджет кадру", en: "Frame budget" }
+      move: { uk: "Винести з жесту", en: "Move out of the gesture" }
+    title:
+      uk: "Бюджет кадру й обробники свайпу"
+      en: "The frame budget and the swipe handlers"
+    instructions:
+      uk: |
+        Свайп рядка витрати поки що веде JS: на кожне оновлення руху викликаються обробники зі списку в `handlers.js`. Допиши `budget.js`:
+
+        - `frameBudgetMs(hz)` — скільки мілісекунд триває один кадр на екрані з частотою `hz`;
+        - `handlersToMove(handlers, hz)` — назви тих обробників, що виконуються **під час свайпу** (`when: 'during-swipe'`) і займають **більше** за один кадр (`ms` більше за бюджет), у тому самому порядку. Обробник рівно на один кадр ще вміщається.
+
+        **Сторінка** показує результат для 60 Гц і 120 Гц. Перевірки викликають обидві функції з різними частотами й наборами обробників.
+      en: |
+        For now JS drives the swipe of an expense row: on every movement update the handlers from the list in `handlers.js` are called. Finish `budget.js`:
+
+        - `frameBudgetMs(hz)` — how many milliseconds one frame lasts on a screen refreshing `hz` times per second;
+        - `handlersToMove(handlers, hz)` — the names of the handlers that run **during the swipe** (`when: 'during-swipe'`) and take **longer** than one frame (`ms` above the budget), in the same order. A handler of exactly one frame still fits.
+
+        The **Page** shows the result for 60 Hz and 120 Hz. The checks call both functions with different refresh rates and sets of handlers.
+    limits:
+      uk: "Це вправа з арифметики кадрів у перегляді react-native-web: тривалості обробників — синтетичні, і жодних потоків телефона тут немає. Справжні тривалості вимірюють профілюванням release-збірки на пристрої."
+      en: "This is a frame-arithmetic exercise in the react-native-web preview: the handler durations are synthetic, and there are no phone threads here. Real durations are measured by profiling a release build on a device."
+    testTitles:
+      "one frame lasts 1000 / hz milliseconds":
+        uk: "Один кадр триває 1000 / hz мілісекунд"
+        en: "One frame lasts 1000 / hz milliseconds"
+      "at 60 Hz only the slow handler that runs during the swipe is moved":
+        uk: "На 60 Гц виноситься лише повільний обробник, що працює під час свайпу"
+        en: "At 60 Hz only the slow handler that runs during the swipe is moved"
+      "at 120 Hz a 10 ms handler no longer fits into a frame":
+        uk: "На 120 Гц обробник на 10 мс уже не вміщається в кадр"
+        en: "At 120 Hz a 10 ms handler no longer fits into a frame"
+      "a handler that runs only after the swipe is never moved, however slow":
+        uk: "Обробник, що працює лише після свайпу, не виноситься, хай який повільний"
+        en: "A handler that runs only after the swipe is never moved, however slow"
+      "a handler that takes exactly one frame still fits":
+        uk: "Обробник рівно на один кадр ще вміщається"
+        en: "A handler that takes exactly one frame still fits"
+    hints:
+      nudge:
+        uk: "Скільки мілісекунд у секунді і скільки кадрів за секунду показує екран? Для другої функції — дві умови, і обидві мають виконатися."
+        en: "How many milliseconds are in a second, and how many frames per second does the screen show? For the second function — two conditions, and both must hold."
+      explanation:
+        uk: "Якщо за секунду (1000 мс) показується `hz` кадрів, один кадр — це секунда, поділена на кількість кадрів. Потім відбери обробники, що працюють саме під час свайпу **і** довші за цей бюджет, і візьми їхні назви. Схоже завдання: «відібрати автобуси, що їдуть зранку й довші за 40 хвилин» — `buses.filter((b) => b.when === 'morning' && b.minutes > 40).map((b) => b.route)`."
+        en: "If `hz` frames are shown per second (1000 ms), one frame is a second divided by the number of frames. Then pick the handlers that run exactly during the swipe **and** are longer than that budget, and take their names. A similar task: “pick the buses that run in the morning and take longer than 40 minutes” — `buses.filter((b) => b.when === 'morning' && b.minutes > 40).map((b) => b.route)`."
+    solutionNote:
+      uk: "`1000 / hz` дає 16,67 мс на 60 Гц і 8,33 мс на 120 Гц. `recomputeCategoryTotals` (24 мс) не вміщається ніде, а `trackSwipeDistance` (10 мс) вміщається в 60 Гц, але не в 120 Гц — той самий код на швидшому екрані дає ривки. `saveExpensesToStorage` повільний, але виконується один раз після свайпу, тож кадрів руху не краде. Винести обробник можна двома способами: рахувати підсумки один раз після завершення жесту або перенести сам рух у потік UI."
+      en: "`1000 / hz` gives 16.67 ms at 60 Hz and 8.33 ms at 120 Hz. `recomputeCategoryTotals` (24 ms) fits nowhere, while `trackSwipeDistance` (10 ms) fits at 60 Hz but not at 120 Hz — the same code on a faster screen jerks. `saveExpensesToStorage` is slow, but it runs once after the swipe, so it steals no frames of the movement. A handler can be moved out in two ways: compute the totals once after the gesture ends, or move the movement itself to the UI thread."
+    feedback:
+      - when: { test: "one frame lasts 1000 / hz milliseconds" }
+        message:
+          uk: "Ця перевірка очікує 16.67 для 60 Гц, 8.33 для 120 Гц і 11.11 для 90 Гц (до двох знаків). Одне фіксоване число для всіх частот не підходить."
+          en: "This check expects 16.67 for 60 Hz, 8.33 for 120 Hz and 11.11 for 90 Hz (to two decimals). One fixed number for every refresh rate does not fit."
+      - when: { test: "at 60 Hz only the slow handler that runs during the swipe is moved" }
+        message:
+          uk: "Ця перевірка очікує для обробників з `handlers.js` на 60 Гц рівно `['recomputeCategoryTotals']`. `saveExpensesToStorage` працює після свайпу, а `trackSwipeDistance` вміщається в 16,67 мс."
+          en: "This check expects exactly `['recomputeCategoryTotals']` for the handlers from `handlers.js` at 60 Hz. `saveExpensesToStorage` runs after the swipe, and `trackSwipeDistance` fits into 16.67 ms."
+      - when: { test: "at 120 Hz a 10 ms handler no longer fits into a frame" }
+        message:
+          uk: "Ця перевірка очікує на 120 Гц `['recomputeCategoryTotals', 'trackSwipeDistance']` — у порядку з `handlers.js`. Бюджет тут 8,33 мс, тож 10 мс уже забагато."
+          en: "This check expects `['recomputeCategoryTotals', 'trackSwipeDistance']` at 120 Hz — in the order of `handlers.js`. The budget here is 8.33 ms, so 10 ms is already too much."
+      - when: { test: "a handler that runs only after the swipe is never moved, however slow" }
+        message:
+          uk: "Ця перевірка дає один обробник з `when: 'after-swipe'` на 900 мс і очікує порожній масив: він не виконується під час руху."
+          en: "This check gives one handler with `when: 'after-swipe'` taking 900 ms and expects an empty array: it does not run during the movement."
+      - when: { test: "a handler that takes exactly one frame still fits" }
+        message:
+          uk: "Ця перевірка на 50 Гц (бюджет 20 мс) очікує лише `['oneMore']` (21 мс): обробник рівно на 20 мс вміщається, тож порівнюй через «більше», а не «більше або дорівнює»."
+          en: "This check at 50 Hz (a 20 ms budget) expects only `['oneMore']` (21 ms): a handler of exactly 20 ms fits, so compare with “greater than”, not “greater than or equal”."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-10
+    body:
+      uk: "У кроці проєкту рух рядка під пальцем іде в потоці UI, а робота твого домену — оновлення запису й підсумків (`summarizeItems`, `countDueTasks`, `summarizeHabit` чи `summarizeExpenses`) — виконується один раз після завершення жесту, а не на кожне оновлення руху."
+      en: "In the project step the row's movement under the finger runs on the UI thread, while your domain's work — updating the record and the summaries (`summarizeItems`, `countDueTasks`, `summarizeHabit` or `summarizeExpenses`) — runs once after the gesture ends, not on every movement update."

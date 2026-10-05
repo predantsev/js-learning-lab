@@ -1,0 +1,669 @@
+id: re-12-02-quality-checks-ci
+unit: RE-12
+title:
+  uk: "Перевірки lint/type/unit/user і CI-конвеєри"
+  en: "Lint/type/unit/user checks and CI pipelines"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Вишикувати lint, перевірку типів, unit- і компонентні тести, тести дій користувача та збирання в конвеєр і пояснити, чому кожен етап зупиняє запуск до наступного."
+    en: "Order lint, typecheck, unit and component tests, user-flow tests and the build into a pipeline and explain why each stage fails fast before the next."
+  - uk: "Прочитати зразок CI-workflow і відтворити кожен його крок локально тими самими командами."
+    en: "Read a sample CI workflow and reproduce each of its jobs locally with the same commands."
+prerequisites: [re-12-01-production-build-env, js-15-05-lint-format, re-06-08-testing-user-actions]
+subskills:
+  - { family: P-06, skill: "lint/type/unit/user checks", depth: intro }
+  - { family: P-06, skill: "CI pipeline reading/design", depth: intro }
+glossary: [ci-pipeline, quality-gate]
+selfCheck: [predict-unused-variable, habit-flow-test]
+
+blocks:
+  - id: four-checks
+    kind: explanation
+    title:
+      uk: "Чотири перевірки, кожна ловить своє"
+      en: "Four checks, each catches its own kind of mistake"
+    body:
+      uk: |
+        Перш ніж віддати збірку людям, проєкт проходить перевірки. Кожна дивиться на код з іншого боку:
+
+        | Команда | Що робить | Що ловить |
+        |---|---|---|
+        | `npm run lint` | лінтер читає код, не запускаючи його | ймовірні помилки: хук в умові, змінна, якою ніхто не користується |
+        | `npm run typecheck` | `tsc` порівнює типи | число там, де чекали текст; поле, якого немає |
+        | `npm test` | запускає unit-тести функцій і тести дій користувача з компонентами | неправильну поведінку: справа не з’явилася, поле не очистилося |
+        | `npm run build` | збирає `dist` | те, що ламає саме збирання |
+
+        Жодна з них не замінює іншу. Тести не бачать зайвої змінної, якщо вона нічого не ламає сьогодні. `tsc` не знає, що кнопка має очищати поле. А Vite під час збирання **типів не перевіряє взагалі** — тому шаблон пише `"build": "tsc -b && vite build"`.
+
+        Кожна команда закінчується кодом виходу: `0` — усе гаразд, інше число — ні. Оператор `&&` запускає наступну команду лише після коду `0`. Так перевірки стають [[quality-gate|воротами якості]]: невдача зупиняє все, що йде далі.
+      en: |
+        Before a build is given to people, the project goes through checks. Each looks at the code from a different side:
+
+        | Command | What it does | What it catches |
+        |---|---|---|
+        | `npm run lint` | a linter reads the code without running it | likely bugs: a hook inside a condition, a variable nobody uses |
+        | `npm run typecheck` | `tsc` compares types | a number where text was expected; a field that does not exist |
+        | `npm test` | runs unit tests of functions and user-flow tests of components | wrong behavior: the task did not appear, the field was not cleared |
+        | `npm run build` | builds `dist` | whatever breaks the build itself |
+
+        None of them replaces another. Tests do not see a spare variable if it breaks nothing today. `tsc` does not know that the button should clear the field. And Vite **does not check types at all** while building — that is why the template says `"build": "tsc -b && vite build"`.
+
+        Every command ends with an exit code: `0` means all is well, any other number means it is not. The `&&` operator starts the next command only after a code of `0`. That turns the checks into a [[quality-gate]]: a failure stops everything after it.
+
+  - id: workflow-file
+    kind: explanation
+    title:
+      uk: "CI — ті самі команди на чужому комп’ютері"
+      en: "CI: the same commands on someone else's computer"
+    body:
+      uk: |
+        [[ci-pipeline|CI-конвеєр]] (continuous integration) — це сервер, який на кожен push і pull request бере свіжу копію репозиторію й запускає ті самі перевірки. Ось workflow для GitHub Actions — файл `.github/workflows/ci.yml`:
+
+        ```yaml
+        name: CI
+        on:
+          push:
+            branches: [main]
+          pull_request:
+        jobs:
+          checks:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: actions/setup-node@v7
+                with:
+                  node-version: 22
+                  cache: npm
+              - run: npm ci
+              - run: npm run lint
+              - run: npm run typecheck
+              - run: npm test
+              - run: npm run build
+        ```
+
+        Читай його згори вниз: `on` — коли запускати; `checkout` — отримати код; `setup-node` — поставити Node.js 22; далі `run` — звичайні команди терміналу. Кроки йдуть по черзі, і перший невдалий зупиняє решту.
+
+        Нічого магічного: CI не має перевірок, яких немає в тебе. Його цінність в іншому: чистий комп’ютер, `npm ci` з lockfile і жодного «а в мене працює». Тому кожен крок ти можеш відтворити локально.
+      en: |
+        A [[ci-pipeline]] (continuous integration) is a server that, on every push and pull request, takes a fresh copy of the repository and runs the same checks. Here is a workflow for GitHub Actions — the file `.github/workflows/ci.yml`:
+
+        ```yaml
+        name: CI
+        on:
+          push:
+            branches: [main]
+          pull_request:
+        jobs:
+          checks:
+            runs-on: ubuntu-latest
+            steps:
+              - uses: actions/checkout@v7
+              - uses: actions/setup-node@v7
+                with:
+                  node-version: 22
+                  cache: npm
+              - run: npm ci
+              - run: npm run lint
+              - run: npm run typecheck
+              - run: npm test
+              - run: npm run build
+        ```
+
+        Read it from top to bottom: `on` — when to run; `checkout` — get the code; `setup-node` — install Node.js 22; then `run` — ordinary terminal commands. The steps run in turn, and the first failing one stops the rest.
+
+        Nothing magic: CI has no checks that you do not have. Its value is elsewhere: a clean computer, `npm ci` from the lockfile and no “it works on my machine”. So you can reproduce every step locally.
+
+  - id: pipeline-picture
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Конвеєр зупиняється на першій невдачі"
+      en: "The pipeline stops at the first failure"
+    textEquivalent:
+      uk: >-
+        Конвеєр має п’ять етапів по черзі: npm ci встановлює залежності з lockfile, далі lint, typecheck, test і build.
+        У зеленому запуску кожен етап закінчується кодом 0, і після build є готова тека dist. Якщо в коді є аргумент
+        неправильного типу, lint його не помічає і проходить, а typecheck друкує error TS2345 і закінчується кодом, відмінним від 0 (у TypeScript 6 — кодом 2).
+        Етапи test і build після цього не запускаються взагалі, а dist не з’являється. Невикористана змінна поводиться
+        так само: lint лише попереджає й проходить, а зупиняє запуск typecheck, бо tsconfig шаблону вмикає
+        noUnusedLocals.
+      en: >-
+        The pipeline has five stages in turn: npm ci installs the dependencies from the lockfile, then lint, typecheck,
+        test and build. In a green run every stage ends with code 0, and after build there is a finished dist folder. If
+        the code has an argument of the wrong type, lint does not notice it and passes, while typecheck prints error
+        TS2345 and ends with a code other than 0 (code 2 in TypeScript 6). The test and build stages then do not start at all, and no dist appears. An unused
+        variable behaves the same way: lint only warns and passes, and typecheck stops the run, because the template's
+        tsconfig turns on noUnusedLocals.
+    spec:
+      layout: grid
+      nodes:
+        - { id: ci, label: "npm ci", shape: pill, w: 110, col: 0, row: 0 }
+        - { id: lint, label: "lint", shape: pill, w: 110, col: 1, row: 0 }
+        - { id: types, label: "typecheck", shape: pill, w: 110, col: 1, row: 1 }
+        - { id: tests, label: "test", shape: pill, w: 110, col: 0, row: 1 }
+        - { id: build, label: "build", shape: pill, w: 110, col: 0, row: 2 }
+        - { id: dist, label: "dist/", shape: cylinder, w: 110, col: 1, row: 2 }
+      edges:
+        - { id: e1, from: ci, to: lint, label: "0" }
+        - { id: e2, from: lint, to: types, label: "0" }
+        - { id: e3, from: types, to: tests, label: "0" }
+        - { id: e4, from: tests, to: build, label: "0" }
+        - { id: e5, from: build, to: dist }
+      steps:
+        - highlight: [ci, lint, types, tests, build, dist, e1, e2, e3, e4, e5]
+          caption:
+            uk: "Зелений запуск: кожен етап закінчується кодом `0`, і лише тоді починається наступний. Наприкінці — тека `dist`."
+            en: "A green run: every stage ends with code `0`, and only then does the next one start. At the end there is a `dist` folder."
+        - highlight: [types]
+          dim: [tests, build, dist, e3, e4, e5]
+          annotate:
+            - { id: types, text: { uk: "TS2345, код не 0", en: "TS2345, code not 0" } }
+          caption:
+            uk: "У коді число там, де чекали текст. `lint` цього не бачить і проходить, `typecheck` друкує `error TS2345` і закінчується кодом, відмінним від `0` (у TypeScript 6 — `2`)."
+            en: "The code has a number where text was expected. `lint` does not see it and passes; `typecheck` prints `error TS2345` and ends with a code other than `0` (`2` in TypeScript 6)."
+        - highlight: [types]
+          dim: [tests, build, dist, e3, e4, e5]
+          annotate:
+            - { id: tests, text: { uk: "не запускався", en: "never ran" } }
+            - { id: build, text: { uk: "не запускався", en: "never ran" } }
+          caption:
+            uk: "`test` і `build` не запускалися взагалі: їхній результат невідомий, а `dist` немає. Виправ першу помилку — і запусти конвеєр знову."
+            en: "`test` and `build` never started: their result is unknown, and there is no `dist`. Fix the first error — and run the pipeline again."
+
+  - id: predict-unused-variable
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "У `release-lab` хтось залишив у компоненті рядок `const draft = title.trim();`, а `draft` ніде не використовується. Решта коду правильна, тести проходять. Конвеєр — `lint → typecheck → test → build`, `lint` запускає oxlint з налаштуваннями шаблону, `tsconfig` — теж шаблонний. На якому етапі запуск зупиниться?"
+      en: "In `release-lab` someone left the line `const draft = title.trim();` in a component, and `draft` is not used anywhere. The rest of the code is correct, the tests pass. The pipeline is `lint → typecheck → test → build`; `lint` runs oxlint with the template's settings, and the `tsconfig` is the template's too. At which stage does the run stop?"
+    answer:
+      type: choice
+      options:
+        - id: at-lint
+          text: { uk: "На `lint`", en: "At `lint`" }
+          why:
+            uk: "oxlint справді помічає зайву змінну, але з налаштуваннями шаблону це **попередження** (`⚠` у терміналі, `!` у лозі CI, і `Found 1 warning and 0 errors.`), а код виходу — `0`. Попередження не зупиняє `&&`."
+            en: "oxlint does notice the spare variable, but with the template's settings it is a **warning** (`⚠` in a terminal, `!` in a CI log, and `Found 1 warning and 0 errors.`), and the exit code is `0`. A warning does not stop `&&`."
+        - id: at-typecheck
+          text: { uk: "На `typecheck`", en: "At `typecheck`" }
+        - id: never
+          text: { uk: "Ніде: тести проходять, отже, усе гаразд", en: "Nowhere: the tests pass, so all is well" }
+          why:
+            uk: "Тести перевіряють лише поведінку, а конвеєр зупиняють будь-які ворота, що не пройшли. Тут ворота `typecheck` не пропустять зайвої змінної, і `test` до черги навіть не дійде."
+            en: "Tests check only behavior, while the pipeline is stopped by any gate that fails. Here the `typecheck` gate does not let the spare variable through, and `test` never even gets its turn."
+        - id: at-build
+          text: { uk: "На `build`: зайва змінна потрапить у bundle", en: "At `build`: the spare variable ends up in the bundle" }
+          why:
+            uk: "Збирач просто викине невикористаний код, він не скаржиться на нього. І до `build` черга не дійде: запуск зупиниться раніше."
+            en: "The bundler simply drops unused code, it does not complain about it. And `build` never gets its turn: the run stops earlier."
+      correct: [at-typecheck]
+    explanation:
+      uk: "Ми запустили це в `release-lab`: `oxlint` надрукував попередження `eslint(no-unused-vars)` і завершився кодом `0`, а `tsc -b` — `error TS6133: 'draft' is declared but its value is never read.` з кодом `2`, бо `tsconfig.app.json` шаблону вмикає `noUnusedLocals`. Тож те, на якому етапі зупиниться конвеєр, залежить від налаштувань інструментів, а не лише від помилки. Ворота ставлять налаштування — читай їх."
+      en: "We ran this in `release-lab`: `oxlint` printed the warning `eslint(no-unused-vars)` and ended with code `0`, while `tsc -b` printed `error TS6133: 'draft' is declared but its value is never read.` with code `2`, because the template's `tsconfig.app.json` turns on `noUnusedLocals`. So the stage where the pipeline stops depends on the tools' settings, not only on the mistake. The settings place the gates — read them."
+
+  - id: pipeline-run
+    kind: example
+    runtime: browser-react
+    dir: pipeline-run
+    entry: main.jsx
+    strings:
+      rent: { uk: "Сплатити оренду", en: "Pay rent" }
+      bank: { uk: "Подзвонити в банк", en: "Call the bank" }
+      newTask: { uk: "Нова справа", en: "New task" }
+      add: { uk: "Додати", en: "Add" }
+      tasksList: { uk: "Справи", en: "Tasks" }
+      testBlank: { uk: "назва з самих пробілів не додає справи", en: "a title of only spaces adds no task" }
+      mCount: { uk: "кількість справ у списку", en: "number of tasks in the list" }
+      recordedMark: { uk: "(записано з локального запуску)", en: "(recorded from a local run)" }
+      stageFailed: { uk: "не пройшов — конвеєр зупинено", en: "failed — the pipeline stopped" }
+      neverRan: { uk: "Не запускалися:", en: "Never ran:" }
+      allPassed: { uk: "Усі етапи пройшли.", en: "All stages passed." }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rNotFound: { uk: "на екрані немає", en: "not on the screen:" }
+      rStillMissing: { uk: "так і не з’явилося", en: "never appeared" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Конвеєр, у якому тести справжні"
+      en: "A pipeline whose tests are real"
+    body:
+      uk: |
+        `pipeline.js` запускає етапи по черзі й зупиняється на першому невдалому — як CI. `App.jsx` — компонент із `release-lab` без типів і збереження.
+
+        Чесно про межі пісочниці: вона стирає типи нічого не перевіряючи, а oxlint і Vite в ній не працюють. Тому етапи `lint`, `typecheck` і `build` **відтворюють записаний вивід** справжнього запуску на комп’ютері — його ти бачиш у `reports.js` і повториш у завданні наприкінці уроку. Етап `test` справжній: він запускає тест з `App.test.jsx` бігунцем курсу з RE-06.
+
+        Натисни **Запустити** й прочитай **Консоль**.
+      en: |
+        `pipeline.js` runs the stages in turn and stops at the first failing one — as CI does. `App.jsx` is the component from `release-lab` without types and saving.
+
+        Honestly about the sandbox's limits: it strips types without checking anything, and oxlint and Vite do not run in it. So the `lint`, `typecheck` and `build` stages **replay recorded output** of a real run on a computer — you see it in `reports.js` and repeat it in the task at the end of the lesson. The `test` stage is real: it runs the test from `App.test.jsx` with the course runner from RE-06.
+
+        Press **Run** and read the **Console**.
+    tryIt:
+      uk: |
+        1. У `reports.js`, в об’єкті `reports` наприкінці файла, заміни `typecheck: TYPECHECK.clean` на `typecheck: TYPECHECK.wrongArgument`. Запусти: `lint` пройшов, `typecheck` не пройшов, а `test` і `build` — у рядку «Не запускалися».
+        2. Поверни `TYPECHECK.clean`. Тепер зламай поведінку: в `App.jsx` прибери з рядка `if (title.trim() === "") return;` виклики `.trim()` — лишиться `if (title === "") return;`. Запусти: `lint` і `typecheck` пройшли (вони відтворюють записаний чистий вивід), а справжній `test` не пройшов — у списку з’явилася порожня справа, і `build` не запускався.
+        3. Поверни `.trim()` і відтвори запуск із передбачення: встанови `lint: LINT.unusedVariable` і `typecheck: TYPECHECK.unusedVariable`. `lint` друкує попередження, але проходить; зупиняє все `typecheck` з `error TS6133`.
+      en: |
+        1. In `reports.js`, in the `reports` object at the end of the file, replace `typecheck: TYPECHECK.clean` with `typecheck: TYPECHECK.wrongArgument`. Run it: `lint` passed, `typecheck` failed, and `test` and `build` are in the line “Never ran”.
+        2. Put `TYPECHECK.clean` back. Now break the behavior: in `App.jsx` remove the `.trim()` call from the line `if (title.trim() === "") return;` — leaving `if (title === "") return;`. Run it: `lint` and `typecheck` passed (they replay the recorded clean output), while the real `test` failed — an empty task appeared in the list, and `build` never ran.
+        3. Put `.trim()` back and replay the run from the prediction: set `lint: LINT.unusedVariable` and `typecheck: TYPECHECK.unusedVariable`. `lint` prints a warning but passes; `typecheck` with `error TS6133` stops everything.
+
+  - id: habit-flow-test
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: habit-flow-test
+    entry: main.jsx
+    editable: [HabitBoard.test.jsx]
+    preview: false
+    strings:
+      walk: { uk: "Ранкова прогулянка", en: "Morning walk" }
+      read: { uk: "Читати 20 сторінок", en: "Read 20 pages" }
+      stretch: { uk: "Розтяжка", en: "Stretching" }
+      habitName: { uk: "Назва звички", en: "Habit name" }
+      add: { uk: "Додати", en: "Add" }
+      habitsList: { uk: "Звички", en: "Habits" }
+      testCreate: { uk: "додана звичка з’являється в списку, а поле очищується", en: "an added habit appears in the list and the field is cleared" }
+      mNames: { uk: "звички в списку", en: "habits in the list" }
+      mField: { uk: "текст у полі", en: "text in the field" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rNotFound: { uk: "на екрані немає", en: "not on the screen:" }
+      rStillMissing: { uk: "так і не з’явилося", en: "never appeared" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Тест дій користувача для етапу test"
+      en: "A user-flow test for the test stage"
+    instructions:
+      uk: |
+        Трекер звичок показує дві звички — «Ранкова прогулянка» і «Читати 20 сторінок», — поле «Назва звички» і кнопку «Додати». `HabitBoard.jsx` правильний і не змінюється. Етап `test` конвеєра запускатиме `HabitBoard.test.jsx` — допиши в нього **один** тест сценарію створення, який діє як людина:
+
+        - вводить у поле «Назва звички» назву «Розтяжка» і натискає «Додати»;
+        - перевіряє те, що видно: у списку тепер **три** звички — дві попередні й нова;
+        - перевіряє, що поле після додавання порожнє.
+
+        Перевіряй лише видиме на екрані: підписи, ролі, текст. Перевірки курсу запускають твій тест із правильною дошкою, а потім із трьома зламаними: що не показує нову звичку, що ховає попередні і що лишає назву в полі. Кожну з них твій тест має зловити.
+      en: |
+        The habit tracker shows two habits — “Morning walk” and “Read 20 pages” — the field “Habit name” and the button “Add”. `HabitBoard.jsx` is correct and does not change. The pipeline's `test` stage will run `HabitBoard.test.jsx` — add **one** test of the create flow to it that acts like a person:
+
+        - it types the name “Stretching” into the field “Habit name” and presses “Add”;
+        - it checks what is visible: the list now has **three** habits — the two earlier ones and the new one;
+        - it checks that the field is empty after adding.
+
+        Check only what is visible on the screen: labels, roles, text. The course checks run your test with the correct board and then with three broken ones: one that does not show the new habit, one that hides the earlier ones and one that leaves the name in the field. Your test must catch each of them.
+    testTitles:
+      "your tests pass with the correct HabitBoard":
+        uk: "Твій тест проходить із правильним `HabitBoard`"
+        en: "Your test passes with the correct `HabitBoard`"
+      "one of your tests fails when an added habit never appears":
+        uk: "Твій тест не проходить, коли додана звичка так і не з’являється"
+        en: "Your test fails when an added habit never appears"
+      "one of your tests fails when adding a habit hides the habits that were there":
+        uk: "Твій тест не проходить, коли додавання ховає звички, що вже були"
+        en: "Your test fails when adding a habit hides the habits that were there"
+      "one of your tests fails when the field keeps the name after adding":
+        uk: "Твій тест не проходить, коли поле зберігає назву після додавання"
+        en: "Your test fails when the field keeps the name after adding"
+    hints:
+      nudge:
+        uk: "Повтори шлях людини: знайди поле за підписом, введи, натисни кнопку за її назвою. А потім спитай себе: що саме людина бачить у списку й у полі?"
+        en: "Repeat the person's path: find the field by its label, type, press the button by its name. Then ask yourself: what exactly does the person see in the list and in the field?"
+      explanation:
+        uk: |
+          Тест «нове з’явилося» пропустить дошку, яка разом із новим губить старе. Перевір **увесь** список — наприклад, зібравши тексти всіх елементів з роллю `listitem` у масив і порівнявши з очікуваним. Приклад з іншою формою:
+
+          ```jsx
+          await user.type(screen.getByLabelText("Назва бажання"), "Лампа");
+          await user.click(screen.getByRole("button", { name: "Зберегти" }));
+          const titles = screen.queryAllByRole("listitem").map((item) => item.textContent);
+          expect(titles).toEqual(["Книжка", "Лампа"]);
+          ```
+
+          Поле перевіряють так само, як його бачить людина: його `value`.
+        en: |
+          A test of “the new one appeared” lets through a board that loses the old ones along with adding the new one. Check the **whole** list — for example, by collecting the texts of all elements with the role `listitem` into an array and comparing it with the expected one. An example with another form:
+
+          ```jsx
+          await user.type(screen.getByLabelText("Wish name"), "Lamp");
+          await user.click(screen.getByRole("button", { name: "Save" }));
+          const titles = screen.queryAllByRole("listitem").map((item) => item.textContent);
+          expect(titles).toEqual(["Book", "Lamp"]);
+          ```
+
+          The field is checked the way a person sees it: its `value`.
+    solutionNote:
+      uk: "Тест повторює дії людини й порівнює весь список, а не лише нову звичку: так він ловить і дошку без нової звички, і дошку, яка замінила список однією новою. Перевірка `value` ловить поле, що не очистилося. Іншого правильного шляху теж досить: дочекатися нової звички через `findByText` і перевірити, що обидві старі на місці."
+      en: "The test repeats a person's actions and compares the whole list, not only the new habit: that way it catches both the board without the new habit and the board that replaced the list with the new one alone. Checking `value` catches a field that was not cleared. Another correct path is also enough: wait for the new habit with `findByText` and check that both old ones are still there."
+    feedback:
+      - when: { test: "your tests pass with the correct HabitBoard" }
+        message:
+          uk: "Ця перевірка запускає твій тест із правильним `HabitBoard` і чекає, що він є і проходить. Якщо тестів немає, допиши `test(…)`. Якщо він не проходить, прочитай його повідомлення в консолі: підпис поля — «Назва звички», кнопка — «Додати», а нова звичка стає в список **третьою**."
+          en: "This check runs your test with the correct `HabitBoard` and expects it to exist and to pass. If there are no tests, add a `test(…)`. If it fails, read its message in the console: the field's label is “Habit name”, the button is “Add”, and the new habit becomes **third** in the list."
+      - when: { test: "one of your tests fails when an added habit never appears" }
+        message:
+          uk: "Ця перевірка спершу вимагає, щоб твій тест проходив із правильною дошкою. Потім вона підставляє дошку, на якій після «Додати» список не змінюється. Твій тест мусить натиснути «Додати» й перевірити, що нова звичка є в списку."
+          en: "This check first requires your test to pass with the correct board. Then it puts in a board whose list does not change after “Add”. Your test must press “Add” and check that the new habit is in the list."
+      - when: { test: "one of your tests fails when adding a habit hides the habits that were there" }
+        message:
+          uk: "Ця перевірка спершу вимагає, щоб твій тест проходив із правильною дошкою. Потім вона підставляє дошку, на якій після додавання видно лише нову звичку. Перевір, що в списку й далі є «Ранкова прогулянка» і «Читати 20 сторінок»."
+          en: "This check first requires your test to pass with the correct board. Then it puts in a board that shows only the new habit after adding. Check that the list still has “Morning walk” and “Read 20 pages”."
+      - when: { test: "one of your tests fails when the field keeps the name after adding" }
+        message:
+          uk: "Ця перевірка спершу вимагає, щоб твій тест проходив із правильною дошкою. Потім вона підставляє дошку, яка додає звичку, але лишає її назву в полі. Перевір `value` поля «Назва звички» після натискання."
+          en: "This check first requires your test to pass with the correct board. Then it puts in a board that adds the habit but leaves its name in the field. Check the `value` of the field “Habit name” after the press."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: що знаходить лінтер"
+      en: "Recall: what a linter finds"
+    items:
+      - id: formatter-keeps-findings
+        from: js-15-05-lint-format
+        prompt:
+          uk: "У файлі є невикористана змінна й нерівні відступи. Ти запускаєш форматер Prettier, а потім лінтер. Що лінтер скаже про невикористану змінну?"
+          en: "A file has an unused variable and uneven indentation. You run the Prettier formatter, then the linter. What does the linter say about the unused variable?"
+        answer:
+          type: choice
+          options:
+            - id: still-there
+              text: { uk: "Знахідка лишилася: форматер змінює лише вигляд коду", en: "The finding is still there: a formatter changes only how the code looks" }
+            - id: gone
+              text: { uk: "Нічого: після форматування код чистий", en: "Nothing: after formatting the code is clean" }
+              why:
+                uk: "Форматер вирівнює відступи, лапки й коми, але не видаляє змінних. Невикористана змінна лишається невикористаною, хоч як її відформатуй."
+                en: "A formatter evens out indentation, quotes and commas, but it does not delete variables. An unused variable stays unused however it is formatted."
+            - id: new-errors
+              text: { uk: "Нові помилки: форматер міг зламати код", en: "New errors: the formatter may have broken the code" }
+              why:
+                uk: "Форматер не змінює того, що код робить. Він не додає помилок і не прибирає їх."
+                en: "A formatter does not change what the code does. It neither adds errors nor removes them."
+          correct: [still-there]
+        explanation:
+          uk: "Форматування й lint незалежні: перше прибирає суперечки про стиль, друге шукає ймовірні помилки. У конвеєрі цього уроку `lint` — окремий етап саме тому, що форматер його не замінює."
+          en: "Formatting and lint are independent: the first ends arguments about style, the second looks for likely bugs. In this lesson's pipeline `lint` is a separate stage precisely because a formatter does not replace it."
+
+  - id: ci-locally
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Тести у release-lab і CI-workflow, перевірений локально"
+      en: "Tests in release-lab and a CI workflow checked locally"
+    intro:
+      uk: |
+        Працюєш у `~/js-course/release-lab` з минулого уроку. Якщо його немає, спершу пройди завдання уроку «Production-бандл, ресурси й межі env». Потрібен інтернет: ти встановиш тестовий бігунець **Vitest** (рідний для Vite), **jsdom** — сторінку для тестів без браузера — і **Testing Library**, справжні `render`, `screen` і `user`, на які схожий бігунець курсу. Команди перевірено на macOS; на Linux вони ті самі.
+
+        **Крок 2 — `vite.config.ts`** (замінює файл шаблону):
+
+        ```ts
+        /// <reference types="vitest/config" />
+        import react from '@vitejs/plugin-react'
+        import { defineConfig } from 'vite'
+
+        // https://vite.dev/config/
+        export default defineConfig({
+          plugins: [react()],
+          test: {
+            environment: 'jsdom',
+            // Node 25 has its own localStorage, which hides the one of the test page.
+            execArgv: ['--no-experimental-webstorage'],
+          },
+        })
+        ```
+
+        **Крок 2 — `src/tasks.test.ts`** (unit-тест функцій):
+
+        ```ts
+        import { expect, test } from "vitest";
+        import { addTask, countDone, toggleTask } from "./tasks.ts";
+
+        test("countDone counts only the tasks marked done", () => {
+          const tasks = toggleTask(addTask(addTask([], "Pay rent"), "Call the bank"), "missing-id");
+          expect(countDone(tasks)).toBe(0);
+          expect(countDone(toggleTask(tasks, tasks[1].id))).toBe(1);
+        });
+        ```
+
+        **Крок 2 — `src/App.test.tsx`** (тест дій користувача):
+
+        ```tsx
+        import { afterEach, expect, test } from "vitest";
+        import { cleanup, render, screen } from "@testing-library/react";
+        import userEvent from "@testing-library/user-event";
+        import App from "./App.tsx";
+
+        afterEach(() => {
+          cleanup();
+          localStorage.clear();
+        });
+
+        test("a new task appears in the list", async () => {
+          const user = userEvent.setup();
+          render(<App />);
+          await user.type(screen.getByLabelText("New task"), "Water the plants");
+          await user.click(screen.getByRole("button", { name: "Add" }));
+          expect(screen.getByRole("listitem").textContent).toBe("Water the plants");
+        });
+        ```
+
+        **Крок 4 — `.github/workflows/ci.yml`:** точно той самий текст, що в поясненні «CI — ті самі команди на чужому комп’ютері» цього уроку.
+      en: |
+        You work in `~/js-course/release-lab` from the last lesson. If you do not have it, first do the task of the lesson “Production bundle, assets and env boundaries”. You need internet access: you install the test runner **Vitest** (native to Vite), **jsdom** — a page for tests without a browser — and **Testing Library**, the real `render`, `screen` and `user` that the course runner resembles. The commands were checked on macOS; on Linux they are the same.
+
+        **Step 2 — `vite.config.ts`** (replaces the template's file):
+
+        ```ts
+        /// <reference types="vitest/config" />
+        import react from '@vitejs/plugin-react'
+        import { defineConfig } from 'vite'
+
+        // https://vite.dev/config/
+        export default defineConfig({
+          plugins: [react()],
+          test: {
+            environment: 'jsdom',
+            // Node 25 has its own localStorage, which hides the one of the test page.
+            execArgv: ['--no-experimental-webstorage'],
+          },
+        })
+        ```
+
+        **Step 2 — `src/tasks.test.ts`** (a unit test of the functions):
+
+        ```ts
+        import { expect, test } from "vitest";
+        import { addTask, countDone, toggleTask } from "./tasks.ts";
+
+        test("countDone counts only the tasks marked done", () => {
+          const tasks = toggleTask(addTask(addTask([], "Pay rent"), "Call the bank"), "missing-id");
+          expect(countDone(tasks)).toBe(0);
+          expect(countDone(toggleTask(tasks, tasks[1].id))).toBe(1);
+        });
+        ```
+
+        **Step 2 — `src/App.test.tsx`** (a user-flow test):
+
+        ```tsx
+        import { afterEach, expect, test } from "vitest";
+        import { cleanup, render, screen } from "@testing-library/react";
+        import userEvent from "@testing-library/user-event";
+        import App from "./App.tsx";
+
+        afterEach(() => {
+          cleanup();
+          localStorage.clear();
+        });
+
+        test("a new task appears in the list", async () => {
+          const user = userEvent.setup();
+          render(<App />);
+          await user.type(screen.getByLabelText("New task"), "Water the plants");
+          await user.click(screen.getByRole("button", { name: "Add" }));
+          expect(screen.getByRole("listitem").textContent).toBe("Water the plants");
+        });
+        ```
+
+        **Step 4 — `.github/workflows/ci.yml`:** exactly the same text as in the explanation “CI: the same commands on someone else's computer” of this lesson.
+    tools:
+      - name: "Node.js"
+        version: { uk: "22.13 або новіший (перевірено з 25.2.1)", en: "22.13 or newer (checked with 25.2.1)" }
+      - name: "Vitest, jsdom, Testing Library"
+        version: { uk: "встановлюються в цьому завданні (перевірено на Node.js 25.2.1 з vitest 4.1.11, jsdom 29.1.1, @testing-library/react 16.3.3, @testing-library/user-event 14.6.7). На Node.js 22.12+ або 24 npm натомість встановлює Vitest 5 (під час перевірки — 5.0.3), бо Vitest 5 не називає Node.js 25 серед підтримуваних; ті самі файли з Vitest 5.0.3 дали в нашому запуску той самий підсумок, але на Node.js 22 чи 24 ми їх не запускали", en: "installed by this task (checked on Node.js 25.2.1 with vitest 4.1.11, jsdom 29.1.1, @testing-library/react 16.3.3, @testing-library/user-event 14.6.7). On Node.js 22.12+ or 24 npm installs Vitest 5 instead (5.0.3 when checked), because Vitest 5 does not list Node.js 25; the same files with Vitest 5.0.3 gave the same summary in our run, but we did not run Node.js 22 or 24" }
+    steps:
+      - text:
+          uk: "Встанови інструменти тестування як dev-залежності й додай два scripts: `typecheck` (перевірити типи окремо від збирання) і `test`."
+          en: "Install the testing tools as dev dependencies and add two scripts: `typecheck` (check types separately from the build) and `test`."
+        command: "cd ~/js-course/release-lab\nnpm install --save-dev vitest jsdom @testing-library/react @testing-library/dom @testing-library/user-event\nnpm pkg set \"scripts.typecheck=tsc -b\" \"scripts.test=vitest run\""
+        expect:
+          uk: "`added 84 packages, and audited 112 packages in 9s` і `found 0 vulnerabilities`. `npm pkg set` нічого не друкує."
+          en: "`added 84 packages, and audited 112 packages in 9s` and `found 0 vulnerabilities`. `npm pkg set` prints nothing."
+      - text:
+          uk: "Заміни `vite.config.ts` і створи два файли тестів (тексти — у вступі, позначки «Крок 2»). Запусти тести."
+          en: "Replace `vite.config.ts` and create the two test files (texts in the introduction, marked “Step 2”). Run the tests."
+        command: "npm test"
+        expect:
+          uk: |
+            ```text
+            > release-lab@0.0.0 test
+            > vitest run
+            …
+             Test Files  2 passed (2)
+                  Tests  2 passed (2)
+            ```
+
+            Над підсумком Vitest перелічує файли тестів із позначками ✓.
+          en: |
+            ```text
+            > release-lab@0.0.0 test
+            > vitest run
+            …
+             Test Files  2 passed (2)
+                  Tests  2 passed (2)
+            ```
+
+            Above the summary Vitest lists the test files with ✓ marks.
+      - text:
+          uk: "Пройди весь конвеєр локально так, як його пройде CI: `npm ci` ставить залежності точно з lockfile (як у JS-15), далі ворота по черзі. `&&` зупиняє ланцюжок на першій невдачі. У Windows PowerShell 7 `&&` працює так само; у старому Windows PowerShell 5.1 запускай чотири команди по одній (не перевірено)."
+          en: "Go through the whole pipeline locally the way CI will: `npm ci` installs the dependencies exactly from the lockfile (as in JS-15), then the gates in turn. `&&` stops the chain at the first failure. In Windows PowerShell 7 `&&` works the same; in the old Windows PowerShell 5.1 run the four commands one by one (not checked)."
+        command: "npm ci\nnpm run lint && npm run typecheck && npm test && npm run build"
+        expect:
+          uk: |
+            ```text
+            added 111 packages, and audited 112 packages in 876ms
+            …
+            > release-lab@0.0.0 lint
+            > oxlint
+
+            Found 0 warnings and 0 errors.
+            …
+             Test Files  2 passed (2)
+            …
+            ✓ built in 313ms
+            ```
+
+            Чотири ворота пройдено, `dist` зібрано.
+          en: |
+            ```text
+            added 111 packages, and audited 112 packages in 876ms
+            …
+            > release-lab@0.0.0 lint
+            > oxlint
+
+            Found 0 warnings and 0 errors.
+            …
+             Test Files  2 passed (2)
+            …
+            ✓ built in 313ms
+            ```
+
+            Four gates passed, `dist` is built.
+      - text:
+          uk: "Створи `.github/workflows/ci.yml` (вміст — у вступі, «Крок 4»). Перевір, що кожен `run:` у ньому — це команда, яку ти щойно запускав. Потім посій помилку типу: у `src/App.tsx` заміни `addTask(current, title)` на `addTask(current, title.length)` і запусти ланцюжок ще раз."
+          en: "Create `.github/workflows/ci.yml` (contents in the introduction, “Step 4”). Check that every `run:` in it is a command you have just run. Then seed a type error: in `src/App.tsx` replace `addTask(current, title)` with `addTask(current, title.length)` and run the chain again."
+        command: "npm run lint && npm run typecheck && npm test && npm run build"
+        expect:
+          uk: |
+            ```text
+            > release-lab@0.0.0 lint
+            > oxlint
+
+            Found 0 warnings and 0 errors.
+            …
+            > release-lab@0.0.0 typecheck
+            > tsc -b
+
+            src/App.tsx:27:44 - error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+
+            27     setTasks((current) => addTask(current, title.length));
+                                                          ~~~~~~~~~~~~
+
+            Found 1 error.
+            ```
+
+            У лозі CI, де вивід іде не в термінал, та сама помилка — один рядок: `src/App.tsx(27,44): error TS2345: …`. Лінтер помилки не побачив, `typecheck` зупинив ланцюжок, а `test` і `build` не запускалися. Запиши, на якому етапі зупинився запуск. Поверни `title` замість `title.length` і переконайся, що ланцюжок знову зелений.
+          en: |
+            ```text
+            > release-lab@0.0.0 lint
+            > oxlint
+
+            Found 0 warnings and 0 errors.
+            …
+            > release-lab@0.0.0 typecheck
+            > tsc -b
+
+            src/App.tsx:27:44 - error TS2345: Argument of type 'number' is not assignable to parameter of type 'string'.
+
+            27     setTasks((current) => addTask(current, title.length));
+                                                          ~~~~~~~~~~~~
+
+            Found 1 error.
+            ```
+
+            In a CI log, where the output does not go to a terminal, the same error is one line: `src/App.tsx(27,44): error TS2345: …`. The linter did not see the error, `typecheck` stopped the chain, and `test` and `build` never ran. Write down at which stage the run stopped. Put `title` back instead of `title.length` and make sure the chain is green again.
+    verify:
+      - id: tests-green
+        text:
+          uk: "`npm test` показав `Test Files  2 passed (2)`."
+          en: "`npm test` showed `Test Files  2 passed (2)`."
+      - id: chain-green
+        text:
+          uk: "Ланцюжок `lint && typecheck && test && build` пройшов повністю, і кожен `run:` у `ci.yml` збігається з командою, яку я запускав."
+          en: "The chain `lint && typecheck && test && build` went all the way through, and every `run:` in `ci.yml` matches a command I ran."
+      - id: chain-stopped
+        text:
+          uk: "З посіяною помилкою типу ланцюжок зупинився на `typecheck` з `error TS2345`, а тести й збирання не запускалися."
+          en: "With the seeded type error the chain stopped at `typecheck` with `error TS2345`, and the tests and the build did not run."
+    troubleshooting:
+      - problem:
+          uk: "`TypeError: localStorage.setItem is not a function` у тесті"
+          en: "`TypeError: localStorage.setItem is not a function` in a test"
+        fix:
+          uk: "Node.js 25 має власний `localStorage`, і він ховає сховище тестової сторінки jsdom. Рядок `execArgv: ['--no-experimental-webstorage']` у `vite.config.ts` вимикає його — перевір, що він на місці й що файл збережено."
+          en: "Node.js 25 has its own `localStorage`, and it hides the storage of the jsdom test page. The line `execArgv: ['--no-experimental-webstorage']` in `vite.config.ts` turns it off — check that it is there and that the file is saved."
+      - problem:
+          uk: "`bad option: --no-experimental-webstorage`"
+          en: "`bad option: --no-experimental-webstorage`"
+        fix:
+          uk: "Твій Node.js старший за 22.4 і такого параметра не знає (ми отримали цю помилку на Node.js 20). Онови Node.js до 22.13 або новішого — такої версії потребують інструменти цієї лабораторії. На версіях 22–24 ми цей рядок не запускали."
+          en: "Your Node.js is older than 22.4 and does not know this option (we got this error on Node.js 20). Update Node.js to 22.13 or newer — the version this lab's tools need. We did not run this line on versions 22–24."
+      - problem:
+          uk: "`TypeError: Cannot read properties of undefined (reading 'Symbol(Node prepared with document state workarounds)')` або `ReferenceError: localStorage is not defined`"
+          en: "`TypeError: Cannot read properties of undefined (reading 'Symbol(Node prepared with document state workarounds)')` or `ReferenceError: localStorage is not defined`"
+        fix:
+          uk: "Тест компонента запустився без тестової сторінки, і `userEvent.setup()` не знайшов `document`. У `vite.config.ts` має бути `environment: 'jsdom'` усередині `test: { … }`."
+          en: "The component test ran without a test page, and `userEvent.setup()` did not find a `document`. `vite.config.ts` must have `environment: 'jsdom'` inside `test: { … }`."
+    recovery:
+      uk: "Усе, що додав цей урок, — це файли тестів, `vite.config.ts`, `ci.yml` і рядки в `package.json`. Якщо проєкт заплутався, порівняй ці файли з текстами у вступі; `rm -rf node_modules` і `npm ci` поставлять залежності наново з lockfile."
+      en: "Everything this lesson added is the test files, `vite.config.ts`, `ci.yml` and lines in `package.json`. If the project got tangled, compare those files with the texts in the introduction; `rm -rf node_modules` and `npm ci` reinstall the dependencies from the lockfile."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-12
+    body:
+      uk: "Наприкінці розділу ти напишеш `ci.yml` для свого проєкту, де кожен крок викликає script з його `package.json` у порядку `lint → typecheck → test → build`, і запишеш, на якому етапі зупиняється запуск із посіяною помилкою типу."
+      en: "At the end of the unit you write a `ci.yml` for your own project in which every step calls a script from its `package.json` in the order `lint → typecheck → test → build`, and you write down at which stage a run with a seeded type error stops."

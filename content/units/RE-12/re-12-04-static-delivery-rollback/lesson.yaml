@@ -1,0 +1,365 @@
+id: re-12-04-static-delivery-rollback
+unit: RE-12
+title:
+  uk: "Статична доставка, кеш і відкат"
+  en: "Static delivery, cache and rollback"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Пояснити, як назви файлів із хешем вмісту разом із некешованим `index.html` дають браузерам кешувати агресивно й усе ж отримувати новий випуск."
+    en: "Explain how content-hashed asset names plus an uncached index.html let browsers cache aggressively yet still pick up a new release."
+  - uk: "Спланувати відкат, що знову віддає попередній артефакт, і передбачити, що бачить людина з відкритою вкладкою під час і після нього."
+    en: "Plan a rollback that re-serves the previous artifact, and predict what a user with an open tab experiences during and after it."
+prerequisites: [re-12-03-versions-artifacts-updates, js-16-02-http-methods-status-headers, re-10-01-lazy-suspense, re-05-07-error-boundaries-limits]
+subskills:
+  - { family: P-06, skill: "static delivery/cache/rollback", depth: intro }
+glossary: [static-hosting, cache-busting, release-rollback]
+selfCheck: [predict-open-tab, module-load-fallback]
+
+blocks:
+  - id: cache-rules
+    kind: explanation
+    title:
+      uk: "Кешувати назавжди — і все одно отримувати нове"
+      en: "Cache forever — and still get the new version"
+    body:
+      uk: |
+        Тека `dist` — лише файли. Щоб їх віддавати, досить [[static-hosting|статичного хостингу]]: сервера, який на `GET /assets/index-BIrlHGyo.js` просто віддає цей файл. Жодного коду на сервері.
+
+        Швидкість дає кеш. У JS-16 ти бачив заголовок [[cache-control|Cache-Control]]. Для збірки з хешами правила такі:
+
+        | Файл | Cache-Control | Чому |
+        |---|---|---|
+        | `assets/index-BIrlHGyo.js` та інші з хешем | `public, max-age=31536000, immutable` | назва зміниться разом із вмістом, тож цей файл ніколи не стане іншим — тримай рік |
+        | `index.html` | `no-cache` | збережи, але щоразу питай сервер, чи він не змінився |
+        | `favicon.svg` та інші файли з `public` — без хешу | `no-cache` | назва та сама в кожному випуску, тож рік тримати не можна |
+
+        `public` дозволяє зберігати копію будь-якому кешу дорогою, не лише браузеру; `immutable` каже браузерові навіть не перепитувати.
+
+        Новий випуск — новий `index.html`, що посилається на **нові** назви. Браузер перепитав про `index.html`, отримав новий і просить файли, яких у кеші ще немає. Старі файли лежать у кеші, але їх більше ніхто не просить. Це [[cache-busting|скидання кешу через назву]]: не треба чекати, поки кеш «протухне».
+
+        Сервер `vite preview`, на якому ти перевірятимеш збірку, ставить `Cache-Control: no-cache` на все — ми перевірили це на Vite 8.3.2. Правила з таблиці налаштовують на справжньому хостингу.
+      en: |
+        The `dist` folder is just files. To serve them, [[static-hosting]] is enough: a server that, on `GET /assets/index-BIrlHGyo.js`, simply sends that file. No code on the server.
+
+        Speed comes from the cache. In JS-16 you saw the [[cache-control|Cache-Control]] header. For a build with hashes the rules are:
+
+        | File | Cache-Control | Why |
+        |---|---|---|
+        | `assets/index-BIrlHGyo.js` and the other hashed ones | `public, max-age=31536000, immutable` | the name changes together with the contents, so this file never becomes different — keep it for a year |
+        | `index.html` | `no-cache` | keep it, but ask the server every time whether it changed |
+        | `favicon.svg` and the other files from `public`, without a hash | `no-cache` | the name is the same in every release, so it must not be kept for a year |
+
+        `public` lets any cache on the way keep a copy, not only the browser; `immutable` tells the browser not even to ask again.
+
+        A new release is a new `index.html` that refers to **new** names. The browser asked about `index.html`, got the new one and requests files it does not have in its cache yet. The old files stay in the cache, but nobody asks for them any more. This is [[cache-busting]]: there is no need to wait for the cache to expire.
+
+        The `vite preview` server, on which you will check a build, sets `Cache-Control: no-cache` on everything — we checked this on Vite 8.3.2. The rules from the table are configured on real hosting.
+
+  - id: rollback-plan
+    kind: explanation
+    title:
+      uk: "Відкат — віддати попередній артефакт"
+      en: "A rollback means serving the previous artifact"
+    body:
+      uk: |
+        Новий випуск зламав щось важливе. Найшвидше повернути людям попередній — [[release-rollback|відкат]]. Його готують заздалегідь: кожен випуск лежить у своїй теці, а сервер віддає ту, на яку зараз вказує:
+
+        ```text
+        releases/
+          v0.1.0/   index.html, assets/index-CcApdMEI.js, assets/Stats-DZOOMpaV.js, …
+          v0.2.0/   index.html, assets/index-BIrlHGyo.js, assets/Stats-DTm_fCmj.js, …
+        ```
+
+        Відкат — перемкнути сервер з `v0.2.0` назад на `v0.1.0`. Хвилини, і віддається **той самий** артефакт, який ти вже перевіряв.
+
+        Перезбирати старий commit замість цього — повільніше й ризикованіше: збирання на іншому комп’ютері може взяти інші значення з `.env`, а `npm install` замість `npm ci` — інші версії пакетів. Тоді «старий» артефакт виявиться новим і неперевіреним.
+
+        А що з людиною, у якої відкрита вкладка `v0.2.0`? Її bundle уже в пам’яті, але lazy-модуль він попросить пізніше — за назвою з `v0.2.0`. Після відкату такого файла на сервері немає.
+      en: |
+        A new release broke something important. The fastest fix is to give people the previous one back — a [[release-rollback]]. It is prepared in advance: every release lives in its own folder, and the server serves the one it currently points to:
+
+        ```text
+        releases/
+          v0.1.0/   index.html, assets/index-CcApdMEI.js, assets/Stats-DZOOMpaV.js, …
+          v0.2.0/   index.html, assets/index-BIrlHGyo.js, assets/Stats-DTm_fCmj.js, …
+        ```
+
+        A rollback means switching the server from `v0.2.0` back to `v0.1.0`. Minutes, and it serves **the same** artifact you have already checked.
+
+        Rebuilding the old commit instead is slower and riskier: a build on another computer may take different values from `.env`, and `npm install` instead of `npm ci` may take different package versions. Then the “old” artifact turns out to be new and unchecked.
+
+        And what about a person who has a `v0.2.0` tab open? Its bundle is already in memory, but it will ask for the lazy module later — by its `v0.2.0` name. After the rollback the server has no such file.
+
+  - id: rollback-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Відкрита вкладка під час відкату"
+      en: "An open tab during a rollback"
+    textEquivalent:
+      uk: >-
+        Вкладка відкриває сайт, коли сервер віддає випуск v0.2.0: GET /index.html повертає index.html випуску v0.2.0, а
+        GET /assets/index-BIrlHGyo.js — його головний bundle. Потім сервер перемикають на теку v0.1.0 — це відкат.
+        Вкладка про це не знає. Людина натискає «Show stats», і bundle v0.2.0 просить свій lazy-модуль
+        GET /assets/Stats-DTm_fCmj.js. У теці v0.1.0 такого файла немає: сервер відповідає 404, а Chrome відхиляє
+        import() з TypeError «Failed to fetch dynamically imported module». Без межі помилок React прибирає з
+        екрана весь застосунок. Коли людина перезавантажує сторінку, GET /index.html повертає вже index.html v0.1.0, і
+        він просить свої файли index-CcApdMEI.js і Stats-DZOOMpaV.js, які на сервері є: застосунок знову працює.
+      en: >-
+        The tab opens the site while the server serves release v0.2.0: GET /index.html returns the index.html of
+        release v0.2.0, and GET /assets/index-BIrlHGyo.js returns its main bundle. Then the server is switched to the
+        v0.1.0 folder — that is the rollback. The tab does not know about it. The person presses "Show stats", and the
+        v0.2.0 bundle asks for its lazy module GET /assets/Stats-DTm_fCmj.js. The v0.1.0 folder has no such file: the
+        server answers 404, and Chrome rejects import() with TypeError "Failed to fetch dynamically imported module".
+        Without an error boundary React removes the whole app from the screen. When the person reloads the page,
+        GET /index.html returns the index.html of v0.1.0, which asks for its own files index-CcApdMEI.js and
+        Stats-DZOOMpaV.js, which the server has: the app works again.
+    spec:
+      actors:
+        - { id: tab, label: { uk: "Вкладка", en: "Browser tab" } }
+        - { id: server, label: { uk: "Статичний сервер", en: "Static server" } }
+      messages:
+        - from: tab
+          to: server
+          label: "GET /index.html"
+          caption:
+            uk: "Сервер зараз віддає `v0.2.0`: вкладка отримує його `index.html`, а з ним — головний bundle `index-BIrlHGyo.js`."
+            en: "The server currently serves `v0.2.0`: the tab gets its `index.html`, and with it the main bundle `index-BIrlHGyo.js`."
+          note: { uk: "випуск v0.2.0", en: "release v0.2.0" }
+        - from: server
+          to: server
+          kind: note
+          label: { uk: "відкат: тепер v0.1.0", en: "rollback: now v0.1.0" }
+          caption:
+            uk: "Відкат: сервер тепер віддає теку `v0.1.0`. Відкрита вкладка про це нічого не знає — її код уже в пам’яті."
+            en: "Rollback: the server now serves the `v0.1.0` folder. The open tab knows nothing about it — its code is already in memory."
+        - from: tab
+          to: server
+          label: "GET /assets/Stats-DTm_fCmj.js"
+          caption:
+            uk: "Людина натискає «Show stats». Bundle `v0.2.0` просить lazy-модуль за **своєю** назвою."
+            en: "The person presses “Show stats”. The `v0.2.0` bundle asks for the lazy module by **its own** name."
+        - from: server
+          to: tab
+          kind: return
+          label: "404"
+          caption:
+            uk: "У теці `v0.1.0` такого файла немає: 404. Chrome відхиляє `import()` з `TypeError: Failed to fetch dynamically imported module`. Без межі помилок React прибирає весь застосунок."
+            en: "The `v0.1.0` folder has no such file: 404. Chrome rejects `import()` with `TypeError: Failed to fetch dynamically imported module`. Without an error boundary React removes the whole app."
+          note: { uk: "TypeError у вкладці", en: "TypeError in the tab" }
+        - from: tab
+          to: server
+          label: { uk: "оновлення: GET /index.html", en: "reload: GET /index.html" }
+          caption:
+            uk: "Людина оновлює сторінку. Тепер `index.html` — з `v0.1.0`, і він просить `index-CcApdMEI.js` та `Stats-DZOOMpaV.js`, які на сервері є."
+            en: "The person reloads the page. Now `index.html` comes from `v0.1.0`, and it asks for `index-CcApdMEI.js` and `Stats-DZOOMpaV.js`, which the server has."
+        - from: server
+          to: tab
+          kind: return
+          label: "200"
+          caption:
+            uk: "Застосунок знову працює — уже як випуск `v0.1.0`. Вихід для відкритої вкладки — нова сторінка, і код може запропонувати її людині сам."
+            en: "The app works again — now as release `v0.1.0`. The way out for an open tab is a fresh page, and the code can offer it to the person itself."
+
+  - id: predict-open-tab
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "`release-lab` не має межі помилок. Людина відкрила сайт, коли сервер віддавав випуск `v0.2.0`, і ще не натискала «Show stats». Тим часом сервер відкотили на `v0.1.0`. Тепер людина натискає «Show stats». Що вона бачить у Chrome?"
+      en: "`release-lab` has no error boundary. A person opened the site while the server served release `v0.2.0` and has not pressed “Show stats” yet. Meanwhile the server was rolled back to `v0.1.0`. Now the person presses “Show stats”. What do they see in Chrome?"
+    answer:
+      type: choice
+      options:
+        - id: blank
+          text: { uk: "Порожню сторінку: зник увесь застосунок, а в консолі — `TypeError: Failed to fetch dynamically imported module`", en: "An empty page: the whole app is gone, and the console shows `TypeError: Failed to fetch dynamically imported module`" }
+        - id: old-stats
+          text: { uk: "Статистику з `v0.1.0`: сервер же тепер віддає саме його", en: "The stats of `v0.1.0`: that is what the server serves now" }
+          why:
+            uk: "Вкладка просить файл за назвою з **свого** bundle — `Stats-DTm_fCmj.js`. У `v0.1.0` той самий компонент має іншу назву (`Stats-DZOOMpaV.js`: текст цього файла імпортує головний bundle свого випуску за назвою з хешем), і про неї вкладка не знає."
+            en: "The tab asks for the file by the name from **its own** bundle — `Stats-DTm_fCmj.js`. In `v0.1.0` the same component has another name (`Stats-DZOOMpaV.js`: this file's text imports its own release's main bundle by its hashed name), and the tab does not know it."
+        - id: new-stats
+          text: { uk: "Статистику з `v0.2.0`: вкладка все завантажила ще під час відкриття", en: "The stats of `v0.2.0`: the tab loaded everything when it was opened" }
+          why:
+            uk: "Lazy-модуль на те й lazy: його файл просять лише під час першого рендеру `Stats`, тобто після кліку. На ту мить на сервері вже `v0.1.0`."
+            en: "A lazy module is lazy for a reason: its file is requested only on the first render of `Stats`, that is after the click. By then the server already has `v0.1.0`."
+        - id: loading-forever
+          text: { uk: "Вічне «Loading stats…»: React чекатиме, поки файл з’явиться", en: "“Loading stats…” forever: React waits until the file appears" }
+          why:
+            uk: "Сервер відповідає 404 одразу, проміс `import()` відхиляється, і `lazy` кидає помилку в рендері. `Suspense` показує запасний вміст лише поки модуль у дорозі, не після відмови."
+            en: "The server answers 404 right away, the `import()` promise rejects, and `lazy` throws an error in render. `Suspense` shows its fallback only while the module is on its way, not after a refusal."
+      correct: [blank]
+    explanation:
+      uk: "Ми відтворили це в Chrome з двома справжніми збірками `release-lab`: запит `Stats-DTm_fCmj.js` отримав 404, сторінка — `TypeError: Failed to fetch dynamically imported module: http://localhost:4175/assets/Stats-DTm_fCmj.js`, а в `#root` не лишилося нічого: помилку в рендері без межі React обробляє, прибираючи все дерево. Після оновлення сторінки застосунок запрацював як `v0.1.0`."
+      en: "We reproduced this in Chrome with two real builds of `release-lab`: the request for `Stats-DTm_fCmj.js` got 404, the page got `TypeError: Failed to fetch dynamically imported module: http://localhost:4175/assets/Stats-DTm_fCmj.js`, and nothing was left in `#root`: React handles an error in render without a boundary by removing the whole tree. After reloading the page the app worked as `v0.1.0`."
+
+  - id: release-switch
+    kind: example
+    runtime: browser-react
+    dir: release-switch
+    entry: main.jsx
+    strings:
+      wishlistTitle: { uk: "Мої бажання", en: "My wishes" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      showStats: { uk: "Показати підсумки", en: "Show stats" }
+      loading: { uk: "Завантажую підсумки…", en: "Loading stats…" }
+      wishCount: { uk: "Бажань", en: "Wishes" }
+      wantedTotal: { uk: "Сума бажаного", en: "Wanted total" }
+      currency: { uk: "грн", en: "UAH" }
+      brokenPart: { uk: "Ця частина сторінки зламалася", en: "This part of the page broke" }
+      serverPanel: { uk: "Панель сервера (не частина застосунку)", en: "Server panel (not part of the app)" }
+      rollBack: { uk: "Відкотити на v0.1.0", en: "Roll back to v0.1.0" }
+      nowServing: { uk: "Сервер віддає випуск", en: "The server serves release" }
+    title:
+      uk: "Відкат, поки вкладка відкрита"
+      en: "A rollback while a tab is open"
+    body:
+      uk: |
+        Пісочниця не вміє віддавати справжні теки випусків, тому `server.js` — модель курсу: `loadChunk` шукає назву файла з хешем у випуску, який сервер віддає **зараз**, чекає 300 мс, як мережа, і друкує в консоль рядок запиту. Якщо файла немає, він кидає той самий `TypeError`, що й Chrome у передбаченні.
+
+        Сторінка — вкладка, відкрита на випуску `v0.2.0`. Під нею панель сервера: вона вже не частина застосунку, це як перемикач на хостингу. Підсумки обгорнуті межею помилок з RE-05.
+
+        Натисни **Запустити**, потім «Показати підсумки» — модуль приходить, видно підсумки `v0.2.0`.
+      en: |
+        The sandbox cannot serve real release folders, so `server.js` is a course model: `loadChunk` looks for the hashed file name in the release the server serves **right now**, waits 300 ms like a network, and prints a request line to the console. If the file is missing, it throws the same `TypeError` that Chrome gave in the prediction.
+
+        The page is a tab opened on release `v0.2.0`. Under it is the server panel: it is not part of the app any more, it is like a switch on the hosting. The stats are wrapped in the error boundary from RE-05.
+
+        Press **Run**, then “Show stats” — the module arrives, and you see the `v0.2.0` stats.
+    tryIt:
+      uk: |
+        1. Запусти ще раз, але тепер спершу натисни «Відкотити на v0.1.0», а вже потім «Показати підсумки». Консоль: `GET /assets/Stats-DTm_fCmj.js → 404 (v0.1.0)`; на місці підсумків межа помилок показує повідомлення з текстом `Failed to fetch dynamically imported module`. Список бажань і кнопка лишилися — межа обмежила шкоду однією ділянкою. У консолі є ще червоне повідомлення React, що починається з `%o` і закінчується словами `using the error boundary you provided, ErrorBoundary`: `%o` і `%s` у ньому — просто незаповнені місця для тексту.
+        2. В `App.jsx` прибери обгортку `<ErrorBoundary>` і `</ErrorBoundary>`, лишивши `Suspense`. Повтори крок 1: тепер сторінка стає порожньою — разом із панеллю сервера, бо вона в тому самому React-корені, — як у Chrome у передбаченні, і з’являється картка помилки `TypeError`, а в консолі — попередження React зі словами `An error occurred in one of your React components`.
+        3. Поверни межу. Повідомлення «Ця частина сторінки зламалася» людині нічого не підказує: перезавантаження сторінки взяло б `index.html` з `v0.1.0`, і все запрацювало б. Таке повідомлення ти напишеш у вправі.
+      en: |
+        1. Run it again, but this time first press “Roll back to v0.1.0”, and only then “Show stats”. The console: `GET /assets/Stats-DTm_fCmj.js → 404 (v0.1.0)`; in place of the stats the error boundary shows a message with the text `Failed to fetch dynamically imported module`. The wish list and the button stayed — the boundary limited the damage to one area. The console also has a red React message that starts with `%o` and ends with the words `using the error boundary you provided, ErrorBoundary`: the `%o` and `%s` in it are just unfilled places for text.
+        2. In `App.jsx` remove the `<ErrorBoundary>` and `</ErrorBoundary>` wrapper, keeping `Suspense`. Repeat step 1: now the page goes empty — the server panel too, because it lives in the same React root — as in Chrome in the prediction, and a `TypeError` error card appears, and the console has a React warning with the words `An error occurred in one of your React components`.
+        3. Put the boundary back. The message “This part of the page broke” gives the person no clue: reloading the page would take `index.html` from `v0.1.0`, and everything would work. You write such a message in the exercise.
+
+  - id: module-load-fallback
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: module-load-fallback
+    entry: main.jsx
+    editable: [ModuleLoadFallback.jsx]
+    strings:
+      newVersion: { uk: "Вийшла нова версія застосунку.", en: "A new version of the app is available." }
+      reloadPage: { uk: "Оновити сторінку", en: "Reload the page" }
+      somethingWrong: { uk: "Щось пішло не так.", en: "Something went wrong." }
+      plannerTitle: { uk: "Планувальник", en: "Planner" }
+      showToday: { uk: "Справи на сьогодні", en: "Due today" }
+      loading: { uk: "Завантажую…", en: "Loading…" }
+      reloadAsked: { uk: "Застосунок попросив перезавантажити сторінку.", en: "The app asked to reload the page." }
+    title:
+      uk: "ModuleLoadFallback: запропонувати нову версію"
+      en: "ModuleLoadFallback: offer the new version"
+    instructions:
+      uk: |
+        Планувальник обгортає lazy-маршрут «Справи на сьогодні» межею помилок `ErrorBoundary.jsx`. Коли щось усередині кидає помилку, межа рендерить `<ModuleLoadFallback error={…} onReload={…} />`. Допиши `ModuleLoadFallback.jsx`:
+
+        - якщо в повідомленні `error` є `dynamically imported module` — так Chrome повідомляє `TypeError`-ом, що файла lazy-модуля немає на сервері, — покажи `<div role="alert">` з текстом «Вийшла нова версія застосунку.» і кнопкою «Оновити сторінку»;
+        - кнопка викликає `onReload` — лише після натискання й рівно один раз;
+        - будь-яка інша помилка — `<div role="alert">` з текстом «Щось пішло не так.» і **без** кнопки оновлення: перезавантаження зламаного коду не полагодить.
+
+        `server.js` у цьому проєкті вже відкочено: натисни **Запустити** й «Справи на сьогодні», щоб побачити свій компонент на сторінці. На платформі `onReload` лише друкує рядок у консоль; у справжньому застосунку це був би `location.reload()`. Перевірки рендерять `ModuleLoadFallback` з різними помилками й рахують виклики `onReload`.
+      en: |
+        The planner wraps the lazy route “Due today” in the error boundary `ErrorBoundary.jsx`. When something inside throws, the boundary renders `<ModuleLoadFallback error={…} onReload={…} />`. Finish `ModuleLoadFallback.jsx`:
+
+        - if the message of `error` contains `dynamically imported module` — this is how Chrome reports, with a `TypeError`, that a lazy module's file is not on the server — show a `<div role="alert">` with the text “A new version of the app is available.” and a “Reload the page” button;
+        - the button calls `onReload` — only after the press and exactly once;
+        - any other error gets a `<div role="alert">` with the text “Something went wrong.” and **no** reload button: reloading broken code does not fix it.
+
+        `server.js` in this project is already rolled back: press **Run** and “Due today” to see your component on the page. On the platform `onReload` only prints a line to the console; in a real app it would be `location.reload()`. The checks render `ModuleLoadFallback` with different errors and count the calls of `onReload`.
+    testTitles:
+      "a failed module load shows the new-version alert":
+        uk: "Невдале завантаження модуля показує `role=\"alert\"` про нову версію"
+        en: "A failed module load shows the new-version `role=\"alert\"`"
+      "the reload button calls onReload once, only when pressed":
+        uk: "Кнопка оновлення викликає `onReload` один раз і лише після натискання"
+        en: "The reload button calls `onReload` once, only when pressed"
+      "another error shows a general alert without a reload button":
+        uk: "Інша помилка показує загальне повідомлення без кнопки оновлення"
+        en: "Another error shows a general alert without a reload button"
+    hints:
+      nudge:
+        uk: "Дві гілки рендеру залежать від того, що за помилка. Що в ній відрізняє «файла немає на сервері» від «код зламався»: тип чи текст повідомлення?"
+        en: "Two branches of the render depend on what the error is. What tells “the file is not on the server” apart from “the code broke”: the type, or the message text?"
+      explanation:
+        uk: |
+          І відсутній файл модуля, і звичайна помилка в коді на кшталт `Cannot read properties of undefined` — це `TypeError`. Тож самого `instanceof TypeError` мало: треба ще перевірити текст `error.message` (`includes`). А обробник передають кнопці як функцію, не викликаючи його під час рендеру. Схожий приклад з іншою помилкою:
+
+          ```jsx
+          function OfflineNotice({ error, onRetry }) {
+            const offline = error.name === "TypeError" && error.message.startsWith("Failed to fetch");
+            if (!offline) return <p role="alert">Помилка сервера.</p>;
+            return <button type="button" onClick={onRetry}>Спробувати ще раз</button>;
+          }
+          ```
+        en: |
+          Both a missing module file and an ordinary bug in the code such as `Cannot read properties of undefined` are a `TypeError`. So `instanceof TypeError` alone is not enough: you also have to check the text of `error.message` (`includes`). And the handler is given to the button as a function, without calling it during render. A similar example with another error:
+
+          ```jsx
+          function OfflineNotice({ error, onRetry }) {
+            const offline = error.name === "TypeError" && error.message.startsWith("Failed to fetch");
+            if (!offline) return <p role="alert">Server error.</p>;
+            return <button type="button" onClick={onRetry}>Try again</button>;
+          }
+          ```
+    solutionNote:
+      uk: "Помилку відсутнього модуля впізнають за типом **і** текстом, бо `TypeError` кидає й звичайний зламаний код — а йому перезавантаження не допоможе. `onClick={onReload}` передає функцію; `onClick={onReload()}` викликав би її під час кожного рендеру. Інші браузери формулюють повідомлення інакше (ми перевіряли лише Chrome), тож у справжньому проєкті перелік ознак варто розширити."
+      en: "A missing-module error is recognized by its type **and** its text, because ordinary broken code throws `TypeError` too — and reloading will not help it. `onClick={onReload}` passes the function; `onClick={onReload()}` would call it on every render. Other browsers word the message differently (we checked only Chrome), so in a real project the list of signs is worth extending."
+    feedback:
+      - when: { test: "a failed module load shows the new-version alert" }
+        message:
+          uk: "Ця перевірка рендерить компонент з `TypeError(\"Failed to fetch dynamically imported module: …\")` і чекає елемент з `role=\"alert\"`, у тексті якого є «Вийшла нова версія застосунку.». Якщо всі перевірки не пройшли разом, спершу виправ першу помилку в консолі."
+          en: "This check renders the component with `TypeError(\"Failed to fetch dynamically imported module: …\")` and expects an element with `role=\"alert\"` whose text contains “A new version of the app is available.”. If every check fails at once, fix the first error in the console first."
+      - when: { test: "the reload button calls onReload once, only when pressed" }
+        message:
+          uk: "Ця перевірка шукає кнопку «Оновити сторінку», чекає, що до натискання `onReload` не викликано жодного разу, а після одного натискання — рівно один раз. Якщо виклик був ще до натискання, функцію викликано під час рендеру: передай її в `onClick` без дужок."
+          en: "This check looks for the “Reload the page” button and expects `onReload` not to have been called at all before the press, and exactly once after one press. If there was a call before the press, the function was called during render: pass it to `onClick` without brackets."
+      - when: { test: "another error shows a general alert without a reload button" }
+        message:
+          uk: "Ця перевірка передає `TypeError(\"Cannot read properties of undefined (reading 'map')\")` і чекає `role=\"alert\"` з текстом «Щось пішло не так.» і без кнопки «Оновити сторінку». Це теж `TypeError`, тож відрізняй помилки за текстом повідомлення."
+          en: "This check passes `TypeError(\"Cannot read properties of undefined (reading 'map')\")` and expects `role=\"alert\"` with the text “Something went wrong.” and no “Reload the page” button. This is a `TypeError` too, so tell the errors apart by the message text."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: lazy-модулі приходять на вимогу"
+      en: "Recall: lazy modules arrive on demand"
+    items:
+      - id: lazy-loads-on-first-render
+        from: re-10-01-lazy-suspense
+        prompt:
+          uk: "`const Settings = lazy(() => import(\"./Settings\"));` оголошено на верхньому рівні модуля, а `<Settings />` рендериться лише після кліку на «Налаштування». Коли браузер просить файл модуля `Settings`?"
+          en: "`const Settings = lazy(() => import(\"./Settings\"));` is declared at the top level of a module, and `<Settings />` renders only after a click on “Settings”. When does the browser ask for the `Settings` module's file?"
+        answer:
+          type: choice
+          options:
+            - id: first-render
+              text: { uk: "Коли React уперше рендерить `<Settings />`, тобто після кліку", en: "When React first renders `<Settings />`, that is after the click" }
+            - id: on-declare
+              text: { uk: "Одразу, коли виконується рядок з `lazy`", en: "Right away, when the line with `lazy` runs" }
+              why:
+                uk: "`lazy` лише запам’ятовує функцію з `import()` і не викликає її. Викликає React — коли компонент уперше рендериться."
+                en: "`lazy` only remembers the function with `import()` and does not call it. React calls it — when the component first renders."
+            - id: with-page
+              text: { uk: "Разом зі сторінкою: усі модулі приходять з `index.html`", en: "Together with the page: all modules come with `index.html`" }
+              why:
+                uk: "Lazy-модуль збирання кладе в окремий файл, і `index.html` на нього не посилається — саме тому він і приходить пізніше."
+                en: "The build puts a lazy module into a separate file, and `index.html` does not refer to it — that is exactly why it arrives later."
+          correct: [first-render]
+        explanation:
+          uk: "Модуль приходить на вимогу, під час першого рендеру. Тому відкрита вкладка може попросити файл через години після відкриття — і на сервері на той час може бути вже інший випуск."
+          en: "The module arrives on demand, during the first render. That is why an open tab may ask for the file hours after it was opened — and by then the server may have another release."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-12
+    body:
+      uk: "У кроці проєкту наприкінці розділу ти запишеш у `docs/release.md` правила кешу для `index.html` і для файлів з хешем та кроки відкату на попередню збірку — і один раз відрепетируєш відкат."
+      en: "In the project step at the end of the unit you write into `docs/release.md` the cache rules for `index.html` and for the hashed files and the steps of a rollback to the previous build — and rehearse the rollback once."

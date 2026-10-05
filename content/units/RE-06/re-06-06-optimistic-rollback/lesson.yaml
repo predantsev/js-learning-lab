@@ -1,0 +1,394 @@
+id: re-06-06-optimistic-rollback
+unit: RE-06
+title:
+  uk: "Оптимістичні оновлення та відкат"
+  en: "Optimistic updates and rollback"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Простежити оптимістичну зміну: запам’ятати попереднє значення, одразу показати нове, надіслати mutation, а потім підтвердити зміну або відкотити її."
+    en: "Trace an optimistic change: keep the previous value, show the new value at once, send the mutation, then confirm it or roll it back."
+  - uk: "Написати відкат, що повертає лише змінений запис і повідомляє людині про збій."
+    en: "Implement a rollback that restores only the affected record and announces the failure to the user."
+prerequisites: [re-06-05-cache-invalidation, re-02-03-updater-queue-batching]
+subskills:
+  - { family: R-06, skill: "optimistic update and rollback", depth: intro }
+glossary: [optimistic-update, optimistic-rollback]
+selfCheck: [predict-rollback, acquired-toggle]
+
+blocks:
+  - id: show-it-now
+    kind: explanation
+    title:
+      uk: "Показати зміну одразу"
+      en: "Show the change at once"
+    body:
+      uk: |
+        Людина ставить галочку «виконано», а сервер відповідає за секунду. Якщо чекати відповіді, галочка з’явиться із затримкою — інтерфейс здається зламаним. [[optimistic-update|Оптимістичне оновлення]] робить інакше:
+
+        1. **Запам’ятай** попереднє значення запису.
+        2. **Покажи** нове значення одразу — змінивши стан.
+        3. **Надішли** mutation.
+        4. Успіх — лиши як є (або візьми версію сервера). Збій — зроби [[optimistic-rollback|відкат]]: поверни попереднє значення **і скажи людині**, що зміна не збереглася.
+
+        Пам’ятай: галочка на екрані — ще не згода сервера. Поки відповіді немає, це лише обіцянка.
+
+        Оптимізм доречний, коли збій рідкісний, а зміну легко скасувати: позначка, лайк, порядок у списку. Видалення облікового запису чи оплату показують лише після відповіді.
+      en: |
+        Someone ticks “done”, and the server answers a second later. If you wait for the answer, the tick appears late — the interface feels broken. An [[optimistic-update]] works differently:
+
+        1. **Keep** the record's previous value.
+        2. **Show** the new value at once — by changing state.
+        3. **Send** the mutation.
+        4. Success — leave it as it is (or take the server's version). Failure — do a [[optimistic-rollback|rollback]]: put the previous value back **and tell the person** the change was not saved.
+
+        Remember: a tick on the screen is not yet the server's agreement. Until the answer comes, it is only a promise.
+
+        Optimism fits when failure is rare and the change is easy to undo: a mark, a like, the order of a list. Deleting an account or a payment is shown only after the answer.
+
+  - id: change-timeline
+    kind: visual
+    visual: render-timeline
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      saveFailed: { uk: "Не вдалося зберегти. Зміну скасовано.", en: "Could not save. The change was undone." }
+    title:
+      uk: "Оптимістична галочка, збій і відкат"
+      en: "An optimistic tick, a failure and a rollback"
+    textEquivalent:
+      uk: >-
+        Компонент TaskChecklist показує справу t-01 «%%plants%%» без галочки: рендер 1 бачить
+        done false і порожнє повідомлення. Людина ставить галочку: обробник запам’ятовує previous
+        = false, функцією-оновлювачем ставить done true для t-01 і надсилає PATCH. Рендер 2 одразу
+        бачить done true — галочка на екрані, хоча сервер ще не відповів. Через 800 мс сервер
+        відповідає 503. Обробник продовжує роботу після await: оновлювач повертає t-01 значення
+        previous, тобто false, а повідомлення стає «%%saveFailed%%». Рендер 3 знову без галочки й
+        з повідомленням у role="status", яке озвучується.
+      en: >-
+        The TaskChecklist component shows task t-01 "%%plants%%" unticked: render 1 sees done false
+        and an empty message. The person ticks it: the handler keeps previous = false, sets done true
+        for t-01 with an updater function and sends a PATCH. Render 2 sees done true at once — the
+        tick is on the screen although the server has not answered. 800 ms later the server answers
+        503. The handler continues after await: an updater gives t-01 back the value previous, that
+        is false, and the message becomes "%%saveFailed%%". Render 3 is unticked again, with the
+        message in role="status", which is announced.
+    spec:
+      component: TaskChecklist
+      code: |
+        async function toggleDone(id) {
+          const previous = tasks.find((t) => t.id === id).done;
+          const setDone = (value) =>
+            setTasks((current) =>
+              current.map((t) => (t.id === id ? { ...t, done: value } : t)));
+          setDone(!previous);
+          setMessage("");
+          if (!(await saveDone(id, !previous))) {
+            setDone(previous);
+            setMessage("%%saveFailed%%");
+          }
+        }
+      steps:
+        - phase: render
+          render: 1
+          reason: { uk: "список завантажено", en: "the list has loaded" }
+          snapshot: { state: { "t-01": { done: false }, message: "" } }
+          caption:
+            uk: "Рендер 1: справа `t-01` без галочки, повідомлення порожнє."
+            en: "Render 1: task `t-01` is unticked, the message is empty."
+        - phase: commit
+          render: 1
+          dom: "☐ %%plants%%"
+          caption:
+            uk: "На екрані порожній прапорець."
+            en: "An empty checkbox is on the screen."
+        - phase: event
+          name: change
+          line: 2
+          sees: { "t-01": { done: false } }
+          actions: ["previous = false", "setDone(true)", "setMessage(\"\")", "PATCH /api/tasks/t-01"]
+          queued: { "t-01": { done: true }, message: "" }
+          caption:
+            uk: "Клік. Обробник **запам’ятовує** `previous = false`, ставить `done: true` оновлювачем і надсилає `PATCH`."
+            en: "A click. The handler **keeps** `previous = false`, sets `done: true` with an updater and sends a `PATCH`."
+        - phase: render
+          render: 2
+          reason: { uk: "оптимістична зміна", en: "the optimistic change" }
+          snapshot: { state: { "t-01": { done: true }, message: "" } }
+          caption:
+            uk: "Рендер 2 одразу бачить `done: true`, хоча сервер ще не відповів. Це обіцянка, а не факт."
+            en: "Render 2 sees `done: true` at once, although the server has not answered. This is a promise, not a fact."
+        - phase: commit
+          render: 2
+          dom: "☑ %%plants%%"
+          caption:
+            uk: "Галочка на екрані. Запит у дорозі."
+            en: "The tick is on the screen. The request is on its way."
+        - phase: event
+          name: response 503
+          line: 8
+          sees: { previous: false }
+          actions: ["setDone(false)", "setMessage(\"%%saveFailed%%\")"]
+          queued: { "t-01": { done: false }, message: "%%saveFailed%%" }
+          caption:
+            uk: "Через 800 мс — `503`. Код після `await` відкочує **лише `t-01`** до `previous` і ставить повідомлення."
+            en: "800 ms later — `503`. The code after `await` rolls back **only `t-01`** to `previous` and sets the message."
+        - phase: render
+          render: 3
+          reason: { uk: "відкат після збою", en: "the rollback after the failure" }
+          snapshot: { state: { "t-01": { done: false }, message: "%%saveFailed%%" } }
+          caption:
+            uk: "Рендер 3: знову без галочки, і є повідомлення про збій."
+            en: "Render 3: unticked again, and there is a failure message."
+        - phase: commit
+          render: 3
+          dom: "☐ %%plants%% · %%saveFailed%%"
+          caption:
+            uk: "`role=\"status\"` змінив текст — програма зчитування з екрана його озвучить. Людина знає, що зміна не збереглася."
+            en: "`role=\"status\"` changed its text — a screen reader announces it. The person knows the change was not saved."
+
+  - id: predict-rollback
+    kind: prediction
+    prompt:
+      uk: "Сервер відповідає на кожну зміну за 800 мс, і найближча зміна провалиться. Людина ставить галочку на `t-01`, а через 0,1 с — на `t-02`. Відкат нижче повертає список, збережений у момент кліку. Що буде на екрані після обох відповідей?"
+      en: "The server answers every change in 800 ms, and the next change will fail. The person ticks `t-01` and 0.1 s later `t-02`. The rollback below puts back the list saved at the moment of the click. What is on the screen after both answers?"
+    code: |
+      async function toggleDone(id) {
+        const snapshot = tasks; // the whole list as it was at the click
+        const next = !tasks.find((task) => task.id === id).done;
+        setTasks((current) => current.map((task) => (task.id === id ? { ...task, done: next } : task)));
+        if (!(await saveDone(id, next))) {
+          setTasks(snapshot);
+        }
+      }
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: both-lost
+          text:
+            uk: "Обидві справи без галочки, хоча сервер прийняв зміну `t-02`"
+            en: "Both tasks unticked, although the server accepted the change of `t-02`"
+        - id: only-first
+          text:
+            uk: "`t-01` без галочки, `t-02` — з галочкою"
+            en: "`t-01` unticked, `t-02` ticked"
+          why:
+            uk: "Так було б із відкатом одного запису. Але `snapshot` — список **на момент першого кліку**, коли `t-02` ще не мала галочки. `setTasks(snapshot)` повертає весь той список і стирає галочку `t-02`."
+            en: "That is what a rollback of one record would give. But `snapshot` is the list **at the moment of the first click**, when `t-02` was still unticked. `setTasks(snapshot)` puts that whole list back and erases the tick of `t-02`."
+        - id: both-ticked
+          text:
+            uk: "Обидві з галочками: екран уже показав зміну, отже, сервер її прийняв"
+            en: "Both ticked: the screen already showed the change, so the server accepted it"
+          why:
+            uk: "Оптимістична галочка — лише обіцянка. Перший `PATCH` отримав `503`, і код у гілці збою повертає старий список."
+            en: "An optimistic tick is only a promise. The first `PATCH` got `503`, and the code in the failure branch puts back the old list."
+      correct: [both-lost]
+    explanation:
+      uk: "На 800 мс приходить `503` для `t-01`, і `setTasks(snapshot)` повертає весь список з моменту першого кліку — без галочки на `t-02`. На 900 мс сервер приймає зміну `t-02`, але екран її вже стер: тепер екран і сервер кажуть різне. Перевірено в пісочниці на прикладі нижче. Відкочувати треба **лише змінений запис**, оновлювачем від найсвіжішого стану."
+      en: "At 800 ms `503` arrives for `t-01`, and `setTasks(snapshot)` puts back the whole list from the moment of the first click — without the tick on `t-02`. At 900 ms the server accepts the change of `t-02`, but the screen has already erased it: now the screen and the server disagree. Checked in the sandbox with the example below. Roll back **only the changed record**, with an updater from the latest state."
+
+  - id: optimistic-toggle
+    kind: example
+    runtime: browser-react
+    dir: optimistic-toggle
+    entry: main.jsx
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      saveFailed: { uk: "Не вдалося зберегти. Зміну скасовано.", en: "Could not save. The change was undone." }
+      failSwitch: { uk: "Сервер: провалити наступну зміну", en: "Server: fail the next change" }
+    title:
+      uk: "Відкат усього списку проти відкату одного запису"
+      en: "Rolling back the whole list versus one record"
+    body:
+      uk: |
+        Кожна зміна йде на сервер 800 мс. Консоль показує журнал запитів і рядок `render:` зі станом кожної справи на кожному рендері — це часова шкала. Кнопка зверху — пульт несправжнього сервера.
+
+        Натисни **Запустити**. На **Сторінці** постав галочку на першій справі: вона з’являється одразу, у консолі новий `render:`, а `← … 200` приходить пізніше.
+      en: |
+        Every change takes 800 ms to reach the server. The console shows the request log and a `render:` line with the state of each task on every render — that is the timeline. The button at the top is the remote control of the fake server.
+
+        Press **Run**. On the **Page** tick the first task: the tick appears at once, the console shows a new `render:`, and `← … 200` arrives later.
+    tryIt:
+      uk: |
+        1. Натисни **Сервер: провалити наступну зміну** й постав галочку на другій справі: вона з’являється, а після `← … 503` зникає, і під списком — повідомлення.
+        2. Тепер відтвори гонку: знову **Сервер: провалити наступну зміну**, потім швидко галочка на третій справі й одразу — зняти першу. Після обох відповідей третя справа без галочки (правильно), але й перша знову з галочкою — хоча сервер прийняв її зміну. `setTasks(snapshot)` повернув увесь старий список.
+        3. Виправ відкат: заміни `const snapshot = tasks;` і наступний рядок на `const previous = tasks.find((task) => task.id === id).done;` і `const next = !previous;`, а `setTasks(snapshot);` — на `setTasks((current) => current.map((task) => (task.id === id ? { ...task, done: previous } : task)));`. Запусти й повтори крок 2: відкочується лише справа, чия зміна провалилася.
+      en: |
+        1. Press **Server: fail the next change** and tick the second task: the tick appears, and after `← … 503` it disappears, and a message shows under the list.
+        2. Now reproduce the race: **Server: fail the next change** again, then quickly tick the third task and right away untick the first. After both answers the third task is unticked (right), but the first is ticked again — although the server accepted its change. `setTasks(snapshot)` put the whole old list back.
+        3. Fix the rollback: replace `const snapshot = tasks;` and the next line with `const previous = tasks.find((task) => task.id === id).done;` and `const next = !previous;`, and `setTasks(snapshot);` with `setTasks((current) => current.map((task) => (task.id === id ? { ...task, done: previous } : task)));`. Run and repeat step 2: only the task whose change failed is rolled back.
+
+  - id: updaters-matter
+    kind: explanation
+    title:
+      uk: "Чому відкат — через функцію-оновлювач"
+      en: "Why the rollback goes through an updater"
+    body:
+      uk: |
+        Код після `await` виконується пізніше, коли стан уже міг змінитися: людина клікала далі, прийшли інші відповіді. Але змінні обробника — це [[state-snapshot|знімок]] того рендеру, у якому був клік. `tasks` там — старий список.
+
+        [[updater-function|Функція-оновлювач]] отримує **найсвіжіший** стан у черзі: `setTasks((current) => …)`. Тому і застосування, і відкат пиши оновлювачами, які чіпають лише свій запис:
+
+        - запам’ятай **значення поля** (`previous`), а не весь список;
+        - у відкаті заміни тільки цей запис у `current`;
+        - повідомлення про збій пиши в `role="status"`, що є на сторінці від початку, і назви, **що саме** не збереглося.
+      en: |
+        Code after `await` runs later, when state may already have changed: the person kept clicking, other answers arrived. But the handler's variables are the [[state-snapshot|snapshot]] of the render in which the click happened. `tasks` there is the old list.
+
+        An [[updater-function]] receives the **latest** state in the queue: `setTasks((current) => …)`. So write both the change and the rollback as updaters that touch only their own record:
+
+        - keep the **value of the field** (`previous`), not the whole list;
+        - in the rollback replace only this record in `current`;
+        - write the failure message into a `role="status"` that is on the page from the start, and say **what exactly** was not saved.
+
+  - id: acquired-toggle
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: acquired-toggle
+    entry: main.jsx
+    editable: [App.jsx]
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      toggleFailed: { uk: "Не вдалося зберегти «{name}». Зміну скасовано.", en: "Could not save “{name}”. The change was undone." }
+    title:
+      uk: "Оптимістична позначка «отримано» з відкатом"
+      en: "An optimistic “acquired” mark with a rollback"
+    instructions:
+      uk: |
+        Зараз позначка «отримано» з’являється лише після відповіді сервера (700 мс), а про збій ніхто не каже. Перепиши `toggleStatusOptimistic(id)` в `App.jsx`:
+
+        - одразу після кліку покажи нове значення `acquired`, ще до відповіді;
+        - надішли зміну через готову `updateWish(id, { acquired })` — вона повертає `{ ok, … }`;
+        - якщо `ok` — `false`, поверни **лише цьому бажанню** значення, яке воно мало до кліку, і напиши в `role="status"` текст «Не вдалося зберегти «Назва». Зміну скасовано.» з назвою бажання; успішна зміна очищає повідомлення;
+        - і застосування, і відкат роби функціями-оновлювачами — інші бажання могли змінитися, поки запит був у дорозі.
+
+        Перевірки дивляться на прапорець одразу після кліку й після відповіді, провалюють потрібні запити (одна з них після збою робить успішну зміну й чекає порожнього повідомлення), а в останній перевірці змінюють друге бажання, поки зміна першого ще в дорозі.
+      en: |
+        Right now the “acquired” mark appears only after the server's answer (700 ms), and nobody mentions a failure. Rewrite `toggleStatusOptimistic(id)` in `App.jsx`:
+
+        - right after the click show the new `acquired` value, before the answer;
+        - send the change with the ready-made `updateWish(id, { acquired })` — it returns `{ ok, … }`;
+        - if `ok` is `false`, give **only this wish** back the value it had before the click, and write into `role="status"` the text “Could not save “Name”. The change was undone.” with the wish's name; a successful change clears the message;
+        - do both the change and the rollback with updater functions — other wishes may have changed while the request was on its way.
+
+        The checks look at the checkbox right after the click and after the answer, make the needed requests fail (one of them makes a successful change after a failure and expects an empty message), and in the last check change a second wish while the first one's change is still on its way.
+    testTitles:
+      "the checkbox changes at once, before the server answers":
+        uk: "Прапорець змінюється одразу, до відповіді сервера"
+        en: "The checkbox changes at once, before the server answers"
+      "a successful toggle stays and announces nothing":
+        uk: "Успішна зміна лишається, і нічого не озвучено"
+        en: "A successful toggle stays and announces nothing"
+      "a successful toggle after a failure clears the message":
+        uk: "Успішна зміна після збою прибирає повідомлення"
+        en: "A successful toggle after a failure clears the message"
+      "a failed toggle puts the wish back":
+        uk: "Невдала зміна повертає бажання назад"
+        en: "A failed toggle puts the wish back"
+      "a failed toggle announces which wish failed":
+        uk: "Невдала зміна повідомляє, яке бажання не збереглося"
+        en: "A failed toggle announces which wish failed"
+      "a failed toggle of an acquired wish puts it back to acquired":
+        uk: "Невдала зміна отриманого бажання повертає його в «отримано»"
+        en: "A failed toggle of an acquired wish puts it back to acquired"
+      "rollback keeps a change made while the request was pending":
+        uk: "Відкат зберігає зміну, зроблену, поки запит був у дорозі"
+        en: "The rollback keeps a change made while the request was pending"
+    hints:
+      nudge:
+        uk: "Що треба знати, щоб відкотити одне бажання? Не весь список, а одне значення — і де воно має бути збережене, щоб дожити до кінця `await`?"
+        en: "What do you need to know to roll back one wish? Not the whole list but one value — and where must it be kept to live until after the `await`?"
+      explanation:
+        uk: |
+          Перед зміною збережи в локальній змінній обробника значення поля, яке бажання має зараз. Потім змінюй стан функцією-оновлювачем, що замінює в `current` лише це бажання, — і тоді вже надсилай запит. Після `await`, якщо `ok` — `false`, тим самим способом поверни збережене значення й постав повідомлення. Не пиши `setWishes(wishes.map(…))`: `wishes` у цій функції — список з моменту кліку.
+
+          Схоже, з іншою задачею: «подобається» на дописі — `const before = post.liked; setPosts((all) => all.map((p) => (p.id === id ? { ...p, liked: !before } : p)));`, а якщо сервер відмовив, — те саме з `before`.
+        en: |
+          Before the change, keep in a local variable of the handler the field value the wish has now. Then change state with an updater function that replaces only this wish in `current` — and only then send the request. After `await`, if `ok` is `false`, put the kept value back the same way and set the message. Do not write `setWishes(wishes.map(…))`: `wishes` in this function is the list from the moment of the click.
+
+          Similar, with a different task: a “like” on a post — `const before = post.liked; setPosts((all) => all.map((p) => (p.id === id ? { ...p, liked: !before } : p)));`, and if the server refused, the same with `before`.
+    solutionNote:
+      uk: "Обробник запам’ятовує лише `previous` — значення поля до кліку, — а зміну й відкат робить оновлювачами від `current`, найсвіжішого стану. Тому відкат не зачіпає бажань, змінених, поки запит був у дорозі, і повертає саме попереднє значення (для вже отриманої книжки — `true`). Повідомлення з назвою бажання в `role=\"status\"` чесно каже, що галочка була лише обіцянкою."
+      en: "The handler keeps only `previous` — the field's value before the click — and makes both the change and the rollback with updaters from `current`, the latest state. So the rollback does not touch wishes changed while the request was on its way, and it restores exactly the previous value (`true` for the already acquired book). The message with the wish's name in `role=\"status\"` honestly says the tick was only a promise."
+    feedback:
+      - when: { test: "the checkbox changes at once, before the server answers" }
+        message:
+          uk: "Ця перевірка клікає прапорець «Навушники» і, поки `PATCH` ще в дорозі, очікує, що прапорець уже відмічений. Зміни стан до `await`, а не після нього. Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі."
+          en: "This check clicks the “Headphones” checkbox and, while the `PATCH` is still on its way, expects the checkbox to be ticked already. Change state before the `await`, not after it. If every check fails at once, fix the first error in the console first."
+      - when: { test: "a successful toggle stays and announces nothing" }
+        message:
+          uk: "Ця перевірка чекає успішної відповіді й очікує, що прапорець «Навушники» лишився відміченим, на сервері `acquired: true`, а текст `role=\"status\"` порожній."
+          en: "This check waits for a successful answer and expects the “Headphones” checkbox to stay ticked, `acquired: true` on the server and an empty `role=\"status\"` text."
+      - when: { test: "a successful toggle after a failure clears the message" }
+        message:
+          uk: "Ця перевірка провалює зміну «Навушники», а потім відмічає «Настільну лампу» (ця зміна вдається) й очікує лампу з галочкою та порожній текст `role=\"status\"`. Нова зміна, що вдалася, прибирає старе повідомлення про збій."
+          en: "This check makes the “Headphones” change fail, then ticks “Desk lamp” (that change succeeds) and expects the lamp ticked and an empty `role=\"status\"` text. A new change that succeeds clears the old failure message."
+      - when: { test: "a failed toggle puts the wish back" }
+        message:
+          uk: "Ця перевірка провалює зміну й після відповіді очікує прапорець «Навушники» без галочки. Коли `ok` — `false`, поверни бажанню значення, яке воно мало до кліку."
+          en: "This check makes the change fail and after the answer expects the “Headphones” checkbox unticked. When `ok` is `false`, give the wish back the value it had before the click."
+      - when: { test: "a failed toggle announces which wish failed" }
+        message:
+          uk: "Ця перевірка провалює зміну й очікує в `role=\"status\"` рівно «Не вдалося зберегти «Навушники». Зміну скасовано.» — шаблон із підстановкою назви замість `{name}`."
+          en: "This check makes the change fail and expects exactly “Could not save “Headphones”. The change was undone.” in `role=\"status\"` — the template with the name in place of `{name}`."
+      - when: { test: "a failed toggle of an acquired wish puts it back to acquired" }
+        message:
+          uk: "Ця перевірка знімає позначку з уже отриманої книжки, провалює зміну й очікує, що книжка знову відмічена. Відкат повертає **попереднє** значення, а не завжди `false`."
+          en: "This check unticks the already acquired book, makes the change fail and expects the book ticked again. The rollback restores the **previous** value, not always `false`."
+      - when: { test: "rollback keeps a change made while the request was pending" }
+        message:
+          uk: "Ця перевірка відмічає «Навушники» (зміна провалиться), за 60 мс — «Настільну лампу» (зміна вдасться) і після обох відповідей очікує навушники без галочки, а лампу — з галочкою. Відкат усього списку чи `setWishes(wishes.map(…))` зі знімка кліку стирає позначку лампи — потрібен оновлювач, що чіпає лише одне бажання."
+          en: "This check ticks “Headphones” (that change will fail), 60 ms later “Desk lamp” (that change succeeds) and after both answers expects the headphones unticked and the lamp ticked. Rolling back the whole list or `setWishes(wishes.map(…))` from the click's snapshot erases the lamp's tick — it needs an updater that touches only one wish."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: two-updates-one-handler
+        from: re-02-03-updater-queue-batching
+        prompt:
+          uk: "Обидві справи спершу без галочки. Обробник викликає `setTasks` двічі. Які справи матимуть `done: true` після кліку?"
+          en: "Both tasks start unticked. The handler calls `setTasks` twice. Which tasks have `done: true` after the click?"
+        code: |
+          function finishBoth() {
+            setTasks(tasks.map((task) => (task.id === "t-01" ? { ...task, done: true } : task)));
+            setTasks(tasks.map((task) => (task.id === "t-02" ? { ...task, done: true } : task)));
+          }
+        lang: jsx
+        runnable: false
+        answer:
+          type: choice
+          options:
+            - id: only-second
+              text: { uk: "Лише `t-02`", en: "Only `t-02`" }
+            - id: both
+              text: { uk: "Обидві", en: "Both" }
+              why:
+                uk: "Обидва виклики рахують від того самого `tasks` — знімка рендеру. Другий кладе в чергу список, де `t-01` ще без галочки, і він замінює перший."
+                en: "Both calls start from the same `tasks` — the render's snapshot. The second queues a list where `t-01` is still unticked, and it replaces the first."
+            - id: only-first
+              text: { uk: "Лише `t-01`", en: "Only `t-01`" }
+              why:
+                uk: "Черга застосовує значення по порядку, і перемагає останнє — список із галочкою лише на `t-02`."
+                en: "The queue applies the values in order, and the last one wins — the list with a tick only on `t-02`."
+          correct: [only-second]
+        explanation:
+          uk: "Значення в `setTasks(list)` — готовий список із знімка, і останній перемагає. З оновлювачами `setTasks((current) => …)` кожен отримав би результат попереднього, і обидві справи були б виконані. Відкат після `await` потребує того самого. Перевірено в пісочниці."
+          en: "A value in `setTasks(list)` is a finished list from the snapshot, and the last one wins. With updaters `setTasks((current) => …)` each would receive the previous one's result, and both tasks would be done. A rollback after `await` needs exactly that. Checked in the sandbox."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-06
+    body:
+      uk: "У кроці проєкту цього розділу одна зміна твого домену стане оптимістичною: перемикання `acquired` у списку бажань, `done` у планувальнику, сьогоднішня дата в `completions` звички або видалення витрати. Відкат повертає лише цей запис (для звички — не губить інших дат) і озвучує, що саме не збереглося."
+      en: "In this unit's project step one change of your domain becomes optimistic: toggling `acquired` in the wishlist, `done` in the planner, today's date in a habit's `completions`, or removing an expense. The rollback restores only that record (for a habit — without losing other dates) and announces what exactly was not saved."

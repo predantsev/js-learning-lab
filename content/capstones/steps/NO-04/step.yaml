@@ -1,0 +1,170 @@
+# Capstone step of unit NO-04 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of NO-04 from this file.
+# A local step: done in the learner's editor and terminal; no platform checks. The project page shows only
+# the intro of a local step, so the intro carries the whole procedure.
+# Every command was run on macOS (Node.js 25.2.1, npm 11.6.2, TypeScript 7.0.2, curl 8.7.1) in a scratch home on
+# all four projects, continuing the NO-03 scratch projects, in a Ukrainian and an English workspace: npm test
+# (node:test over real HTTP on listen(0): 13 tests, 14 in the habit tracker), npm start with a fresh data folder,
+# node try-api.mjs (create, retried create, invalid update, page 1, page 2; and "done today" twice in the habit
+# tracker), the stored file, npm run check:server and npm run check (still all ✔), npm run typecheck, npm run
+# lint of the web project, the commit. Deliberately wrong variants were run against npm test on all four and
+# each failed at least one test: the key read as request.headers["Idempotency-Key"], no body-hash check, an
+# unknown cursor read as "from the start", nextCursor from items.length === limit, no id tie-breaker, an
+# offset cursor (wishlist), unknown fields accepted, an unvalidated PATCH (wishlist), malformed JSON as 500, the
+# stack in a 500 body, no Allow, no body limit, a missing record answered 200, DELETE answered 200 (wishlist),
+# the unversioned GET /records removed (wishlist), completions pushed without completeHabit (habit tracker).
+# Not run: Node.js 22, Linux, Windows. Quoted output is from the wishlist run in the Ukrainian workspace.
+# The request script was first a curl shell script without an extension, which the content loader does not
+# carry; it became server/try-api.mjs (the same requests through fetch, the same printed lines), run against
+# the NO-04, NO-05, NO-07 and NO-11 references of all four projects (Ukrainian workspace) on Node.js 25.2.1 and 22.13.1, and against
+# NO-04 in both workspaces next to the old script: the same statuses and bodies as the curl script.
+# reference/ is the NO-03 reference plus the files of this step (without node_modules/, package-lock.json and
+# the runtime folders server/data/ and server/.check/); sample names in tests/ and try-api.mjs are fixture strings.
+unit: NO-04
+mode: local
+entry: index.html
+title:
+  uk: "CRUD API /v1: валідація, помилки, сторінки й повтори"
+  en: "A /v1 CRUD API: validation, errors, pages and retries"
+intro:
+  uk: |
+    Сервер твого проєкту стає API записів із версією в адресі: `/v1/records` і `/v1/records/:id` — шість операцій, валідація на межі доменними функціями `validate*`, одна форма всіх помилок, фільтр, сортування й сторінки за курсором, ідемпотентне створення. Неверсований `GET /records` попереднього кроку лишається таким, яким його опубліковано: ламати чужий контракт не можна, а нове живе під `/v1`.
+
+    | Запит | Успіх |
+    |---|---|
+    | `GET /v1/records` | `200` `{ items, nextCursor }` |
+    | `POST /v1/records` (`Idempotency-Key`) | `201` і новий запис |
+    | `GET /v1/records/:id` | `200` |
+    | `PUT /v1/records/:id` | `200`, запис замінено цілком |
+    | `PATCH /v1/records/:id` | `200`, перевірено **злитий** запис |
+    | `DELETE /v1/records/:id` | `204`, без тіла |
+
+    | Проєкт | Перевіряє (`validate…Input`) | Фільтр і сортування |
+    |---|---|---|
+    | Список бажань | `validateItem`: `name` 1–80, `price` ціле ≥ 0 або `null`; `category` до 30 або `null` | `?acquired=`, `?sort=name` або `price` (без ціни — останні) |
+    | Планувальник | `validateTask`: `title`, `dueDate` `YYYY-MM-DD` або `null`, `priority` `low` / `normal` / `high` | `?done=`, `?dueBefore=`, за `dueDate`, без терміну — останні |
+    | Трекер звичок | `validateHabit`: `name`, `frequency` `daily` / `weekly`; `completions` — дати, кожна раз, за зростанням | `?active=`, за `name`; `POST /v1/records/:id/completions` |
+    | Трекер витрат | `validateExpense`: `label`, `amountMinor` ціле > 0, `date`, `category` зі списку | `?category=`, `?from=` і `?to=`, `?sort=date` або `amountMinor` |
+
+    Помилки: `{ "error": { "code", "messageKey", "details", "requestId" } }` і заголовок `x-request-id`. Коди: `VALIDATION_FAILED` (400; у `details` — поле й ключ домену: `required`, `too-long`, `not-a-number`… або `unknown-field`), `MALFORMED_JSON` (400), `NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405 з `Allow`), `PAYLOAD_TOO_LARGE` (413, тіло понад 4096 байтів), `IDEMPOTENCY_KEY_REUSED` (422), `INTERNAL` (500, без повідомлення й стеку). Сторінки: `limit` 1–50 (за замовчуванням 10), курсор — `id` останнього запису попередньої сторінки, `id` розв’язує нічию; невідомий курсор, `limit`, `sort` чи значення фільтра — `400` з причиною.
+
+    Перевірено на macOS (Node.js 25.2.1, curl 8.7.1) на всіх чотирьох проєктах; нижче — «Список бажань» в українському проєкті. На Node.js 22 (крім `node try-api.mjs`, який ми запустили й на 22.13.1), Linux і Windows не перевірялося; за документацією Node.js 22 ([Modules: TypeScript](https://nodejs.org/docs/latest-v22.x/api/typescript.html)) у 22.13–22.17 тести запускають `node --experimental-strip-types --test tests/*.test.ts`.
+
+    **1. Стан на початку.** `cd ~/js-course/wishlist`, `git status` — чисто, `git log --oneline -1` — commit `Serve GET /records from the file repository on 127.0.0.1`.
+
+    **2. Модель помилок — `src/api-errors.ts`.** `ApiError(status, code, details, headers)` для відмов, які API дає навмисно, і `toErrorResponse(error, requestId)` — одне місце, що перетворює будь-яку помилку на відповідь; усе, що не `ApiError`, стає `INTERNAL`, а стек іде лише в термінал поруч із `requestId`.
+
+    **3. Тіло запиту — `src/body.ts`.** `readBodyText(req, 4096)` рахує байти частин, тіло понад межу дочитує, але не зберігає, і відповідає `413`; `parseJson` замість `SyntaxError` (тобто `500`) дає `400 MALFORMED_JSON`.
+
+    **4. Валідація на межі — `src/validate.ts`.** `validateWishInput(body)` викликає доменну `validateItem`, тож сервер і вебзастосунок погоджуються щодо правил, а ключі помилок — ті самі, які вже перекладає клієнт. Межа додає те, чого форма не надсилає: неправильні типи, невідомі поля (`isAdmin` → `unknown-field`), категорію. Помилки збираються всі; далі йде новий очищений об’єкт, а не сире тіло.
+
+    **5. Список — `src/list.ts`.** `listWishes(records, query)` у порядку: фільтр → сортування з `id` для нічиїх (назви порівнюються з локаллю `"uk"`, переданою явно) → записи після курсору → сторінка. `nextCursor` — `null`, коли далі нічого немає: рахується з `rest.length > limit`, а не з `items.length === limit`.
+
+    **6. Ідемпотентність — `src/idempotency.ts`.** Для кожного ключа — SHA-256 сирого тіла й відповідь. Той самий ключ і те саме тіло — та сама відповідь без другого створення; той самий ключ з іншим тілом — `422`. Ключ запам’ятовується лише після вдалого створення. Сховище — у пам’яті процесу: перезапуск забуває ключі, а два повтори в ту саму мить не обробляються (справжній сервіс зберігає ключі обмежений час у спільному сховищі). Заголовок читай як `req.headers["idempotency-key"]`: Node дає назви заголовків малими літерами.
+
+    **7. Маршрути — `src/api.ts`, `handleV1`.** Шлях ділиться на частини: `v1`, `records`, `:id` (`decodeURIComponent`; зламане `%E0` — `400`). Новий `id` — наступний номер (`w-07`). `PATCH` зливає надіслані поля із записом без `id` і перевіряє результат, тож патч не може залишити запис, який відкинуло б створення. `src/server.ts` передає в `handleV1` усе під `/v1`, решта — як раніше.
+
+    **8. Тести — `tests/api.test.ts`, `npm test`.** `node:test` і `node:assert/strict`, як в уроці: кожен тест — власна тека даних у `server/.check/`, власний сервер на `listen(0, "127.0.0.1")` і `t.after(() => server.close())`, справжній `fetch` із `AbortSignal.timeout(2000)`. У `server/package.json` — `"test": "node --test tests/*.test.ts"` (файли названо явно), у `tsconfig.json` — `"include": ["src/**/*.ts", "tests/**/*.ts"]`. Тести: повний CRUD і `404` після видалення; невалідне створення з усіма полями в `details`; правила домену; невалідний `PATCH` нічого не змінює; `MALFORMED_JSON` і `413`; кожен запис рівно раз на всіх сторінках; рівні значення на межі сторінки; фільтри й `nextCursor: null` на останній сторінці; невідомі курсор, `limit`, `sort`, фільтр; повторений `POST` з тим самим ключем і `422` для іншого тіла; `404`, `405` з `Allow`; `500` без стеку з `requestId` із заголовка; записи у файлі для нового сервера. У нас — `ℹ pass 13`, `ℹ fail 0`.
+
+    **9. Скрипт запитів.** `npm start`, у другому терміналі, у `server/`, — `node try-api.mjs` (файл `server/try-api.mjs`: ті самі запити через `fetch`):
+
+    ```text
+    == 1. POST /v1/records (Idempotency-Key: …)
+    {"id":"w-07","name":"Навушники 2","price":30,"acquired":false,"category":"Дім"} → 201
+    == 2. the same POST retried with the same key
+    {"id":"w-07","name":"Навушники 2","price":30,"acquired":false,"category":"Дім"} → 201
+    == 3. PATCH /v1/records/w-01 with an invalid name and price
+    {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"name":"required","price":"not-a-number"},"requestId":"…"}} → 400
+    == 4. GET /v1/records?sort=price&limit=3
+    {"items":[{"id":"w-06",…},{"id":"w-04",…},{"id":"w-07",…}],"nextCursor":"w-07"}
+    == 5. GET /v1/records?sort=price&limit=3&cursor=w-07
+    {"items":[{"id":"w-02",…},{"id":"w-01",…},{"id":"w-03",…}],"nextCursor":"w-03"} → 200
+    ```
+
+    Ctrl+C, а у файлі даних — `schemaVersion` 1 і сім записів `w-01` … `w-07`: повторений `POST` нічого не додав.
+
+    **10. Спробуй зламати.** Прочитай ключ як `req.headers["Idempotency-Key"]` — `✖ a retried POST with the same Idempotency-Key creates one wish`; рахуй `nextCursor` з `items.length === limit` — `✖ a page that ends exactly at the last wish has nextCursor null`; прибери `id` з компаратора — `✖ wishes with an equal price are not lost at a page boundary`; віддай `error.stack` у тілі `500` — `✖ a failure inside is 500 INTERNAL with the request id and no stack`. Кожна зміна ламає свій тест; поверни код.
+
+    **11. Доказ і commit.** `npm run typecheck` — жодного рядка; `npm run check:server` і `npm run check` — як і раніше, усі `✔`. У `docs/server.md` — розділ «NO-04» з виводом кроків 8–9 і записами у файлі. `cd ..`, `git add -A`, `git commit -m "Expose the records as a /v1 CRUD API with validation, errors, pages and idempotent creates"`.
+
+    **Самоперевірка:** кожна помилка `/v1` — одна форма з `code`, `messageKey`, `details`, `requestId`; правила полів — доменні `validate*`, невідомі поля відкидаються; `PATCH` перевіряє злитий запис; список — фільтр, сортування з `id` для нічиїх, курсор, сторінка; повторений `POST` з тим самим ключем створює один запис; `GET /records` попереднього кроку працює як раніше; `npm test` — `fail 0`.
+
+    **Якщо щось не так:** повторений `POST` створює другий запис — ключ читається не малими літерами або сховище створюється на кожен запит, а не на сервер. За уроком про JSON-тіла, тіло в десятки разів більше за межу може отримати замість `413` обірване з’єднання, якщо сервер перестав його читати (у нас не відтворювалося: `readBodyText` дочитує тіло). `npm test` надрукував підсумок, але процес не закінчується (у нас — понад 15 с) — тест не закрив сервер (`t.after`). `tests 0` — у команді немає файлів тестів: шлях `tests/*.test.ts`.
+
+    Референс кроку — `Завантажити: NO-04 — CRUD API /v1: валідація, помилки, сторінки й повтори` після експорту; відкрий його після власної спроби.
+  en: |
+    Your project's server becomes a records API with a version in the address: `/v1/records` and `/v1/records/:id` — six operations, validation at the edge with the domain's `validate*` functions, one shape for every error, a filter, sorting and cursor pages, idempotent creates. The unversioned `GET /records` of the previous step stays as it was published: a contract others may use is not broken, and the new one lives under `/v1`.
+
+    | Request | Success |
+    |---|---|
+    | `GET /v1/records` | `200` `{ items, nextCursor }` |
+    | `POST /v1/records` (`Idempotency-Key`) | `201` and the new record |
+    | `GET /v1/records/:id` | `200` |
+    | `PUT /v1/records/:id` | `200`, the whole record replaced |
+    | `PATCH /v1/records/:id` | `200`, the **merged** record validated |
+    | `DELETE /v1/records/:id` | `204`, no body |
+
+    | Project | Validates (`validate…Input`) | Filter and sort |
+    |---|---|---|
+    | Wishlist | `validateItem`: `name` 1–80, `price` a whole number ≥ 0 or `null`; `category` up to 30 or `null` | `?acquired=`, `?sort=name` or `price` (no price last) |
+    | Planner | `validateTask`: `title`, `dueDate` `YYYY-MM-DD` or `null`, `priority` `low` / `normal` / `high` | `?done=`, `?dueBefore=`, by `dueDate`, undated last |
+    | Habit tracker | `validateHabit`: `name`, `frequency` `daily` / `weekly`; `completions` — dates, each once, ascending | `?active=`, by `name`; `POST /v1/records/:id/completions` |
+    | Expense tracker | `validateExpense`: `label`, `amountMinor` a whole number > 0, `date`, `category` from the list | `?category=`, `?from=` and `?to=`, `?sort=date` or `amountMinor` |
+
+    Errors: `{ "error": { "code", "messageKey", "details", "requestId" } }` and an `x-request-id` header. The codes: `VALIDATION_FAILED` (400; `details` holds the field and the domain's key: `required`, `too-long`, `not-a-number`… or `unknown-field`), `MALFORMED_JSON` (400), `NOT_FOUND` (404), `METHOD_NOT_ALLOWED` (405 with `Allow`), `PAYLOAD_TOO_LARGE` (413, a body over 4096 bytes), `IDEMPOTENCY_KEY_REUSED` (422), `INTERNAL` (500, no message and no stack). Pages: `limit` 1–50 (10 by default), the cursor is the `id` of the last record of the previous page, the `id` breaks ties; an unknown cursor, `limit`, `sort` or filter value is a `400` with a reason.
+
+    Checked on macOS (Node.js 25.2.1, curl 8.7.1) on all four projects; below is the Wishlist in a Ukrainian project. Not checked on Node.js 22 (except `node try-api.mjs`, which we also ran on 22.13.1), Linux or Windows; according to the Node.js 22 documentation ([Modules: TypeScript](https://nodejs.org/docs/latest-v22.x/api/typescript.html)) on 22.13–22.17 the tests run with `node --experimental-strip-types --test tests/*.test.ts`.
+
+    **1. The starting state.** `cd ~/js-course/wishlist`, `git status` — clean, `git log --oneline -1` — the commit `Serve GET /records from the file repository on 127.0.0.1`.
+
+    **2. The error model — `src/api-errors.ts`.** `ApiError(status, code, details, headers)` for the refusals the API gives on purpose, and `toErrorResponse(error, requestId)` — the one place that turns any error into an answer; anything that is not an `ApiError` becomes `INTERNAL`, and the stack goes only to the terminal, next to the `requestId`.
+
+    **3. The request body — `src/body.ts`.** `readBodyText(req, 4096)` counts the bytes of the chunks, reads a body over the limit to its end without keeping it and answers `413`; `parseJson` gives `400 MALFORMED_JSON` instead of a `SyntaxError` (that is, a `500`).
+
+    **4. Validation at the edge — `src/validate.ts`.** `validateWishInput(body)` calls the domain's `validateItem`, so the server and the web app agree on the rules, and the error keys are the ones the client already translates. The edge adds what a form never sends: wrong types, unknown fields (`isAdmin` → `unknown-field`), the category. Every error is collected; what goes on is a new, cleaned object, not the raw body.
+
+    **5. The list — `src/list.ts`.** `listWishes(records, query)` in this order: filter → sort with the `id` for ties (names compare with the locale `"uk"` passed explicitly) → the records after the cursor → the page. `nextCursor` is `null` when nothing follows: it comes from `rest.length > limit`, not from `items.length === limit`.
+
+    **6. Idempotency — `src/idempotency.ts`.** For every key, the SHA-256 of the raw body and the answer. The same key and the same body — the same answer without a second create; the same key with another body — `422`. A key is remembered only after a successful create. The store is in the process's memory: a restart forgets the keys, and two retries at the same moment are not handled (a real service keeps keys for a limited time in shared storage). Read the header as `req.headers["idempotency-key"]`: Node gives header names in lower case.
+
+    **7. The routes — `src/api.ts`, `handleV1`.** The path is split into parts: `v1`, `records`, `:id` (`decodeURIComponent`; a broken `%E0` is a `400`). A new `id` is the next number (`w-07`). `PATCH` merges the sent fields into the record without its `id` and validates the result, so a patch can never leave a record that a create would refuse. `src/server.ts` hands everything under `/v1` to `handleV1`; the rest is as before.
+
+    **8. Tests — `tests/api.test.ts`, `npm test`.** `node:test` and `node:assert/strict`, as in the lesson: every test has its own data folder in `server/.check/`, its own server on `listen(0, "127.0.0.1")` and `t.after(() => server.close())`, a real `fetch` with `AbortSignal.timeout(2000)`. `server/package.json` gets `"test": "node --test tests/*.test.ts"` (the files are named explicitly), `tsconfig.json` gets `"include": ["src/**/*.ts", "tests/**/*.ts"]`. The tests: the full CRUD and a `404` after the delete; an invalid create with every field in `details`; the domain rules; an invalid `PATCH` changes nothing; `MALFORMED_JSON` and `413`; every record exactly once across the pages; equal values at a page boundary; the filters and `nextCursor: null` on the last page; an unknown cursor, `limit`, `sort`, filter; a retried `POST` with the same key and `422` for another body; `404`, `405` with `Allow`; a `500` without a stack, with the `requestId` of the header; the records in the file for a new server. For us — `ℹ pass 13`, `ℹ fail 0`.
+
+    **9. The request script.** `npm start`, in a second terminal, in `server/`, `node try-api.mjs` (the file `server/try-api.mjs`: the same requests through `fetch`):
+
+    ```text
+    == 1. POST /v1/records (Idempotency-Key: …)
+    {"id":"w-07","name":"Навушники 2","price":30,"acquired":false,"category":"Дім"} → 201
+    == 2. the same POST retried with the same key
+    {"id":"w-07","name":"Навушники 2","price":30,"acquired":false,"category":"Дім"} → 201
+    == 3. PATCH /v1/records/w-01 with an invalid name and price
+    {"error":{"code":"VALIDATION_FAILED","messageKey":"errors.validationFailed","details":{"name":"required","price":"not-a-number"},"requestId":"…"}} → 400
+    == 4. GET /v1/records?sort=price&limit=3
+    {"items":[{"id":"w-06",…},{"id":"w-04",…},{"id":"w-07",…}],"nextCursor":"w-07"}
+    == 5. GET /v1/records?sort=price&limit=3&cursor=w-07
+    {"items":[{"id":"w-02",…},{"id":"w-01",…},{"id":"w-03",…}],"nextCursor":"w-03"} → 200
+    ```
+
+    Ctrl+C, and the data file holds `schemaVersion` 1 and seven records `w-01` … `w-07`: the retried `POST` added nothing.
+
+    **10. Try to break it.** Read the key as `req.headers["Idempotency-Key"]` — `✖ a retried POST with the same Idempotency-Key creates one wish`; compute `nextCursor` from `items.length === limit` — `✖ a page that ends exactly at the last wish has nextCursor null`; remove the `id` from the comparator — `✖ wishes with an equal price are not lost at a page boundary`; send `error.stack` in the body of a `500` — `✖ a failure inside is 500 INTERNAL with the request id and no stack`. Every change breaks its own test; put the code back.
+
+    **11. Evidence and the commit.** `npm run typecheck` — not a single line; `npm run check:server` and `npm run check` — every check `✔`, as before. In `docs/server.md` — a section “NO-04” with the output of steps 8–9 and the records in the file. `cd ..`, `git add -A`, `git commit -m "Expose the records as a /v1 CRUD API with validation, errors, pages and idempotent creates"`.
+
+    **Self-check:** every `/v1` error is one shape with `code`, `messageKey`, `details`, `requestId`; the field rules are the domain's `validate*`, unknown fields are refused; `PATCH` validates the merged record; the list is filter, sort with the `id` for ties, cursor, page; a retried `POST` with the same key creates one record; the `GET /records` of the previous step works as before; `npm test` — `fail 0`.
+
+    **If something goes wrong:** a retried `POST` creates a second record — the key is not read in lower case, or the store is created per request instead of per server. According to the lesson about JSON bodies, a body dozens of times over the limit can get a broken connection instead of the `413` when the server stops reading it (not reproduced here: `readBodyText` reads the body to its end). `npm test` printed its summary but the process does not end (for us — over 15 s) — a test did not close its server (`t.after`). `tests 0` — the command names no test files: the path is `tests/*.test.ts`.
+
+    The step's reference is `Download: NO-04 — A /v1 CRUD API: validation, errors, pages and retries` after the export; open it after your own attempt.
+purpose:
+  uk: "Це крок твого проєкту: межі REST, валідацію за схемою, стабільну модель помилок, сторінки з фільтром і сортуванням, ідемпотентні повтори й версійований контракт із цього розділу ти застосовуєш до власних записів — сервер стає API, яке можна перевірити тестами. Платформа цей крок не перевіряє: доказ — `npm test`, вивід `node try-api.mjs`, `docs/server.md` і commit."
+  en: "This is a step of your project: you apply this unit's REST boundaries, schema validation, stable error model, pages with a filter and sorting, idempotent retries and versioned contract to your own records — the server becomes an API that tests can check. The platform does not check this step: the evidence is `npm test`, the output of `node try-api.mjs`, `docs/server.md` and the commit."
+objectives:
+  - uk: "Відкрити записи проєкту як CRUD API `/v1/records`, що перевіряє тіла доменними `validate*` на межі й відповідає однією формою помилок з `requestId`."
+    en: "Expose the project's records as a `/v1/records` CRUD API that validates bodies at the edge with the domain's `validate*` functions and answers with one error shape that carries a `requestId`."
+  - uk: "Віддавати список із фільтром і сортуванням за полями домену, сторінками за курсором і `id` для нічиїх, а повторений `POST` з тим самим `Idempotency-Key` — без другого запису; довести це тестами `node:test` і скриптом curl."
+    en: "Serve the list with a filter and sorting on the domain's fields, cursor pages and the `id` for ties, and a retried `POST` with the same `Idempotency-Key` without a second record; prove it with `node:test` tests and a curl script."
+transfer:
+  uk: "Цей крок виконується в редакторі й терміналі на твоєму комп’ютері: що зробити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor and a terminal on your computer: what to do, the expected output and the self-check list are above and on the step's page in your project."

@@ -1,0 +1,365 @@
+id: no-12-11-independent-incident-runbook
+unit: NO-12
+title:
+  uk: "Самостійно: експлуатація й відновлення за runbook"
+  en: "Independent: operate and recover from the runbook"
+kind: assessment
+minutes: 40
+contentVersion: 1
+purpose:
+  uk: "Перевірити, що ти без підказок керуєш незнайомим сервісом так, як у цьому розділі: конфігурація, що відмовляє на неправильних значеннях, health-перевірки й коректне завершення, перевірка відновлення й контракту — у коді, а потім усе разом за runbook у твоєму терміналі: перевірений артефакт, production-режим на loopback, SIGTERM під навантаженням, тренування відновлення, оновлення залежності й відкат — із доказом кожного кроку."
+  en: "To check that you, without hints, operate an unfamiliar service the way this unit taught: configuration that refuses invalid values, health checks and a graceful shutdown, a restore check and a contract check — in code, and then all of it together by a runbook in your terminal: a verified artifact, production mode on loopback, SIGTERM under load, a restore drill, a dependency upgrade and a rollback — with evidence for every step."
+objectives:
+  - uk: "Без підказок керувати незнайомим синтетичним сервісом за його runbook: перевірити артефакт, запустити його в production-режимі на loopback, оновити залежність, відновитися після збою й відкотитися."
+    en: "Operate an unseen synthetic service from its runbook without hints: verify the artifact, start it in production mode on loopback, upgrade a dependency, recover from an injected failure and roll back."
+  - uk: "Відновити backup, довести відновлення id, підсумками й перевіркою контракту та записати доказ кожного кроку."
+    en: "Restore a backup, prove the restore with ids, totals and contract tests, and record evidence for every step."
+prerequisites: [no-12-10-debug-latency-defect]
+subskills:
+  - { family: B-09, skill: "typed contracts", depth: assess }
+  - { family: B-10, skill: "production build/config/env", depth: assess }
+  - { family: B-10, skill: "CI checks/artifacts", depth: assess }
+  - { family: B-10, skill: "loopback production-mode rehearsal", depth: assess }
+  - { family: B-10, skill: "process lifecycle/health", depth: assess }
+  - { family: B-10, skill: "graceful shutdown", depth: assess }
+  - { family: B-10, skill: "deployment/monitoring/rollback/runbook", depth: assess }
+  - { family: B-10, skill: "backup/restore", depth: assess }
+  - { family: B-10, skill: "dependency upgrades", depth: assess }
+glossary: []
+selfCheck: [bookmarks-ops]
+
+blocks:
+  - id: what-is-checked
+    kind: explanation
+    title:
+      uk: "Що перевіряється"
+      en: "What is checked"
+    body:
+      uk: |
+        Тема — сервіс закладок (bookmarks): `id`, `title`, `url`, `slug`, `archived`. Ти його ще не бачив, і підказок немає: усе потрібне — в умові й у цьому розділі.
+
+        Дві частини:
+
+        1. **У курсі** — `ops.js` із чотирма функціями: `loadConfig`, `startService`, `verifyRestore`, `checkContract`. Перевірки викликають лише їх: передають різні середовища, надсилають справжні запити, викликають сигнали, підкладають зіпсовані backup і зламані відповіді.
+        2. **У твоєму терміналі** — той самий `ops.js` усередині проєкту `bookmarks-ops` з його `RUNBOOK.md`. Проходиш runbook від релізу до відкату й заповнюєш `EVIDENCE.md` справжнім виводом.
+
+        Одна підказка таки є, але не про код: якщо щось у терміналі пішло не так, як каже runbook, це теж доказ — запиши, що саме ти побачив.
+      en: |
+        The topic is a bookmarks service: `id`, `title`, `url`, `slug`, `archived`. You have not seen it, and there are no hints: everything you need is in the task and in this unit.
+
+        Two parts:
+
+        1. **In the course** — `ops.js` with four functions: `loadConfig`, `startService`, `verifyRestore`, `checkContract`. The checks call only them: they pass different environments, send real requests, trigger signals, plant damaged backups and broken answers.
+        2. **In your terminal** — the same `ops.js` inside the project `bookmarks-ops` with its `RUNBOOK.md`. You go through the runbook from release to rollback and fill in `EVIDENCE.md` with real output.
+
+        There is one hint after all, though not about code: if something in the terminal went differently from what the runbook says, that is evidence too — write down exactly what you saw.
+
+  - id: bookmarks-ops
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: isolated-node
+    dir: bookmarks-ops
+    entry: index.js
+    editable: [ops.js]
+    capabilities: { network: loopback, timeoutMs: 45000, testTimeoutMs: 8000 }
+    strings:
+      docs: { uk: "Документація Node.js", en: "Node.js docs" }
+      secretTitle: { uk: "Мій приватний список", en: "My private list" }
+      contract: { uk: "проблеми контракту:", en: "contract problems:" }
+    title:
+      uk: "ops.js для сервісу закладок"
+      en: "ops.js for the bookmarks service"
+    instructions:
+      uk: |
+        Напиши в `ops.js` чотири функції. `contract.js` (схема й `schemaErrors`) і `store.js` (`readBookmarks`, `summaryOf`) — лише для читання.
+
+        **`loadConfig(env)`** — читає лише переданий `env`, повертає заморожений `{ port, host, dataDir, deadlineMs }` або кидає **одну** помилку, що називає **кожну** неправильну змінну:
+
+        | Змінна | За замовчуванням | Правило |
+        |---|---|---|
+        | `PORT` | `7374` | лише цифри, від 1 до 65535 |
+        | `HOST` | `127.0.0.1` | лише `127.0.0.1` або `::1` |
+        | `DATA_DIR` | — | абсолютний шлях |
+        | `DEADLINE_MS` | `5000` | лише цифри, від 100 до 30000 |
+
+        **`startService(config, { store, exit, log })`** — слухає `config.port` на `config.host` і повертає `{ url }`. `store` має `isReady()`, `list()`, `add({ title, url })`, `flush()`.
+
+        - `GET /livez` → 200; `GET /readyz` → 200, коли сховище готове й сервіс не завершує роботу, інакше 503.
+        - `GET /bookmarks` → 200 і список; `POST /bookmarks` з непорожніми текстовими `title` і `url` → 201 і результат `store.add`, інакше 400.
+        - На кожен запит — один виклик `log` з об’єктом, що має `requestId`, `route`, `status`, `ms`, і без тіла запиту.
+        - `SIGTERM` або `SIGINT` — одне коректне завершення: обробники сигналів прибрано, нових з’єднань немає, запити в роботі завершуються до `config.deadlineMs`, потім `store.flush()` і `exit(0)`; не встигли — `exit(1)`.
+
+        **`verifyRestore(sourceDir, restoredDir)`** → `{ ok, problems }`, ніколи не кидає: відсутні й зайві id (з їхніми id у тексті), різний `summaryOf`, нечитабельні відновлені дані. Порядок записів значення не має.
+
+        **`checkContract(baseUrl)`** → масив проблем, ніколи не кидає: `GET /bookmarks` має відповісти 200, а тіло — пройти `schemaErrors`; інший статус чи недоступний сервер — теж проблема.
+      en: |
+        Write four functions in `ops.js`. `contract.js` (the schema and `schemaErrors`) and `store.js` (`readBookmarks`, `summaryOf`) are read-only.
+
+        **`loadConfig(env)`** — reads only the given `env`, returns a frozen `{ port, host, dataDir, deadlineMs }` or throws **one** error that names **every** invalid variable:
+
+        | Variable | Default | Rule |
+        |---|---|---|
+        | `PORT` | `7374` | digits only, from 1 to 65535 |
+        | `HOST` | `127.0.0.1` | only `127.0.0.1` or `::1` |
+        | `DATA_DIR` | — | an absolute path |
+        | `DEADLINE_MS` | `5000` | digits only, from 100 to 30000 |
+
+        **`startService(config, { store, exit, log })`** — listens on `config.port` at `config.host` and returns `{ url }`. `store` has `isReady()`, `list()`, `add({ title, url })`, `flush()`.
+
+        - `GET /livez` → 200; `GET /readyz` → 200 when the store is ready and the service is not shutting down, otherwise 503.
+        - `GET /bookmarks` → 200 and the list; `POST /bookmarks` with non-empty text `title` and `url` → 201 and the result of `store.add`, otherwise 400.
+        - For every request, one `log` call with an object that has `requestId`, `route`, `status`, `ms`, and no request body.
+        - `SIGTERM` or `SIGINT` — one graceful shutdown: the signal handlers are removed, no new connections, requests in flight finish within `config.deadlineMs`, then `store.flush()` and `exit(0)`; not in time — `exit(1)`.
+
+        **`verifyRestore(sourceDir, restoredDir)`** → `{ ok, problems }`, never throws: missing and extra ids (with their ids in the text), a different `summaryOf`, unreadable restored data. The order of records does not matter.
+
+        **`checkContract(baseUrl)`** → an array of problems, never throws: `GET /bookmarks` must answer 200, and the body must pass `schemaErrors`; another status or an unreachable server is a problem too.
+    testTitles:
+      "loadConfig: defaults and a frozen result":
+        uk: "`loadConfig`: значення за замовчуванням і заморожений результат"
+        en: "`loadConfig`: defaults and a frozen result"
+      "loadConfig: one error names every invalid variable":
+        uk: "`loadConfig`: одна помилка називає кожну неправильну змінну"
+        en: "`loadConfig`: one error names every invalid variable"
+      "loadConfig: process.env is not read":
+        uk: "`loadConfig`: `process.env` не читається"
+        en: "`loadConfig`: `process.env` is not read"
+      "startService: /livez and /readyz follow the store":
+        uk: "`startService`: `/livez` і `/readyz` залежать від сховища"
+        en: "`startService`: `/livez` and `/readyz` follow the store"
+      "startService: POST /bookmarks validates and creates, GET /bookmarks lists":
+        uk: "`startService`: `POST /bookmarks` перевіряє й створює, `GET /bookmarks` віддає список"
+        en: "`startService`: `POST /bookmarks` validates and creates, `GET /bookmarks` lists"
+      "startService: one log line per request without the body":
+        uk: "`startService`: один рядок журналу на запит, без тіла"
+        en: "`startService`: one log line per request without the body"
+      "startService: SIGTERM refuses new connections, drains the POST in flight, flushes, exits 0 and removes its listeners":
+        uk: "`startService`: після `SIGTERM` нові з’єднання відхилено, POST завершується, записує, вихід із 0, обробники прибрано"
+        en: "`startService`: `SIGTERM` refuses new connections, drains the POST in flight, flushes, exits 0 and removes its listeners"
+      "startService: past the deadline it exits with 1":
+        uk: "`startService`: після крайнього строку вихід із кодом 1"
+        en: "`startService`: past the deadline it exits with 1"
+      "verifyRestore: an exact copy in another order passes":
+        uk: "`verifyRestore`: точна копія в іншому порядку проходить"
+        en: "`verifyRestore`: an exact copy in another order passes"
+      "verifyRestore: a missing id and a changed summary are reported":
+        uk: "`verifyRestore`: відсутній id і змінений підсумок позначено"
+        en: "`verifyRestore`: a missing id and a changed summary are reported"
+      "verifyRestore: a torn or missing file is reported, not thrown":
+        uk: "`verifyRestore`: обірваний чи відсутній файл позначено, а не кинуто"
+        en: "`verifyRestore`: a torn or missing file is reported, not thrown"
+      "checkContract: a good answer gives no problems, a broken slug is named":
+        uk: "`checkContract`: правильна відповідь — без проблем, зламаний `slug` названо"
+        en: "`checkContract`: a good answer gives no problems, a broken `slug` is named"
+      "checkContract: a wrong status or no server is a problem, not an exception":
+        uk: "`checkContract`: неправильний статус чи відсутній сервер — проблема, а не виняток"
+        en: "`checkContract`: a wrong status or no server is a problem, not an exception"
+    solutionNote:
+      uk: "Кожна функція повторює урок цього розділу: `loadConfig` — урок про конфігурацію, `startService` — health і коректне завершення, `verifyRestore` — тренування відновлення, `checkContract` — твердження про схему, але як перевірку після розгортання, що повертає список, а не кидає. Варіант, що описує змінні конфігурації таблицею правил і порівнює відсортовані id, теж правильний."
+      en: "Each function repeats a lesson of this unit: `loadConfig` the configuration lesson, `startService` health and graceful shutdown, `verifyRestore` the restore drill, `checkContract` the schema assertion — but as a post-deploy check that returns a list instead of throwing. A version that describes the configuration variables as a table of rules and compares sorted ids is correct too."
+
+    feedback:
+      - when: { test: "loadConfig: defaults and a frozen result" }
+        message:
+          uk: "Ця перевірка передає лише `DATA_DIR` і очікує рівно `{ port: 7374, host: '127.0.0.1', dataDir, deadlineMs: 5000 }` (числа — числами), а `Object.isFrozen` результату — `true`."
+          en: "This check passes only `DATA_DIR` and expects exactly `{ port: 7374, host: '127.0.0.1', dataDir, deadlineMs: 5000 }` (numbers as numbers), with `Object.isFrozen` of the result `true`."
+      - when: { test: "loadConfig: one error names every invalid variable" }
+        message:
+          uk: "Ця перевірка передає `PORT: '1e3'`, `HOST: '0.0.0.0'`, `DATA_DIR: 'data'` і `DEADLINE_MS: '50'` та очікує, що текст **однієї** кинутої помилки містить усі чотири назви змінних."
+          en: "This check passes `PORT: '1e3'`, `HOST: '0.0.0.0'`, `DATA_DIR: 'data'` and `DEADLINE_MS: '50'` and expects the text of **one** thrown error to contain all four variable names."
+      - when: { test: "loadConfig: process.env is not read" }
+        message:
+          uk: "Ця перевірка ставить `process.env.PORT = '1234'`, передає лише `DATA_DIR` і очікує `port` 7374: значення беруться тільки з аргументу `env`."
+          en: "This check sets `process.env.PORT = '1234'`, passes only `DATA_DIR` and expects `port` 7374: values come only from the `env` argument."
+      - when: { test: "startService: /livez and /readyz follow the store" }
+        message:
+          uk: "Ця перевірка очікує `[200, 200]` для `/livez` і `/readyz`, коли `store.isReady()` — `true`, і `[200, 503]`, коли `false`."
+          en: "This check expects `[200, 200]` for `/livez` and `/readyz` when `store.isReady()` is `true`, and `[200, 503]` when it is `false`."
+      - when: { test: "startService: POST /bookmarks validates and creates, GET /bookmarks lists" }
+        message:
+          uk: "Ця перевірка очікує 400 для `title: ' '` і для тіла без `url`, 201 для правильного POST, а потім `GET /bookmarks` → 200 з id `bm-1` і `bm-2`."
+          en: "This check expects 400 for `title: ' '` and for a body without `url`, 201 for a valid POST, and then `GET /bookmarks` → 200 with the ids `bm-1` and `bm-2`."
+      - when: { test: "startService: one log line per request without the body" }
+        message:
+          uk: "Ця перевірка надсилає POST і очікує рядок журналу з `route: '/bookmarks'`, `status: 201`, текстовим `requestId` і числовим `ms`, а в усіх рядках — жодного слова з тіла запиту (ні назви, ні адреси)."
+          en: "This check sends a POST and expects a log line with `route: '/bookmarks'`, `status: 201`, a text `requestId` and a numeric `ms`, and no word of the request body (neither the title nor the address) in any line."
+      - when: { test: "startService: SIGTERM refuses new connections, drains the POST in flight, flushes, exits 0 and removes its listeners" }
+        message:
+          uk: "Ця перевірка надсилає POST, що триває 300 мс, через 80 мс викликає `SIGTERM` і очікує: нове з’єднання — `ECONNREFUSED`, POST — 201, потім порядок `add done` → `flush` → `exit 0` протягом 1,5 с і стільки ж обробників `SIGTERM`/`SIGINT`, скільки було до `startService`."
+          en: "This check sends a POST that takes 300 ms, triggers `SIGTERM` after 80 ms and expects: a new connection gets `ECONNREFUSED`, the POST gets 201, then the order `add done` → `flush` → `exit 0` within 1.5 s, and as many `SIGTERM`/`SIGINT` handlers as before `startService`."
+      - when: { test: "startService: past the deadline it exits with 1" }
+        message:
+          uk: "Ця перевірка дає `add`, що триває 2,5 с, `deadlineMs` 200, викликає `SIGINT` і очікує рівно один `exit(1)` протягом 1,5 с."
+          en: "This check gives an `add` that takes 2.5 s and `deadlineMs` 200, triggers `SIGINT` and expects exactly one `exit(1)` within 1.5 s."
+      - when: { test: "verifyRestore: an exact copy in another order passes" }
+        message:
+          uk: "Ця перевірка відновлює ті самі три закладки у зворотному порядку й очікує рівно `{ ok: true, problems: [] }`."
+          en: "This check restores the same three bookmarks in reverse order and expects exactly `{ ok: true, problems: [] }`."
+      - when: { test: "verifyRestore: a missing id and a changed summary are reported" }
+        message:
+          uk: "Ця перевірка очікує `ok: false` і `bm-3` у тексті проблем, коли `bm-3` бракує, і `ok: false`, коли id ті самі, але `bm-2` більше не `archived` (підсумок `summaryOf` інший)."
+          en: "This check expects `ok: false` and `bm-3` in the problems when `bm-3` is missing, and `ok: false` when the ids are the same but `bm-2` is no longer `archived` (the `summaryOf` result differs)."
+      - when: { test: "verifyRestore: a torn or missing file is reported, not thrown" }
+        message:
+          uk: "Ця перевірка дає відновлений файл, обірваний на 40-му символі, і теку без `bookmarks.json` та для обох очікує звіт з `ok: false`, а не виняток."
+          en: "This check gives a restored file cut off at the 40th character and a folder without `bookmarks.json`, and for both expects a report with `ok: false`, not an exception."
+      - when: { test: "checkContract: a good answer gives no problems, a broken slug is named" }
+        message:
+          uk: "Ця перевірка очікує `[]` для правильної відповіді 200 і проблему з `[1].slug`, коли друга закладка має `slug: 'node_docs'`."
+          en: "This check expects `[]` for a correct 200 answer and a problem with `[1].slug` when the second bookmark has `slug: 'node_docs'`."
+      - when: { test: "checkContract: a wrong status or no server is a problem, not an exception" }
+        message:
+          uk: "Ця перевірка очікує непорожній масив проблем і для відповіді 500, і для адреси `http://127.0.0.1:9`, де ніхто не слухає, — без винятку."
+          en: "This check expects a non-empty array of problems both for a 500 answer and for the address `http://127.0.0.1:9`, where nobody listens — without an exception."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: що доводить перевірене відновлення"
+      en: "Recall: what a verified restore proves"
+    items:
+      - id: verified-not-correct
+        from: no-05-08-independent-restart-no-loss
+        prompt:
+          uk: "У NO-05 backup зламаного сховища (без черги записів, з утраченими бронюваннями) успішно пройшов перевірку відновленням. Що ця перевірка насправді довела?"
+          en: "In NO-05 a backup of a broken store (no write queue, with lost bookings) passed the restore check successfully. What did that check really prove?"
+        answer:
+          type: choice
+          options:
+            - id: copy-matches
+              text:
+                uk: "Що копія збігається зі своїм джерелом — а не що джерело правильне"
+                en: "That the copy matches its source — not that the source is correct"
+            - id: store-ok
+              text:
+                uk: "Що сховище працює правильно"
+                en: "That the store works correctly"
+              why:
+                uk: "Перевірка відновлення порівнює копію з джерелом. Якщо джерело вже загубило записи, копія чесно загубила їх так само."
+                en: "A restore check compares the copy with the source. If the source has already lost records, the copy has honestly lost them in the same way."
+            - id: nothing
+              text:
+                uk: "Нічого: перевірка відновлення марна"
+                en: "Nothing: a restore check is useless"
+              why:
+                uk: "Вона доводить важливе — що з копії можна відновитися. Просто правильність самих даних перевіряють інші перевірки: інваріанти, контракт, тести."
+                en: "It proves something important — that you can restore from the copy. The correctness of the data itself is checked by other checks: invariants, the contract, tests."
+          correct: [copy-matches]
+        explanation:
+          uk: "Тому в runbook атестації NO-12 після тренування відновлення йде ще й перевірка контракту на відновлених даних: перша доводить, що копія та сама, друга — що сервіс на ній відповідає за контрактом."
+          en: "That is why in the runbook of the NO-12 assessment the restore drill is followed by a contract check on the restored data: the first proves the copy is the same, the second that the service on it answers by the contract."
+
+  - id: bookmarks-kit
+    kind: example
+    runtime: isolated-node
+    dir: bookmarks-kit
+    entry: index.js
+    strings:
+      bmDocs: { uk: "Документація Node.js 22", en: "Node.js 22 docs" }
+      bmFetch: { uk: "fetch на MDN", en: "MDN fetch" }
+      bmOld: { uk: "Старі нотатки", en: "Old notes" }
+      smokeTitle: { uk: "Нотатки до релізу", en: "Release notes" }
+      loadTitle: { uk: "Навантаження", en: "Load" }
+      testTitle: { uk: "Зміни", en: "Changelog" }
+      runbookMd:
+        uk: "\"# Runbook сервісу bookmarks-ops\\n\\nКоманди виконуй у цій теці, якщо крок не каже іншого. Порт 7374, лише loopback.\\nКожну команду та її справжній вивід записуй у EVIDENCE.md.\\n\\n## 1. Реліз\\n1. `node scripts/ci.mjs` — має закінчитися рядком `✔ CI passed: artifacts/bookmarks-ops-<version>.tgz`.\\n2. Порівняй `sha256` у `artifacts/bookmarks-ops-<version>.tgz.release.json` з виводом\\n   `shasum -a 256 artifacts/bookmarks-ops-<version>.tgz`. Не збігаються — не запускай цей архів.\\n\\n## 2. Запуск\\n1. Лише першого разу: `mkdir -p data && cp backups/last-night/bookmarks.json data/`.\\n2. `mkdir -p run/<version> && tar -xzf artifacts/bookmarks-ops-<version>.tgz -C run/<version>`\\n3. В окремому терміналі, з теки `run/<version>/package`:\\n   `NODE_ENV=production PORT=7374 HOST=127.0.0.1 DATA_DIR=<абсолютний шлях до data> DEADLINE_MS=5000 node server.mjs`\\n4. Стартовий рядок називає версію, версію slug і pid. `/livez` і `/readyz` відповідають 200.\\n   Неправильна конфігурація зупиняє процес ще до listen(): виправляй змінну, а не код.\\n\\n## 3. Зупинка\\n`kill -TERM <pid>` (або Ctrl+C у його терміналі). Очікуй рядок журналу про завершення й код виходу 0.\\nКод виходу 1 означає, що крайній строк минув і запити обірвано: читай журнал.\\n\\n## 4. Тренування відновлення: backup минулої ночі\\n1. `mkdir -p drill && cp backups/last-night/bookmarks.json drill/`\\n2. `node scripts/restore-check.mjs backups/last-night drill` має надрукувати `{\\\"ok\\\":true,\\\"problems\\\":[]}`.\\n3. Запусти поточний артефакт (розділ 2, крок 3) з `DATA_DIR=<абсолютний шлях до drill>`, виконай\\n   `node scripts/contract-check.mjs http://127.0.0.1:7374` (має закінчитися `contract kept`), зупини його.\\n\\n## 5. Оновлення однієї залежності\\n1. `git switch -c upgrade-slug`; у `vendor/slug.js` заміни `slug-2.0.0.js` на `slug-2.1.0.js`;\\n   закоміть; `npm version patch`; `node scripts/ci.mjs`.\\n2. Розгортання: зупини запущену версію (розділ 3), запусти новий артефакт на `data` (розділ 2).\\n3. Перевірка після розгортання: `node scripts/contract-check.mjs http://127.0.0.1:7374`.\\n\\n## 6. Відкат (перевірка після розгортання не пройшла)\\n1. Зупини нову версію (розділ 3).\\n2. Перевірка даних: відкат коду не відкочує дані — закладки, створені новою версією, зберігають\\n   свої slug. `git switch main` (назад до slug 2.0.0), потім, коли сервіс зупинено:\\n   `node scripts/reslug.mjs <абсолютний шлях до data>` і запиши id, які він змінив.\\n3. Перевір sha256 попереднього артефакту (розділ 1, крок 2) і запусти його на `data` (розділ 2, крок 3).\\n4. Підтвердь: `/readyz` — 200, а `node scripts/contract-check.mjs` закінчується `contract kept`.\\n\""
+        en: "\"# bookmarks-ops runbook\\n\\nCommands run in this folder unless a step says otherwise. Port 7374, loopback only.\\nRecord every command and its real output in EVIDENCE.md.\\n\\n## 1. Release\\n1. `node scripts/ci.mjs` — must end with `✔ CI passed: artifacts/bookmarks-ops-<version>.tgz`.\\n2. Compare `sha256` in `artifacts/bookmarks-ops-<version>.tgz.release.json` with\\n   `shasum -a 256 artifacts/bookmarks-ops-<version>.tgz`. A mismatch: do not start it.\\n\\n## 2. Start\\n1. The first time only: `mkdir -p data && cp backups/last-night/bookmarks.json data/`.\\n2. `mkdir -p run/<version> && tar -xzf artifacts/bookmarks-ops-<version>.tgz -C run/<version>`\\n3. In its own terminal, from `run/<version>/package`:\\n   `NODE_ENV=production PORT=7374 HOST=127.0.0.1 DATA_DIR=<absolute path of data> DEADLINE_MS=5000 node server.mjs`\\n4. The start line names the version, the slug version and the pid. `/livez` and `/readyz` answer 200.\\n   An invalid configuration stops the process before listen(): fix the variable, not the code.\\n\\n## 3. Stop\\n`kill -TERM <pid>` (or Ctrl+C in its terminal). Expect the shutdown log line and exit code 0.\\nExit code 1 means the deadline passed and requests were cut off: read the log.\\n\\n## 4. Restore drill: last night's backup\\n1. `mkdir -p drill && cp backups/last-night/bookmarks.json drill/`\\n2. `node scripts/restore-check.mjs backups/last-night drill` must print `{\\\"ok\\\":true,\\\"problems\\\":[]}`.\\n3. Start the current artifact (section 2, step 3) with `DATA_DIR=<absolute path of drill>`, run\\n   `node scripts/contract-check.mjs http://127.0.0.1:7374` (must end with `contract kept`), stop it.\\n\\n## 5. Upgrade one dependency\\n1. `git switch -c upgrade-slug`; in `vendor/slug.js` change `slug-2.0.0.js` to `slug-2.1.0.js`;\\n   commit; `npm version patch`; `node scripts/ci.mjs`.\\n2. Deploy: stop the running version (section 3), start the new artifact on `data` (section 2).\\n3. Post-deploy check: `node scripts/contract-check.mjs http://127.0.0.1:7374`.\\n\\n## 6. Rollback (the post-deploy check failed)\\n1. Stop the new version (section 3).\\n2. Data check: rolling back the code does not roll back the data — the bookmarks the new version\\n   created keep their slugs. `git switch main` (back to slug 2.0.0), then with the service stopped:\\n   `node scripts/reslug.mjs <absolute path of data>` and note the ids it changed.\\n3. Verify the previous artifact's sha256 (section 1, step 2) and start it on `data` (section 2, step 3).\\n4. Confirm: `/readyz` is 200 and `node scripts/contract-check.mjs` ends with `contract kept`.\\n\""
+      evidenceMd:
+        uk: "\"# bookmarks-ops — журнал доказів\\n\\nЗаповни кожен рядок справжньою командою та її виводом (копіюй, а не переказуй). Node: `<node --version>`.\\n\\n1. Реліз 2.0.0: два останні рядки CI; sha256 із запису; вивід `shasum -a 256`; чи збігаються?\\n2. Запуск: команда; стартовий рядок; `/livez`; `/readyz`.\\n3. SIGTERM під навантаженням: рядок `load.mjs`; рядки сервера про завершення; код виходу.\\n4. Тренування відновлення: вивід `restore-check`; вивід `contract-check` на даних drill.\\n5. Оновлення: `git diff` файла `vendor/slug.js`; вивід `npm version`; два останні рядки CI; вивід `contract-check` після розгортання.\\n6. Відкат: вивід `reslug`; перевірка sha256 попереднього артефакту; стартовий рядок; вивід `contract-check`.\\n7. Одне речення: чому CI для 2.0.1 пройшов, а перевірка після розгортання — ні?\\n\""
+        en: "\"# bookmarks-ops — evidence log\\n\\nFill in every line with the real command and its output (copy, do not retell). Node: `<node --version>`.\\n\\n1. Release 2.0.0: CI last two lines; sha256 from the record; `shasum -a 256` output; match?\\n2. Start: the command; the start line; `/livez`; `/readyz`.\\n3. SIGTERM under load: the `load.mjs` line; the server's shutdown lines; the exit code.\\n4. Restore drill: `restore-check` output; `contract-check` output on the drill data.\\n5. Upgrade: `git diff` of `vendor/slug.js`; `npm version` output; CI last two lines; post-deploy `contract-check` output.\\n6. Rollback: `reslug` output; the previous artifact's sha256 check; start line; `contract-check` output.\\n7. One sentence: why did CI pass for 2.0.1 while the post-deploy check failed?\\n\""
+    title:
+      uk: "Проєкт bookmarks-ops і його runbook"
+      en: "The bookmarks-ops project and its runbook"
+    body:
+      uk: |
+        `create-bookmarks-ops.mjs` створює в поточній теці проєкт `bookmarks-ops`: сервер, сховище, CI-скрипт без npm-пакетів, скрипти навантаження, перевірки відновлення й контракту, вендорну бібліотеку slug двох версій, backup «минулої ночі», `RUNBOOK.md` і `EVIDENCE.md`. Твій `ops.js` у набір не входить — його ти скопіюєш сам. Якщо `bookmarks-ops` уже існує, скрипт нічого не змінює.
+
+        Натисни **Запустити**: `index.js` створює проєкт у пісочниці, перевіряє backup контрактом і друкує розділи runbook. `RUNBOOK.md` і `EVIDENCE.md` набір пише мовою уроку; команди, назви файлів і вивід програм у них — як у терміналі.
+      en: |
+        `create-bookmarks-ops.mjs` creates the project `bookmarks-ops` in the current folder: the server, the store, a CI script without npm packages, scripts for load, the restore check and the contract check, a vendored slug library in two versions, “last night’s” backup, `RUNBOOK.md` and `EVIDENCE.md`. Your `ops.js` is not part of the kit — you copy it in yourself. If `bookmarks-ops` already exists, the script changes nothing.
+
+        Press **Run**: `index.js` creates the project in the sandbox, checks the backup with the contract and prints the runbook’s sections. The kit writes `RUNBOOK.md` and `EVIDENCE.md` in the lesson’s language; the commands, file names and program output in them are as in the terminal.
+
+  - id: operate-locally
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Самостійно: від релізу до відкату за RUNBOOK.md"
+      en: "Independent: from release to rollback by RUNBOOK.md"
+    intro:
+      uk: |
+        Почни, коли всі перевірки вправи «ops.js для сервісу закладок» зелені. Далі — без підказок: інструкції дає `RUNBOOK.md` проєкту, а доказ — твій `EVIDENCE.md`. Тобі знадобляться Node.js, git, curl і два-три термінали. npm-пакети не потрібні.
+
+        Під час підготовки й рецензії уроку весь runbook (розділи 1–6) пройдено на macOS з Node.js v25.2.1, npm 11.6.2, git 2.51.0 і зразковим `ops.js`, а розділи 1–3 — ще й на v22.23.3 (розділ 3 — також на v22.13.1). Що ми бачили, без подробиць, щоб не підказувати: CI дав артефакт 2.0.0, а його sha256 збігся із записом; після `SIGTERM` під навантаженням сервер вийшов із кодом 0, і записів на диску стало рівно 3 + кількість відповідей `201`; тренування відновлення й перевірка контракту на відновлених даних пройшли; CI версії 2.0.1 пройшов, а перевірка після розгортання — ні; після відкату перевірка контракту знову пройшла. Windows і Linux не перевіряли; у Windows немає `kill -TERM`, `tar` і `shasum` працюють інакше — там користуйся Ctrl+C і `CertUtil -hashfile <файл> SHA256` (не перевірено).
+
+        Сервер пише рядок журналу на кожен запит, тож під навантаженням його термінал заповнюється — це нормально; рядки завершення будуть останніми.
+      en: |
+        Start when every check of the exercise “ops.js for the bookmarks service” is green. From here on there are no hints: the project’s `RUNBOOK.md` gives the instructions, and your `EVIDENCE.md` is the evidence. You need Node.js, git, curl and two or three terminals. No npm packages are needed.
+
+        While preparing and reviewing this lesson the whole runbook (sections 1–6) was run on macOS with Node.js v25.2.1, npm 11.6.2, git 2.51.0 and a model `ops.js`, and sections 1–3 also on v22.23.3 (section 3 on v22.13.1 too). What we saw, without details so as not to give hints: CI produced the 2.0.0 artifact, and its sha256 matched the record; after `SIGTERM` under load the server exited with code 0, and the records on disk were exactly 3 + the number of `201` answers; the restore drill and the contract check on the restored data passed; CI of version 2.0.1 passed, while the post-deploy check did not; after the rollback the contract check passed again. Windows and Linux were not checked; Windows has no `kill -TERM`, and `tar` and `shasum` work differently there — use Ctrl+C and `CertUtil -hashfile <file> SHA256` (not checked).
+
+        The server writes a log line for every request, so under load its terminal fills up — that is normal; the shutdown lines come last.
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1, (розділи 1–3) v22.23.3 і (розділ 3) v22.13.1", en: "checked with v25.2.1, (sections 1–3) v22.23.3 and (section 3) v22.13.1" } }
+      - { name: "git", note: { uk: "перевірено з 2.51.0", en: "checked with 2.51.0" } }
+      - { name: "curl", version: "8.7.1", note: { uk: "у PowerShell — `curl.exe`", en: "in PowerShell: `curl.exe`" } }
+    steps:
+      - text:
+          uk: "Створи проєкт: у теці `~/js-course` створи `create-bookmarks-ops.mjs` із вмістом вкладки прикладу «Проєкт bookmarks-ops і його runbook» і запусти його."
+          en: "Create the project: in the folder `~/js-course` create `create-bookmarks-ops.mjs` with the content of the tab of the example “The bookmarks-ops project and its runbook” and run it."
+        command: "mkdir -p ~/js-course\ncd ~/js-course\nnode create-bookmarks-ops.mjs"
+        expect:
+          uk: "`Created bookmarks-ops with 18 files. Now copy your ops.js into it.`"
+          en: "`Created bookmarks-ops with 18 files. Now copy your ops.js into it.`"
+      - text:
+          uk: "Створи `~/js-course/bookmarks-ops/ops.js` зі своїм розв’язком вправи й збережи проєкт у git."
+          en: "Create `~/js-course/bookmarks-ops/ops.js` with your solution of the exercise and save the project in git."
+        command: "cd bookmarks-ops\ngit init -b main\ngit add -A\ngit commit -m \"bookmarks-ops 2.0.0\""
+      - text:
+          uk: "Пройди `RUNBOOK.md` розділ за розділом — 1, 2, потім 3 під навантаженням (`node scripts/load.mjs http://127.0.0.1:7374 4` в іншому терміналі), 4, 5 і 6 — і після кожного кроку записуй команду та її справжній вивід у `EVIDENCE.md`."
+          en: "Go through `RUNBOOK.md` section by section — 1, 2, then 3 under load (`node scripts/load.mjs http://127.0.0.1:7374 4` in another terminal), 4, 5 and 6 — and after every step write the command and its real output into `EVIDENCE.md`."
+        expect:
+          uk: "Кожен розділ закінчується так, як каже runbook, або в `EVIDENCE.md` записано, що пішло інакше і що ти із цим зробив."
+          en: "Every section ends the way the runbook says, or `EVIDENCE.md` records what went differently and what you did about it."
+      - text:
+          uk: "Дай відповідь на пункт 7 `EVIDENCE.md` одним реченням і закоміть журнал."
+          en: "Answer item 7 of `EVIDENCE.md` in one sentence and commit the log."
+        command: "git add EVIDENCE.md\ngit commit -m \"evidence of the bookmarks-ops drill\""
+    verify:
+      - id: release-start
+        text:
+          uk: "Я перевірив sha256 артефакту 2.0.0 за записом і запустив його в production-режимі на 127.0.0.1:7374 з перевіреною конфігурацією."
+          en: "I verified the sha256 of the 2.0.0 artifact against its record and started it in production mode on 127.0.0.1:7374 with a validated configuration."
+      - id: sigterm-load
+        text:
+          uk: "Після `SIGTERM` під навантаженням сервер вийшов із кодом 0, а кількість записів на диску дорівнює 3 + кількість відповідей `201`."
+          en: "After `SIGTERM` under load the server exited with code 0, and the records on disk equal 3 + the number of `201` answers."
+      - id: restore-proven
+        text:
+          uk: "Backup минулої ночі відновлено в нову теку, `restore-check` дав `ok: true`, а перевірка контракту на ньому — `contract kept`."
+          en: "Last night’s backup was restored into a new folder, `restore-check` gave `ok: true`, and the contract check on it `contract kept`."
+      - id: upgrade-rollback
+        text:
+          uk: "Оновлення slug дало зелений CI, але не пройшло перевірку після розгортання; я відкотився до 2.0.0 за його sha256, виправив дані нової версії й побачив `contract kept`."
+          en: "The slug upgrade gave a green CI but failed the post-deploy check; I rolled back to 2.0.0 by its sha256, fixed the new version’s data and saw `contract kept`."
+      - id: evidence
+        text:
+          uk: "Мій `EVIDENCE.md` закомічено, і в ньому справжній вивід кожного кроку та відповідь на пункт 7."
+          en: "My `EVIDENCE.md` is committed, with the real output of every step and the answer to item 7."
+    troubleshooting:
+      - problem:
+          uk: "`node scripts/ci.mjs` зупиняється на `test` з помилкою імпорту `ops.js`."
+          en: "`node scripts/ci.mjs` stops at `test` with an import error for `ops.js`."
+        fix:
+          uk: "`ops.js` має лежати в корені `bookmarks-ops` і експортувати всі чотири функції. Скопіюй розв’язок вправи, у якому всі перевірки зелені."
+          en: "`ops.js` must be in the root of `bookmarks-ops` and export all four functions. Copy the exercise solution with every check green."
+      - problem:
+          uk: "Сервер друкує `Invalid configuration` і одразу завершується."
+          en: "The server prints `Invalid configuration` and ends at once."
+        fix:
+          uk: "Так і має бути за неправильного значення: прочитай, яку змінну названо, і виправ саме її в команді запуску (наприклад, абсолютний `DATA_DIR` через `$PWD/data`)."
+          en: "That is what must happen with an invalid value: read which variable is named and fix exactly that one in the start command (for example, an absolute `DATA_DIR` through `$PWD/data`)."
+    recovery:
+      uk: "Усе, що змінює завдання, — у git і в теках `data`, `drill`, `run`, `artifacts` усередині проєкту. Щоб почати спочатку, перейменуй теку (`mv bookmarks-ops bookmarks-ops-old`) і знову запусти `node create-bookmarks-ops.mjs`; твій `ops.js` лишиться в старій теці."
+      en: "Everything the task changes is in git and in the folders `data`, `drill`, `run`, `artifacts` inside the project. To start over, rename the folder (`mv bookmarks-ops bookmarks-ops-old`) and run `node create-bookmarks-ops.mjs` again; your `ops.js` stays in the old folder."

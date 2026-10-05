@@ -1,0 +1,379 @@
+id: no-06-06-offline-errors-retry
+unit: NO-06
+title:
+  uk: "Офлайн, помилки й повтори в інтегрованому застосунку"
+  en: "Offline, errors and retry, integrated"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Віднести збій інтегрованого застосунку до одного з класів — офлайн, сервер недоступний, HTTP-помилка чи неправильна відповідь — і показати відповідний стан."
+    en: "Classify an integrated failure as offline, server unavailable, HTTP error or invalid response, and show the matching state."
+  - uk: "Повторювати безпечні читання з обмеженою затримкою, що зростає, а записи — лише з ключем ідемпотентності."
+    en: "Retry safe reads with bounded backoff and retry writes only with an idempotency key."
+prerequisites: [no-06-05-web-native-adapters, re-06-03-loading-retry]
+subskills:
+  - { family: B-12, skill: "offline/errors/retry", depth: intro }
+glossary: [refetch-on-reconnect]
+selfCheck: [predict-failure-class, failure-policy]
+
+blocks:
+  - id: four-classes
+    kind: explanation
+    title:
+      uk: "Чотири класи збою — чотири різні дії"
+      en: "Four classes of failure — four different actions"
+    body:
+      uk: |
+        Коли клієнт і твій сервер працюють разом, збій видно по-різному, і від класу залежить, що робити:
+
+        | Клас | Як його бачить код | Що показати | Повторювати? |
+        |---|---|---|---|
+        | **offline** | адаптер каже, що мережі немає; запит не надсилали | збережену копію й «немає мережі» | ні — повторити, коли мережа повернеться |
+        | **unavailable** | `fetch` відхилено: `TypeError` (сервер зупинено) або `TimeoutError` | копію й «сервер не відповідає» | так, обмежено |
+        | **http** | відповідь прийшла, але `ok` — `false` | копію й статус | лише 5xx; 4xx — ні |
+        | **invalid** | статус 200, а тіло порушує контракт | копію й «неочікувана відповідь» | ні — прийде те саме |
+
+        У всіх чотирьох випадках копія, що вже на екрані, **лишається** — з позначкою, що вона застаріла.
+
+        `offline` і `unavailable` легко сплутати: «немає мережі» видно ще до запиту, а сервер, що не відповідає, — лише після. Стан мережі — тільки підказка: мережа може бути, а твій сервер — зупинений.
+
+        У розділі RN-06 «офлайном» називався відхилений `fetch` (`Network request failed`), а тайм-аут ішов до помилки сервера. Тут ці випадки розділено інакше: `offline` — лише коли адаптер знає, що мережі немає, ще до запиту, а відхилений `fetch` і тайм-аут — обидва `unavailable`: запит пішов, а відповіді немає.
+      en: |
+        When the client and your server work together, a failure shows up in different ways, and the class decides what to do:
+
+        | Class | How the code sees it | What to show | Retry? |
+        |---|---|---|---|
+        | **offline** | the adapter says there is no network; nothing was sent | the saved copy and “no network” | no — try again when the network is back |
+        | **unavailable** | `fetch` rejected: `TypeError` (server stopped) or `TimeoutError` | the copy and “the server does not answer” | yes, bounded |
+        | **http** | an answer came, but `ok` is `false` | the copy and the status | only 5xx; 4xx — no |
+        | **invalid** | status 200, but the body breaks the contract | the copy and “unexpected answer” | no — the same would come again |
+
+        In all four cases the copy already on screen **stays** — marked as stale.
+
+        `offline` and `unavailable` are easy to confuse: “no network” is visible before the request, a server that does not answer only after it. The network status is only a hint: there can be a network while your server is stopped.
+
+        In unit RN-06 a rejected `fetch` (`Network request failed`) was called “offline”, and a timeout went to server error. Here these cases are split differently: `offline` only when the adapter knows there is no network, before any request, while a rejected `fetch` and a timeout are both `unavailable`: the request went out and no answer came.
+
+  - id: predict-failure-class
+    kind: prediction
+    prompt:
+      uk: "Екран витрат уже показує список. Наступне оновлення закінчується так: (А) сервер зупинено; (Б) відповідь 500; (В) відповідь 200 з тілом `{\"records\":\"not-a-list\"}`; (Г) сервер мовчить, і спрацьовує тайм-аут. Який клас збою в кожному випадку?"
+      en: "The expenses screen already shows a list. The next refresh ends like this: (A) the server is stopped; (B) a 500 answer; (C) a 200 answer with the body `{\"records\":\"not-a-list\"}`; (D) the server is silent and the timeout fires. Which failure class is each case?"
+    answer:
+      type: choice
+      options:
+        - id: right
+          text: { uk: "А — unavailable, Б — http, В — invalid, Г — unavailable", en: "A — unavailable, B — http, C — invalid, D — unavailable" }
+        - id: all-network
+          text: { uk: "Усі чотири — unavailable: «сервер не працює»", en: "All four — unavailable: “the server is down”" }
+          why:
+            uk: "У Б і В сервер відповів. 500 — це відповідь з помилкою, а 200 з неправильним тілом — відповідь, що порушує контракт. Повідомлення «сервер не працює» тут неправдиве."
+            en: "In B and C the server answered. A 500 is an answer with an error, and a 200 with a wrong body is an answer that breaks the contract. “The server is down” is not true here."
+        - id: offline-mix
+          text: { uk: "А — offline, Б — unavailable, В — http, Г — offline", en: "A — offline, B — unavailable, C — http, D — offline" }
+          why:
+            uk: "Зупинений сервер — не відсутність мережі: мережа є, не відповідає лише сервер. А тіло зі статусом 200 — не HTTP-помилка: статус успішний, зламаний вміст."
+            en: "A stopped server is not a missing network: the network is there, only the server does not answer. And a body with status 200 is not an HTTP error: the status is a success, the content is broken."
+      correct: [right]
+    explanation:
+      uk: "Клас вирішує дію: А і Г варто повторити обмежено, Б — лише тому, що це 5xx, а В повторювати марно. І в усіх чотирьох випадках список на екрані лишається з позначкою «застарілі дані»."
+      en: "The class decides the action: A and D are worth a bounded retry, B only because it is a 5xx, and C is pointless to retry. And in all four cases the list on screen stays, marked “stale data”."
+
+  - id: retry-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Сервер зупинився й повернувся"
+      en: "The server stopped and came back"
+    textEquivalent:
+      uk: "Клієнт показує свіжий список. Сервер зупиняється; наступний GET відхиляється з TypeError, і клієнт показує збережену копію з банером про застарілі дані. Клієнт чекає 100 мс і повторює — знову TypeError; чекає 200 мс. Тим часом сервер перезапускається, і третя спроба отримує 200: свіжий список замінює копію, банер зникає. Потім клієнт надсилає POST з ключем ідемпотентності; сервер зберігає витрату, але відповідь губиться. Клієнт повторює POST з тим самим ключем, сервер упізнає ключ і повертає першу відповідь, нічого не створюючи вдруге."
+      en: "The client shows a fresh list. The server stops; the next GET is rejected with a TypeError, and the client shows the saved copy with a stale-data banner. The client waits 100 ms and retries — another TypeError; it waits 200 ms. Meanwhile the server restarts, and the third attempt gets 200: the fresh list replaces the copy and the banner goes away. Then the client sends a POST with an idempotency key; the server stores the expense, but the answer is lost. The client retries the POST with the same key, the server recognizes the key and returns the first answer, creating nothing a second time."
+    spec:
+      actors:
+        - { id: client, label: { uk: "Клієнт", en: "Client" } }
+        - { id: net, label: { uk: "Мережа", en: "Network" } }
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+      messages:
+        - from: server
+          to: server
+          kind: note
+          label: { uk: "зупинено", en: "stopped" }
+          caption: { uk: "Клієнт показує свіжий список, і тут сервер зупиняється.", en: "The client shows a fresh list, and then the server stops." }
+        - from: client
+          to: net
+          label: "GET /v1/records"
+          caption: { uk: "Спроба 1: з’єднатися нема з ким.", en: "Attempt 1: there is nobody to connect to." }
+        - from: net
+          to: client
+          kind: return
+          label: "TypeError"
+          caption: { uk: "`fetch` відхилено: клас `unavailable`. Копія лишається на екрані з банером «застарілі дані».", en: "`fetch` is rejected: class `unavailable`. The copy stays on screen with a “stale data” banner." }
+        - from: client
+          to: client
+          kind: note
+          label: { uk: "чекаю 100 мс", en: "wait 100 ms" }
+          caption: { uk: "Повтор не одразу, а із затримкою.", en: "The retry comes not at once, but after a delay." }
+        - from: client
+          to: net
+          label: { uk: "GET (спроба 2)", en: "GET (attempt 2)" }
+          caption: { uk: "Спроба 2 — і знову `TypeError`. Наступна затримка вдвічі довша: 200 мс.", en: "Attempt 2 — another `TypeError`. The next delay is twice as long: 200 ms." }
+        - from: server
+          to: server
+          kind: note
+          label: { uk: "знову працює", en: "running again" }
+          caption: { uk: "Тим часом сервер перезапустився на тому самому порту з тими самими даними.", en: "Meanwhile the server restarted on the same port with the same data." }
+        - from: client
+          to: server
+          label: { uk: "GET (спроба 3)", en: "GET (attempt 3)" }
+          caption: { uk: "Спроба 3 доходить до сервера.", en: "Attempt 3 reaches the server." }
+        - from: server
+          to: client
+          kind: return
+          label: "200"
+          caption: { uk: "Свіжий список замінює копію, банер зникає. Спроб було три — не безліч.", en: "The fresh list replaces the copy, and the banner goes away. There were three attempts — not endless ones." }
+        - from: client
+          to: server
+          label: "POST + Idempotency-Key: k1"
+          caption: { uk: "Клієнт створює витрату з ключем, створеним один раз на дію.", en: "The client creates an expense with a key created once per action." }
+        - from: server
+          to: net
+          kind: return
+          label: { uk: "201 — загублено", en: "201 — lost" }
+          caption: { uk: "Сервер зберіг витрату, але відповідь загубилася дорогою.", en: "The server stored the expense, but the answer got lost on the way." }
+        - from: client
+          to: server
+          label: "POST + Idempotency-Key: k1"
+          caption: { uk: "Повтор з **тим самим** ключем.", en: "A retry with **the same** key." }
+        - from: server
+          to: client
+          kind: return
+          label: { uk: "201 — та сама витрата", en: "201 — the same expense" }
+          caption: { uk: "Сервер упізнав ключ і повторив першу відповідь. Витрата одна.", en: "The server recognized the key and repeated the first answer. There is one expense." }
+
+  - id: restart-retry
+    kind: example
+    runtime: isolated-node
+    dir: restart-retry
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      retryIn: { uk: "повтор через", en: "retry in" }
+      ms: { uk: "мс", en: "ms" }
+      staleBanner: { uk: "застарілі дані", en: "stale data" }
+      fresh: { uk: "свіжі дані", en: "fresh data" }
+      count: { uk: "витрат:", en: "expenses:" }
+      noAnswer: { uk: "відповіді немає", en: "no answer" }
+    title:
+      uk: "Зупинка, перезапуск і повтори"
+      en: "A stop, a restart and retries"
+    body:
+      uk: |
+        `app.js` — API витрат; `store` у ньому замінює файл чи базу даних сервера й переживає перезапуск. Перший `POST` сервер зберігає, а відповідь губить. `client.js` — шар даних з обмеженим повтором: повторює лише «немає відповіді» (`TypeError` чи `TimeoutError`), а `POST` — тільки з ключем ідемпотентності. `index.js` зупиняє сервер посеред роботи й запускає знову через 200 мс на тому самому порту — це перезапуск усередині одного процесу Node.js; справжній перезапуск процесу буде в незалежному завданні.
+
+        Натисни **Запустити**. Повторів поки немає (`retries: 0`): рядок 2 — застарілі дані, рядок 3 — знову свіжі. `POST` не отримав відповіді, але в рядку 4 витрат уже 2.
+      en: |
+        `app.js` is the expenses API; its `store` stands in for the server's file or database and outlives a restart. The server stores the first `POST` and loses the answer. `client.js` is a data layer with a bounded retry: it repeats only “no answer” (`TypeError` or `TimeoutError`), and a `POST` only with an idempotency key. `index.js` stops the server in the middle of the run and starts it again 200 ms later on the same port — a restart inside one Node.js process; a real process restart comes in the independent task.
+
+        Press **Run**. There are no retries yet (`retries: 0`): line 2 is stale data, line 3 fresh again. The `POST` got no answer, but line 4 already has 2 expenses.
+    tryIt:
+      uk: |
+        1. В `index.js` заміни `retries: 0` на `retries: 3` і запусти. Перед рядком 2 тепер видно `повтор через 100 мс` і `повтор через 200 мс`, і рядок 2 уже свіжий: третя спроба застала сервер. `POST` усе одно без відповіді — без ключа клієнт його не повторює.
+        2. Передай ключ: заміни `amountMinor: 21050, category: 'food' });` на `amountMinor: 21050, category: 'food' }, { idempotencyKey: crypto.randomUUID() });` і запусти. Клієнт повторює `POST`, отримує `201 e-02`, а витрат — 2: сервер упізнав повтор.
+        3. А тепер небезпечний варіант: у `client.js` заміни `idempotencyKey ? await withRetry('POST', send) : await send()` на `await withRetry('POST', send)` і в `index.js` прибери `, { idempotencyKey: crypto.randomUUID() }`. Запусти: `POST` повторено без ключа, і в рядку 4 витрат 3 — обід записано двічі. Поверни обидва рядки.
+      en: |
+        1. In `index.js` replace `retries: 0` with `retries: 3` and run. Before line 2 you now see `retry in 100 ms` and `retry in 200 ms`, and line 2 is already fresh: the third attempt found the server. The `POST` still has no answer — without a key the client does not repeat it.
+        2. Pass a key: replace `amountMinor: 21050, category: 'food' });` with `amountMinor: 21050, category: 'food' }, { idempotencyKey: crypto.randomUUID() });` and run. The client repeats the `POST`, gets `201 e-02`, and there are 2 expenses: the server recognized the retry.
+        3. Now the dangerous variant: in `client.js` replace `idempotencyKey ? await withRetry('POST', send) : await send()` with `await withRetry('POST', send)`, and in `index.js` remove `, { idempotencyKey: crypto.randomUUID() }`. Run: the `POST` is repeated without a key, and line 4 has 3 expenses — the lunch is recorded twice. Put both lines back.
+
+  - id: backoff-and-reconnect
+    kind: explanation
+    title:
+      uk: "Обмежено, із затримкою, і заново після повернення мережі"
+      en: "Bounded, with a delay, and again when the network returns"
+    body:
+      uk: |
+        Три правила повтору з прикладу:
+
+        - **Обмежено.** Кілька спроб, а не цикл до перемоги — [[bounded-retry|обмежений повтор]]. Потім чесний стан «сервер не відповідає» і кнопка.
+        - **Із затримкою, що зростає.** 100, 200, 400 мс — [[exponential-backoff|експоненційна затримка]]: сервер, що перезапускається, отримує час, а не шквал запитів.
+        - **Запис — лише з ключем.** `GET` можна повторити: він нічого не змінює. `POST` без [[idempotency-key|ключа ідемпотентності]] повторювати не можна — перша спроба могла вже записати дані.
+
+        А для `offline` повтор із затримкою марний: доки мережі немає, кожна спроба дасть те саме. Замість цього клієнт робить [[refetch-on-reconnect|повторний запит після відновлення мережі]] — у вебі на подію `online` вікна, у нативному застосунку — на зміну стану мережі.
+      en: |
+        The example's three retry rules:
+
+        - **Bounded.** A few attempts, not a loop until it works — a [[bounded-retry]]. Then an honest “the server does not answer” state and a button.
+        - **With a growing delay.** 100, 200, 400 ms — [[exponential-backoff]]: a restarting server gets time instead of a burst of requests.
+        - **A write only with a key.** A `GET` can be repeated: it changes nothing. A `POST` without an [[idempotency-key]] must not be repeated — the first attempt may already have written the data.
+
+        For `offline` a delayed retry is pointless: while there is no network, every attempt gives the same. Instead the client does a [[refetch-on-reconnect]] — on the web on the window's `online` event, in a native app on a change of the network status.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: invalid-no-retry
+        from: rn-06-04-offline-error-state
+        prompt:
+          uk: "Нативний екран витрат отримав статус 200 з тілом, що не пройшло перевірку контракту. Що варто показати?"
+          en: "The native expenses screen got status 200 with a body that failed the contract check. What is worth showing?"
+        answer:
+          type: choice
+          options:
+            - id: keep-data
+              text: { uk: "Дані, що вже є (чи вбудовані), і пояснення; повтор зараз не допоможе", en: "The data already there (or the bundled data) and an explanation; a retry now would not help" }
+            - id: retry-loop
+              text: { uk: "Повторювати запит, доки тіло не стане правильним", en: "Repeat the request until the body becomes valid" }
+              why:
+                uk: "Сервер, що зламав форму відповіді, на повтор дасть ту саму форму. Повтор лише навантажить його."
+                en: "A server that broke the answer's shape gives the same shape on a retry. A retry only adds load."
+            - id: empty
+              text: { uk: "Порожній список, бо даних, що прийшли, використати не можна", en: "An empty list, because the data that came cannot be used" }
+              why:
+                uk: "Збій мережі чи сервера — не причина стирати те, що вже є на екрані. Дані лишаються з позначкою, що вони не найсвіжіші."
+                en: "A network or server failure is no reason to erase what is already on screen. The data stays, marked as not the latest."
+          correct: [keep-data]
+        explanation:
+          uk: "Неправильна відповідь — клас `invalid`: той самий запит дасть ту саму відповідь. Показують наявні дані й пояснення, а не повтор чи порожнечу."
+          en: "A wrong answer is the `invalid` class: the same request gives the same answer. You show the data you have and an explanation, not a retry or emptiness."
+
+  - id: failure-policy
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: failure-policy
+    entry: index.js
+    editable: [failures.js]
+    capabilities: { network: loopback }
+    strings:
+      offline: { uk: "немає мережі", en: "no network" }
+      stopped: { uk: "сервер зупинено", en: "server stopped" }
+      timeout: { uk: "тайм-аут", en: "timeout" }
+      status500: { uk: "відповідь 500", en: "a 500 answer" }
+      status404: { uk: "відповідь 404", en: "a 404 answer" }
+      badBody: { uk: "200 з неправильним тілом", en: "200 with a wrong body" }
+    title:
+      uk: "Класи збою й таблиця повторів"
+      en: "Failure classes and the retry table"
+    instructions:
+      uk: |
+        Допиши в `failures.js` дві функції.
+
+        `classifyFailure(failure)` повертає клас:
+
+        - `Error` з `name` `'OfflineError'` — `'offline'`;
+        - те, чим відхилився `fetch`: `TypeError` (немає з’єднання) або помилка з `name` `'TimeoutError'` — `'unavailable'`;
+        - `Response`, у якої `ok` — `false` (сервер відповів статусом помилки) — `'http'`;
+        - `Error` з `name` `'InvalidResponseError'` — `'invalid'`.
+
+        `shouldRetry(kind, request)`, де `request` — `{ method, status, idempotencyKey }`, повертає `true`, лише коли повтор варто робити й безпечно:
+
+        - `'offline'` і `'invalid'` — ніколи;
+        - `'http'` — лише для статусу 500–599; 4xx — ніколи;
+        - для `'unavailable'` і для 5xx: `GET`, `HEAD`, `PUT` і `DELETE` — так; `POST` і `PATCH` — лише коли є `idempotencyKey`.
+
+        **Запустити** створює справжні збої на сервері в цій пісочниці й друкує, що повертають твої функції.
+      en: |
+        In `failures.js` finish two functions.
+
+        `classifyFailure(failure)` returns the class:
+
+        - an `Error` whose `name` is `'OfflineError'` — `'offline'`;
+        - what `fetch` rejected with: a `TypeError` (no connection) or an error whose `name` is `'TimeoutError'` — `'unavailable'`;
+        - a `Response` whose `ok` is `false` (the server answered with an error status) — `'http'`;
+        - an `Error` whose `name` is `'InvalidResponseError'` — `'invalid'`.
+
+        `shouldRetry(kind, request)`, where `request` is `{ method, status, idempotencyKey }`, returns `true` only when a retry is worth it and safe:
+
+        - `'offline'` and `'invalid'` — never;
+        - `'http'` — only for a status from 500 to 599; 4xx — never;
+        - for `'unavailable'` and for 5xx: `GET`, `HEAD`, `PUT` and `DELETE` — yes; `POST` and `PATCH` — only when there is an `idempotencyKey`.
+
+        **Run** produces real failures against a server in this sandbox and prints what your functions return.
+    testTitles:
+      "a fetch to a stopped server is unavailable":
+        uk: "`fetch` до зупиненого сервера — `unavailable`"
+        en: "A `fetch` to a stopped server is `unavailable`"
+      "a timeout is unavailable":
+        uk: "Тайм-аут — `unavailable`"
+        en: "A timeout is `unavailable`"
+      "an answer with an error status is http":
+        uk: "Відповідь зі статусом помилки — `http`"
+        en: "An answer with an error status is `http`"
+      "OfflineError is offline and InvalidResponseError is invalid":
+        uk: "`OfflineError` — `offline`, а `InvalidResponseError` — `invalid`"
+        en: "`OfflineError` is `offline`, and `InvalidResponseError` is `invalid`"
+      "GET is retried after unavailable and after a 5xx":
+        uk: "`GET` повторюється після `unavailable` і після 5xx"
+        en: "`GET` is retried after `unavailable` and after a 5xx"
+      "a 4xx answer is never retried":
+        uk: "Відповідь 4xx ніколи не повторюється"
+        en: "A 4xx answer is never retried"
+      "offline and invalid are never retried":
+        uk: "`offline` і `invalid` ніколи не повторюються"
+        en: "`offline` and `invalid` are never retried"
+      "PUT, DELETE and HEAD are retried like GET":
+        uk: "`PUT`, `DELETE` і `HEAD` повторюються, як `GET`"
+        en: "`PUT`, `DELETE` and `HEAD` are retried like `GET`"
+      "POST and PATCH are retried only with an idempotency key":
+        uk: "`POST` і `PATCH` повторюються лише з ключем ідемпотентності"
+        en: "`POST` and `PATCH` are retried only with an idempotency key"
+    hints:
+      nudge:
+        uk: "У `classifyFailure` перше питання: відповідь прийшла (`Response`) чи ні (помилка)? Помилки далі розрізняє їхня `name`."
+        en: "In `classifyFailure` the first question is: did an answer come (`Response`) or not (an error)? Errors are then told apart by their `name`."
+      explanation:
+        uk: "`failure instanceof Response` відрізняє відповідь від помилки; `failure.name` — помилки між собою (`TypeError` теж має `name`, а `instanceof TypeError` працює так само). `shouldRetry` зручно ділити на два питання: «чи варто?» (за класом і статусом) і «чи безпечно?» (за методом і ключем). Для замовлень кав’ярні це було б: збій `unavailable` для `DELETE /orders/7` — варто й безпечно, а для `POST /orders` без ключа — ні."
+        en: "`failure instanceof Response` tells an answer from an error; `failure.name` tells errors apart (a `TypeError` has a `name` too, and `instanceof TypeError` works as well). `shouldRetry` splits nicely into two questions: “is it worth it?” (by class and status) and “is it safe?” (by method and key). For a café's orders it would be: an `unavailable` failure for `DELETE /orders/7` — worth it and safe, for `POST /orders` without a key — no."
+    solutionNote:
+      uk: "Клас збою відповідає на «що сталося», таблиця повторів — на «що робити». Повтор має сенс лише там, де наступна спроба може дати інший результат (`unavailable`, 5xx), і безпечний лише там, де повтор не створить дубль (ідемпотентні методи або ключ)."
+      en: "The failure class answers “what happened”, the retry table “what to do”. A retry makes sense only where the next attempt can give another result (`unavailable`, 5xx), and is safe only where a repeat cannot create a duplicate (idempotent methods, or a key)."
+    feedback:
+      - when: { test: "a fetch to a stopped server is unavailable" }
+        message:
+          uk: "Ця перевірка робить `fetch` на порт, де вже нічого не слухає, і чекає `'unavailable'` для `TypeError`, яким він відхиляється."
+          en: "This check calls `fetch` on a port where nothing listens any more and expects `'unavailable'` for the `TypeError` it rejects with."
+      - when: { test: "a timeout is unavailable" }
+        message:
+          uk: "Ця перевірка чекає `'unavailable'` для помилки з `name` `'TimeoutError'` від `AbortSignal.timeout`."
+          en: "This check expects `'unavailable'` for the error whose `name` is `'TimeoutError'` from `AbortSignal.timeout`."
+      - when: { test: "an answer with an error status is http" }
+        message:
+          uk: "Ця перевірка передає справжні `Response` зі статусами 500 і 404 і чекає `'http'` для обох: сервер відповів, отже це не `unavailable`."
+          en: "This check passes real `Response` objects with statuses 500 and 404 and expects `'http'` for both: the server answered, so it is not `unavailable`."
+      - when: { test: "OfflineError is offline and InvalidResponseError is invalid" }
+        message:
+          uk: "Ця перевірка чекає `'offline'` для помилки з `name` `'OfflineError'` і `'invalid'` для `'InvalidResponseError'`."
+          en: "This check expects `'offline'` for an error named `'OfflineError'` and `'invalid'` for `'InvalidResponseError'`."
+      - when: { test: "GET is retried after unavailable and after a 5xx" }
+        message:
+          uk: "Ця перевірка чекає `true` для `GET` з класом `'unavailable'` і з класом `'http'` при статусах 503 і 500."
+          en: "This check expects `true` for `GET` with the class `'unavailable'` and with the class `'http'` at statuses 503 and 500."
+      - when: { test: "a 4xx answer is never retried" }
+        message:
+          uk: "Ця перевірка чекає `false` для статусів 400, 404 і 422 — і для `GET`, і для `POST` з ключем."
+          en: "This check expects `false` for statuses 400, 404 and 422 — for `GET` and for `POST` with a key."
+      - when: { test: "offline and invalid are never retried" }
+        message:
+          uk: "Ця перевірка чекає `false` для класів `'offline'` і `'invalid'` — навіть для `GET` і для `POST` з ключем."
+          en: "This check expects `false` for the classes `'offline'` and `'invalid'` — even for `GET` and for `POST` with a key."
+      - when: { test: "PUT, DELETE and HEAD are retried like GET" }
+        message:
+          uk: "Ця перевірка чекає `true` для `PUT`, `DELETE` і `HEAD` без ключа — для `'unavailable'` і для 503: їхній повтор лишає сервер у тому самому стані."
+          en: "This check expects `true` for `PUT`, `DELETE` and `HEAD` without a key — for `'unavailable'` and for 503: repeating them leaves the server in the same state."
+      - when: { test: "POST and PATCH are retried only with an idempotency key" }
+        message:
+          uk: "Ця перевірка чекає `false` для `POST` і `PATCH` без `idempotencyKey` і `true` з ним (для `'unavailable'` і для 503)."
+          en: "This check expects `false` for `POST` and `PATCH` without an `idempotencyKey`, and `true` with one (for `'unavailable'` and for 503)."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-06
+    body:
+      uk: "У кроці проєкту цього розділу `data/httpApi.ts` повторює читання ще двічі, через 100 і 200 мс, лише після `TypeError`, `TimeoutError` (5 с) чи `5xx`, ніколи після `4xx`; створення несе `Idempotency-Key`, створений один раз на виклик, а `PUT`, `PATCH` і `DELETE` не повторюються. Без сервера сторінка каже «Список не завантажився (немає з’єднання)» і дає кнопку повтору, а після невдалого оновлення кешовані записи лишаються на екрані з поясненням. Після перезапуску сервера дані повертаються кнопкою повтору чи перезавантаженням сторінки; автоматичне повторне завантаження на подію `online` чи після перезапуску сервера крок не робить — у справжньому проєкті ти міг би його додати."
+      en: "In this unit’s project step `data/httpApi.ts` retries a read twice more, after 100 and 200 ms, only after a `TypeError`, a `TimeoutError` (5 s) or a `5xx`, never after a `4xx`; a create carries an `Idempotency-Key` made once per call, and `PUT`, `PATCH` and `DELETE` are not retried. Without the server the page says “The list did not load (no connection)” and offers a retry button, and after a failed refresh the cached records stay on screen with an explanation. After a server restart the data comes back with the retry button or a page reload; the step does not reload automatically on the `online` event or after a server restart — in a real project you could add that."

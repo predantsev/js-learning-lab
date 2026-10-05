@@ -1,0 +1,566 @@
+id: no-13-03-data-secret-boundary
+unit: NO-13
+title:
+  uk: "Межа даних і секретів"
+  en: "Data and secret boundary"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Серіалізувати в сторінку лише публічні початкові дані в кодуванні JSON, безпечному для HTML, яке не може закрити елемент `<script>`."
+    en: "Serialize only the public initial data into the page with an HTML-safe JSON encoding that cannot close the script element."
+  - uk: "Не пустити секрети, шляхи до даних і серверні модулі ні в серіалізовані дані, ні в клієнтський бандл — і перевірити обидва."
+    en: "Keep secrets, data paths and server-only modules out of both the serialized payload and the client bundle, and check both."
+prerequisites: [no-13-02-hydration-browser, re-11-04-secrets-server-only]
+subskills:
+  - { family: B-11, skill: "server/client data/secret boundary", depth: intro }
+glossary: [initial-data-payload, html-safe-json]
+selfCheck: [predict-script-close, safe-payload]
+
+blocks:
+  - id: what-crosses
+    kind: explanation
+    title:
+      uk: "Усе, що в сторінці, — публічне"
+      en: "Everything in the page is public"
+    body:
+      uk: |
+        Сторінка з рендерингом на сервері передає в браузер **три** речі: розмітку в `#root`, [[initial-data-payload|початкові дані]] в `#initial-data` і клієнтський [[bundle|бандл]]. Усі три відкриває будь-хто: «Переглянути код сторінки» чи DevTools.
+
+        Звідси головне правило: у сторінку йде лише те, що можна показати кожному. А ще те, що **не видно на екрані**, теж стає публічним, щойно потрапить у дані: компонент може не показувати поле `notes`, але якщо ти передав увесь запис, `notes` лежить у JSON.
+
+        Тому межу будують явно:
+
+        - **дані** — лише поля зі списку дозволених (allowlist), а не «все, крім секретного»: поле, яке додадуть до запису завтра, без дозволу не пройде;
+        - **налаштування** — токени й шляхи (`apiToken`, `dataDir`) лишаються в серверних модулях; браузер отримує окремий маленький об’єкт із публічними значеннями;
+        - **бандл** — клієнтська точка входу не імпортує серверних модулів ні напряму, ні через посередника: збирач бере все, до чого ведуть імпорти (ти бачив це в RE-11).
+      en: |
+        A server-rendered page passes **three** things to the browser: the markup in `#root`, the [[initial-data-payload|initial data]] in `#initial-data` and the client [[bundle]]. Anyone can open all three: “View page source” or DevTools.
+
+        Hence the main rule: only what may be shown to everyone goes into the page. And what is **not visible on screen** becomes public too, as soon as it gets into the data: a component may not show the `notes` field, but if you passed the whole record, `notes` is in the JSON.
+
+        So the boundary is built explicitly:
+
+        - **data** — only fields from a list of allowed ones (an allowlist), not “everything except the secret”: a field added to the record tomorrow does not pass without permission;
+        - **settings** — tokens and paths (`apiToken`, `dataDir`) stay in server modules; the browser gets a separate small object with the public values;
+        - **the bundle** — the client entry imports no server modules, neither directly nor through a middleman: the bundler takes everything the imports lead to (you saw this in RE-11).
+
+  - id: boundary-diagram
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Що перетинає межу сервер → браузер"
+      en: "What crosses the server → browser boundary"
+    textEquivalent:
+      uk: "Угорі — сервер: репозиторій із записами, config.js з apiToken і шляхом dataDir, тека data. Унизу — браузер: HTML у #root, скрипт #initial-data і клієнтський бандл. Записи потрапляють у #initial-data лише через allowlist публічних полів, а назва запису з </script> проходить екранованою — \\u003c замість <. Розмітку в #root дає renderToString. Бандл збирається з клієнтської точки входу та її імпортів; публічні налаштування йдуть туди окремим модулем. config.js із токеном і тека data до браузера не доходять: межа їх зупиняє."
+      en: "At the top is the server: the repository with records, config.js with apiToken and the dataDir path, the data folder. At the bottom is the browser: the HTML in #root, the #initial-data script and the client bundle. Records reach #initial-data only through an allowlist of public fields, and a record name containing </script> crosses escaped — \\u003c instead of <. renderToString produces the markup in #root. The bundle is built from the client entry and its imports; public settings go there as a separate module. config.js with the token and the data folder never reach the browser: the boundary stops them."
+    spec:
+      layout: grid
+      groups:
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+        - { id: browser, label: { uk: "Браузер (публічне)", en: "Browser (public)" } }
+      nodes:
+        - { id: repo, group: server, label: { uk: "репозиторій", en: "repository" }, shape: cylinder, w: 130, col: 0, row: 0 }
+        - { id: config, group: server, label: "config.js: apiToken", w: 160, col: 1, row: 0 }
+        - { id: pub, group: server, label: "public-config.js", w: 160, col: 1, row: 1 }
+        - { id: root, group: browser, label: "#root (HTML)", w: 130, col: 0, row: 2 }
+        - { id: data, group: browser, label: "#initial-data", w: 130, col: 0, row: 3 }
+        - { id: bundle, group: browser, label: { uk: "клієнтський бандл", en: "client bundle" }, w: 160, col: 1, row: 2 }
+      edges:
+        - { id: render, from: repo, to: root, label: "renderToString" }
+        - { id: allow, from: repo, to: data, label: "allowlist + \\u003c" }
+        - { id: bundled, from: pub, to: bundle, label: "import" }
+        - { id: stopped, from: config, to: bundle, label: { uk: "зупинено", en: "stopped" }, kind: dashed }
+      steps:
+        - caption:
+            uk: "Угорі — те, що лишається на сервері; унизу — усе, що бачить будь-хто з браузером."
+            en: "At the top is what stays on the server; at the bottom is everything anyone with a browser sees."
+        - caption:
+            uk: "Записи стають розміткою через `renderToString`: React екранує текст, тож `</script>` у назві в `#root` безпечний."
+            en: "Records become markup through `renderToString`: React escapes text, so `</script>` in a name is harmless in `#root`."
+          highlight: [repo, root, render]
+        - caption:
+            uk: "У `#initial-data` записи йдуть лише через allowlist, а `<` записано як `\\u003c`: такий JSON не може закрити `<script>`."
+            en: "Records reach `#initial-data` only through an allowlist, and `<` is written as `\\u003c`: such JSON cannot close the `<script>`."
+          highlight: [repo, data, allow]
+        - caption:
+            uk: "Бандл містить усе, що імпортує клієнтський код. Публічні налаштування — окремий модуль; `config.js` із токеном клієнт не імпортує, і межа його зупиняє."
+            en: "The bundle holds everything the client code imports. Public settings are a separate module; the client does not import `config.js` with the token, and the boundary stops it."
+          highlight: [pub, bundle, bundled, config, stopped]
+
+  - id: predict-script-close
+    kind: prediction
+    prompt:
+      uk: "Сервер кладе в сторінку `<script id=\"initial-data\" type=\"application/json\">${JSON.stringify(data)}</script>`. Один запис має назву `</script><script>alert(1)</script>`. Що зробить браузер?"
+      en: "The server puts `<script id=\"initial-data\" type=\"application/json\">${JSON.stringify(data)}</script>` into the page. One record has the name `</script><script>alert(1)</script>`. What does the browser do?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: closes-and-runs
+          text:
+            uk: "Перший `</script>` у назві закриває блок даних, наступний `<script>` виконується — з’являється `alert` — а `JSON.parse` у клієнті падає"
+            en: "The first `</script>` in the name closes the data block, the following `<script>` runs — an `alert` appears — and `JSON.parse` in the client fails"
+        - id: escaped-by-json
+          text:
+            uk: "Нічого поганого: `JSON.stringify` екранує небезпечні символи"
+            en: "Nothing bad: `JSON.stringify` escapes dangerous characters"
+          why:
+            uk: "`JSON.stringify` екранує лапки й зворотну скісну риску — те, що небезпечне для **JSON**. Символи `<`, `/` і `>` він лишає як є, а для HTML-парсера `</script>` — кінець скрипту."
+            en: "`JSON.stringify` escapes quotes and backslashes — what is dangerous for **JSON**. It leaves `<`, `/` and `>` as they are, and for the HTML parser `</script>` is the end of the script."
+        - id: json-type-safe
+          text:
+            uk: "Нічого: блок має `type=\"application/json\"`, тож браузер не виконує нічого всередині"
+            en: "Nothing: the block has `type=\"application/json\"`, so the browser runs nothing inside it"
+          why:
+            uk: "Тип забороняє виконувати **цей** блок. Але HTML-парсер шукає кінець елемента до того, як дивиться на тип, і закриває блок на першому `</script>`. Далі йде новий, звичайний `<script>`."
+            en: "The type forbids running **this** block. But the HTML parser looks for the end of the element before it looks at the type, and closes the block at the first `</script>`. What follows is a new, ordinary `<script>`."
+        - id: parse-only
+          text:
+            uk: "`JSON.parse` у клієнті падає, але жоден код не виконується"
+            en: "`JSON.parse` in the client fails, but no code runs"
+          why:
+            uk: "`JSON.parse` справді падає — блок обірвано посеред рядка. Але другий `<script>` після обриву — це вже справжній скрипт сторінки, і він виконується."
+            en: "`JSON.parse` does fail — the block is cut off in the middle of a string. But the second `<script>` after the cut is already a real page script, and it runs."
+      correct: [closes-and-runs]
+    explanation:
+      uk: "Під час підготовки уроку це виміряно в Chrome 154: з’явилося `alert`, клієнтський `JSON.parse` упав з `Unterminated string in JSON`, а на сторінці текстом лишився хвіст JSON після назви (у нашому запуску — `\",\"acquired\":false}]}`). Ім’я з `</script>` — звичайні дані від користувача, тож така сторінка вразлива до [[xss|XSS]]."
+      en: "This was measured in Chrome 154 while preparing the lesson: an `alert` appeared, the client’s `JSON.parse` failed with `Unterminated string in JSON`, and the tail of the JSON after the name was left on the page as text (in our run, `\",\"acquired\":false}]}`). A name containing `</script>` is ordinary user data, so such a page is open to [[xss|XSS]]."
+
+  - id: safe-encoding
+    kind: explanation
+    title:
+      uk: "JSON, безпечний для HTML"
+      en: "HTML-safe JSON"
+    body:
+      uk: |
+        JSON дозволяє записати будь-який символ рядка як `\uXXXX`. `JSON.parse` читає `"\u003c"` як `"<"` — значення не змінюється, змінюється лише запис. Тому [[html-safe-json|JSON, безпечний для HTML]], — це звичайний `JSON.stringify`, у результаті якого кілька символів записано такими екрануваннями:
+
+        | Символ | Запис | Навіщо |
+        |---|---|---|
+        | `<` | `\u003c` | без нього немає ні `</script>`, ні `<!--` |
+        | `>`, `&` | `\u003e`, `\u0026` | усередині `<script>` браузер їх не розшифровує, але той самий текст лишається безпечним, якщо колись потрапить в інше місце HTML |
+        | U+2028, U+2029 | `\u2028`, `\u2029` | роздільники рядків: у JSON вони дозволені, а рушії JavaScript, старші за ES2019, вважали їх кінцем рядка коду — це важить, коли той самий текст вставляють як JavaScript (`window.data = …`) |
+
+        HTML-сутності (`&lt;`) тут не годяться: усередині `<script>` браузер їх не розшифровує, тож `JSON.parse` поверне текст `&lt;` замість `<`.
+      en: |
+        JSON lets you write any character of a string as `\uXXXX`. `JSON.parse` reads `"\u003c"` as `"<"` — the value does not change, only its spelling does. So [[html-safe-json]] is an ordinary `JSON.stringify` whose result has a few characters written as such escapes:
+
+        | Character | Written as | Why |
+        |---|---|---|
+        | `<` | `\u003c` | without it there is neither `</script>` nor `<!--` |
+        | `>`, `&` | `\u003e`, `\u0026` | inside `<script>` the browser does not decode them, but the same text stays safe if it ever lands somewhere else in HTML |
+        | U+2028, U+2029 | `\u2028`, `\u2029` | line separators: JSON allows them, but JavaScript engines older than ES2019 treated them as the end of a line of code — this matters when the same text is inserted as JavaScript (`window.data = …`) |
+
+        HTML entities (`&lt;`) do not work here: inside `<script>` the browser does not decode them, so `JSON.parse` would return the text `&lt;` instead of `<`.
+
+  - id: hostile-record
+    kind: example
+    runtime: isolated-node
+    dir: hostile-record
+    entry: index.js
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      privateNote: { uk: "подарунок на день народження — не показувати", en: "birthday present — do not show" }
+      scriptText: { uk: "текст скрипту для браузера", en: "script text for the browser" }
+      afterScript: { uk: "далі браузер читає як HTML", en: "the browser reads the rest as HTML" }
+      nothing: { uk: "(нічого)", en: "(nothing)" }
+      parseOk: { uk: "JSON.parse: успіх", en: "JSON.parse: success" }
+      parseFailed: { uk: "JSON.parse падає", en: "JSON.parse fails" }
+      tokenInPage: { uk: "apiToken у сторінці", en: "apiToken in the page" }
+      noteInPage: { uk: "приватна нотатка в сторінці", en: "private note in the page" }
+    title:
+      uk: "Ворожий запис і довірливий JSON"
+      en: "A hostile record and trusting JSON"
+    body:
+      uk: |
+        `index.js` будує сторінку зі списком бажань і блоком `#initial-data`, а потім розбирає її так, як це робить HTML-парсер: текст скрипту закінчується на першому `</script>`. Ще він перевіряє, чи потрапили в сторінку `apiToken` і приватна нотатка, якої список не показує.
+
+        Зараз `SAFE = false`: у дані йдуть цілі записи й увесь `config` («клієнтові ж потрібна валюта»). Натисни **Запустити**.
+      en: |
+        `index.js` builds a page with the wishlist and an `#initial-data` block, then takes it apart the way an HTML parser does: the script text ends at the first `</script>`. It also checks whether `apiToken` and a private note that the list never shows got into the page.
+
+        Right now `SAFE = false`: whole records and the entire `config` go into the data (“the client needs the currency, after all”). Press **Run**.
+    tryIt:
+      uk: |
+        1. Прочитай вивід: у `#root` назву екрановано (`&lt;/script&gt;`), а в `#initial-data` — ні; текст скрипту обривається посеред назви, `JSON.parse` падає, токен і нотатка — у сторінці.
+        2. Заміни `const SAFE = false;` на `const SAFE = true;` і запусти знову. Тепер записи пройшли через allowlist, із `config` узято лише валюту, а `<` записано як `\u003c`: скрипт цілий, `JSON.parse` успішний, токена й нотатки немає.
+        3. Безпечна гілка екранує лише `<`. Чого їй бракує до повного кодування з таблиці? Це завдання вправи нижче.
+      en: |
+        1. Read the output: in `#root` the name is escaped (`&lt;/script&gt;`), but in `#initial-data` it is not; the script text is cut off in the middle of the name, `JSON.parse` fails, the token and the note are in the page.
+        2. Replace `const SAFE = false;` with `const SAFE = true;` and run again. Now the records went through an allowlist, only the currency was taken from `config`, and `<` is written as `\u003c`: the script is whole, `JSON.parse` succeeds, the token and the note are gone.
+        3. The safe branch escapes only `<`. What does it lack compared with the full encoding from the table? That is the task of the exercise.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: секрети й JSON"
+      en: "Recall: secrets and JSON"
+    items:
+      - id: env-prefix
+        from: re-11-04-secrets-server-only
+        prompt:
+          uk: "У Vite-проєкті клієнтський модуль читає `import.meta.env.VITE_REMINDER_KEY`. Де після збірки опиниться значення цієї змінної?"
+          en: "In a Vite project a client module reads `import.meta.env.VITE_REMINDER_KEY`. Where does the value of that variable end up after the build?"
+        answer:
+          type: choice
+          options:
+            - id: in-bundle
+              text:
+                uk: "У бандлі звичайним текстом — префікс `VITE_` означає «це публічне»"
+                en: "In the bundle as plain text — the `VITE_` prefix means “this is public”"
+            - id: server-only
+              text:
+                uk: "Лише на сервері: змінні оточення не потрапляють у браузер"
+                en: "Only on the server: environment variables do not get into the browser"
+              why:
+                uk: "Те, що клієнтський код читає зі змінних, збірка **вписує** в бандл. Змінна прибирає значення з коду, але не з бандла."
+                en: "Whatever client code reads from variables, the build **writes into** the bundle. A variable removes the value from the code, but not from the bundle."
+            - id: encrypted
+              text:
+                uk: "У бандлі, але зашифроване"
+                en: "In the bundle, but encrypted"
+              why:
+                uk: "Збірка нічого не шифрує: у RE-11 ключ із префіксом `VITE_` лежав у файлі збірки як звичайний текст."
+                en: "The build encrypts nothing: in RE-11 the key with the `VITE_` prefix sat in the built file as plain text."
+          correct: [in-bundle]
+        explanation:
+          uk: "Префікс — це оголошення «публічне», а не захист. Секрети не мають публічного префікса й живуть лише в серверному коді — так само, як `config.js` у цьому уроці."
+          en: "A prefix is a declaration “public”, not a protection. Secrets get no public prefix and live only in server code — just like `config.js` in this lesson."
+      - id: json-date
+        from: js-07-04-json
+        prompt:
+          uk: "Що поверне `JSON.parse(JSON.stringify({ when: new Date(\"2026-03-01\") })).when`?"
+          en: "What does `JSON.parse(JSON.stringify({ when: new Date(\"2026-03-01\") })).when` return?"
+        code: |
+          const copy = JSON.parse(JSON.stringify({ when: new Date("2026-03-01") }));
+          console.log(typeof copy.when, copy.when);
+        verify: { logs: ["string 2026-03-01T00:00:00.000Z"] }
+        answer:
+          type: choice
+          options:
+            - id: string
+              text:
+                uk: "Рядок `\"2026-03-01T00:00:00.000Z\"`"
+                en: "The string `\"2026-03-01T00:00:00.000Z\"`"
+            - id: date
+              text:
+                uk: "Об’єкт `Date` на ту саму мить"
+                en: "A `Date` object for the same moment"
+              why:
+                uk: "JSON не має типу «дата». `JSON.stringify` записує дату рядком, а `JSON.parse` так і лишає рядок."
+                en: "JSON has no “date” type. `JSON.stringify` writes a date as a string, and `JSON.parse` leaves it a string."
+            - id: empty
+              text:
+                uk: "Порожній об’єкт `{}`"
+                en: "An empty object `{}`"
+              why:
+                uk: "Так `JSON.stringify` записує `Map` чи `Set`. У `Date` є метод `toJSON`, і він дає рядок ISO."
+                en: "That is how `JSON.stringify` writes a `Map` or a `Set`. A `Date` has a `toJSON` method, and it gives an ISO string."
+          correct: [string]
+        explanation:
+          uk: "Дата перетинає JSON рядком. Тому в початкових даних курсу дати — це рядки `YYYY-MM-DD` із самого початку: клієнт отримує рівно те, із чим рендерив сервер."
+          en: "A date crosses JSON as a string. That is why the course’s initial data keeps dates as `YYYY-MM-DD` strings from the start: the client gets exactly what the server rendered with."
+
+  - id: safe-payload
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: safe-payload
+    entry: index.js
+    editable: [payload.js]
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      note: { uk: "чек ще не перевірено", en: "receipt not checked yet" }
+    title:
+      uk: "Публічні поля й безпечний JSON для витрат"
+      en: "Public fields and safe JSON for expenses"
+    instructions:
+      uk: |
+        Допиши дві функції в `payload.js`:
+
+        - `toInitialData(expenses)` повертає **нові** об’єкти лише з публічними полями: `id`, `label`, `amountMinor`, `date`, `category`. Будь-яке інше поле — навіть те, якого зараз немає в `expenses.js`, — лишається на сервері. Самі записи функція не змінює.
+        - `serializeForHtml(value)` повертає текст JSON, у якому `<`, `>`, `&`, U+2028 і U+2029 записано як `\u003c`, `\u003e`, `\u0026`, `\u2028`, `\u2029`, а `JSON.parse` цього тексту дає рівно те саме значення.
+
+        Драйвер `index.js` друкує блок `#initial-data` для двох витрат — одна з них має назву з `</script>` — і назви, які з нього читає `JSON.parse`. **Перевірити** викликає твої функції з іншими витратами, серед яких є запис із ще одним серверним полем, і зі значенням, у якому є `</script>`, `&`, лапки та обидва роздільники рядків.
+      en: |
+        Finish the two functions in `payload.js`:
+
+        - `toInitialData(expenses)` returns **new** objects with only the public fields: `id`, `label`, `amountMinor`, `date`, `category`. Any other field — even one that is not in `expenses.js` today — stays on the server. The function does not change the records themselves.
+        - `serializeForHtml(value)` returns JSON text in which `<`, `>`, `&`, U+2028 and U+2029 are written as `\u003c`, `\u003e`, `\u0026`, `\u2028`, `\u2029`, and `JSON.parse` of that text gives exactly the same value.
+
+        The driver `index.js` prints the `#initial-data` block for two expenses — one has a name containing `</script>` — and the names `JSON.parse` reads back from it. **Check** calls your functions with other expenses, including a record with one more server-only field, and with a value that contains `</script>`, `&`, quotes and both line separators.
+    testTitles:
+      "keeps only the public fields":
+        uk: "Лишає тільки публічні поля"
+        en: "Keeps only the public fields"
+      "leaves the stored records unchanged":
+        uk: "Не змінює збережені записи"
+        en: "Leaves the stored records unchanged"
+      "a </script> in the data cannot end the script":
+        uk: "`</script>` у даних не може закрити скрипт (немає `<`)"
+        en: "`</script>` in the data cannot end the script (no `<`)"
+      "> and & are written as escapes too":
+        uk: "`>` і `&` теж записано екрануваннями"
+        en: "`>` and `&` are written as escapes too"
+      "U+2028 and U+2029 are written as escapes":
+        uk: "U+2028 і U+2029 записано екрануваннями"
+        en: "U+2028 and U+2029 are written as escapes"
+      "JSON.parse gives back exactly the same value":
+        uk: "`JSON.parse` повертає рівно те саме значення"
+        en: "`JSON.parse` gives back exactly the same value"
+    hints:
+      nudge:
+        uk: "Для полів: що надійніше — перелічити, що **викинути**, чи перелічити, що **лишити**? Для тексту: які символи небезпечні саме для HTML-парсера?"
+        en: "For the fields: which is safer — listing what to **drop**, or listing what to **keep**? For the text: which characters are dangerous for the HTML parser specifically?"
+      explanation:
+        uk: "Новий об’єкт лише з потрібними полями дає деструктуризація в параметрі стрілкової функції: `({ a, b }) => ({ a, b })` — у `map` це повертає нові об’єкти й не чіпає старих. Текст JSON — звичайний рядок, тож до результату `JSON.stringify` можна застосувати `replace` з регулярним виразом-класом символів і функцією, яка повертає заміну для кожного знайденого символу. У рядку JavaScript зворотна скісна риска пишеться двічі: `'\\\\u003c'` у коді — це шість символів `\\u003c` у тексті, а `'\\u003c'` з однією рискою — це вже сам символ `<`."
+        en: "Destructuring in an arrow function’s parameter gives a new object with only the needed fields: `({ a, b }) => ({ a, b })` — inside `map` it returns new objects and leaves the old ones alone. JSON text is an ordinary string, so you can apply `replace` to the result of `JSON.stringify` with a character-class regular expression and a function that returns the replacement for each character found. In a JavaScript string the backslash is written twice: `'\\\\u003c'` in the code is the six characters `\\u003c` in the text, while `'\\u003c'` with one backslash is the character `<` itself."
+    solutionNote:
+      uk: "Allowlist у `map` будує нові об’єкти, тож серверні поля — і ті, яких ще немає, — не проходять, а записи лишаються цілими. `serializeForHtml` міняє лише **запис** п’яти символів: для `JSON.parse` `\\u003c` і `<` — той самий символ, тому значення повертається без змін, а HTML-парсер не бачить у тексті жодного `<`."
+      en: "The allowlist in `map` builds new objects, so server-only fields — including ones that do not exist yet — do not pass, and the records stay intact. `serializeForHtml` changes only the **spelling** of five characters: to `JSON.parse`, `\\u003c` and `<` are the same character, so the value comes back unchanged, while the HTML parser sees no `<` in the text."
+    feedback:
+      - when: { test: "keeps only the public fields" }
+        message:
+          uk: "Ця перевірка передає витрати з полями `receiptPath`, `internalNote` і ще одним серверним полем `syncToken` і чекає об’єкти рівно з `id`, `label`, `amountMinor`, `date`, `category`. Якщо ти видаляєш відомі приватні поля, нове поле все одно проходить: перелічи ті, що треба **лишити**."
+          en: "This check passes expenses with the fields `receiptPath`, `internalNote` and one more server-only field `syncToken` and expects objects with exactly `id`, `label`, `amountMinor`, `date`, `category`. If you delete the known private fields, the new field still gets through: list the ones to **keep**."
+      - when: { test: "leaves the stored records unchanged" }
+        message:
+          uk: "Після виклику `toInitialData` записи, які отримала функція, мають лишитися такими самими, з усіма полями: репозиторій ще працює з ними. Повертай нові об’єкти, а не видаляй поля зі старих."
+          en: "After `toInitialData` is called, the records the function received must stay the same, with all their fields: the repository still works with them. Return new objects instead of deleting fields from the old ones."
+      - when: { test: "a </script> in the data cannot end the script" }
+        message:
+          uk: "Ця перевірка шукає в тексті `serializeForHtml` хоч один символ `<`. Його не має бути: запиши його як `\\u003c` (у рядку JavaScript — `'\\\\u003c'`)."
+          en: "This check looks for any `<` character in the text from `serializeForHtml`. There must be none: write it as `\\u003c` (in a JavaScript string, `'\\\\u003c'`)."
+      - when: { test: "> and & are written as escapes too" }
+        message:
+          uk: "Ця перевірка чекає, що в тексті немає символів `>` і `&`: їх записано як `\\u003e` і `\\u0026`. HTML-сутності на кшталт `&amp;` теж містять `&`."
+          en: "This check expects no `>` and no `&` characters in the text: they are written as `\\u003e` and `\\u0026`. HTML entities such as `&amp;` contain `&` too."
+      - when: { test: "U+2028 and U+2029 are written as escapes" }
+        message:
+          uk: "Ця перевірка передає значення з роздільниками рядків U+2028 і U+2029 і чекає, що в тексті їх записано як `\\u2028` і `\\u2029`, а не самими символами."
+          en: "This check passes a value with the line separators U+2028 and U+2029 and expects them written in the text as `\\u2028` and `\\u2029`, not as the characters themselves."
+      - when: { test: "JSON.parse gives back exactly the same value" }
+        message:
+          uk: "`JSON.parse` твого тексту має дати те саме значення, що й на вході, зокрема назву з `</script>` і `&`. HTML-сутності (`&lt;`) `JSON.parse` не розшифровує — використовуй екранування JSON `\\u003c`."
+          en: "`JSON.parse` of your text must give the same value as the input, including the name with `</script>` and `&`. `JSON.parse` does not decode HTML entities (`&lt;`) — use the JSON escape `\\u003c`."
+
+  - id: lab-boundary
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Лабораторія: токен у бандлі й `</script>` у даних"
+      en: "Lab: a token in the bundle and `</script>` in the data"
+    intro:
+      uk: |
+        Продовжуємо лабораторію `~/js-course/ssr-lab` з попереднього уроку: перевіриш обидві частини межі — бандл і початкові дані. Якщо лабораторії ще немає, спершу пройди локальне завдання уроку «Гідратація в браузері».
+
+        Під час підготовки уроку все виконано на macOS з react 19.3.0, react-dom 19.3.0 і esbuild 0.28.2 у Chrome 154 двічі — на Node.js v25.2.1 і на v22.23.3 — з однаковим виводом; він нижче. На Windows і Linux не перевірено.
+
+        **Крок 1 — файл `config.js`** (серверні налаштування):
+
+        ```js
+        // Server settings: the token is for the server's own calls and must never reach the browser.
+        export const config = {
+          apiToken: 'demo-TOKEN-not-a-real-secret',
+          dataDir: './data',
+          currency: 'UAH',
+        };
+        ```
+
+        **Крок 2 — `WishList.js`, який показує валюту з `config`:**
+
+        ```js
+        // The shared list component: the server renders it to HTML, the browser hydrates it.
+        import { createElement as h, useState } from 'react';
+        import { config } from './config.js';
+
+        export function WishList({ items }) {
+          const [acquired, setAcquired] = useState(() => items.filter((item) => item.acquired).map((item) => item.id));
+          function toggle(id) {
+            setAcquired(acquired.includes(id) ? acquired.filter((x) => x !== id) : [...acquired, id]);
+          }
+          return h('section', null,
+            h('p', null, 'Ціни в ', config.currency),
+            h('ul', null,
+              items.map((item) =>
+                h('li', { key: item.id },
+                  item.name, ' ',
+                  h('button', { type: 'button', 'aria-pressed': acquired.includes(item.id), onClick: () => toggle(item.id) },
+                    acquired.includes(item.id) ? 'Отримано' : 'Хочу')))));
+        }
+        ```
+
+        **Крок 3 — після збірки:**
+
+        ```text
+        23562:  apiToken: "demo-TOKEN-not-a-real-secret",
+        ```
+
+        Компонент узяв лише `config.currency`, але збирач поклав у бандл увесь модуль — разом із токеном. Номер рядка в тебе може відрізнятися.
+
+        **Крок 4 — файл `public-config.js`:**
+
+        ```js
+        // Settings the browser may see. Nothing secret goes here: this module ends up in the client bundle.
+        export const publicConfig = { currency: 'UAH' };
+        ```
+
+        **Крок 7 — консоль браузера, коли в даних є запис із `</script>`:** спершу вікно `alert` із текстом `1`, а потім помилка
+
+        ```text
+        SyntaxError: Unterminated string in JSON at position 136 (line 1 column 137)
+        ```
+
+        Гідратація не відбувається: клієнтська точка входу впала на `JSON.parse`. Позиція в тебе може бути іншою, якщо назви записів інші.
+
+        **Крок 8 — `html-json.js`:** скопіюй сюди свою функцію `serializeForHtml` із вправи цього уроку (разом із допоміжними значеннями, якими вона користується) і додай перед нею `export`.
+      en: |
+        We continue the `~/js-course/ssr-lab` lab from the previous lesson: you will check both parts of the boundary — the bundle and the initial data. If you do not have the lab yet, first do the local task of the lesson “Hydration in the browser”.
+
+        While preparing the lesson everything was run on macOS with react 19.3.0, react-dom 19.3.0 and esbuild 0.28.2 in Chrome 154, twice — on Node.js v25.2.1 and on v22.23.3 — with the same output; it is below. Not checked on Windows or Linux.
+
+        **Step 1 — the file `config.js`** (server settings):
+
+        ```js
+        // Server settings: the token is for the server's own calls and must never reach the browser.
+        export const config = {
+          apiToken: 'demo-TOKEN-not-a-real-secret',
+          dataDir: './data',
+          currency: 'UAH',
+        };
+        ```
+
+        **Step 2 — a `WishList.js` that shows the currency from `config`:**
+
+        ```js
+        // The shared list component: the server renders it to HTML, the browser hydrates it.
+        import { createElement as h, useState } from 'react';
+        import { config } from './config.js';
+
+        export function WishList({ items }) {
+          const [acquired, setAcquired] = useState(() => items.filter((item) => item.acquired).map((item) => item.id));
+          function toggle(id) {
+            setAcquired(acquired.includes(id) ? acquired.filter((x) => x !== id) : [...acquired, id]);
+          }
+          return h('section', null,
+            h('p', null, 'Prices in ', config.currency),
+            h('ul', null,
+              items.map((item) =>
+                h('li', { key: item.id },
+                  item.name, ' ',
+                  h('button', { type: 'button', 'aria-pressed': acquired.includes(item.id), onClick: () => toggle(item.id) },
+                    acquired.includes(item.id) ? 'Got it' : 'Wanted')))));
+        }
+        ```
+
+        **Step 3 — after the build:**
+
+        ```text
+        23562:  apiToken: "demo-TOKEN-not-a-real-secret",
+        ```
+
+        The component took only `config.currency`, but the bundler put the whole module into the bundle — token included. Your line number may differ.
+
+        **Step 4 — the file `public-config.js`:**
+
+        ```js
+        // Settings the browser may see. Nothing secret goes here: this module ends up in the client bundle.
+        export const publicConfig = { currency: 'UAH' };
+        ```
+
+        **Step 7 — the browser console when the data holds a record with `</script>`:** first an `alert` window with the text `1`, then the error
+
+        ```text
+        SyntaxError: Unterminated string in JSON at position 131 (line 1 column 132)
+        ```
+
+        Hydration does not happen: the client entry crashed on `JSON.parse`. Your position may differ if the record names are different.
+
+        **Step 8 — `html-json.js`:** copy your `serializeForHtml` function from this lesson’s exercise here (together with any helper values it uses) and put `export` in front of it.
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "Урок виконано на v25.2.1 і v22.23.3.", en: "The lesson was run on v25.2.1 and v22.23.3." } }
+      - { name: "esbuild", version: "0.28.2", note: { uk: "Установлено в лабораторії.", en: "Installed in the lab." } }
+    steps:
+      - text:
+          uk: "Перейди в лабораторію й створи `config.js` з кроку 1 вступу."
+          en: "Go to the lab and create `config.js` from step 1 of the introduction."
+        command: "cd ~/js-course/ssr-lab"
+      - text:
+          uk: "Заміни вміст `WishList.js` на код із кроку 2 вступу."
+          en: "Replace the content of `WishList.js` with the code from step 2 of the introduction."
+      - text:
+          uk: "Збери клієнт і пошукай значення токена в бандлі. Шукаємо саме значення, а не слово «token»."
+          en: "Build the client and search the bundle for the token’s value. We search for the value itself, not for the word “token”."
+        command: |
+          npm run build
+          grep -n "demo-TOKEN" public/client.js
+        expect:
+          uk: "`grep` знаходить один рядок — той, що в кроці 3 вступу."
+          en: "`grep` finds one line — the one in step 3 of the introduction."
+      - text:
+          uk: "Створи `public-config.js` з кроку 4 вступу. У `WishList.js` заміни рядок імпорту на `import { publicConfig } from './public-config.js';`, а `config.currency` — на `publicConfig.currency`. Збери й пошукай знову."
+          en: "Create `public-config.js` from step 4 of the introduction. In `WishList.js` replace the import line with `import { publicConfig } from './public-config.js';` and `config.currency` with `publicConfig.currency`. Build and search again."
+        command: |
+          npm run build
+          grep -n "demo-TOKEN" public/client.js
+        expect:
+          uk: "`grep` нічого не друкує: токена в бандлі немає. Сервер і далі може імпортувати `config.js` — він у бандл не потрапляє."
+          en: "`grep` prints nothing: the token is not in the bundle. The server can still import `config.js` — it does not get into the bundle."
+      - text:
+          uk: "У `server.js` додай до масиву `items` третій запис: `{ id: 'w-07', name: '</script><script>alert(1)</script>', acquired: false },`."
+          en: "In `server.js` add a third record to the `items` array: `{ id: 'w-07', name: '</script><script>alert(1)</script>', acquired: false },`."
+      - text:
+          uk: "Запусти сервер і відкрий http://127.0.0.1:4320/ з відкритою консоллю."
+          en: "Start the server and open http://127.0.0.1:4320/ with the console open."
+        command: "npm start"
+      - text:
+          uk: "Подивись, що сталося: вікно `alert`, помилка з кроку 7 вступу, кнопки не реагують. У списку назва `</script><script>alert(1)</script>` показана як текст — `renderToString` її екранував, а от блок даних — ні. Закрий вікно `alert` і зупини сервер (Ctrl+C)."
+          en: "See what happened: an `alert` window, the error from step 7 of the introduction, the buttons do not react. In the list the name `</script><script>alert(1)</script>` is shown as text — `renderToString` escaped it, but the data block did not. Close the `alert` window and stop the server (Ctrl+C)."
+      - text:
+          uk: "Створи `html-json.js`, як у кроці 8 вступу. У `server.js` додай `import { serializeForHtml } from './html-json.js';` і заміни `${JSON.stringify(data)}` на `${serializeForHtml(data)}`. Запусти сервер і перезавантаж сторінку."
+          en: "Create `html-json.js` as in step 8 of the introduction. In `server.js` add `import { serializeForHtml } from './html-json.js';` and replace `${JSON.stringify(data)}` with `${serializeForHtml(data)}`. Start the server and reload the page."
+        command: "npm start"
+        expect:
+          uk: "Вікна `alert` немає, у консолі є `hydrated`, кнопки реагують, і третій запис показано з назвою `</script><script>alert(1)</script>` як звичайний текст."
+          en: "There is no `alert` window, the console shows `hydrated`, the buttons react, and the third record is shown with the name `</script><script>alert(1)</script>` as ordinary text."
+      - text:
+          uk: "Відкрий код сторінки (Chrome: ⌥⌘U на macOS, Ctrl+U на Windows і Linux) і знайди блок `initial-data`. Потім зупини сервер (Ctrl+C)."
+          en: "Open the page source (Chrome: ⌥⌘U on macOS, Ctrl+U on Windows and Linux) and find the `initial-data` block. Then stop the server (Ctrl+C)."
+        expect:
+          uk: "У назві третього запису замість `<` стоїть `\\u003c`, а `>` — `\\u003e`; `apiToken` у коді сторінки немає."
+          en: "In the third record’s name `<` is written as `\\u003c` and `>` as `\\u003e`; there is no `apiToken` in the page source."
+    verify:
+      - id: token-gone
+        text:
+          uk: "Після переходу на `public-config.js` `grep` не знаходить значення токена в `public/client.js`."
+          en: "After switching to `public-config.js`, `grep` does not find the token’s value in `public/client.js`."
+      - id: no-alert
+        text:
+          uk: "Із `serializeForHtml` сторінка гідратується без `alert`, а назва з `</script>` показана як текст."
+          en: "With `serializeForHtml` the page hydrates without an `alert`, and the name with `</script>` is shown as text."
+    troubleshooting:
+      - problem:
+          uk: "Після кроку 4 `grep` досі знаходить токен."
+          en: "After step 4 `grep` still finds the token."
+        fix:
+          uk: "Бандл не перезібрано або якийсь клієнтський модуль досі імпортує `config.js`. Перевір `grep -n \"config.js\" WishList.js client.js` — має лишитися лише `public-config.js` — і запусти `npm run build` ще раз."
+          en: "The bundle was not rebuilt, or some client module still imports `config.js`. Check `grep -n \"config.js\" WishList.js client.js` — only `public-config.js` should remain — and run `npm run build` again."
+      - problem:
+          uk: "`SyntaxError: The requested module './html-json.js' does not provide an export named 'serializeForHtml'`."
+          en: "`SyntaxError: The requested module './html-json.js' does not provide an export named 'serializeForHtml'`."
+        fix:
+          uk: "Перед `function serializeForHtml` у `html-json.js` бракує `export`. Такий самий текст дали Node.js v25.2.1 і v22.23.3."
+          en: "`html-json.js` is missing `export` in front of `function serializeForHtml`. Node.js v25.2.1 and v22.23.3 gave the same text."
+    recovery:
+      uk: "Усі зміни — у `WishList.js`, `server.js` і трьох нових файлах лабораторії. Якщо щось зламалося, поверни `WishList.js` і `server.js` до варіантів із кроків 3 і 5 локального завдання уроку «Гідратація в браузері» й пройди кроки знову. Проєкт `~/js-course/<capstone>` не змінюється."
+      en: "All changes are in `WishList.js`, `server.js` and three new lab files. If something breaks, restore `WishList.js` and `server.js` to the versions from steps 3 and 5 of the local task of the lesson “Hydration in the browser” and go through the steps again. The project `~/js-course/<capstone>` does not change."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-13
+    body:
+      uk: "У кроці проєкту цього розділу `toInitialData(records, requestId)` з `server/src/page.ts` будує початкові дані за списком дозволених полів — нові об’єкти з публічними полями й текстами, уже відформатованими на сервері, плюс `requestId`, — а `serializeForHtml` замінює `<`, `>`, `&`, U+2028 і U+2029, тож ворожа назва `</script><script>alert(1)</script>` лишається текстом. Клієнтський вхід не імпортує жодного модуля сервера (esbuild зупиняється на `node:`-модулі), а `grep` шляху даних у `server/public/client.js` і в сирцях сторінки дає `0`."
+      en: "In this unit’s project step `toInitialData(records, requestId)` of `server/src/page.ts` builds the initial data from an allowlist of fields — new objects with the public fields and texts already formatted on the server, plus the `requestId` — and `serializeForHtml` replaces `<`, `>`, `&`, U+2028 and U+2029, so a hostile name `</script><script>alert(1)</script>` stays text. The client entry imports no server module (esbuild stops at a `node:` module), and a `grep` for the data path in `server/public/client.js` and in the page source gives `0`."

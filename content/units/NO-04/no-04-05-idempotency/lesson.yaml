@@ -1,0 +1,365 @@
+id: no-04-05-idempotency
+unit: NO-04
+title:
+  uk: "Ідемпотентність"
+  en: "Idempotency"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Розподілити GET, PUT, DELETE і POST на ідемпотентні й ні та передбачити збережений стан після того, як кожен надіслано двічі."
+    en: "Classify GET, PUT, DELETE and POST as idempotent or not, and predict the stored state after each is sent twice."
+  - uk: "Реалізувати Idempotency-Key для POST, щоб повторене створення повертало початковий результат, а не створювало дубль."
+    en: "Implement an Idempotency-Key for POST so a retried create returns the original result instead of creating a duplicate."
+prerequisites: [no-04-04-pagination-filter-sort, no-04-01-rest-boundaries]
+subskills:
+  - { family: B-03, skill: "idempotency", depth: intro }
+glossary: [idempotency-key]
+selfCheck: [predict-lost-response, task-idempotency]
+
+blocks:
+  - id: lost-answer
+    kind: explanation
+    title:
+      uk: "Відповідь загубилася — що тепер?"
+      en: "The answer got lost — now what?"
+    body:
+      uk: |
+        Клієнт надсилає `POST /expenses` з обідом за 210,50 грн. Сервер зберігає витрату, відповідає 201… і з’єднання рветься. Клієнт отримує не відповідь, а помилку мережі. Він не знає головного: **зробив сервер роботу чи ні?**
+
+        Повторити запит — природне рішення (ти писав такий повтор у JavaScript). Але для `POST` це небезпечно: повтор створить другу витрату, і обід «коштуватиме» вдвічі більше.
+
+        Тут допомагає [[idempotency|ідемпотентність]] — ти вже зустрічав її в розділі JS-16, тепер подивимося з боку сервера. Запит ідемпотентний, якщо два однакові запити лишають сервер у тому самому стані, що й один.
+
+        | Метод | Двічі поспіль | Ідемпотентний? |
+        |---|---|---|
+        | `GET /expenses/e-1` | нічого не змінює | так |
+        | `PUT /expenses/e-1` | той самий запис двічі — той самий результат | так |
+        | `DELETE /expenses/e-1` | запис видалено; вдруге — 404, але запису так само немає | так |
+        | `POST /expenses` | дві витрати замість однієї | **ні** |
+
+        Зверни увагу на `DELETE`: відповіді різні (204, потім 404), а **стан** однаковий. Ідемпотентність — про стан, а не про однакові відповіді.
+      en: |
+        A client sends `POST /expenses` with a 210.50 lunch. The server stores the expense, answers 201… and the connection breaks. The client gets a network error instead of the answer. It does not know the main thing: **did the server do the work or not?**
+
+        Repeating the request is the natural move (you wrote such a retry in JavaScript). But for `POST` it is dangerous: the retry creates a second expense, and lunch “costs” twice as much.
+
+        This is where [[idempotency]] helps — you met it in unit JS-16; now look at it from the server's side. A request is idempotent when two identical requests leave the server in the same state as one.
+
+        | Method | Twice in a row | Idempotent? |
+        |---|---|---|
+        | `GET /expenses/e-1` | changes nothing | yes |
+        | `PUT /expenses/e-1` | the same record twice — the same result | yes |
+        | `DELETE /expenses/e-1` | the record is deleted; the second time 404, but the record is just as gone | yes |
+        | `POST /expenses` | two expenses instead of one | **no** |
+
+        Note `DELETE`: the answers differ (204, then 404), but the **state** is the same. Idempotency is about state, not about identical answers.
+
+  - id: predict-delete-twice
+    kind: prediction
+    prompt:
+      uk: "Клієнт надсилає `DELETE /expenses/e-3` двічі поспіль. Що правда?"
+      en: "A client sends `DELETE /expenses/e-3` twice in a row. What is true?"
+    answer:
+      type: choice
+      options:
+        - id: state-same
+          text:
+            uk: "Перша відповідь 204, друга 404; запис видалено один раз — запит ідемпотентний"
+            en: "The first answer is 204, the second 404; the record is deleted once — the request is idempotent"
+        - id: not-idempotent
+          text:
+            uk: "Запит не ідемпотентний, бо друга відповідь відрізняється від першої"
+            en: "The request is not idempotent, because the second answer differs from the first"
+          why:
+            uk: "Ідемпотентність — про стан на сервері, а не про однакові відповіді. Після одного й після двох `DELETE` запису однаково немає."
+            en: "Idempotency is about the state on the server, not about identical answers. After one and after two `DELETE` requests the record is equally gone."
+        - id: both-204
+          text:
+            uk: "Обидві відповіді 204, інакше запит не був би ідемпотентним"
+            en: "Both answers are 204, otherwise the request would not be idempotent"
+          why:
+            uk: "Сервер чесно каже, що другого разу видаляти вже нічого: запису немає — 404. Це не порушує ідемпотентності."
+            en: "The server honestly says that the second time there is nothing left to delete: no record — 404. That does not break idempotency."
+      correct: [state-same]
+    explanation:
+      uk: "Тому `DELETE` можна сміливо повторити після помилки мережі: гірше не стане. А от `POST` — не можна, поки сервер не навчиться впізнавати повтор."
+      en: "That is why a `DELETE` can safely be retried after a network error: it will not make things worse. A `POST` cannot — until the server learns to recognize a retry."
+
+  - id: the-key
+    kind: explanation
+    title:
+      uk: "Idempotency-Key: номер, за яким сервер упізнає повтор"
+      en: "Idempotency-Key: a number by which the server recognizes a retry"
+    body:
+      uk: |
+        Щоб зробити `POST` безпечним для повтору, клієнт додає до запиту заголовок [[idempotency-key|Idempotency-Key]] — випадковий унікальний рядок (наприклад, з `crypto.randomUUID()`), створений **один раз** для цієї дії й надісланий з кожною спробою.
+
+        Сервер для кожного ключа запам’ятовує три речі: відбиток тіла, статус і тіло відповіді.
+
+        - Ключ новий → виконати роботу, запам’ятати відповідь.
+        - Ключ відомий і тіло те саме → **не** виконувати роботу вдруге, а повернути збережену відповідь — той самий 201 і той самий запис.
+        - Ключ відомий, а тіло інше → це не повтор, а помилка клієнта: 422.
+
+        Заголовок описує чернетка IETF, а не завершений стандарт; 422 для іншого тіла — її порада. Вона ж радить 409, коли повтор прийшов, поки перша спроба ще виконується, — цей випадок урок не розбирає.
+
+        Відбиток тіла — це хеш SHA-256: короткий рядок, обчислений із сирого тексту тіла (такого, як він прийшов), що змінюється від будь-якої зміни цього тексту: `createHash('sha256').update(text).digest('hex')` з `node:crypto`. Порівнювати відбитки дешевше, ніж зберігати й порівнювати цілі тіла.
+      en: |
+        To make a `POST` safe to retry, the client adds the [[idempotency-key|Idempotency-Key]] header — a random unique string (for example from `crypto.randomUUID()`), created **once** for this action and sent with every attempt.
+
+        For each key the server remembers three things: a fingerprint of the body, the status and the response body.
+
+        - A new key → do the work, remember the answer.
+        - A known key with the same body → do **not** do the work again; return the saved answer — the same 201 and the same record.
+        - A known key with a different body → that is not a retry but a client mistake: 422.
+
+        The header is described by an IETF draft, not a finished standard; 422 for a different body is its advice. The same draft advises 409 when a retry arrives while the first attempt is still running — a case this lesson does not cover.
+
+        The body's fingerprint is a SHA-256 hash: a short string computed from the raw body text (as it arrived) that changes with any change of that text: `createHash('sha256').update(text).digest('hex')` from `node:crypto`. Comparing fingerprints is cheaper than storing and comparing whole bodies.
+
+  - id: order-slip
+    kind: analogy
+    body:
+      uk: "Idempotency-Key схожий на бланк замовлення з надрукованим номером. Віддаси той самий бланк двічі — отримаєш квитанцію першого замовлення, а не друге замовлення."
+      en: "An Idempotency-Key is like an order slip with a printed number. Hand in the same slip twice and you get the first order's receipt, not a second order."
+    limits:
+      uk: "Працює лише доки сервер пам’ятає номер: сховище ключів у пам’яті зникає з перезапуском, а справжні сервіси тримають ключі обмежений час. І той самий номер на іншому замовленні треба відхилити (422), а не мовчки прийняти. Ще одне: два запити з одним ключем, що прийшли одночасно, поки перший ще виконується, ця проста схема не розрізнить — справжні реалізації блокують ключ на час роботи."
+      en: "It works only while the server remembers the number: an in-memory key store disappears on restart, and real services keep keys for a limited time. And the same number on a different order must be refused (422), not silently accepted. One more: this simple scheme cannot tell apart two requests with one key that arrive at the same time while the first is still running — real implementations lock the key for the duration of the work."
+
+  - id: retry-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Загублена відповідь і повтор з ключем"
+      en: "A lost answer and a retry with a key"
+    textEquivalent:
+      uk: "Клієнт надсилає POST /expenses із заголовком Idempotency-Key: K1. Сервер зберігає витрату e-1 і запам’ятовує для K1 відбиток тіла й відповідь 201. Відповідь губиться в мережі, і клієнт отримує помилку мережі. Він повторює той самий POST з тим самим ключем K1. Сервер знаходить K1 з тим самим відбитком і, нічого не створюючи, повертає збережену відповідь 201 з e-1. На сервері одна витрата. Без ключа повтор створив би e-2, і витрат стало б дві."
+      en: "The client sends POST /expenses with the header Idempotency-Key: K1. The server stores expense e-1 and remembers the body fingerprint and the 201 answer for K1. The answer is lost in the network, and the client gets a network error. It retries the same POST with the same key K1. The server finds K1 with the same fingerprint and, creating nothing, returns the saved 201 answer with e-1. The server holds one expense. Without a key the retry would have created e-2, and there would be two expenses."
+    spec:
+      actors:
+        - { id: client, label: { uk: "Клієнт", en: "Client" } }
+        - { id: network, label: { uk: "Мережа", en: "Network" } }
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+      messages:
+        - from: client
+          to: server
+          label: "POST /expenses · K1"
+          caption:
+            uk: "Клієнт надсилає витрату з ключем `K1`, створеним один раз для цієї дії."
+            en: "The client sends the expense with the key `K1`, created once for this action."
+        - from: server
+          to: server
+          kind: note
+          label: { uk: "створено e-1; K1 → 201", en: "created e-1; K1 → 201" }
+          caption:
+            uk: "Сервер створює `e-1` і запам’ятовує для `K1` відбиток тіла й відповідь 201."
+            en: "The server creates `e-1` and remembers the body fingerprint and the 201 answer for `K1`."
+        - from: server
+          to: network
+          kind: return
+          label: "201 e-1"
+          caption:
+            uk: "Відповідь вирушає назад…"
+            en: "The answer sets off back…"
+        - from: network
+          to: client
+          kind: return
+          label: { uk: "з’єднання обірвано", en: "connection lost" }
+          caption:
+            uk: "…і губиться: клієнт бачить помилку мережі й не знає, чи створено витрату."
+            en: "…and is lost: the client sees a network error and does not know whether the expense was created."
+        - from: client
+          to: server
+          label: "POST /expenses · K1"
+          caption:
+            uk: "Клієнт повторює **той самий** запит з **тим самим** ключем."
+            en: "The client retries **the same** request with **the same** key."
+        - from: server
+          to: server
+          kind: note
+          label: { uk: "K1 відомий → нічого не створювати", en: "K1 known → create nothing" }
+          caption:
+            uk: "Ключ відомий, відбиток тіла збігається: це повтор. Нова витрата не створюється."
+            en: "The key is known and the body fingerprint matches: this is a retry. No new expense is created."
+        - from: server
+          to: client
+          kind: return
+          label: "201 e-1"
+          caption:
+            uk: "Сервер повертає збережену відповідь — той самий 201 і той самий `e-1`. На сервері одна витрата; без ключа їх було б дві."
+            en: "The server returns the saved answer — the same 201 and the same `e-1`. The server holds one expense; without a key there would be two."
+
+  - id: predict-lost-response
+    kind: prediction
+    prompt:
+      uk: "Сервер підтримує заголовок `Idempotency-Key`. Перший `POST /expenses` створив витрату, але відповідь загубилася, і клієнт повторив запит. Скільки витрат буде на сервері, якщо клієнт (А) не надсилав ключа; (Б) надіслав той самий ключ в обох спробах; (В) створив **новий** ключ для другої спроби?"
+      en: "The server supports the `Idempotency-Key` header. The first `POST /expenses` created an expense, but the answer got lost and the client retried. How many expenses are on the server if the client (A) sent no key; (B) sent the same key in both attempts; (C) created a **new** key for the second attempt?"
+    answer:
+      type: choice
+      options:
+        - id: two-one-two
+          text: { uk: "А — 2, Б — 1, В — 2", en: "A — 2, B — 1, C — 2" }
+        - id: all-one
+          text: { uk: "А — 1, Б — 1, В — 1", en: "A — 1, B — 1, C — 1" }
+          why:
+            uk: "Без ключа сервер не має чим упізнати повтор: для нього це просто другий `POST`. Зачекати перед повтором теж не допоможе — сервер нічого не пам’ятає про перший запит."
+            en: "Without a key the server has nothing to recognize the retry by: to it this is just a second `POST`. Waiting before the retry does not help either — the server remembers nothing about the first request."
+        - id: two-one-one
+          text: { uk: "А — 2, Б — 1, В — 1", en: "A — 2, B — 1, C — 1" }
+          why:
+            uk: "Новий ключ для сервера — нова дія. Ключ створюють один раз на дію й повторюють з кожною спробою, інакше він нічого не захищає."
+            en: "A new key is a new action to the server. A key is created once per action and repeated with every attempt, otherwise it protects nothing."
+      correct: [two-one-two]
+    explanation:
+      uk: "Захищає лише **той самий** ключ у кожній спробі. Тому клієнт створює ключ, коли людина натиснула «Зберегти», а не всередині циклу повторів."
+      en: "Only **the same** key in every attempt protects. So the client creates the key when the person pressed “Save”, not inside the retry loop."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: what-to-retry
+        from: js-08-10-stale-responses-retry
+        prompt:
+          uk: "Обмежений повтор у JavaScript-клієнті повторював запит не за кожної невдачі. Які невдачі варто повторювати?"
+          en: "The bounded retry in the JavaScript client did not repeat the request on every failure. Which failures are worth retrying?"
+        answer:
+          type: choice
+          options:
+            - id: network-5xx
+              text: { uk: "Помилки мережі й відповіді 5xx", en: "Network errors and 5xx answers" }
+            - id: all
+              text: { uk: "Будь-які, включно з 400 і 404", en: "Any, including 400 and 404" }
+              why:
+                uk: "400 чи 404 повториться так само: проблема в самому запиті, а не в тимчасовому збої."
+                en: "A 400 or 404 repeats exactly the same: the problem is in the request itself, not in a temporary failure."
+            - id: none
+              text: { uk: "Жодні: повторювати запити шкідливо", en: "None: retrying requests is harmful" }
+              why:
+                uk: "Тимчасові збої мережі й сервера трапляються; обмежений повтор їх пережидає. Небезпека лише в повторі неідемпотентного запиту без захисту."
+                en: "Temporary network and server failures happen; a bounded retry waits them out. The only danger is retrying a non-idempotent request without protection."
+          correct: [network-5xx]
+        explanation:
+          uk: "Саме помилка мережі — найнебезпечніший випадок для `POST`: робота могла вже виконатися. Idempotency-Key робить такий повтор безпечним."
+          en: "A network error is exactly the most dangerous case for a `POST`: the work may already be done. An Idempotency-Key makes such a retry safe."
+
+  - id: expense-retry
+    kind: example
+    runtime: isolated-node
+    dir: expense-retry
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      lunch: { uk: "Обід", en: "Lunch" }
+      stored: { uk: "збережено", en: "stored" }
+      dropped: { uk: "обриваю з’єднання замість відповіді", en: "dropping the connection instead of answering" }
+      replayed: { uk: "уже бачив цей ключ — повторюю першу відповідь", en: "key seen before — repeating the first answer" }
+      attempt: { uk: "спроба", en: "attempt" }
+      noAnswer: { uk: "відповіді немає", en: "no answer" }
+      count: { uk: "Витрат на сервері:", en: "Expenses on the server:" }
+    title:
+      uk: "Повтор крізь ненадійне з’єднання"
+      en: "A retry through a flaky connection"
+    body:
+      uk: |
+        `app.js` має «зламане» з’єднання: перший `POST` він виконує, а потім обриває з’єднання замість відповіді. `client.js` після помилки мережі повторює запит один раз. Рядки `[server]` і `[client]` показують, що бачить кожна сторона.
+
+        Натисни **Запустити**: клієнт повторив запит, і на сервері дві однакові витрати.
+      en: |
+        `app.js` has a “broken” connection: it carries out the first `POST` and then drops the connection instead of answering. `client.js` retries once after a network error. The `[server]` and `[client]` lines show what each side sees.
+
+        Press **Run**: the client retried, and the server holds two identical expenses.
+    tryIt:
+      uk: |
+        1. У `index.js` заміни `const headers = {};` на `const headers = { 'idempotency-key': crypto.randomUUID() };` і запусти. Сервер упізнає повтор, а витрата одна. (`crypto` у Node.js — глобальний об’єкт, імпорт не потрібен.)
+        2. Перенеси створення ключа всередину циклу в `client.js`: додай у заголовки запиту `'idempotency-key': crypto.randomUUID()` після `...headers` і запусти. Кожна спроба тепер має новий ключ — і витрат знову дві.
+      en: |
+        1. In `index.js` replace `const headers = {};` with `const headers = { 'idempotency-key': crypto.randomUUID() };` and run. The server recognizes the retry, and there is one expense. (`crypto` is a global object in Node.js, no import needed.)
+        2. Move the key creation into the loop in `client.js`: add `'idempotency-key': crypto.randomUUID()` to the request headers after `...headers` and run. Every attempt now has a new key — and there are two expenses again.
+
+  - id: task-idempotency
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: task-idempotency
+    entry: index.js
+    editable: [idempotency.js]
+    capabilities: { network: loopback }
+    strings:
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+      noKey: { uk: "без ключа", en: "no key" }
+      count: { uk: "Справ:", en: "Tasks:" }
+    title:
+      uk: "Сховище ключів для планувальника"
+      en: "A key store for the planner"
+    instructions:
+      uk: |
+        `app.js` пропускає кожен `POST /tasks` через `idempotency.run(key, rawBody, create)`: `key` — заголовок `Idempotency-Key` (або `undefined`), `rawBody` — тіло як текст, `create()` створює справу й повертає `{ status: 201, body }`. Напиши `createIdempotencyStore` в `idempotency.js`:
+
+        - без ключа — просто виконай `create()`;
+        - новий ключ — виконай `create()` і запам’ятай для ключа відбиток SHA-256 сирого тексту тіла, `status` і `body`;
+        - відомий ключ і той самий відбиток — **не** викликай `create()`, поверни збережені `status` і `body`;
+        - відомий ключ з іншим відбитком — поверни статус 422 і тіло `{ error: { code: "IDEMPOTENCY_KEY_REUSED", messageKey: "errors.idempotencyKeyReused", details: {} } }`.
+
+        Відбиток: `createHash('sha256').update(text).digest('hex')` з `node:crypto`. Перевірки бачать лише відповіді сервера, тож зберігати замість відбитка сам текст тіла теж правильно — відбиток просто коротший.
+      en: |
+        `app.js` passes every `POST /tasks` through `idempotency.run(key, rawBody, create)`: `key` is the `Idempotency-Key` header (or `undefined`), `rawBody` is the body as text, `create()` creates the task and returns `{ status: 201, body }`. Write `createIdempotencyStore` in `idempotency.js`:
+
+        - no key — just run `create()`;
+        - a new key — run `create()` and remember, for the key, the SHA-256 fingerprint of the raw body text, the `status` and the `body`;
+        - a known key with the same fingerprint — do **not** call `create()`; return the saved `status` and `body`;
+        - a known key with a different fingerprint — return status 422 and the body `{ error: { code: "IDEMPOTENCY_KEY_REUSED", messageKey: "errors.idempotencyKeyReused", details: {} } }`.
+
+        Fingerprint: `createHash('sha256').update(text).digest('hex')` from `node:crypto`. The checks see only the server's answers, so keeping the body text itself instead of a fingerprint is correct too — a fingerprint is just shorter.
+    testTitles:
+      "a retried POST with the same key creates one task":
+        uk: "Повторений `POST` з тим самим ключем створює одну справу"
+        en: "A retried `POST` with the same key creates one task"
+      "the replay repeats the first answer: status 201 and the same task":
+        uk: "Повтор повертає першу відповідь: статус 201 і ту саму справу"
+        en: "The replay repeats the first answer: status 201 and the same task"
+      "the same key with a different body answers 422 and creates nothing":
+        uk: "Той самий ключ з іншим тілом — 422, і нічого не створено"
+        en: "The same key with a different body answers 422 and creates nothing"
+      "without a key, or with different keys, every POST creates a task":
+        uk: "Без ключа чи з різними ключами кожен `POST` створює справу"
+        en: "Without a key, or with different keys, every `POST` creates a task"
+    hints:
+      nudge:
+        uk: "Збережені відповіді зручно тримати в `Map`, створеному всередині `createIdempotencyStore` — так у кожного сервера власне сховище."
+        en: "A `Map` created inside `createIdempotencyStore` is a handy place for the saved answers — that way every server has its own store."
+      explanation:
+        uk: "Порядок дій у `run`: немає ключа — одразу `create()`. Є запис для ключа — порівняй відбитки й або поверни збережене, або 422. Немає запису — дочекайся `await create()`, збережи `{ hash, status, body }` і поверни результат. Для іншого API це могло б виглядати як `cache.set(orderId, { hash, status: 202, body: receipt })`."
+        en: "The order inside `run`: no key — `create()` at once. A saved entry for the key — compare fingerprints and either return the saved answer or 422. No entry — `await create()`, save `{ hash, status, body }` and return the result. For another API it might look like `cache.set(orderId, { hash, status: 202, body: receipt })`."
+    solutionNote:
+      uk: "Сховище пам’ятає для кожного ключа відбиток тіла й повну відповідь. Повтор з тим самим тілом отримує ту саму відповідь, і `create()` не викликається вдруге; інше тіло з тим самим ключем — помилка клієнта, 422. Сховище в пам’яті зникає з перезапуском; справжній сервіс зберігав би ключі разом із даними й обмежений час."
+      en: "For every key the store remembers the body fingerprint and the full answer. A retry with the same body gets the same answer, and `create()` is not called again; another body with the same key is a client mistake, 422. An in-memory store disappears on restart; a real service would store keys together with the data, for a limited time."
+    feedback:
+      - when: { test: "a retried POST with the same key creates one task" }
+        message:
+          uk: "Ця перевірка надсилає два однакові `POST` з ключем `key-1` і чекає 3 справи (2 початкові + 1). Для відомого ключа не викликай `create()` вдруге."
+          en: "This check sends two identical `POST` requests with the key `key-1` and expects 3 tasks (2 initial + 1). For a known key do not call `create()` a second time."
+      - when: { test: "the replay repeats the first answer: status 201 and the same task" }
+        message:
+          uk: "Ця перевірка чекає на повтор той самий статус 201 і те саме тіло, що й першого разу. Зберігай статус разом із тілом і повертай обидва."
+          en: "This check expects the retry to get the same status 201 and the same body as the first time. Save the status together with the body and return both."
+      - when: { test: "the same key with a different body answers 422 and creates nothing" }
+        message:
+          uk: "Ця перевірка надсилає ключ `key-3` вдруге з іншою справою й чекає 422 з кодом `IDEMPOTENCY_KEY_REUSED` і без нової справи. Порівнюй відбиток тіла, а не лише ключ."
+          en: "This check sends the key `key-3` a second time with another task and expects 422 with the code `IDEMPOTENCY_KEY_REUSED` and no new task. Compare the body fingerprint, not only the key."
+      - when: { test: "without a key, or with different keys, every POST creates a task" }
+        message:
+          uk: "Ця перевірка надсилає два `POST` без ключа й два з різними ключами і чекає 6 справ. Без ключа нічого не запам’ятовуй."
+          en: "This check sends two `POST` requests without a key and two with different keys and expects 6 tasks. Without a key remember nothing."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-04
+    body:
+      uk: "У кроці проєкту цього розділу `POST /v1/records` твого сервера приймає `Idempotency-Key`: той самий ключ і те саме тіло дають ту саму відповідь без другого запису, інше тіло — `422`. Клієнта крок не змінює: ключі надсилають лише `node try-api.mjs` і `npm test`, а ключ, який клієнт створює один раз на натискання «Зберегти», — необов’язкове доповнення на потім. У трекері звичок `POST /v1/records/:id/completions` додає день через `completeHabit`, тож повтор лишає один запис навіть без ключа."
+      en: "In this unit’s project step your server’s `POST /v1/records` accepts an `Idempotency-Key`: the same key and the same body give the same answer without a second record, another body is a `422`. The step does not change the client: only `node try-api.mjs` and `npm test` send keys, and a key that the client creates once per press of “Save” is an optional addition for later. In the habit tracker `POST /v1/records/:id/completions` adds a day through `completeHabit`, so a retry leaves one entry even without a key."

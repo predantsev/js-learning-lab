@@ -3,7 +3,7 @@ import { type KeyboardEvent, useEffect, useMemo, useState } from 'react';
 import { ApiError, api } from '../lib/api';
 import { loadLesson } from '../lib/content';
 import { type Key, formatDate, pick } from '../lib/i18n';
-import { dueReviews, lessonEvidence, recordReview, skipLesson } from '../lib/progress';
+import { canSkipLesson, dueReviews, lessonEvidence, recordReview, skipLesson } from '../lib/progress';
 import { lessonHref, navigate } from '../lib/router';
 import { useStore } from '../lib/store';
 import type { CapstoneId, IndexLesson, IndexUnit, Lang, Lesson, Question, ReviewItemState, StyleId } from '../lib/types';
@@ -57,11 +57,13 @@ function UnitCard({ unit }: { unit: IndexUnit }) {
   const t = useT();
   const lang = useLang();
   const done = useStore(app().progress.store, (s) => unit.lessons.filter((l) => s.lessons[l.id]?.state === 'completed').length);
-  const hasOpen = useStore(app().progress.store, (s) => unit.lessons.some((l) => l.authored && !['completed', 'skipped'].includes(s.lessons[l.id]?.state ?? 'unseen')));
+  // Assessment lessons are not skipped with the unit: they are completed only through their exercises.
+  const skippable = unit.lessons.filter((l) => l.authored && canSkipLesson(l));
+  const hasOpen = useStore(app().progress.store, (s) => skippable.some((l) => !['completed', 'skipped'].includes(s.lessons[l.id]?.state ?? 'unseen')));
   const capstone = useActiveCapstone();
   const skipUnit = () => {
     if (!window.confirm(t('course.skipUnitConfirm'))) return;
-    app().progress.update((p) => unit.lessons.filter((l) => l.authored).reduce((doc, l) => skipLesson(doc, { id: l.id }), p));
+    app().progress.update((p) => skippable.reduce((doc, l) => skipLesson(doc, { id: l.id, kind: l.kind }), p));
   };
   return (
     <section className="unit-card" aria-labelledby={`unit-${unit.id}`}>

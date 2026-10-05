@@ -1,0 +1,409 @@
+id: no-12-08-runbook-monitoring-rollback
+unit: NO-12
+title:
+  uk: "Runbook, моніторинг і rollback"
+  en: "Runbook, monitoring and rollback"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Писати запис runbook для одного симптому — сигнал, перевірки, дія, кроки rollback, — за яким зможе діяти інша людина."
+    en: "Write a runbook entry for one symptom with its signal, checks, action and rollback steps that someone else can follow."
+  - uk: "Встановлювати поріг тривоги за метриками й вирішувати, коли відкотитися до попереднього артефакту, а коли виправляти вперед."
+    en: "Set an alert threshold from the metrics and decide when to roll back to the previous artifact instead of fixing forward."
+prerequisites: [no-12-07-production-mode-rehearsal, re-12-04-static-delivery-rollback]
+subskills:
+  - { family: B-10, skill: "deployment/monitoring/rollback/runbook", depth: intro }
+glossary: [runbook, alert-threshold]
+selfCheck: [predict-data-rollback, runbook-code]
+
+blocks:
+  - id: write-it-before
+    kind: explanation
+    title:
+      uk: "Runbook пишуть до інциденту"
+      en: "A runbook is written before the incident"
+    body:
+      uk: |
+        О третій ночі приходить тривога. Людина, що чергує, може не знати цього сервісу, а голова працює гірше, ніж удень. Тому **[[runbook]]** пишуть заздалегідь — для кожного симптому окремий запис:
+
+        - **сигнал** — яка тривога спрацювала і з якої метрики;
+        - **перевірки** по черзі — `/readyz`, рядки журналу за request id, останній запис релізу;
+        - **рішення** — відкотитися чи виправляти вперед, і за якою ознакою;
+        - **перевірка даних** перед відкатом;
+        - **кроки rollback** — команди, а не «відкоти якось»;
+        - **як підтвердити відновлення** — що саме має показати метрика.
+
+        Тривогу задає **[[alert-threshold|поріг]]**: не «помилки є», а «частка помилок за хвилину понад 5 % дві хвилини поспіль, якщо запитів хоча б 20». Одна погана хвилина — ще не інцидент, а три запити, з яких один невдалий, — ще не 33 % помилок.
+      en: |
+        At three in the morning an alert arrives. The person on duty may not know this service, and the mind works worse than in the daytime. So a **[[runbook]]** is written in advance — a separate entry for each symptom:
+
+        - the **signal** — which alert fired, and from which metric;
+        - the **checks**, in order — `/readyz`, log lines by request id, the latest release record;
+        - the **decision** — roll back or fix forward, and by which sign;
+        - a **data check** before rolling back;
+        - the **rollback steps** — commands, not “roll it back somehow”;
+        - **how to confirm recovery** — what exactly the metric must show.
+
+        An alert is set by an **[[alert-threshold]]**: not “there are errors”, but “the share of errors per minute is above 5 % for two minutes in a row, if there are at least 20 requests”. One bad minute is not yet an incident, and three requests with one failure are not yet 33 % errors.
+
+  - id: code-and-data
+    kind: explanation
+    title:
+      uk: "Відкат коду не відкочує дані"
+      en: "Rolling back the code does not roll back the data"
+    body:
+      uk: |
+        У RE-12 [[release-rollback]] клієнта означав знову віддати попередню теку `dist`. Сервер складніший: нова версія могла **змінити дані**. Якщо 1.4.0 під час старту мігрувала `habits.json` на схему 2 (NO-05), то 1.3.0, яка знає лише схему 1, після відкату просто не стартує — або, гірше, стартує й неправильно прочитає дані.
+
+        Тому перед відкатом runbook порівнює `schemaVersion` даних із тим, що читає попередня версія:
+
+        - дані сумісні → відкат: зупинити, перевірити sha256 попереднього артефакту, запустити його;
+        - дані новіші, а backup, зроблений **перед** оновленням, є і відтоді не було записів → відновити backup, потім запустити попередню версію;
+        - дані новіші, а записи вже були → відновлення їх загубить: **виправляй уперед** (fix forward) або спершу напиши зворотну міграцію.
+      en: |
+        In RE-12 a [[release-rollback]] of the client meant serving the previous `dist` folder again. A server is harder: the new version may have **changed the data**. If 1.4.0 migrated `habits.json` to schema 2 at startup (NO-05), then 1.3.0, which knows only schema 1, simply does not start after a rollback — or, worse, starts and reads the data wrongly.
+
+        So before rolling back, the runbook compares the data’s `schemaVersion` with what the previous version reads:
+
+        - the data is compatible → roll back: stop, verify the previous artifact’s sha256, start it;
+        - the data is newer, and a backup taken **before** the upgrade exists with no writes since → restore the backup, then start the previous version;
+        - the data is newer and writes have already happened → a restore would lose them: **fix forward**, or write a down-migration first.
+
+  - id: runbook-flow
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Від тривоги до відновлення"
+      en: "From an alert to recovery"
+    textEquivalent:
+      uk: "Тривога спрацьовує, коли частка помилок понад 5 % дві хвилини поспіль. Спершу перевіряють /readyz, потім рядки журналу за request id, потім останній запис релізу. Далі рішення: виправляти вперед або відкотитися до попередньої контрольної суми. Перед відкатом стоїть перевірка даних: якщо схема даних новіша, ніж читає попередня версія, відновлюють backup, зроблений перед оновленням, і лише тоді запускають попередню версію. Наприкінці підтверджують відновлення: /readyz відповідає 200, а частка помилок наступної хвилини нижча за поріг."
+      en: "The alert fires when the share of errors is above 5 % for two minutes in a row. First /readyz is checked, then the log lines by request id, then the latest release record. Next comes the decision: fix forward or roll back to the previous checksum. Before a rollback there is a data check: if the data’s schema is newer than the previous version reads, the backup taken before the upgrade is restored, and only then the previous version is started. At the end recovery is confirmed: /readyz answers 200, and the error share of the next minute is below the threshold."
+    spec:
+      layout: grid
+      nodes:
+        - { id: alert, label: { uk: "помилки > 5 % × 2 хв", en: "errors > 5 % × 2 min" }, shape: pill, w: 170, col: 0, row: 0 }
+        - { id: readyz, label: "/readyz", w: 170, col: 0, row: 1 }
+        - { id: logs, label: { uk: "рядки журналу за request id", en: "logs by request id" }, w: 170, col: 0, row: 2 }
+        - { id: record, label: { uk: "запис релізу", en: "release record" }, w: 170, col: 0, row: 3 }
+        - { id: fix, label: { uk: "виправити вперед", en: "fix forward" }, shape: note, w: 150, col: 1, row: 3 }
+        - { id: data, label: { uk: "перевірка даних", en: "data check" }, shape: round, w: 170, col: 0, row: 4 }
+        - { id: restore, label: { uk: "відновити backup", en: "restore backup" }, shape: cylinder, w: 150, col: 1, row: 4 }
+        - { id: previous, label: { uk: "попередній sha256", en: "previous sha256" }, w: 170, col: 0, row: 5 }
+        - { id: confirm, label: { uk: "підтвердити", en: "confirm" }, shape: pill, w: 170, col: 0, row: 6 }
+      edges:
+        - { id: e1, from: alert, to: readyz }
+        - { id: e2, from: readyz, to: logs }
+        - { id: e3, from: logs, to: record }
+        - { id: e4, from: record, to: fix, kind: dashed }
+        - { id: e5, from: record, to: data }
+        - { id: e6, from: data, to: restore, kind: dashed, label: { uk: "схема новіша", en: "newer schema" } }
+        - { id: e7, from: data, to: previous }
+        - { id: e8, from: restore, to: previous }
+        - { id: e9, from: previous, to: confirm }
+      steps:
+        - caption:
+            uk: "Тривога: частка помилок понад 5 % дві хвилини поспіль. Поріг відсіює одну випадкову погану хвилину."
+            en: "The alert: the error share is above 5 % for two minutes in a row. The threshold filters out one random bad minute."
+          highlight: [alert]
+        - caption:
+            uk: "Перевірки по черзі: `/readyz` (сховище живе?), рядки журналу за request id (який маршрут, яке повідомлення), останній запис релізу (що й коли розгорнули)."
+            en: "Checks in turn: `/readyz` (is the storage alive?), log lines by request id (which route, which message), the latest release record (what was deployed and when)."
+          highlight: [readyz, logs, record, e1, e2, e3]
+        - caption:
+            uk: "Рішення. Помилки почалися з новим релізом, а попередній артефакт збережено, — відкат. Інакше — виправлення вперед."
+            en: "The decision. The errors began with the new release and the previous artifact is kept — a rollback. Otherwise — a fix forward."
+          highlight: [record, fix, data, e4, e5]
+        - caption:
+            uk: "Перевірка даних: якщо схема новіша, ніж читає попередня версія, спершу відновлюють backup, зроблений перед оновленням, — лише коли відтоді не було записів."
+            en: "The data check: if the schema is newer than the previous version reads, the backup taken before the upgrade is restored first — only when there were no writes since."
+          highlight: [data, restore, e6, e8]
+        - caption:
+            uk: "Запуск попереднього артефакту за його sha256 і підтвердження: `/readyz` — 200, частка помилок наступної хвилини нижча за поріг."
+            en: "Starting the previous artifact by its sha256, and confirmation: `/readyz` is 200, the error share of the next minute is below the threshold."
+          highlight: [previous, confirm, e7, e9]
+
+  - id: predict-data-rollback
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Сервіс звичок оновили з 1.3.0 до 1.4.0. Під час старту 1.4.0 перенесла дані на схему 2: поле `completions` тепер `doneDates`. Через дві хвилини спрацювала тривога: 15 % помилок на `/habits/streaks`. Команда хоче просто запустити збережений артефакт 1.3.0, який читає лише схему 1. Що станеться і що runbook мав перевірити першим?"
+      en: "The habit service was upgraded from 1.3.0 to 1.4.0. At startup 1.4.0 moved the data to schema 2: the field `completions` is now `doneDates`. Two minutes later the alert fired: 15 % errors on `/habits/streaks`. The team wants to just start the kept artifact 1.3.0, which reads schema 1 only. What happens, and what should the runbook have checked first?"
+    answer:
+      type: choice
+      options:
+        - id: refuses-check-schema
+          text:
+            uk: "1.3.0 не стартує на даних схеми 2; спершу треба порівняти `schemaVersion` даних із тим, що читає 1.3.0, і відновити backup, зроблений перед оновленням"
+            en: "1.3.0 does not start on schema 2 data; first compare the data’s `schemaVersion` with what 1.3.0 reads, and restore the backup taken before the upgrade"
+        - id: just-works
+          text:
+            uk: "Усе запрацює: відкат повертає систему в стан до оновлення"
+            en: "Everything works: a rollback returns the system to its state before the upgrade"
+          why:
+            uk: "Відкат повертає **код**, а не дані. Файл `habits.json` уже переписано на схему 2, і 1.3.0 знаходить там `doneDates` замість `completions`."
+            en: "A rollback returns the **code**, not the data. The file `habits.json` has already been rewritten to schema 2, and 1.3.0 finds `doneDates` there instead of `completions`."
+        - id: restore-always
+          text:
+            uk: "Треба завжди відновлювати backup перед відкатом — це безпечно"
+            en: "A backup must always be restored before a rollback — it is safe"
+          why:
+            uk: "Не завжди: якщо після оновлення люди вже щось записали, відновлення backup ці записи загубить. Тоді правильний шлях — виправляти вперед або написати зворотну міграцію."
+            en: "Not always: if people already wrote something after the upgrade, restoring the backup loses those writes. Then the right way is to fix forward or write a down-migration."
+      correct: [refuses-check-schema]
+    explanation:
+      uk: "Такий інцидент легко програти в пісочниці. З перевіркою даних runbook відновлює `habits-before-1.4.0.json`, і 1.3.0 стартує з 0 % помилок. Без неї 1.3.0 зупиняється з `unsupported schemaVersion 2` — краще, ніж тихо читати чужі поля, але сервіс лежить, доки ти розбираєшся."
+      en: "Such an incident is easy to play out in the sandbox. With the data check the runbook restores `habits-before-1.4.0.json`, and 1.3.0 starts with 0 % errors. Without it 1.3.0 stops with `unsupported schemaVersion 2` — better than silently reading the wrong fields, but the service is down while you figure it out."
+
+  - id: habit-incident
+    kind: example
+    runtime: isolated-node
+    dir: habit-incident
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      words: { uk: "Вчити англійські слова", en: "Learn English words" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+      runbook:
+        uk: |
+          # Сервіс звичок — запис runbook: помилок понад 5 % протягом 2 хвилин
+
+          **Сигнал.** Тривога: `errors / requests` хвилинного вікна більше за 0.05 у двох вікнах поспіль
+          (і у вікні щонайменше 20 запитів).
+
+          **Перевірки по черзі.**
+          1. `GET /readyz` — 503 означає проблему зі сховищем або запуском: тоді діяти за записом про сховище.
+          2. Рядки журналу з помилками за останнє вікно: який маршрут, які request id, яке повідомлення.
+          3. Останній запис релізу: що розгорнуто, коли, з яким sha256; чи збережено попередній артефакт?
+
+          **Рішення.** Помилки почалися з останнім релізом, а попередній артефакт збережено →
+          відкат. Інакше, або якщо попередній реліз не прочитає сьогоднішніх даних → виправлення вперед.
+
+          **Перевірка даних перед відкатом.** Порівняти `schemaVersion` даних із тим, що читає попередній
+          реліз. Якщо дані новіші: відновити backup, зроблений одразу перед оновленням, — лише якщо відтоді
+          не було записів (інакше вони загубляться: виправлення вперед або спершу зворотна міграція).
+
+          **Відкат.** Зупинити поточний реліз, перевірити sha256 попереднього артефакту, відновити дані,
+          якщо так сказала перевірка, запустити попередній реліз.
+
+          **Підтвердити відновлення.** `/readyz` — 200 з попередньою версією, а частка помилок наступного
+          повного вікна нижча за 0.05.
+        en: |
+          # Habit service — runbook entry: error rate above 5 % for 2 minutes
+
+          **Signal.** Alert: `errors / requests` of a one-minute window is above 0.05 for 2 windows in a row
+          (and the window has at least 20 requests).
+
+          **Checks, in order.**
+          1. `GET /readyz` — 503 means storage or startup trouble: follow the storage entry instead.
+          2. Error log lines of the last window: which route, which request ids, which message.
+          3. The latest release record: what was deployed, when, which sha256; is the previous artifact kept?
+
+          **Decision.** The errors started with the latest release and the previous artifact is kept →
+          roll back. Otherwise, or if the previous release cannot read today's data → fix forward.
+
+          **Data check before rollback.** Compare the data's `schemaVersion` with what the previous release
+          supports. If the data is newer: restore the backup taken right before the upgrade — only if no
+          writes happened since (otherwise they would be lost: fix forward or write a down-migration instead).
+
+          **Rollback.** Stop the current release, verify the previous artifact's sha256, restore data if the
+          check said so, start the previous release.
+
+          **Confirm recovery.** `/readyz` is 200 with the previous version, and the error rate of the next
+          full window is below 0.05.
+      noAlert: { uk: "тривоги немає — відкат не потрібен", en: "no alert — no rollback needed" }
+      deploy: { uk: "розгортання", en: "deploy" }
+      backupFirst: { uk: "спершу backup даних", en: "data backup first" }
+      minute: { uk: "хвилина", en: "minute" }
+      checks: { uk: "перевірки", en: "checks" }
+      errorLines: { uk: "рядків журналу з помилками", en: "error log lines" }
+      first: { uk: "перший", en: "first" }
+      release: { uk: "запис релізу", en: "release record" }
+      justDeployed: { uk: "щойно розгорнуто", en: "just deployed" }
+      kept: { uk: "збережено", en: "kept" }
+      dataCheck: { uk: "перевірка даних", en: "data check" }
+      dataSchema: { uk: "схема даних", en: "data schema" }
+      supports: { uk: "читає схему", en: "reads schema" }
+      restored: { uk: "відновлено", en: "restored" }
+      rollback: { uk: "відкат до", en: "roll back to" }
+      didNotStart: { uk: "не стартувала", en: "did not start" }
+      confirm: { uk: "підтвердження", en: "confirm" }
+    title:
+      uk: "Інцидент після оновлення, за runbook"
+      en: "An incident after an upgrade, by the runbook"
+    body:
+      uk: |
+        Спершу відкрий `RUNBOOK.md` — це запис runbook для тривоги «помилок понад 5 % дві хвилини». Потім натисни **Запустити**: `incident.js` розгортає 1.4.0 (спершу зробивши backup даних), надсилає «хвилини» по 40 запитів, ловить тривогу й проходить runbook крок за кроком.
+
+        Коментар угорі `incident.js` пояснює, де це імітація: обидва релізи — модулі в одному процесі, «хвилина» — 40 запитів поспіль, а «розгортання» — зупинка одного сервера й запуск іншого.
+      en: |
+        First open `RUNBOOK.md` — the runbook entry for the alert “errors above 5 % for two minutes”. Then press **Run**: `incident.js` deploys 1.4.0 (taking a data backup first), sends “minutes” of 40 requests, catches the alert and follows the runbook step by step.
+
+        The comment at the top of `incident.js` explains where this is an imitation: both releases are modules in one process, a “minute” is 40 requests in a row, and a “deploy” is stopping one server and starting another.
+    tryIt:
+      uk: |
+        1. Прочитай перший рядок журналу з помилкою: `/habits/streaks` і повідомлення `Cannot read properties of undefined (reading 'slice')`. Знайди в `releases/1.4.0/app.js`, де це: у звички `h-06` немає жодного виконаного дня, тож `doneDates.at(-1)` — `undefined`.
+        2. В `incident.js` заміни `const CHECK_DATA = true;` на `const CHECK_DATA = false;` і запусти. Тепер відкат завершується рядком `✖ 1.3.0 … unsupported schemaVersion 2`: код відкотили, а дані — ні. Поверни `true`.
+        3. У `releases/1.4.0/app.js` заміни `lastDay: last.slice(0, 10)` на `lastDay: last ?? null` і запусти: помилок 0 %, тривоги немає, і відкат не потрібен — так виглядало б виправлення вперед. Поверни рядок.
+      en: |
+        1. Read the first error log line: `/habits/streaks` and the message `Cannot read properties of undefined (reading 'slice')`. Find where it is in `releases/1.4.0/app.js`: the habit `h-06` has no completed day, so `doneDates.at(-1)` is `undefined`.
+        2. In `incident.js`, replace `const CHECK_DATA = true;` with `const CHECK_DATA = false;` and run. Now the rollback ends with the line `✖ 1.3.0 … unsupported schemaVersion 2`: the code was rolled back, the data was not. Put back `true`.
+        3. In `releases/1.4.0/app.js`, replace `lastDay: last.slice(0, 10)` with `lastDay: last ?? null` and run: 0 % errors, no alert, and no rollback is needed — that is what a fix forward would look like. Put the line back.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: rollback клієнта"
+      en: "Recall: a client rollback"
+    items:
+      - id: previous-dist
+        from: re-12-04-static-delivery-rollback
+        prompt:
+          uk: "У RE-12 rollback клієнта зводився до того, щоб знову віддавати попередній артефакт. Що мало бути зроблено **до** релізу, щоб це стало можливим?"
+          en: "In RE-12 a client rollback came down to serving the previous artifact again. What had to be done **before** the release to make that possible?"
+        answer:
+          type: choice
+          options:
+            - id: keep-previous
+              text:
+                uk: "Зберегти попередню зібрану теку окремо, а не перезаписувати її новою збіркою"
+                en: "Keep the previous built folder separately instead of overwriting it with the new build"
+            - id: rebuild-later
+              text:
+                uk: "Нічого: попередню версію можна будь-коли зібрати знову з git"
+                en: "Nothing: the previous version can be built again from git at any time"
+              why:
+                uk: "Перезбірка займає час саме тоді, коли його немає, і дає не обов’язково ті самі байти: інші залежності, інструменти, Node. Відкочуються до збереженого, перевіреного артефакту."
+                en: "A rebuild takes time exactly when there is none, and does not necessarily give the same bytes: other dependencies, tools, Node. You roll back to a kept, verified artifact."
+            - id: cache
+              text:
+                uk: "Вимкнути кеш у браузерах, щоб люди одразу побачили стару версію"
+                en: "Turn off caching in browsers so that people see the old version at once"
+              why:
+                uk: "Кеш тут не заважає: файли з хешем у назві кешуються назавжди, а `index.html` — ні. Для відкату потрібен сам попередній артефакт."
+                en: "Caching does not get in the way here: files with a hash in their names are cached forever, while `index.html` is not. A rollback needs the previous artifact itself."
+          correct: [keep-previous]
+        explanation:
+          uk: "Для сервера те саме, плюс одне: зберігається не лише артефакт із записом релізу, а й backup даних, зроблений перед оновленням, — бо нова версія могла змінити дані."
+          en: "For a server it is the same, plus one thing: not only the artifact with its release record is kept, but also a data backup taken before the upgrade — because the new version may have changed the data."
+
+  - id: runbook-code
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: runbook-code
+    entry: index.js
+    editable: [runbook.js]
+    strings:
+      alertAt: { uk: "тривога спрацювала у вікні №", en: "the alert fired in window no." }
+    title:
+      uk: "Запис runbook як код: тривога й план відкату"
+      en: "A runbook entry as code: the alert and the rollback plan"
+    instructions:
+      uk: |
+        У `runbook.js` напиши дві функції — дві частини запису «помилок понад 5 % дві хвилини».
+
+        `alertFires(windows, { rate = 0.05, forWindows = 2, minRequests = 20 })` отримує масив хвилинних вікон `{ requests, errors }` і повертає індекс вікна, у якому тривога спрацьовує, або `-1`:
+
+        - вікно погане, коли в ньому щонайменше `minRequests` запитів **і** `errors / requests` **більше** за `rate` (рівно 5 % — ще не тривога);
+        - тривога — це `forWindows` поганих вікон поспіль; вікно з малою кількістю запитів перериває серію.
+
+        `rollbackPlan({ current, previous, dataSchemaVersion, backup, writesSinceUpgrade })` повертає план:
+
+        - `previous` немає (`null`) → `{ action: 'fix-forward', reason }`;
+        - `dataSchemaVersion` не більший за `previous.supportsSchema` → `{ action: 'rollback', steps }` з кроками `stop <current.version>`, `verify sha256 <previous.sha256>`, `start <previous.version>`, `check /readyz`, `check error rate`;
+        - дані новіші → потрібен `backup` зі `schemaVersion` не більшим за `previous.supportsSchema` **і** `writesSinceUpgrade === 0`; тоді між `verify sha256 …` і `start …` стоїть крок `restore <backup.file>`; інакше — `{ action: 'fix-forward', reason }`.
+
+        `reason` — будь-який зрозумілий текст.
+      en: |
+        In `runbook.js`, write two functions — two parts of the entry “errors above 5 % for two minutes”.
+
+        `alertFires(windows, { rate = 0.05, forWindows = 2, minRequests = 20 })` receives an array of one-minute windows `{ requests, errors }` and returns the index of the window where the alert fires, or `-1`:
+
+        - a window is bad when it has at least `minRequests` requests **and** `errors / requests` is **greater** than `rate` (exactly 5 % is not yet an alert);
+        - the alert is `forWindows` bad windows in a row; a window with too few requests breaks the run.
+
+        `rollbackPlan({ current, previous, dataSchemaVersion, backup, writesSinceUpgrade })` returns a plan:
+
+        - there is no `previous` (`null`) → `{ action: 'fix-forward', reason }`;
+        - `dataSchemaVersion` is not greater than `previous.supportsSchema` → `{ action: 'rollback', steps }` with the steps `stop <current.version>`, `verify sha256 <previous.sha256>`, `start <previous.version>`, `check /readyz`, `check error rate`;
+        - the data is newer → you need a `backup` with a `schemaVersion` not greater than `previous.supportsSchema` **and** `writesSinceUpgrade === 0`; then the step `restore <backup.file>` stands between `verify sha256 …` and `start …`; otherwise `{ action: 'fix-forward', reason }`.
+
+        `reason` is any clear text.
+    testTitles:
+      "the alert fires on the second bad window in a row":
+        uk: "Тривога спрацьовує на другому поганому вікні поспіль"
+        en: "The alert fires on the second bad window in a row"
+      "one bad window alone does not fire":
+        uk: "Одне погане вікно не спрацьовує"
+        en: "One bad window alone does not fire"
+      "exactly 5 % is not above the threshold":
+        uk: "Рівно 5 % — не понад поріг"
+        en: "Exactly 5 % is not above the threshold"
+      "a window with fewer than 20 requests does not count":
+        uk: "Вікно з менш ніж 20 запитами не враховується"
+        en: "A window with fewer than 20 requests does not count"
+      "the options change the threshold and the length":
+        uk: "Параметри змінюють поріг і довжину серії"
+        en: "The options change the threshold and the length"
+      "with compatible data the plan rolls back without a restore":
+        uk: "Із сумісними даними план відкочує без відновлення"
+        en: "With compatible data the plan rolls back without a restore"
+      "newer data is restored from the backup before the start":
+        uk: "Новіші дані відновлюються з backup перед запуском"
+        en: "Newer data is restored from the backup before the start"
+      "newer data with writes since the upgrade means fix forward":
+        uk: "Новіші дані із записами після оновлення — виправлення вперед"
+        en: "Newer data with writes since the upgrade means fix forward"
+      "newer data without a readable backup means fix forward":
+        uk: "Новіші дані без придатного backup — виправлення вперед"
+        en: "Newer data without a readable backup means fix forward"
+      "without a previous artifact there is nothing to roll back to":
+        uk: "Без попереднього артефакту відкочуватися нікуди"
+        en: "Without a previous artifact there is nothing to roll back to"
+    hints:
+      nudge:
+        uk: "Для тривоги тримай лічильник поганих вікон поспіль: погане вікно додає 1, будь-яке інше скидає до 0. Для плану спершу виріши, чи потрібне відновлення, а вже потім збирай масив кроків."
+        en: "For the alert keep a counter of bad windows in a row: a bad window adds 1, any other resets it to 0. For the plan, first decide whether a restore is needed, and only then build the array of steps."
+      explanation:
+        uk: "Серія поспіль на іншому прикладі — «три дні поспіль понад 10 000 кроків»: `let run = 0; for (const day of days) { run = day.steps > 10000 ? run + 1 : 0; if (run === 3) return day.date; }`. У тебе умова «поганого» вікна має дві частини, і мале вікно — теж «не погане». Для плану: спершу виходи з `fix-forward` у випадках, коли відкат неможливий, а решту кроків додавай у масив по черзі — так `restore …` гарантовано стане перед `start …`."
+        en: "A run in a row on another example — “three days in a row above 10,000 steps”: `let run = 0; for (const day of days) { run = day.steps > 10000 ? run + 1 : 0; if (run === 3) return day.date; }`. Your “bad” window has a two-part condition, and a small window is also “not bad”. For the plan: first return `fix-forward` in the cases where a rollback is impossible, and add the remaining steps to the array in turn — that way `restore …` is sure to come before `start …`."
+    solutionNote:
+      uk: "Runbook у вигляді коду можна перевірити тестами, як будь-яку функцію: «рівно 5 %», «мале вікно», «записи після оновлення» — це ті випадки, у яких людина вночі найчастіше помиляється. Текст `RUNBOOK.md` і код мають казати одне й те саме; коли змінюєш одне, змінюй і друге. Варіант, що перевіряє кожну серію вікон через `slice` і `every`, теж правильний."
+      en: "A runbook as code can be tested like any function: “exactly 5 %”, “a small window”, “writes after the upgrade” are exactly the cases where a person at night most often goes wrong. The text of `RUNBOOK.md` and the code must say the same thing; when you change one, change the other. A version that checks every run of windows with `slice` and `every` is correct too."
+    feedback:
+      - when: { test: "one bad window alone does not fire" }
+        message:
+          uk: "Ця перевірка дає вікна «погане, добре, погане, добре» й очікує `-1`. Тривога — лише кілька поганих вікон **поспіль**; добре вікно скидає серію."
+          en: "This check gives the windows “bad, good, bad, good” and expects `-1`. The alert is only several bad windows **in a row**; a good window resets the run."
+      - when: { test: "exactly 5 % is not above the threshold" }
+        message:
+          uk: "Ця перевірка дає три вікна по 2 помилки з 40 (рівно 5 %) і очікує `-1`. Порівнюй строго: `>`, а не `>=`."
+          en: "This check gives three windows of 2 errors out of 40 (exactly 5 %) and expects `-1`. Compare strictly: `>`, not `>=`."
+      - when: { test: "a window with fewer than 20 requests does not count" }
+        message:
+          uk: "Ця перевірка дає вікна по 10 запитів із 3 помилками й очікує `-1`, для «погане, мале, погане, погане» — `3`, а для двох вікон по 2 помилки з рівно 20 запитів — `1`. Вікно з менш ніж `minRequests` запитами не погане й перериває серію, а рівно `minRequests` — уже враховується (`>=`)."
+          en: "This check gives windows of 10 requests with 3 errors and expects `-1`, for “bad, small, bad, bad” — `3`, and for two windows of 2 errors in exactly 20 requests — `1`. A window with fewer than `minRequests` requests is not bad and breaks the run, while exactly `minRequests` already counts (`>=`)."
+      - when: { test: "newer data is restored from the backup before the start" }
+        message:
+          uk: "Ця перевірка дає дані схеми 2, попередню версію, що читає схему 1, і backup схеми 1 без записів після оновлення. Вона очікує крок `restore backups/habits-before-1.4.0.json` між `verify sha256 bb22` і `start 1.3.0`."
+          en: "This check gives data of schema 2, a previous version that reads schema 1, and a schema 1 backup with no writes after the upgrade. It expects the step `restore backups/habits-before-1.4.0.json` between `verify sha256 bb22` and `start 1.3.0`."
+      - when: { test: "newer data with writes since the upgrade means fix forward" }
+        message:
+          uk: "Ця перевірка дає новіші дані й 3 записи після оновлення та очікує `fix-forward`: відновлення backup загубило б ці записи."
+          en: "This check gives newer data and 3 writes after the upgrade and expects `fix-forward`: restoring the backup would lose those writes."
+      - when: { test: "with compatible data the plan rolls back without a restore" }
+        message:
+          uk: "Ця перевірка очікує рівно `['stop 1.4.0', 'verify sha256 bb22', 'start 1.3.0', 'check /readyz', 'check error rate']`, коли дані сумісні. Перевірка sha256 стоїть перед запуском."
+          en: "This check expects exactly `['stop 1.4.0', 'verify sha256 bb22', 'start 1.3.0', 'check /readyz', 'check error rate']` when the data is compatible. The sha256 check comes before the start."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-12
+    body:
+      uk: "У кроці проєкту цього розділу ти пишеш `server/RUNBOOK.md`: випуск, старт (спершу контрольна сума), зупинка й коди 0 і 1, спостереження за `/livez`, `/readyz` і `/metrics`, backup і restore drill, оновлення та один інцидент від симптому — сигнал, перевірки по черзі, перевірка даних (`schemaVersion`) перед відкатом, відкат і підтвердження відновлення. Інцидент ти репетируєш: вручну запакований 1.1.0 з дефектом, `npm run check:deploy` показує `✖`, і відкат до 1.0.0 за контрольною сумою повертає всі `✔`."
+      en: "In this unit’s project step you write `server/RUNBOOK.md`: release, start (the checksum first), stop and the exit codes 0 and 1, watching `/livez`, `/readyz` and `/metrics`, backup and the restore drill, upgrade, and one incident from its symptom — the signal, the checks in turn, a data check (`schemaVersion`) before the rollback, the rollback and confirming recovery. You rehearse the incident: a hand-packed 1.1.0 with a defect, `npm run check:deploy` shows `✖`, and the rollback to 1.0.0 by its checksum brings back every `✔`."

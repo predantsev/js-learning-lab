@@ -1,0 +1,369 @@
+id: js-08-09-cancellation-abort
+unit: JS-08
+title:
+  uk: "Скасування через AbortController"
+  en: "Cancellation with AbortController"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Скасувати запит `fetch`, що ще триває, через `AbortController` і відрізнити в блоці `catch` помилку `AbortError` від справжнього збою."
+    en: "Cancel an in-flight `fetch` with an `AbortController` and tell an `AbortError` from a real failure in the `catch` block."
+  - uk: "Скасовувати запит, щойно він став непотрібним (новий пошук, закрита частина сторінки), і прибирати таймер чи обробник події, що належали йому."
+    en: "Abort a request as soon as it is no longer needed (a new search, a closed view) and remove the listener or timer that belonged to it."
+prerequisites: [js-08-08-combinators-sequential-concurrent, js-06-10-events-default-behavior]
+subskills:
+  - { family: J-11, skill: "cancellation/AbortController", depth: intro }
+glossary: [abort-controller, abort-signal, cancellation]
+selfCheck: [aborted-fetch, search-records]
+
+blocks:
+  - id: stop-the-request
+    kind: explanation
+    title:
+      uk: "Перестати чекати ≠ зупинити запит"
+      en: "Stopping the wait ≠ stopping the request"
+    body:
+      uk: |
+        `withTimeout` з попереднього уроку лише переставав чекати: сам запит ішов далі й займав мережу. Щоб справді зупинити запит, потрібне [[cancellation|скасування]] — через [[abort-controller|AbortController]]:
+
+        ```js
+        const controller = new AbortController();
+        fetch("/lab/expenses/items", { signal: controller.signal });
+        // later, when the answer is no longer needed:
+        controller.abort();
+        ```
+
+        - `controller.signal` — [[abort-signal|сигнал]], який передають у `fetch`. Один контролер — для одного запиту (або групи запитів, що скасовуються разом).
+        - `controller.abort()` зупиняє запит, і його promise **відхиляється** помилкою з назвою `AbortError` (це `DOMException` — тип помилок самого браузера).
+        - Скасування — нормальна подія, а не збій: у `catch` перевір `error.name === "AbortError"` і **не** показуй людині повідомлення про помилку.
+
+        Скасування не повертає назад те, що сервер уже зробив: якщо запит на збереження встиг дійти, запис збережено. Воно лише звільняє браузер і твій код від відповіді, яка вже не потрібна.
+      en: |
+        `withTimeout` from the previous lesson only stopped waiting: the request itself went on and kept using the network. To really stop a request you need [[cancellation]] — through an [[abort-controller|AbortController]]:
+
+        ```js
+        const controller = new AbortController();
+        fetch("/lab/expenses/items", { signal: controller.signal });
+        // later, when the answer is no longer needed:
+        controller.abort();
+        ```
+
+        - `controller.signal` is the [[abort-signal|signal]] you pass to `fetch`. One controller per request (or per group of requests that are cancelled together).
+        - `controller.abort()` stops the request, and its promise **rejects** with an error named `AbortError` (a `DOMException` — the browser’s own type of error).
+        - Cancelling is a normal event, not a failure: in `catch` check `error.name === "AbortError"` and do **not** show the person an error message.
+
+        Cancelling does not undo what the server has already done: if a save request got through, the record is saved. It only frees the browser and your code from an answer that is no longer needed.
+
+  - id: aborted-fetch
+    kind: prediction
+    prompt:
+      uk: "Запит скасовують одразу після того, як його запустили. Що надрукує код?"
+      en: "The request is aborted right after it is started. What does the code print?"
+    code: |
+      const controller = new AbortController();
+      const request = fetch("./data/wishes.json", { signal: controller.signal });
+      controller.abort();
+
+      try {
+        await request;
+        console.log("loaded");
+      } catch (error) {
+        console.log("caught:", error.name);
+      }
+      console.log("aborted:", controller.signal.aborted);
+    verify:
+      logs: ["caught: AbortError", "aborted: true"]
+    answer:
+      type: choice
+      options:
+        - id: right
+          text:
+            uk: "`caught: AbortError`, `aborted: true`"
+            en: "`caught: AbortError`, `aborted: true`"
+        - id: still-loads
+          text:
+            uk: "`loaded`, `aborted: true`"
+            en: "`loaded`, `aborted: true`"
+          why:
+            uk: "`abort()` не лише позначає сигнал — він зупиняє запит, і promise `fetch` відхиляється."
+            en: "`abort()` does not just mark the signal — it stops the request, and the `fetch` promise rejects."
+        - id: hangs
+          text:
+            uk: "Лише `aborted: true` — скасований promise зависає назавжди"
+            en: "Only `aborted: true` — a cancelled promise hangs forever"
+          why:
+            uk: "Скасований запит не зникає мовчки: його promise **відхиляється**, тож `catch` спрацьовує, і код іде далі."
+            en: "A cancelled request does not quietly vanish: its promise **rejects**, so `catch` runs, and the code goes on."
+        - id: type-error
+          text:
+            uk: "`caught: TypeError`, `aborted: true`"
+            en: "`caught: TypeError`, `aborted: true`"
+          why:
+            uk: "`TypeError` — це збій мережі. Скасування має власну назву помилки — `AbortError`, і саме за нею його відрізняють від справжніх збоїв."
+            en: "`TypeError` is a network failure. Cancellation has its own error name — `AbortError` — and that is how it is told apart from real failures."
+      correct: [right]
+    explanation:
+      uk: "`abort()` зупиняє запит, і `await request` кидає помилку з назвою `AbortError`. `catch` її отримує, а `signal.aborted` назавжди лишається `true`: скасований контролер не можна «перезапустити» — для нового запиту потрібен новий."
+      en: "`abort()` stops the request, and `await request` throws an error named `AbortError`. `catch` receives it, and `signal.aborted` stays `true` for good: an aborted controller cannot be “restarted” — a new request needs a new one."
+
+  - id: abort-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Новий пошук скасовує старий"
+      en: "A new search cancels the old one"
+    textEquivalent:
+      uk: "Людина вводить «л». Код сторінки створює контролер A і запускає fetch пошуку з його сигналом; браузер надсилає GET /lab/search?q=л. Людина вводить ще одну літеру — «ла». Код викликає abort() для контролера A: браузер зупиняє перший запит, і його promise відхиляється з AbortError; код бачить цю назву й нічого не показує. Потім код створює контролер B і запускає новий пошук — GET /lab/search?q=ла. Сервер відповідає 200 OK, браузер віддає відповідь коду, і на сторінці з’являються результати для «ла». Сервер міг устигнути виконати пошук «л» — скасування не повертає його роботу назад, лише прибирає непотрібну відповідь."
+      en: "The person types “l”. The page code creates controller A and starts a search fetch with its signal; the browser sends GET /lab/search?q=l. The person types one more letter — “la”. The code calls abort() on controller A: the browser stops the first request, and its promise rejects with AbortError; the code sees that name and shows nothing. Then the code creates controller B and starts a new search — GET /lab/search?q=la. The server answers 200 OK, the browser hands the response to the code, and the results for “la” appear on the page. The server may have managed to run the search for “l” — cancelling does not undo its work, it only drops an answer nobody needs."
+    spec:
+      actors:
+        - { id: page, label: { uk: "Код сторінки", en: "Page code" } }
+        - { id: browser, label: { uk: "Браузер (fetch)", en: "Browser (fetch)" } }
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+      intro:
+        uk: "Людина набирає запит пошуку. Кожна нова літера — новий запит, а старий стає непотрібним."
+        en: "A person types a search query. Every new letter is a new request, and the old one becomes unneeded."
+      messages:
+        - from: page
+          to: browser
+          label: { uk: "fetch(\"…?q=л\", { signal: A })", en: "fetch(\"…?q=l\", { signal: A })" }
+          caption:
+            uk: "Після літери «л» код створює контролер **A** і передає його сигнал у `fetch`."
+            en: "After the letter “l” the code creates controller **A** and passes its signal to `fetch`."
+        - from: browser
+          to: server
+          label: { uk: "GET /lab/search?q=л", en: "GET /lab/search?q=l" }
+          kind: async
+          caption:
+            uk: "Перший запит пішов на сервер."
+            en: "The first request is on its way to the server."
+        - from: page
+          to: page
+          label: "A.abort()"
+          kind: note
+          caption:
+            uk: "Людина ввела «ла». Відповідь для «л» уже не потрібна: код викликає `abort()` для контролера **A**."
+            en: "The person typed “la”. The answer for “l” is no longer needed: the code calls `abort()` on controller **A**."
+        - from: browser
+          to: page
+          label: "AbortError"
+          kind: return
+          note: { uk: "код ігнорує: це не збій", en: "the code ignores it: not a failure" }
+          caption:
+            uk: "Браузер зупиняє перший запит, і його promise відхиляється з `AbortError`. Код перевіряє назву помилки й нічого не показує."
+            en: "The browser stops the first request, and its promise rejects with `AbortError`. The code checks the error’s name and shows nothing."
+        - from: page
+          to: browser
+          label: { uk: "fetch(\"…?q=ла\", { signal: B })", en: "fetch(\"…?q=la\", { signal: B })" }
+          caption:
+            uk: "Новий пошук — з новим контролером **B**: скасований контролер для нового запиту не годиться."
+            en: "A new search — with a new controller **B**: an aborted controller is no good for a new request."
+        - from: browser
+          to: server
+          label: { uk: "GET /lab/search?q=ла", en: "GET /lab/search?q=la" }
+          kind: async
+          caption:
+            uk: "Другий запит іде на сервер."
+            en: "The second request goes to the server."
+        - from: server
+          to: browser
+          label: { uk: "200 OK (q=ла)", en: "200 OK (q=la)" }
+          kind: return
+          note: { uk: "пошук «л» сервер міг устигнути виконати", en: "the server may have run the search for “l” anyway" }
+          caption:
+            uk: "Сервер відповідає на другий запит. Перший пошук він, можливо, теж устиг виконати: скасування не повертає назад роботу сервера."
+            en: "The server answers the second request. It may have run the first search too: cancelling does not undo the server’s work."
+        - from: browser
+          to: page
+          label: { uk: "Response → результати для «ла»", en: "Response → results for “la”" }
+          kind: return
+          caption:
+            uk: "Код показує результати для «ла» — і лише їх."
+            en: "The code shows the results for “la” — and only those."
+
+  - id: abort-button
+    kind: example
+    runtime: browser-js
+    dir: abort-button
+    entry: index.html
+    capabilities: { network: lab }
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Скасуй, якщо довго", en: "Cancel if it takes long" }
+      loadButton: { uk: "Завантажити (2 с)", en: "Load (2 s)" }
+      cancelButton: { uk: "Скасувати", en: "Cancel" }
+      loading: { uk: "Завантаження…", en: "Loading…" }
+      stillLoading: { uk: "Ще завантажується…", en: "Still loading…" }
+      loaded: { uk: "Готово, сервер чекав", en: "Done, the server waited" }
+      cancelled: { uk: "Скасовано.", en: "Cancelled." }
+      failed: { uk: "Не вдалося:", en: "Failed:" }
+      ms: { uk: "мс", en: "ms" }
+    title:
+      uk: "Кнопка «Скасувати»"
+      en: "A Cancel button"
+    body:
+      uk: |
+        Запит до навчального сервера триває 2 секунди. Через секунду таймер замінює напис на «Ще завантажується…»; цей таймер належить запиту, тож у `finally` його прибирає `clearTimeout`.
+
+        Натисни **Запустити**, на **Сторінці** — «Завантажити», а потім одразу «Скасувати». У **Консолі** видно назву помилки й скільки минуло часу.
+      en: |
+        A request to the lab server takes 2 seconds. After a second a timer changes the text to “Still loading…”; this timer belongs to the request, so `clearTimeout` removes it in `finally`.
+
+        Press **Run**, then on the **Page** press “Load” and right after it “Cancel”. The **Console** shows the error’s name and how much time has passed.
+    tryIt:
+      uk: |
+        1. Натисни «Завантажити» й зачекай 2 секунди, нічого не скасовуючи: запит виконається.
+        2. Заміни `controller.signal` у виклику `fetch` на `AbortSignal.timeout(1000)` і натисни «Завантажити»: через секунду запит скасується сам, а назва помилки буде `TimeoutError`, не `AbortError`. Так розрізняють «скасувала людина» і «минув тайм-аут».
+        3. Прибери рядок коду з `clearTimeout`, поверни `controller.signal` і скасуй запит одразу: за секунду напис «Скасовано.» зміниться на «Ще завантажується…» — таймер пережив свій запит.
+      en: |
+        1. Press “Load” and wait 2 seconds without cancelling: the request completes.
+        2. In the `fetch` call replace `controller.signal` with `AbortSignal.timeout(1000)` and press “Load”: after a second the request cancels itself, and the error’s name is `TimeoutError`, not `AbortError`. That is how “the person cancelled” is told from “the timeout ran out”.
+        3. Remove the line of code with `clearTimeout`, put `controller.signal` back and cancel the request at once: a second later “Cancelled.” turns into “Still loading…” — the timer outlived its request.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: прибрати обробник"
+      en: "Recall: removing a listener"
+    items:
+      - id: remove-same-function
+        from: js-06-10-events-default-behavior
+        prompt:
+          uk: "Обробник намагаються зняти до кліку. Що надрукує код?"
+          en: "The listener is removed before the click. What does the code print?"
+        code: |
+          const button = document.createElement("button");
+          let clicks = 0;
+          button.addEventListener("click", () => {
+            clicks += 1;
+          });
+          button.removeEventListener("click", () => {
+            clicks += 1;
+          });
+          button.click();
+          console.log(clicks);
+        verify:
+          logs: ["1"]
+        answer:
+          type: choice
+          options:
+            - id: one
+              text:
+                uk: "`1`"
+                en: "`1`"
+            - id: zero
+              text:
+                uk: "`0`"
+                en: "`0`"
+              why:
+                uk: "`removeEventListener` знімає лише **ту саму** функцію. Друга стрілкова функція — інший об’єкт, хоч код у ній однаковий, тож обробник лишився."
+                en: "`removeEventListener` removes only **the same** function. The second arrow function is a different object, even with identical code, so the listener stays."
+            - id: two
+              text:
+                uk: "`2`"
+                en: "`2`"
+              why:
+                uk: "`removeEventListener` нічого не додає. Обробник один, а клік — теж один."
+                en: "`removeEventListener` adds nothing. There is one listener, and one click."
+          correct: [one]
+        explanation:
+          uk: "Зняти обробник можна лише за посиланням на ту саму функцію, тож її зберігають у змінній. Зі скасуванням так само: щоб пізніше скасувати запит, контролер зберігають у змінній, доступній там, де ухвалюють рішення."
+          en: "A listener can be removed only by a reference to the same function, so the function is kept in a variable. Cancellation works the same way: to cancel a request later, the controller is kept in a variable reachable where the decision is made."
+
+  - id: search-records
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: search-records
+    entry: index.html
+    editable: [index.js]
+    capabilities: { network: lab }
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Пошук справ", en: "Task search" }
+      searchLabel: { uk: "Пошук:", en: "Search:" }
+      found: { uk: "Знайдено:", en: "Found:" }
+      error: { uk: "Пошук не вдався. Спробуй ще раз.", en: "The search failed. Try again." }
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      write: { uk: "Написати бабусі", en: "Write to grandma" }
+    title:
+      uk: "Пошук, що скасовує застарілі запити"
+      en: "A search that cancels outdated requests"
+    instructions:
+      uk: |
+        Допиши `searchRecords(query)`. Кожна літера в полі пошуку викликає її знову, тож:
+
+        1. Перед новим запитом скасуй попередній (контролер зберігай у змінній `controller`).
+        2. Для нового запиту створи новий `AbortController` і передай його сигнал у `fetch(searchUrl(query), …)`.
+        3. Якщо відповідь `ok`, покажи `body.results` через готову `renderResults`.
+        4. Скасований запит нічого не показує. Будь-який інший збій — відповідь не `ok` чи відсутність мережі — показує `renderError()`.
+
+        Спробуй на **Сторінці**: швидко набери кілька літер у полі пошуку.
+      en: |
+        Complete `searchRecords(query)`. Every letter in the search field calls it again, so:
+
+        1. Before a new request, abort the previous one (keep the controller in the variable `controller`).
+        2. For the new request create a new `AbortController` and pass its signal to `fetch(searchUrl(query), …)`.
+        3. If the response is `ok`, show `body.results` with the ready `renderResults`.
+        4. An aborted request shows nothing. Any other failure — a response that is not `ok` or no network — shows `renderError()`.
+
+        Try it on the **Page**: quickly type several letters into the search field.
+    testTitles:
+      "shows the results of one search":
+        uk: "Показує результати одного пошуку"
+        en: "Shows the results of one search"
+      "a new search aborts the previous request":
+        uk: "Новий пошук скасовує попередній запит"
+        en: "A new search aborts the previous request"
+      "only the latest results stay on the page":
+        uk: "На сторінці лишаються лише найновіші результати"
+        en: "Only the latest results stay on the page"
+      "an aborted search shows no error message":
+        uk: "Скасований пошук не показує повідомлення про помилку"
+        en: "An aborted search shows no error message"
+      "a real failure still shows the error message":
+        uk: "Справжній збій і далі показує повідомлення про помилку"
+        en: "A real failure still shows the error message"
+    hints:
+      nudge:
+        uk: "Де зберігається контролер попереднього запиту і що з ним зробити, перш ніж створювати новий? Як у `catch` відрізнити скасування від збою?"
+        en: "Where is the previous request’s controller kept, and what do you do with it before creating a new one? How do you tell cancellation from failure in `catch`?"
+      explanation:
+        uk: "Наприклад, плеєр, що вмикає нову пісню, спершу зупиняє попередню: `current?.stop(); current = play(song);`. Тут так само: спершу скасуй старий запит через його контролер (на першому пошуку змінна ще `null` — тут допоможе `?.`), потім поклади в ту саму змінну новий контролер. У `catch` назва `AbortError` означає «скасовано навмисно» — тоді просто вийди з функції."
+        en: "For example, a player that starts a new song first stops the previous one: `current?.stop(); current = play(song);`. Same here: first abort the old request through its controller (on the first search the variable is still `null` — `?.` helps there), then put a new controller into the same variable. In `catch` the name `AbortError` means “cancelled on purpose” — then just leave the function."
+    solutionNote:
+      uk: "Кожен пошук скасовує попередній запит і створює власний контролер, тож повільна відповідь на старий запит ніколи не перекриє нову: її promise відхиляється з `AbortError`, а `catch` мовчки виходить. Справжні збої йдуть у `renderError()`. Варіант, що перевіряє `signal.aborted` свого запиту замість назви помилки, теж правильний."
+      en: "Every search aborts the previous request and creates its own controller, so a slow answer to an old request never overwrites a new one: its promise rejects with `AbortError`, and `catch` leaves quietly. Real failures go to `renderError()`. A version that checks its own request’s `signal.aborted` instead of the error’s name is also correct."
+    feedback:
+      - when: { test: "shows the results of one search" }
+        message:
+          uk: "Ця перевірка шукає «wa» й очікує в списку назву справи з відповіді. Покажи `body.results` через `renderResults`. Якщо список порожній, перевір, чи не скасовано запит одразу після запуску: скасований контролер для нового запиту не годиться."
+          en: "This check searches for “wa” and expects the task’s title from the answer in the list. Show `body.results` with `renderResults`. If the list is empty, check that the request is not aborted right after it starts: an aborted controller is no good for a new request."
+      - when: { test: "a new search aborts the previous request" }
+        message:
+          uk: "Ця перевірка запускає два пошуки поспіль і очікує, що перший запит отримав сигнал і цей сигнал скасовано, щойно почався другий."
+          en: "This check starts two searches in a row and expects the first request to have received a signal that is aborted as soon as the second one starts."
+      - when: { test: "only the latest results stay on the page" }
+        message:
+          uk: "Ця перевірка робить повільний пошук «w», а за ним швидкий «wa», і очікує, що на сторінці лишаться результати «wa». Якщо видно результати «w», повільна стара відповідь перекрила нову — її треба скасувати."
+          en: "This check runs a slow search “w” followed by a fast one “wa” and expects the results of “wa” to stay on the page. If the results of “w” are visible, the slow old answer overwrote the new one — it has to be aborted."
+      - when: { test: "an aborted search shows no error message" }
+        message:
+          uk: "Ця перевірка очікує, що після скасованого пошуку на сторінці немає повідомлення про помилку. Скасування — не збій: якщо `error.name` дорівнює `\"AbortError\"`, нічого не показуй."
+          en: "This check expects no error message on the page after an aborted search. Cancellation is not a failure: if `error.name` is `\"AbortError\"`, show nothing."
+      - when: { test: "a real failure still shows the error message" }
+        message:
+          uk: "Ця перевірка відповідає `500` і очікує повідомлення про помилку від `renderError()`. Пам’ятай: при `500` `fetch` виконується — перевір `response.ok`."
+          en: "This check answers `500` and expects the error message from `renderError()`. Remember: on `500` `fetch` fulfills — check `response.ok`."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` означає, що значення має не той тип, на який розраховує код. Якщо всі перевірки впали разом і є картка «Помилка під час виконання», програма зупинилася ще під час завантаження — спершу виправ помилку з цієї картки."
+          en: "A `TypeError` means a value has a different type than the code expects. If every check failed at once and the card “Error while running” is shown, the program stopped while loading — fix the error from that card first."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-08
+    body:
+      uk: "У проєкті `start` може виконатися знову, поки попередня відповідь ще в дорозі, а кнопка повтору робить новий запит. Скасовуй попередній так само, як тут: новий контролер на кожне завантаження, `abort()` для старого, а `AbortError` мовчки завершує скасоване завантаження — без повідомлення про помилку."
+      en: "In your project, `start` may run again while the previous answer is still on its way, and the retry button makes a new request. Abort the previous one just like here: a new controller for every load, `abort()` for the old one, and an `AbortError` quietly ends the aborted load — with no error message."

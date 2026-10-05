@@ -1,0 +1,398 @@
+id: no-09-01-tables-keys-relationships
+unit: NO-09
+title:
+  uk: "Таблиці, ключі та зв’язки"
+  en: "Tables, keys and relationships"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Змоделювати учасників, книжки й видачі як таблиці з первинними й зовнішніми ключами та назвати зв’язки «один до багатьох» і «багато до багатьох» між ними."
+    en: "Model members, books and loans as tables with primary and foreign keys, and name the one-to-many and many-to-many relationships between them."
+  - uk: "Пояснити, чому видача зберігає `memberId` і `bookId`, а не копії полів учасника й книжки, і передбачити, що зламає копіювання під час оновлення."
+    en: "Explain why a loan stores `memberId` and `bookId` instead of copies of member and book fields, and predict what copying breaks on update."
+prerequisites: [no-04-09-capstone-crud-api, no-02-08-independent-file-repository]
+subskills:
+  - { family: B-04, skill: "tables/keys/relationships", depth: intro }
+glossary: [primary-key, foreign-key, junction-table, relational-schema]
+selfCheck: [predict-loan, club-schema]
+
+blocks:
+  - id: rows-and-columns
+    kind: explanation
+    title:
+      uk: "Від масиву записів до таблиць"
+      en: "From an array of records to tables"
+    body:
+      uk: |
+        У NO-02 записи жили в JSON-файлі як масив об’єктів. Реляційна база даних тримає їх у **таблицях**: таблиця — це рядки з однаковими стовпцями, як масив об’єктів з однаковими полями, але кожен стовпець має тип, а правила таблиці перевіряє сама база.
+
+        Візьмемо невелику бібліотеку. Три таблиці:
+
+        ```sql
+        CREATE TABLE members (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE books   (id INTEGER PRIMARY KEY, title TEXT NOT NULL);
+        CREATE TABLE loans (
+          id       INTEGER PRIMARY KEY,
+          memberId INTEGER NOT NULL REFERENCES members(id),
+          bookId   INTEGER NOT NULL REFERENCES books(id),
+          loanedOn TEXT NOT NULL
+        );
+        ```
+
+        - `id INTEGER PRIMARY KEY` — [[primary-key|первинний ключ]]: значення, унікальне для кожного рядка таблиці. За ним рядок знаходять.
+        - `memberId … REFERENCES members(id)` — [[foreign-key|зовнішній ключ]]: видача не копіює учасника, а **посилається** на його рядок. І це не просто стовпець, у якому «випадково» лежить чийсь `id`: база відмовить у видачі для учасника, якого немає (у `node:sqlite` ця перевірка ввімкнена за замовчуванням; коли її немає, покаже урок про обмеження).
+
+        Такий опис таблиць, стовпців і ключів називають [[relational-schema|реляційною схемою]].
+      en: |
+        In NO-02 the records lived in a JSON file as an array of objects. A relational database keeps them in **tables**: a table is rows with the same columns, like an array of objects with the same fields — but every column has a type, and the database itself enforces the table's rules.
+
+        Take a small library. Three tables:
+
+        ```sql
+        CREATE TABLE members (id INTEGER PRIMARY KEY, name TEXT NOT NULL);
+        CREATE TABLE books   (id INTEGER PRIMARY KEY, title TEXT NOT NULL);
+        CREATE TABLE loans (
+          id       INTEGER PRIMARY KEY,
+          memberId INTEGER NOT NULL REFERENCES members(id),
+          bookId   INTEGER NOT NULL REFERENCES books(id),
+          loanedOn TEXT NOT NULL
+        );
+        ```
+
+        - `id INTEGER PRIMARY KEY` is the [[primary-key]]: a value unique to each row of the table. Rows are found by it.
+        - `memberId … REFERENCES members(id)` is a [[foreign-key]]: a loan does not copy the member, it **points at** the member’s row. And it is not just a column that “happens” to hold someone’s `id`: the database refuses a loan for a member who does not exist (in `node:sqlite` this check is on by default; the lesson on constraints shows when it is not).
+
+        Such a description of tables, columns and keys is called a [[relational-schema]].
+
+  - id: relationships
+    kind: explanation
+    title:
+      uk: "Один до багатьох, багато до багатьох"
+      en: "One-to-many, many-to-many"
+    body:
+      uk: |
+        - **Один до багатьох.** В одного учасника може бути багато видач, а кожна видача належить рівно одному учасникові. Тому `memberId` стоїть у `loans`, а не навпаки.
+        - **Багато до багатьох.** Учасник бере багато книжок, а книжку беруть багато учасників. Жодна з двох таблиць не може тримати «список» іншої, тож між ними стоїть третя — `loans`. Таблицю, рядок якої з’єднує пару, називають [[junction-table|таблицею зв’язку]].
+
+        Чому не вкласти книжки всередину учасника, як у JSON (`{ name, books: [...] }`)? Одну книжку бере кілька людей — її довелося б копіювати в кожного. Щоб дізнатися, у кого книжка, довелося б переглянути всіх учасників. А коли копія змінюється в одному місці, решта копій лишаються старими.
+
+        Буває, що пара може трапитися лише раз (людина вступає до гуртка один раз). Тоді ключем стає сама пара: `PRIMARY KEY (a, b)` з двох стовпців. У `loans` пара повторюється — книжку можна взяти вдруге, — тому в неї свій `id`.
+
+        Код нижче використовує `node:sqlite` — вбудований модуль Node: `new DatabaseSync(':memory:')` відкриває базу в пам’яті, `db.exec(sql)` виконує інструкції, `db.prepare(sql).all()` повертає рядки результату як об’єкти. `WHERE id = 3` лишає лише рядки з `id` 3, а `UPDATE` змінює рядки, які лишив `WHERE`; обидва розберемо докладно в наступних уроках.
+      en: |
+        - **One-to-many.** One member can have many loans, and each loan belongs to exactly one member. That is why `memberId` sits in `loans`, not the other way round.
+        - **Many-to-many.** A member borrows many books, and a book is borrowed by many members. Neither table can hold a “list” of the other, so a third one stands between them — `loans`. A table whose row connects a pair is called a [[junction-table]].
+
+        Why not nest the books inside the member, as in JSON (`{ name, books: [...] }`)? One book is borrowed by several people — it would be copied into each of them. To find out who has a book, you would scan every member. And when one copy changes, the other copies stay old.
+
+        Sometimes a pair may occur only once (a person joins a club once). Then the pair itself becomes the key: a two-column `PRIMARY KEY (a, b)`. In `loans` a pair repeats — a book can be borrowed again — so it has its own `id`.
+
+        The code below uses `node:sqlite`, a module built into Node: `new DatabaseSync(':memory:')` opens a database in memory, `db.exec(sql)` runs statements, `db.prepare(sql).all()` returns the result rows as objects. `WHERE id = 3` keeps only the rows with `id` 3, and `UPDATE` changes the rows `WHERE` kept; both get a closer look in the next lessons.
+
+  - id: keys-diagram
+    kind: visual
+    visual: diagram
+    strings:
+      oleh: { uk: "Олег", en: "Oleh" }
+      marta: { uk: "Марта", en: "Marta" }
+      martaNew: { uk: "Марта Коваль", en: "Marta Koval" }
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+    title:
+      uk: "Видача посилається, копія розходиться"
+      en: "A loan points; a copy drifts"
+    textEquivalent:
+      uk: "Три таблиці: members, loans і books. Кожна має первинний ключ id. Рядок видачі 3 зберігає лише два числа: memberId 2 веде до рядка учасника з id 2 (%%oleh%%), bookId 1 — до рядка книжки з id 1 («%%lighthouse%%»). Далі поруч з’являється таблиця loans_flat, де ім’я учасника скопійовано в кожну видачу: «%%marta%%» записано тричі. Коли учасниця змінює ім’я, а програма оновлює лише ту видачу, яку редагує, у loans_flat лишаються два старі імені й одне нове. У звичайній схемі ім’я змінюють один раз у members, і всі три видачі бачать нове ім’я через ключ."
+      en: "Three tables: members, loans and books. Each has a primary key id. Loan row 3 stores only two numbers: memberId 2 leads to the member row with id 2 (%%oleh%%), bookId 1 to the book row with id 1 (“%%lighthouse%%”). Then a table loans_flat appears, where the member’s name is copied into every loan: “%%marta%%” is written three times. When she changes her name and the program updates only the loan it is editing, loans_flat keeps two old names and one new one. In the normal schema the name changes once in members, and all three loans see the new name through the key."
+    spec:
+      layout: grid
+      nodes:
+        - { id: members, label: "members (id, name)", col: 0, row: 0, w: 200 }
+        - { id: loans, label: "loans (id, memberId, bookId)", col: 0, row: 1, w: 240 }
+        - { id: books, label: "books (id, title)", col: 0, row: 2, w: 200 }
+        - { id: flat, label: "loans_flat (id, memberName)", col: 0, row: 3, w: 240, shape: note }
+      edges:
+        - { id: to-member, from: loans, to: members, label: "memberId" }
+        - { id: to-book, from: loans, to: books, label: "bookId" }
+      hidden: [flat]
+      steps:
+        - caption:
+            uk: "Три таблиці, у кожної первинний ключ `id`. Стрілки — зовнішні ключі `loans`."
+            en: "Three tables, each with a primary key `id`. The arrows are the foreign keys of `loans`."
+        - caption:
+            uk: "Видача 3 зберігає `memberId = 2`. Це не ім’я, а адреса: рядок `members` з `id` 2 — %%oleh%%."
+            en: "Loan 3 stores `memberId = 2`. It is not a name but an address: the `members` row with `id` 2 is %%oleh%%."
+          highlight: [loans, members, to-member]
+          annotate:
+            - { id: loans, text: { uk: "видача 3: memberId 2, bookId 1", en: "loan 3: memberId 2, bookId 1" } }
+            - { id: members, text: { uk: "id 2 → %%oleh%%", en: "id 2 → %%oleh%%" } }
+        - caption:
+            uk: "`bookId = 1` веде до книжки з `id` 1 — «%%lighthouse%%». Назву книжки видача теж не копіює."
+            en: "`bookId = 1` leads to the book with `id` 1, “%%lighthouse%%”. The loan does not copy the title either."
+          highlight: [loans, books, to-book]
+          annotate:
+            - { id: loans, text: { uk: "видача 3: memberId 2, bookId 1", en: "loan 3: memberId 2, bookId 1" } }
+            - { id: books, text: { uk: "id 1 → %%lighthouse%%", en: "id 1 → %%lighthouse%%" } }
+        - caption:
+            uk: "Інший варіант: `loans_flat` копіює ім’я в кожну видачу. %%marta%% має три видачі — ім’я записано тричі."
+            en: "Another design: `loans_flat` copies the name into every loan. %%marta%% has three loans, so her name is written three times."
+          show: [flat]
+          highlight: [flat]
+          annotate:
+            - { id: flat, text: "%%marta%% · %%marta%% · %%marta%%" }
+        - caption:
+            uk: "Вона змінює ім’я, а програма оновлює лише видачу, яку редагує. Копії розійшлися. У `members` ім’я змінюють один раз, і всі видачі бачать нове через ключ."
+            en: "She changes her name, and the program updates only the loan it is editing. The copies have drifted. In `members` the name changes once, and every loan sees the new one through the key."
+          highlight: [flat, members]
+          annotate:
+            - { id: flat, text: "%%marta%% · %%marta%% · %%martaNew%%" }
+            - { id: members, text: { uk: "id 1 → %%martaNew%%", en: "id 1 → %%martaNew%%" } }
+
+  - id: predict-loan
+    kind: prediction
+    strings:
+      marta: { uk: "Марта", en: "Marta" }
+      oleh: { uk: "Олег", en: "Oleh" }
+      borys: { uk: "Борис", en: "Borys" }
+      taras: { uk: "Тарас", en: "Taras" }
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+      garden: { uk: "Сад на даху", en: "A garden on the roof" }
+      stars: { uk: "Карта зоряного неба", en: "A map of the night sky" }
+    prompt:
+      uk: "Ось дані бібліотеки (стовпці `loans`: `id, memberId, bookId, loanedOn`). Чия видача 3, яка в ній книжка і скільки рядків у `loans` має учасниця %%marta%%?"
+      en: "Here is the library’s data (the columns of `loans`: `id, memberId, bookId, loanedOn`). Whose loan is loan 3, which book is in it, and how many rows of `loans` belong to %%marta%%?"
+    code: |
+      INSERT INTO members VALUES (1, '%%marta%%'), (2, '%%oleh%%'), (3, '%%borys%%'), (4, '%%taras%%');
+      INSERT INTO books VALUES (1, '%%lighthouse%%'), (2, '%%garden%%'), (3, '%%stars%%');
+      INSERT INTO loans VALUES
+        (1, 1, 1, '2026-03-01'),
+        (2, 1, 2, '2026-03-03'),
+        (3, 2, 1, '2026-03-04'),
+        (4, 1, 3, '2026-03-05'),
+        (5, 3, 3, '2026-03-06');
+    lang: sql
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: oleh-three
+          text: { uk: "%%oleh%%, «%%lighthouse%%»; %%marta%% має 3 рядки", en: "%%oleh%%, “%%lighthouse%%”; %%marta%% has 3 rows" }
+        - id: oleh-one
+          text: { uk: "%%oleh%%, «%%lighthouse%%»; %%marta%% має 1 рядок", en: "%%oleh%%, “%%lighthouse%%”; %%marta%% has 1 row" }
+          why:
+            uk: "У `members` %%marta%% справді має один рядок. Але `loans` — бік «багатьох»: кожна видача — окремий рядок із `memberId` 1, а таких три (видачі 1, 2 і 4)."
+            en: "In `members` %%marta%% indeed has one row. But `loans` is the “many” side: every loan is its own row with `memberId` 1, and there are three of them (loans 1, 2 and 4)."
+        - id: borys
+          text: { uk: "%%borys%%, «%%stars%%»; %%marta%% має 3 рядки", en: "%%borys%%, “%%stars%%”; %%marta%% has 3 rows" }
+          why:
+            uk: "Номер видачі (3) не вказує на учасника 3. Зв’язок іде через **значення** `memberId` у рядку видачі — тут це 2, тобто %%oleh%%, а `bookId` 1 — «%%lighthouse%%»."
+            en: "The loan’s number (3) does not point at member 3. The link goes through the **value** of `memberId` in the loan row — here 2, that is %%oleh%% — and `bookId` 1 is “%%lighthouse%%”."
+        - id: unknown
+          text: { uk: "Не дізнатися: у `loans` немає ні імен, ні назв", en: "Impossible to tell: `loans` holds no names and no titles" }
+          why:
+            uk: "Імена й не потрібні в `loans`: число в зовнішньому ключі — це адреса рядка в іншій таблиці. Знайди рядок `members` з `id` 2 і рядок `books` з `id` 1."
+            en: "The names need not be in `loans`: the number in a foreign key is the address of a row in another table. Find the `members` row with `id` 2 and the `books` row with `id` 1."
+      correct: [oleh-three]
+    explanation:
+      uk: "Видача 3 — це `(3, 2, 1, …)`: `memberId` 2 — це %%oleh%%, `bookId` 1 — «%%lighthouse%%». Рядків з `memberId` 1 три: один учасник — багато видач. Приклад «Бібліотека в SQLite: ключі проти копій» друкує саме це."
+      en: "Loan 3 is `(3, 2, 1, …)`: `memberId` 2 leads to %%oleh%%, `bookId` 1 to “%%lighthouse%%”. There are three rows with `memberId` 1: one member, many loans. The example “A library in SQLite: keys versus copies” prints exactly that."
+
+  - id: library-tables
+    kind: example
+    runtime: isolated-node
+    dir: library-tables
+    entry: index.js
+    strings:
+      marta: { uk: "Марта", en: "Marta" }
+      martaNew: { uk: "Марта Коваль", en: "Marta Koval" }
+      oleh: { uk: "Олег", en: "Oleh" }
+      borys: { uk: "Борис", en: "Borys" }
+      taras: { uk: "Тарас", en: "Taras" }
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+      garden: { uk: "Сад на даху", en: "A garden on the roof" }
+      stars: { uk: "Карта зоряного неба", en: "A map of the night sky" }
+    title:
+      uk: "Бібліотека в SQLite: ключі проти копій"
+      en: "A library in SQLite: keys versus copies"
+    body:
+      uk: |
+        Натисни **Запустити**. Програма створює три таблиці в пам’яті, заповнює їх даними з попереднього питання, іде від видачі 3 до її учасника й книжки, а потім перейменовує учасницю 1 у двох схемах: через ключ (`members`) і в таблиці з копіями імен (`loans_flat`).
+
+        Це справжній Node.js з модулем `node:sqlite`. На власному комп’ютері Node друкує для цього модуля попередження `ExperimentalWarning` (ми бачили його на v25.2.1): модуль позначено як експериментальний (у документації Node 22 — «Stability 1.1, active development»). Платформа такі попередження приховує.
+      en: |
+        Press **Run**. The program creates three tables in memory, fills them with the data from the previous question, follows loan 3 to its member and book, and then renames member 1 in two schemas: through the key (`members`) and in the table with copied names (`loans_flat`).
+
+        This is real Node.js with the `node:sqlite` module. On your own computer Node prints an `ExperimentalWarning` for this module (we saw it on v25.2.1): it is marked experimental (the Node 22 documentation says “Stability 1.1, active development”). The platform hides such warnings.
+    tryIt:
+      uk: "Додай у перший `db.exec` після видач ще одну: `INSERT INTO loans VALUES (6, 9, 1, '2026-03-07');` — учасника 9 немає. Запусти: програма зупиняється з `FOREIGN KEY constraint failed`, бо зовнішній ключ — це перевірка, а не просто стовпець. Тепер прибери цей рядок і додай до другого `db.exec` рядок `INSERT INTO loans_flat VALUES (6, 'X', '%%stars%%');` — він проходить: `loans_flat` нічого не перевіряє."
+      en: "In the first `db.exec`, add one more loan after the others: `INSERT INTO loans VALUES (6, 9, 1, '2026-03-07');` — there is no member 9. Run it: the program stops with `FOREIGN KEY constraint failed`, because a foreign key is a check, not just a column. Now remove that row and add `INSERT INTO loans_flat VALUES (6, 'X', '%%stars%%');` to the second `db.exec` — it goes through: `loans_flat` checks nothing."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: посилання на об’єкт"
+      en: "Recall: a reference to an object"
+    strings:
+      marta: { uk: "Марта", en: "Marta" }
+      martaNew: { uk: "Марта Коваль", en: "Marta Koval" }
+    items:
+      - id: reference-or-copy
+        from: js-04-07-reference-identity
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          const member = { id: 1, name: "%%marta%%" };
+          const loan = { id: 4, member };
+          const flatLoan = { id: 5, memberName: member.name };
+          member.name = "%%martaNew%%";
+          console.log(loan.member.name);
+          console.log(flatLoan.memberName);
+        verify:
+          logs: ["%%martaNew%%", "%%marta%%"]
+        answer:
+          type: choice
+          options:
+            - id: new-old
+              code: "%%martaNew%%\n%%marta%%"
+            - id: new-new
+              code: "%%martaNew%%\n%%martaNew%%"
+              why:
+                uk: "`memberName` отримав копію тексту в мить створення `flatLoan`. Текст — примітив: зміна `member.name` пізніше його не торкається."
+                en: "`memberName` got a copy of the text when `flatLoan` was created. Text is a primitive: changing `member.name` later does not touch it."
+            - id: old-old
+              code: "%%marta%%\n%%marta%%"
+              why:
+                uk: "`loan.member` — той самий об’єкт, що й `member`, а не його копія. Зміну, зроблену через одну назву, видно через іншу."
+                en: "`loan.member` is the same object as `member`, not a copy. A change made through one name is visible through the other."
+          correct: [new-old]
+        explanation:
+          uk: "`loan` посилається на об’єкт учасника, тож бачить нове ім’я; `flatLoan` тримає копію, яка лишилася старою. Зовнішній ключ у таблиці — те саме посилання, лише через значення `id`."
+          en: "`loan` refers to the member object, so it sees the new name; `flatLoan` holds a copy, which stayed old. A foreign key in a table is the same kind of reference, made through the value of `id`."
+
+  - id: club-schema
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: club-schema
+    entry: index.js
+    editable: [schema.js]
+    strings:
+      lina: { uk: "Ліна", en: "Lina" }
+      denys: { uk: "Денис", en: "Denys" }
+      chess: { uk: "Шаховий гурток", en: "Chess club" }
+      choir: { uk: "Хор", en: "Choir" }
+    title:
+      uk: "Схема шкільних гуртків"
+      en: "A schema for school clubs"
+    instructions:
+      uk: |
+        У школі є учні, гуртки й записи про те, хто в якому гуртку. У `schema.js` вже є таблиця `students`. Допиши до тексту `schema`:
+
+        - таблицю `clubs` зі стовпцями `id` (цілочисловий первинний ключ) і `title`;
+        - таблицю `memberships` зі стовпцями `studentId`, `clubId` і `joinedOn` (дата як текст `'YYYY-MM-DD'`);
+        - зовнішні ключі: `studentId` посилається на `students(id)`, `clubId` — на `clubs(id)`;
+        - учень може бути в багатьох гуртках, у гуртку може бути багато учнів, але ту саму пару «учень — гурток» не можна записати двічі;
+        - `memberships` зберігає лише номери, без копій імен чи назв.
+
+        Натисни **Запустити**: програма створить таблиці, заповнить їх і спробує два записи, які база має відхилити.
+      en: |
+        A school has students, clubs and records of who is in which club. `schema.js` already has the table `students`. Add to the `schema` text:
+
+        - a table `clubs` with the columns `id` (an integer primary key) and `title`;
+        - a table `memberships` with the columns `studentId`, `clubId` and `joinedOn` (a date as text `'YYYY-MM-DD'`);
+        - foreign keys: `studentId` points at `students(id)`, `clubId` at `clubs(id)`;
+        - a student can be in many clubs and a club can have many students, but the same student–club pair cannot be stored twice;
+        - `memberships` stores only numbers, no copies of names or titles.
+
+        Press **Run**: the program creates the tables, fills them and tries two rows the database must refuse.
+    testTitles:
+      "the tables students, clubs and memberships exist":
+        uk: "Є таблиці `students`, `clubs` і `memberships`"
+        en: "The tables `students`, `clubs` and `memberships` exist"
+      "clubs has an integer primary key id and a title":
+        uk: "`clubs` має цілочисловий первинний ключ `id` і стовпець `title`"
+        en: "`clubs` has an integer primary key `id` and a column `title`"
+      "memberships points at students and clubs with foreign keys":
+        uk: "`memberships` посилається на `students` і `clubs` зовнішніми ключами"
+        en: "`memberships` points at `students` and `clubs` with foreign keys"
+      "a membership of an unknown student is refused":
+        uk: "Запис неіснуючого учня відхилено"
+        en: "A membership of an unknown student is refused"
+      "a student joins the same club only once":
+        uk: "Учень записується до того самого гуртка лише раз"
+        en: "A student joins the same club only once"
+      "a student can join two clubs, and a club can have two students":
+        uk: "Учень може бути у двох гуртках, а в гуртку — двоє учнів"
+        en: "A student can join two clubs, and a club can have two students"
+      "memberships stores ids, not copies of names or titles":
+        uk: "`memberships` зберігає номери, а не копії імен чи назв"
+        en: "`memberships` stores ids, not copies of names or titles"
+    hints:
+      nudge:
+        uk: "`memberships` — таблиця зв’язку між двома іншими. Що в ній має бути унікальним: кожен стовпець окремо чи щось інше?"
+        en: "`memberships` is a junction table between two others. What in it has to be unique: each column on its own, or something else?"
+      explanation:
+        uk: |
+          Зовнішній ключ пишуть просто при стовпці: `authorId INTEGER NOT NULL REFERENCES authors(id)`. Коли пара може трапитися лише раз, ключем стає вся пара — наприклад, для авторства книжок:
+
+          ```sql
+          CREATE TABLE authorships (
+            authorId INTEGER NOT NULL REFERENCES authors(id),
+            bookId   INTEGER NOT NULL REFERENCES books(id),
+            PRIMARY KEY (authorId, bookId)
+          );
+          ```
+
+          `UNIQUE` на одному стовпці дозволив би кожному значенню з’явитися лише раз — це вже «один до одного», а не «багато до багатьох».
+        en: |
+          A foreign key is written right at the column: `authorId INTEGER NOT NULL REFERENCES authors(id)`. When a pair may occur only once, the whole pair becomes the key — for example, for book authorships:
+
+          ```sql
+          CREATE TABLE authorships (
+            authorId INTEGER NOT NULL REFERENCES authors(id),
+            bookId   INTEGER NOT NULL REFERENCES books(id),
+            PRIMARY KEY (authorId, bookId)
+          );
+          ```
+
+          `UNIQUE` on a single column would let each value appear only once — that is one-to-one, not many-to-many.
+    solutionNote:
+      uk: "`memberships` має два зовнішні ключі й первинний ключ із двох стовпців `(studentId, clubId)`: та сама пара не повториться, а кожен учень і кожен гурток можуть з’являтися в багатьох парах. Варіант зі своїм `id`, `UNIQUE (studentId, clubId)` і обмеженнями `FOREIGN KEY (…) REFERENCES …` наприкінці таблиці теж правильний."
+      en: "`memberships` has two foreign keys and a two-column primary key `(studentId, clubId)`: the same pair cannot repeat, while every student and every club can appear in many pairs. A version with its own `id`, `UNIQUE (studentId, clubId)` and `FOREIGN KEY (…) REFERENCES …` constraints at the end of the table is correct too."
+    feedback:
+      - when: { test: "the tables students, clubs and memberships exist" }
+        message:
+          uk: "Ця перевірка виконує твій текст `schema` у новій базі й очікує три таблиці з точними назвами `students`, `clubs` і `memberships`. Якщо всі перевірки не проходять разом, прочитай першу помилку в консолі після **Запустити** — часто це помилка синтаксису SQL (`near …: syntax error`)."
+          en: "This check runs your `schema` text in a new database and expects three tables named exactly `students`, `clubs` and `memberships`. If every check fails at once, read the first error in the console after **Run** — it is often an SQL syntax error (`near …: syntax error`)."
+      - when: { test: "clubs has an integer primary key id and a title" }
+        message:
+          uk: "Ця перевірка очікує в `clubs` стовпець `id` з типом, записаним саме як `INTEGER`, що є первинним ключем, і стовпець `title`. `INT PRIMARY KEY` у SQLite — не те саме: лише `INTEGER PRIMARY KEY` стає номером рядка, який база видає сама."
+          en: "This check expects `clubs` to have a column `id` whose type is spelled exactly `INTEGER` and which is the primary key, plus a column `title`. `INT PRIMARY KEY` is not the same in SQLite: only `INTEGER PRIMARY KEY` becomes the row number the database assigns by itself."
+      - when: { test: "memberships points at students and clubs with foreign keys" }
+        message:
+          uk: "Ця перевірка очікує зовнішні ключі `studentId → students(id)` і `clubId → clubs(id)`. Стовпець із числом сам по собі ключем не є — потрібне `REFERENCES`."
+          en: "This check expects the foreign keys `studentId → students(id)` and `clubId → clubs(id)`. A column holding a number is not a key by itself — it needs `REFERENCES`."
+      - when: { test: "a membership of an unknown student is refused" }
+        message:
+          uk: "Ця перевірка вставляє запис з `studentId` 99, якого немає в `students`, і очікує помилку `FOREIGN KEY constraint failed`."
+          en: "This check inserts a membership with `studentId` 99, which is not in `students`, and expects the error `FOREIGN KEY constraint failed`."
+      - when: { test: "a student joins the same club only once" }
+        message:
+          uk: "Ця перевірка вставляє пару (1, 1) двічі й очікує, що друга вставка зламається. Зроби унікальною саму пару — не кожен стовпець окремо."
+          en: "This check inserts the pair (1, 1) twice and expects the second insert to fail. Make the pair itself unique — not each column separately."
+      - when: { test: "a student can join two clubs, and a club can have two students" }
+        message:
+          uk: "Ця перевірка вставляє пари (1, 1), (1, 2) і (2, 1) й очікує три рядки. `UNIQUE` на одному стовпці забороняє другу пару з тим самим учнем чи гуртком."
+          en: "This check inserts the pairs (1, 1), (1, 2) and (2, 1) and expects three rows. `UNIQUE` on a single column forbids a second pair with the same student or club."
+      - when: { test: "memberships stores ids, not copies of names or titles" }
+        message:
+          uk: "Ця перевірка очікує, що в `memberships` немає стовпців, у назві яких є `name` чи `title`. Ім’я учня береться з `students` за `studentId`."
+          en: "This check expects `memberships` to have no columns whose name contains `name` or `title`. A student’s name comes from `students` through `studentId`."
+
+  - id: to-project
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-09 немає, це окрема лабораторна. Але подивись на записи свого домену із цього погляду: що в них посилалося б на інший запис за `id`, а що ти зараз копіюєш? За планом курсу сховище для проєкту обирають у NO-05; тоді ця схема знадобиться, якщо обереш SQLite."
+      en: "Your project does not change in this unit: NO-09 has no project step, it is a separate lab. But look at your domain’s records from this angle: what in them would point at another record by `id`, and what do you copy today? In the course plan the project’s storage is chosen in NO-05; this kind of schema is what you will need then if you choose SQLite."

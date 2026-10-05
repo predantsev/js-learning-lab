@@ -1,0 +1,336 @@
+id: no-03-06-debug-hanging-request
+unit: NO-03
+title:
+  uk: "Налагодження: запит, що зависає, і неправильний статус"
+  en: "Debug: a hanging request and a wrong status"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знаходити причину запиту, що ніколи не завершується: гілку без `res.end()` або `await` промісу, який ніколи не виконається."
+    en: "Diagnose a request that never completes because one branch forgets res.end() or awaits a promise that never settles."
+  - uk: "Виправляти обробники, що відповідають на помилку валідації й відсутній запис статусом 200 з повідомленням про помилку в тілі."
+    en: "Repair handlers that answer validation and missing-record failures with 200 and an error message in the body."
+prerequisites: [no-03-05-start-stop-restart-local]
+subskills:
+  - { family: B-03, skill: "request/response lifecycle", depth: assess }
+  - { family: B-03, skill: "methods/status/headers", depth: assess }
+glossary: []
+selfCheck: [predict-symptoms, repair-expenses]
+
+blocks:
+  - id: two-symptoms
+    kind: explanation
+    title:
+      uk: "Два симптоми, дві різні хвороби"
+      en: "Two symptoms, two different illnesses"
+    body:
+      uk: |
+        **Запит зависає.** Клієнт чекає, доки не спрацює його тайм-аут, а сервер не друкує жодної помилки. Перш ніж думати про «перевантажений сервер», подивись на гілку, яку обрав саме цей запит:
+
+        - вона задає `res.statusCode` чи заголовки, але **не викликає** `res.end()` (і не кличе `sendJson`) — відповідь ніхто не завершив;
+        - вона чекає (`await`) на проміс, що **ніколи не виконається**: на подію, яка вже відбулася, на `resolve`, який ніхто не викличе.
+
+        Ключ — порівняти запити: якщо інші маршрути того самого сервера відповідають миттєво, сервер не перевантажений. Зависає одна гілка.
+
+        **Статус бреше.** Відповідь приходить, але `200` з `{"error": …}` у тілі. Клієнт перевіряє `response.ok`, бачить `true` — і показує помилку як дані або вважає запис збереженим. Тут ліки — правильний статус: `404` для відсутнього запису, `400` для неправильних даних, `405` для недозволеного методу.
+      en: |
+        **The request hangs.** The client waits until its timeout fires, and the server prints no error at all. Before thinking “the server is overloaded”, look at the branch this particular request took:
+
+        - it sets `res.statusCode` or headers but **never calls** `res.end()` (nor `sendJson`) — nobody finished the answer;
+        - it `await`s a promise that **never settles**: an event that already happened, a `resolve` that nobody will call.
+
+        The key is to compare requests: if other routes of the same server answer at once, the server is not overloaded. One branch hangs.
+
+        **The status lies.** An answer arrives, but it is `200` with `{"error": …}` in the body. The client checks `response.ok`, sees `true` — and shows the error as data or believes the record was saved. The cure here is the right status: `404` for a missing record, `400` for invalid data, `405` for a method that is not allowed.
+
+  - id: replay-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Два запити, відтворені крок за кроком"
+      en: "Two requests replayed step by step"
+    textEquivalent:
+      uk: "Перший запит — GET /records?status=later. Обробник іде в гілку перевірки статусу, задає res.statusCode = 400 і виходить через return, не викликавши res.end(). Клієнт нічого не отримує — ні статусу, ні заголовків, — і через 1 с його власний тайм-аут обриває очікування з TimeoutError. Сервер жодної помилки не бачить. Другий запит — POST /records з порожньою назвою справи. Обробник знаходить помилку валідації, але відповідає sendJson(res, 200, { error: 'title is required' }). Клієнт отримує 200, response.ok — true, і код клієнта вважає справу збереженою, хоча її не створено."
+      en: "The first request is GET /records?status=later. The handler enters the status-check branch, sets res.statusCode = 400 and leaves through return without calling res.end(). The client receives nothing — no status, no headers — and after 1 s its own timeout ends the wait with a TimeoutError. The server sees no error at all. The second request is POST /records with an empty task title. The handler finds the validation error but answers sendJson(res, 200, { error: 'title is required' }). The client gets 200, response.ok is true, and the client code believes the task was saved, although it was never created."
+    spec:
+      actors:
+        - { id: client, label: { uk: "Клієнт", en: "Client" } }
+        - { id: handler, label: { uk: "Обробник", en: "Handler" } }
+      intro:
+        uk: "Клієнт із тайм-аутом 1 с і обробник сервера планувальника з посіяними дефектами."
+        en: "A client with a 1 s timeout and the handler of the planner server with seeded defects."
+      messages:
+        - from: client
+          to: handler
+          kind: async
+          label: "GET /records?status=later"
+          caption:
+            uk: "Значення `later` фільтр не знає — обробник іде в гілку помилки."
+            en: "The filter does not know the value `later` — the handler enters the error branch."
+        - from: handler
+          to: handler
+          kind: note
+          label: "res.statusCode = 400; return;"
+          caption:
+            uk: "Статус задано, але `res.end()` не викликано. Нічого не надіслано — навіть заголовків."
+            en: "The status is set, but `res.end()` is never called. Nothing is sent — not even the headers."
+        - from: client
+          to: client
+          kind: note
+          label: { uk: "1 с: TimeoutError", en: "1 s: TimeoutError" }
+          caption:
+            uk: "Клієнт чекає, доки його тайм-аут не обірве очікування. Сервер помилки не бачить: для нього все «гаразд»."
+            en: "The client waits until its timeout ends the wait. The server sees no error: to it, all is “fine”."
+        - from: client
+          to: handler
+          kind: async
+          label: "POST /records"
+          note: { uk: '{"title":""}', en: '{"title":""}' }
+          caption:
+            uk: "Друга сцена: справа з порожньою назвою."
+            en: "The second scene: a task with an empty title."
+        - from: handler
+          to: client
+          kind: return
+          label: "200 OK"
+          note: { uk: '{"error":"title is required"}', en: '{"error":"title is required"}' }
+          caption:
+            uk: "Валідація спрацювала, але відповідь — `200`. Помилка ховається в тілі."
+            en: "Validation worked, but the answer is `200`. The error hides in the body."
+        - from: client
+          to: client
+          kind: note
+          label: { uk: "ok: true → «збережено»", en: "ok: true → “saved”" }
+          caption:
+            uk: "Клієнт перевіряє `response.ok`, бачить `true` і показує «збережено». Справи не існує. Правильно було б `400`."
+            en: "The client checks `response.ok`, sees `true` and shows “saved”. The task does not exist. The right answer would be `400`."
+
+  - id: predict-symptoms
+    kind: prediction
+    prompt:
+      uk: "Сервер планувальника має чотири посіяні дефекти, позначені в коді як A, B, C і D (тіло обробника скорочено). Клієнт надсилає `GET /records?status=later` (A), `GET /records/t-99` (B), `GET /summary` (C) і `POST /records` з `{\"title\":\"\"}` (D) і чекає на кожен 1 с. Які твердження правдиві? Обери всі."
+      en: "The planner server has four seeded defects, marked A, B, C and D in the code (the handler is shortened). The client sends `GET /records?status=later` (A), `GET /records/t-99` (B), `GET /summary` (C) and `POST /records` with `{\"title\":\"\"}` (D) and waits 1 s for each. Which statements are true? Choose all that are."
+    code: |
+      let markWarm;
+      const warm = new Promise((resolve) => { markWarm = resolve; }); // nobody calls markWarm()
+
+      // GET /records with an unknown ?status=
+      res.statusCode = 400; // A
+      return;
+      // GET /records/:id with an unknown id
+      if (!task) return sendJson(res, 200, { error: "task not found" }); // B
+      // GET /summary
+      await warm; // C
+      // POST /records with an empty title
+      return sendJson(res, 200, { error: "title is required" }); // D
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: a-hangs
+          text:
+            uk: "A зависає до тайм-ауту клієнта; правильно — відповісти `400`"
+            en: "A hangs until the client’s timeout; the right answer is `400`"
+        - id: a-400
+          text:
+            uk: "A отримує `400`: статус же задано"
+            en: "A gets `400`: the status is set, after all"
+          why:
+            uk: "Задати статус — не те саме, що надіслати відповідь. Без `res.end()` (чи `sendJson`) клієнт не отримує навіть заголовків."
+            en: "Setting the status is not the same as sending the answer. Without `res.end()` (or `sendJson`) the client does not get even the headers."
+        - id: b-misleading
+          text:
+            uk: "B отримує оманливе `200` з помилкою в тілі; правильно — `404`"
+            en: "B gets a misleading `200` with the error in the body; the right answer is `404`"
+        - id: c-hangs
+          text:
+            uk: "C зависає: `await` чекає на проміс, що ніколи не виконається"
+            en: "C hangs: the `await` waits for a promise that never settles"
+        - id: c-overloaded
+          text:
+            uk: "C повільний, бо сервер перевантажений іншими запитами"
+            en: "C is slow because the server is overloaded with other requests"
+          why:
+            uk: "Запити йдуть по одному, і B з D відповідають миттєво. Зависає одна гілка: `warm` ніхто не виконає, бо `markWarm()` ніхто не викликає."
+            en: "The requests go one at a time, and B and D answer at once. One branch hangs: nobody will settle `warm`, because nobody calls `markWarm()`."
+        - id: d-misleading
+          text:
+            uk: "D отримує оманливе `200` з помилкою в тілі; правильно — `400`"
+            en: "D gets a misleading `200` with the error in the body; the right answer is `400`"
+      correct: [a-hangs, b-misleading, c-hangs, d-misleading]
+    explanation:
+      uk: "A і C зависають, але з різних причин: A не завершує відповідь, C чекає на проміс, якого ніхто не виконає. B і D відповідають, але статус `200` бреше клієнтові: має бути `404` і `400`. Перевір, запустивши приклад цього уроку."
+      en: "A and C hang, but for different reasons: A never finishes the answer, C waits for a promise nobody will settle. B and D do answer, but status `200` lies to the client: it should be `404` and `400`. Check it by running this lesson’s example."
+
+  - id: seeded-planner
+    kind: example
+    runtime: isolated-node
+    dir: seeded-planner
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      task1: { uk: "Полити квіти", en: "Water the plants" }
+      task2: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      noAnswer: { uk: "жодної відповіді за", en: "no answer within" }
+    title:
+      uk: "Сервер із посіяними дефектами"
+      en: "A server with seeded defects"
+    body:
+      uk: |
+        Повний сервер із передбачення, а клієнт надсилає чотири запити й чекає на кожен не довше 1 с. Натисни **Запустити** й зістав кожен рядок із передбаченням: де «жодної відповіді», а де `ok: true` з помилкою в тілі.
+      en: |
+        The whole server from the prediction, and a client that sends four requests and waits at most 1 s for each. Press **Run** and match every line with your prediction: where it says “no answer”, and where `ok: true` comes with an error in the body.
+    tryIt:
+      uk: |
+        1. Виправ A: заміни два рядки `res.statusCode = 400;` і `return;` одним `return sendJson(res, 400, { error: 'unknown status' });`. Тепер A отримує `400` одразу.
+        2. Виправ C: під рядком `const warm = …` додай виклик `markWarm();`. `GET /summary` відповідає миттєво.
+        3. У B і D заміни `200` на `404` і `400`: тепер `ok: false`, і клієнт бачить помилку як помилку.
+      en: |
+        1. Fix A: replace the two lines `res.statusCode = 400;` and `return;` with a single `return sendJson(res, 400, { error: 'unknown status' });`. Now A gets `400` at once.
+        2. Fix C: below the line `const warm = …` add the call `markWarm();`. `GET /summary` answers at once.
+        3. In B and D replace `200` with `404` and `400`: now `ok: false`, and the client sees the error as an error.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: проміс, що ніколи не виконається"
+      en: "Recall: a promise that never settles"
+    items:
+      - id: never-settles
+        from: js-08-11-debug-async
+        prompt:
+          uk: "В асинхронній функції стоїть `await new Promise(() => {});`, а під ним — `console.log(\"done\")`. Що станеться?"
+          en: "An async function contains `await new Promise(() => {});` followed by `console.log(\"done\")`. What happens?"
+        answer:
+          type: choice
+          options:
+            - id: waits
+              text:
+                uk: "Функція назавжди зупиняється на `await`: «done» не друкується, і жодної помилки немає"
+                en: "The function stops at the `await` forever: “done” is never printed, and there is no error"
+            - id: throws
+              text:
+                uk: "Через якийсь час проміс відхиляється з помилкою тайм-ауту"
+                en: "After a while the promise rejects with a timeout error"
+              why:
+                uk: "Сам проміс не має тайм-ауту. Він лишається в стані «pending», доки хтось не викличе `resolve` чи `reject` — а тут їх ніхто не викличе."
+                en: "A promise has no timeout of its own. It stays “pending” until someone calls `resolve` or `reject` — and here nobody will."
+            - id: undefined
+              text:
+                uk: "`await` одразу дає `undefined`, і «done» друкується"
+                en: "`await` gives `undefined` at once, and “done” is printed"
+              why:
+                uk: "Так поводиться `await` на значенні, що не є промісом. Тут проміс, і `await` чекає, доки він виконається."
+                en: "That is how `await` behaves on a value that is not a promise. Here it is a promise, and `await` waits until it settles."
+          correct: [waits]
+        explanation:
+          uk: "Проміс, що ніколи не виконується, — тиха помилка: ні винятку, ні запису в журналі. В обробнику сервера вона виглядає як запит, що зависає, тож шукай `await`, до якого доходить виконання, і питай: хто й коли викличе його `resolve`?"
+          en: "A promise that never settles is a quiet bug: no exception, no log line. In a server handler it looks like a hanging request, so look for the `await` that execution reaches and ask: who will call its `resolve`, and when?"
+
+  - id: repair-expenses
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: repair-expenses
+    entry: index.js
+    editable: [app.js]
+    capabilities: { network: loopback }
+    strings:
+      expense1: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      expense2: { uk: "Проїзний", en: "Transit pass" }
+      expense3: { uk: "Кава з друзями", en: "Coffee with friends" }
+      expense4: { uk: "Лампочки", en: "Light bulbs" }
+      noAnswer: { uk: "жодної відповіді за", en: "no answer within" }
+    title:
+      uk: "Полагодь сервер витрат"
+      en: "Repair the expense server"
+    instructions:
+      uk: |
+        Сервер витрат у `app.js` має чотири дефекти: два запити зависають, а два отримують `200` з помилкою в тілі. **Запусти** його: драйвер надсилає п’ять запитів і на кожен чекає щонайбільше 1 с. За тим, що надрукує драйвер, знайди кожну причину й виправ так, щоб:
+
+        - `GET /records/<id>` неіснуючої витрати отримував `404`;
+        - `POST /records` з неправильною витратою (порожня назва або `amountMinor` — не додатне ціле число) отримував `400`, а правильна витрата, як і раніше, — `201`;
+        - інший метод на `/records` отримував `405` із заголовком `Allow`;
+        - `GET /totals` відповідав `200` з `count` і `totalMinor`;
+        - кожна відповідь-помилка була JSON (`Content-Type: application/json`).
+
+        `GET /records` уже працює — не зламай його. `repository.js` лише для читання: він «завантажується» одразу після створення, ще до першого запиту. **Перевірити** надсилає справжні запити й на кожен чекає щонайбільше 1 с.
+      en: |
+        The expense server in `app.js` has four defects: two requests hang, and two get `200` with an error in the body. **Run** it: the driver sends five requests and waits at most 1 s for each. From what the driver prints, find each cause and repair it so that:
+
+        - `GET /records/<id>` of a non-existent expense gets `404`;
+        - `POST /records` with an invalid expense (an empty label, or an `amountMinor` that is not a positive whole number) gets `400`, while a valid expense still gets `201`;
+        - another method on `/records` gets `405` with an `Allow` header;
+        - `GET /totals` answers `200` with `count` and `totalMinor`;
+        - every error answer is JSON (`Content-Type: application/json`).
+
+        `GET /records` already works — do not break it. `repository.js` is read-only: it “loads” right after it is created, before the first request. **Check** sends real requests and waits at most 1 s for each.
+    testTitles:
+      "GET /records still answers 200 with the expenses":
+        uk: "`GET /records`, як і раніше, відповідає `200` зі списком"
+        en: "`GET /records` still answers `200` with the list"
+      "a missing expense answers 404":
+        uk: "Неіснуюча витрата дає `404`"
+        en: "A missing expense gives `404`"
+      "an invalid expense answers 400":
+        uk: "Неправильна витрата дає `400`"
+        en: "An invalid expense gives `400`"
+      "a valid expense still answers 201":
+        uk: "Правильна витрата, як і раніше, дає `201`"
+        en: "A valid expense still gives `201`"
+      "another method on /records answers 405 with Allow":
+        uk: "Інший метод на `/records` дає `405` з `Allow`"
+        en: "Another method on `/records` gives `405` with `Allow`"
+      "GET /totals answers 200 with the totals":
+        uk: "`GET /totals` відповідає `200` з підсумками"
+        en: "`GET /totals` answers `200` with the totals"
+      "every error answer is JSON":
+        uk: "Кожна відповідь-помилка — JSON"
+        en: "Every error answer is JSON"
+    hints:
+      nudge:
+        uk: "Запусти й розділи рядки драйвера на дві купки: «жодної відповіді» і «відповідь є, але статус не той». Для кожного рядка знайди гілку, яку обрав саме цей запит."
+        en: "Run it and split the driver’s lines into two piles: “no answer” and “there is an answer, but the wrong status”. For every line, find the branch that this particular request took."
+      explanation:
+        uk: "Запит без відповіді — це гілка, що не дійшла до `res.end()`/`sendJson`, або `await`, що чекає вічно. Подія, яка вже відбулася, удруге не настане: `once(emitter, \"ready\")` після того, як `\"ready\"` уже випущено, чекатиме наступного разу, якого не буде, — тож спершу перевір прапорець стану, який тримає сам об’єкт. Відповідь зі статусом `200` для помилки виправляє перший аргумент після `res` у `sendJson`. Для відповіді `405` потрібен ще й заголовок `Allow`."
+        en: "A request with no answer is a branch that never reached `res.end()`/`sendJson`, or an `await` that waits forever. An event that already happened will not happen again: `once(emitter, \"ready\")` after `\"ready\"` was already emitted waits for a next time that never comes — so check the state flag the object itself keeps first. An answer with status `200` for an error is fixed by the argument right after `res` in `sendJson`. A `405` answer also needs an `Allow` header."
+    solutionNote:
+      uk: "Чотири правки: `404` замість `200` для відсутньої витрати; `400` замість `200` для невалідних даних; гілка `405` тепер завершує відповідь через `sendJson`, зберігаючи `Allow`; `GET /totals` чекає на `'loaded'` лише тоді, коли `repository.loaded` ще `false`, — подія вже відбулася до першого запиту, тож `once` чекав би вічно. Інший правильний шлях для підсумків — відповідати `503`, поки сховище не завантажилося."
+      en: "Four edits: `404` instead of `200` for a missing expense; `400` instead of `200` for invalid data; the `405` branch now finishes the answer through `sendJson`, keeping `Allow`; `GET /totals` waits for `'loaded'` only while `repository.loaded` is still `false` — the event happened before the first request, so `once` would wait forever. Another valid route for the totals is to answer `503` while the storage has not loaded yet."
+    feedback:
+      - when: { test: "GET /records still answers 200 with the expenses" }
+        message:
+          uk: "`GET /records` має, як і на початку, відповідати `200` зі списком `e-01`, `e-02`, `e-03`. Якщо цю гілку змінено, кнопка «Почати спочатку» поверне початковий код."
+          en: "`GET /records` must, as at the start, answer `200` with the list `e-01`, `e-02`, `e-03`. If this branch was changed, the “Start over” button restores the starting code."
+      - when: { test: "a missing expense answers 404" }
+        message:
+          uk: "Ця перевірка надсилає `GET /records/e-99` і чекає `404`. Повідомлення «expense not found» у тілі статусу не змінює."
+          en: "This check sends `GET /records/e-99` and expects `404`. An “expense not found” message in the body does not change the status."
+      - when: { test: "an invalid expense answers 400" }
+        message:
+          uk: "Ця перевірка надсилає витрату з `amountMinor: 12.5`, а потім із назвою із самих пробілів і чекає `400` для обох. У початковому коді валідація вже знаходить поле, а неправильний лише статус відповіді."
+          en: "This check sends an expense with `amountMinor: 12.5`, then one whose label is only spaces, and expects `400` for both. In the starting code validation already finds the field, and only the answer’s status is wrong."
+      - when: { test: "a valid expense still answers 201" }
+        message:
+          uk: "Правильна витрата має, як і раніше, отримувати `201`. Перевір, що зміни у валідації не зачепили успішну гілку."
+          en: "A valid expense must still get `201`. Make sure the validation changes did not touch the success branch."
+      - when: { test: "another method on /records answers 405 with Allow" }
+        message:
+          uk: "Ця перевірка надсилає `DELETE /records` і чекає `405` із заголовком `Allow` протягом 1 с. Якщо відповіді немає зовсім, гілка задає статус, але не завершує відповідь."
+          en: "This check sends `DELETE /records` and expects `405` with an `Allow` header within 1 s. If there is no answer at all, the branch sets the status but never finishes the answer."
+      - when: { test: "GET /totals answers 200 with the totals" }
+        message:
+          uk: "Ця перевірка надсилає `GET /totals` уже після того, як сховище завантажилося, і чекає `200` з `count: 3` і сумою трьох витрат протягом 1 с. Якщо відповіді немає, `await` чекає на подію, яка вже відбулася."
+          en: "This check sends `GET /totals` after the storage has loaded and expects `200` with `count: 3` and the sum of the three expenses within 1 s. If there is no answer, the `await` is waiting for an event that already happened."
+      - when: { test: "every error answer is JSON" }
+        message:
+          uk: "Ця перевірка дивиться на відповіді `GET /records/e-99`, невалідного `POST /records` і `DELETE /records` і чекає `Content-Type: application/json` з тілом-JSON. Відповідай на помилки через `sendJson`, а не простим текстом."
+          en: "This check looks at the answers to `GET /records/e-99`, an invalid `POST /records` and `DELETE /records` and expects `Content-Type: application/json` with a JSON body. Answer errors through `sendJson`, not with plain text."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-03
+    body:
+      uk: "Коли сервер твого проєкту не відповідає, спершу з’ясуй, чи зависає лише один шлях: `curl -i --max-time 2` для кількох адрес покаже це за секунди. У кроці NO-03 звичайна причина — гілка без `sendJson`; через неї ще й `server.close()` не завершується після Ctrl+C. Помилки — невідомий шлях, недозволений метод — відповідай чесним статусом і JSON, а не `200` з текстом помилки."
+      en: "When your project’s server does not answer, first find out whether only one path hangs: `curl -i --max-time 2` on a few addresses shows it within seconds. In step NO-03 the usual cause is a branch without `sendJson`; it also keeps `server.close()` from finishing after Ctrl+C. Answer errors — an unknown path, a method that is not allowed — with an honest status and JSON, not `200` with an error text."

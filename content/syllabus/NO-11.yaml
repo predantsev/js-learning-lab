@@ -31,7 +31,7 @@ lessons:
     kind: instructional
     minutes: 12
     objectives:
-      - "Read a large file chunk by chunk with a readable stream and predict its peak memory compared with readFile on the same 200 MB synthetic file."
+      - "Read a large file chunk by chunk with a readable stream and predict its peak memory compared with readFile on the same 32 MB synthetic file (the isolated-node runtime caps files written at 64 MB)."
       - "Explain what write() returning false means and pause the producer until the writable emits 'drain'."
     subskills:
       - { family: B-08, skill: "read/write streams and backpressure", depth: intro }
@@ -39,13 +39,13 @@ lessons:
       - "write() returning false means the chunk was lost, so I should write it again."
       - "A stream is just a faster readFile; the memory use is the same."
     prerequisites: [no-02-04-bounded-reads-writes, no-01-05-eventemitter-errors]
-    glossary: [backpressure, high-water-mark, drain-event]
-    visual: { kind: pipeline, concept: "Chunks flow from a file reader to a deliberately slow writer; the writer's buffer fills to highWaterMark, write() turns false, the reader pauses and 'drain' resumes the flow while a memory gauge stays flat; a second run that ignores false shows the buffer and memory growing." }
+    glossary: [backpressure, high-water-mark, drain-event, json-lines]
+    visual: { kind: diagram, concept: "(A diagram, not the pipeline kind: VISUALS.md pipeline is for array-method chains.) Chunks flow from a file reader to a deliberately slow writer; the writer's buffer fills to highWaterMark, write() turns false, the reader pauses and 'drain' resumes the flow while a memory gauge stays flat; a second run that ignores false shows the buffer and memory growing." }
     analogy: "A conveyor belt into a packing station: when the station's tray is full it signals the belt to stop, and restarts it once there is room (limit: in Node nothing stops automatically unless the code respects write()'s false return or uses pipe/pipeline; ignoring the signal keeps piling chunks up in memory)."
     practice:
-      - { kind: predict, runtime: isolated-node, summary: "Predict peak memory for readFile versus createReadStream on a generated 200 MB JSON-lines file, and whether a slow writer's write() ever returns false." }
-      - { kind: run-change, runtime: isolated-node, summary: "Run the synthetic slow-consumer script, print process.memoryUsage() every second, then remove the 'drain' wait and watch memory climb." }
-      - { kind: write, runtime: isolated-node, summary: "Write copyWithBackpressure(readable, writable) that pauses on write() === false and resumes on 'drain', and confirm flat memory on the generated file." }
+      - { kind: predict, runtime: isolated-node, summary: "Predict peak memory for readFile versus createReadStream on a generated 32 MB JSON-lines file, whether a slow writer's write() ever returns false, and whether a chunk answered with false is lost." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the synthetic slow-consumer script, print the writer's queued bytes (writableLength) every 100 ms, then stop respecting false and watch the queue climb to almost the whole file." }
+      - { kind: write, runtime: isolated-node, summary: "Write writeJsonLines(records, writable): the producer is your own loop, so it awaits 'drain' after write() === false, never writes a line twice and resolves after 'finish'; checks measure the slow writer's queue." }
     retrieval:
       - { concept: "bounded reads with a fixed-size buffer", from: no-02-04-bounded-reads-writes }
   - id: no-11-02-pipeline-error-abort
@@ -62,11 +62,11 @@ lessons:
       - "Aborting a job only stops my callback; the file and the socket close on their own."
     prerequisites: [no-11-01-streams-backpressure, no-02-06-errors-handle-cleanup]
     glossary: [stream-pipeline, transform-stream]
-    visual: { kind: pipeline, concept: "Source, a JSON-lines parsing transform and a file writer in a row; an invalid line makes the transform fail, and the step-through shows pipeline destroying every stage, closing the file descriptor and rejecting once, next to .pipe() leaving the source open." }
+    visual: { kind: diagram, concept: "(A diagram, not the pipeline kind: VISUALS.md pipeline is for array-method chains.) Source, a JSON-lines parsing transform and a file writer in a row; an invalid line makes the transform fail, and the step-through shows pipeline destroying every stage, closing the file descriptor and rejecting once, next to .pipe() leaving the source open." }
     analogy: null
     practice:
       - { kind: predict, runtime: isolated-node, summary: "Predict which of the three stages stay open after the parsing transform throws on line 501, first with .pipe() and then with pipeline()." }
-      - { kind: run-change, runtime: isolated-node, summary: "Run both versions, list open resources with process.getActiveResourcesInfo(), then pass an AbortSignal, abort after 100 ms and list them again." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run both versions and print each stage's destroyed state and the bytes left on disk (process.getActiveResourcesInfo() does not list an idle open file stream — measured on Node 25), then pass an AbortSignal, abort after 100 ms and compare." }
       - { kind: write, runtime: isolated-node, summary: "Write exportRecords(source, destPath, { signal }) with pipeline that writes to a temp file, renames it on success and deletes it on error or abort." }
     retrieval:
       - { concept: "readable streams are async iterables", from: js-13-01-iterable-protocol }
@@ -85,10 +85,10 @@ lessons:
       - "Node handles requests in parallel, so one slow handler only delays its own client."
     prerequisites: [no-11-02-pipeline-error-abort, no-01-04-event-loop-phases]
     glossary: [cpu-bound-work, event-loop-delay]
-    visual: { kind: event-loop, concept: "The call stack holds a 300 ms synchronous checksum inside a request handler while a timer, an I/O callback and two other requests wait in their queues; batching the loop with setImmediate lets the queued callbacks run between batches." }
+    visual: { kind: diagram, concept: "(A diagram, not the event-loop kind: the build-time event-loop runner has no setImmediate or HTTP.) The main thread holds a ~200 ms synchronous checksum inside a request handler while a timer, an I/O callback and two other requests wait in their queues; batching the loop with setImmediate lets the queued callbacks run between batches." }
     analogy: null
     practice:
-      - { kind: predict, runtime: isolated-node, summary: "Predict the response time of GET /health while another request runs a synchronous 300 ms checksum, and again after the checksum is wrapped in an async function." }
+      - { kind: predict, runtime: isolated-node, summary: "Predict the response time of GET /health while another request runs a synchronous ~200 ms checksum, and again after the checksum is wrapped in an async function." }
       - { kind: run-change, runtime: isolated-node, summary: "Run the loopback lab server with perf_hooks.monitorEventLoopDelay, fire both requests, then batch the loop with setImmediate and compare the p99 delay." }
       - { kind: write, runtime: isolated-node, summary: "Write sumInBatches(records, batchSize) that yields to the event loop between batches and resolves with the total." }
     retrieval:
@@ -110,8 +110,8 @@ lessons:
     visual: { kind: diagram, concept: "A queue box with a fixed number of slots feeding two running slots; arriving jobs take free slots, the queue length is shown at each step, and the first job over the limit is highlighted being rejected with 503 instead of growing the queue." }
     analogy: null
     practice:
-      - { kind: predict, runtime: isolated-node, summary: "Predict how many export jobs are running, waiting and rejected after 20 POST /jobs requests hit a queue of 8 with concurrency 2." }
-      - { kind: run-change, runtime: isolated-node, summary: "Run the synthetic job server, send the burst, then change concurrency and maximum length and compare the running/waiting/rejected counts." }
+      - { kind: predict, runtime: isolated-node, summary: "Predict the outcome, peak memory and time of 100 export jobs against a simulated 10-connection database, run all at once (Promise.allSettled) versus a pool of 4." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run the all-at-once versus pool lab, then change CONCURRENCY to 10 and 11 and compare successes, failures, peak and time; the exercise driver then sends 20 POST /jobs to a queue of 8 with concurrency 2 and prints 202/503 and running/waiting counts." }
       - { kind: write, runtime: isolated-node, summary: "Write createJobQueue({ concurrency, maxQueued }) whose add(job) returns a promise or rejects with QueueFull, and test the boundary job." }
     retrieval:
       - { concept: "sequential versus concurrent promises", from: js-08-08-combinators-sequential-concurrent }
@@ -133,7 +133,7 @@ lessons:
     analogy: null
     practice:
       - { kind: predict, runtime: isolated-node, summary: "Predict how many records exist after an import step that writes and then fails once is retried twice, with and without a processed-job-ids check." }
-      - { kind: run-change, runtime: isolated-node, summary: "Run the flaky-step simulation, then add maxAttempts, exponential backoff with jitter and a non-retryable ValidationError, and compare the attempt logs." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run a real node:sqlite import step that commits and then loses its answer under a naive retry loop, then turn on the job-id check and raise the failures, and compare rows and attempt logs (maxAttempts, backoff with jitter and ValidationError are built in the write task)." }
       - { kind: write, runtime: isolated-node, summary: "Write retry(fn, { maxAttempts, baseMs, isRetryable, signal }) and wrap the import step so it records the job id in the same atomic write as the records." }
     retrieval:
       - { concept: "idempotent requests and idempotency keys", from: no-04-05-idempotency }
@@ -155,8 +155,8 @@ lessons:
     visual: { kind: diagram, concept: "Main thread, a worker thread and a child process as boxes joined by message arrows; the step-through shows the cost of copying a large array through postMessage, a crash contained in the child process, and each box's open-handle count returning to zero on clean shutdown." }
     analogy: null
     practice:
-      - { kind: predict, runtime: isolated-node, summary: "Predict the latency of a concurrent GET /health while a checksum runs on the main thread, in a worker thread and in a child process, and the extra cost of sending 50,000 records to each." }
-      - { kind: run-change, runtime: isolated-node, summary: "Run the three variants with timing output, then transfer an ArrayBuffer instead of copying the array and compare." }
+      - { kind: predict, runtime: isolated-node, summary: "Predict the checksum duration and the lateness of a 10 ms health timer when the checksum runs on the main thread versus a worker thread (child processes are compared from the Node 22 docs: isolated-node does not start child processes)." }
+      - { kind: run-change, runtime: isolated-node, summary: "Run main thread versus worker with timing output after a warm-up, then compare copying 50,000 record objects with transferring an ArrayBuffer, and shrink the work to see when a worker is not worth it." }
       - { kind: write, runtime: isolated-node, summary: "Write runJob(job, { signal, maxRecords }) that closes every file handle and timer it opened in finally and reports zero remaining active resources afterwards." }
     retrieval:
       - { concept: "worker concurrency in the browser", from: js-13-09-proxy-workers-awareness }
@@ -201,7 +201,8 @@ lessons:
     visual: null
     analogy: null
     practice:
-      - { kind: independent, runtime: local-node, summary: "No-hint task on your machine: a synthetic report-job queue with maxQueued and concurrency, retries with backoff that never duplicate output, AbortSignal cancellation, an event-loop delay measurement under load and node:test tests for cancellation and shutdown." }
+      - { kind: independent, runtime: isolated-node, summary: "No-hint task: a report-job runner with maxQueued and concurrency, retries with doubling pauses and jitter that never rebuild or resave a stored report id, AbortSignal cancellation of waiting and running jobs, and a shutdown that refuses new work, waits for running jobs and leaves no timers; hidden checks drive it with gated jobs." }
+      - { kind: local-task, runtime: local-node, summary: "On your machine: node:test tests for cancellation and shutdown (with a per-test timeout), proof that the cancellation test catches a runner that ignores the signal, an event-loop delay measurement of CPU-heavy reports on the main thread, and a two-sentence decision about where the checksum step runs." }
     retrieval:
       - { concept: "cancellation with AbortController", from: js-08-09-cancellation-abort }
     # design note: no-hint
@@ -215,11 +216,11 @@ lessons:
       - { family: B-08, skill: "read/write streams and backpressure", depth: practice }
     misconceptions: []
     prerequisites: [no-11-08-independent-bounded-job, no-05-09-capstone-server-persistence]
-    glossary: [json-lines]
+    glossary: []
     visual: null
     analogy: null
     practice:
-      - { kind: write, runtime: local-node, summary: "In server/, add GET /export that streams JSON lines from the repository, and an import job that reads a generated large file through pipeline, validates each line with the domain validator and upserts by id." }
+      - { kind: write, runtime: local-node, summary: "In server/, add GET /v1/export that streams JSON lines from the repository, and POST /v1/import plus npm run import: a bounded, cancellable job that reads a generated large file through pipeline, checks each line against the storage contract and the id shape, and upserts by id." }
       - { kind: run-change, runtime: local-node, summary: "On your machine, run the import twice and cancel it once midway, then confirm the record count and the derived summary are unchanged by the retry." }
     retrieval:
       - { concept: "durable server storage for the capstone", from: no-05-09-capstone-server-persistence }

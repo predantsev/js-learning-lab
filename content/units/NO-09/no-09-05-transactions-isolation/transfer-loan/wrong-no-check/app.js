@@ -1,0 +1,16 @@
+// transferLoan(db, { fromMember, toMember, bookId, today }): fromMember hands an open loan of bookId to
+// toMember. Close fromMember's open loan of that book (returnedOn = today) and open a new loan for
+// toMember (loanedOn = today), as one transaction that rolls back when any step fails or changes no row.
+export function transferLoan(db, { fromMember, toMember, bookId, today }) {
+  db.exec('BEGIN');
+  try {
+    // A step that changes zero rows is not an error for SQL, so nothing stops here.
+    db.prepare('UPDATE loans SET returnedOn = ? WHERE memberId = ? AND bookId = ? AND returnedOn IS NULL')
+      .run(today, fromMember, bookId);
+    db.prepare('INSERT INTO loans (memberId, bookId, loanedOn) VALUES (?, ?, ?)').run(toMember, bookId, today);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}

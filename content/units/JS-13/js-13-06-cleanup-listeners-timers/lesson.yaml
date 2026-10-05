@@ -1,0 +1,454 @@
+id: js-13-06-cleanup-listeners-timers
+unit: JS-13
+title:
+  uk: "Прибираємо listeners, таймери та дескриптори ресурсів"
+  en: "Cleaning up listeners, timers and handles"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Дати кожному `addEventListener`, `setInterval` і `setTimeout`, які створює віджет, пару — їхнє прибирання в одній функції `teardown`."
+    en: "Pair every `addEventListener`, `setInterval` and `setTimeout` a widget creates with its removal in one teardown function."
+  - uk: "Знімати кілька listeners одразу одним сигналом `AbortController` і зробити `teardown` безпечним для повторного виклику."
+    en: "Remove several listeners at once with one `AbortController` signal and make teardown safe to call twice."
+  - uk: "Прибирати у `finally`, щоб прибирання відбувалося й тоді, коли налаштування впало на півдорозі, а початкова помилка йшла далі."
+    en: "Run cleanup in `finally` so it also happens when setup throws part-way, and let the original error propagate."
+prerequisites: [js-13-05-allocation-retained-references, js-08-09-cancellation-abort]
+subskills:
+  - { family: J-12, skill: "listeners/timers/handles cleanup", depth: intro }
+  - { family: J-10, skill: "cleanup and propagation", depth: practice }
+glossary: [teardown, idempotent-cleanup, resource-handle]
+selfCheck: [predict-after-remove, mount-widget]
+
+blocks:
+  - id: element-is-not-owner
+    kind: explanation
+    title:
+      uk: "Елемент прибрали — а таймер цокає"
+      en: "The element is gone — and the timer keeps ticking"
+    body:
+      uk: |
+        Коли віджет запускає `setInterval` чи додає listener (слухача події) на `window` або `document`, їх тримає **браузер**, а не елемент віджета. Тому `element.remove()` прибирає лише картинку: таймер далі викликає свою функцію, listener далі реагує на події, а їхні замикання тримають дані в пам’яті.
+
+        Звідси правило: **кожне «увімкнув» має пару «вимкнув»**, і всі пари зібрано в одній функції [[teardown]]:
+
+        | Увімкнув | Вимкнув |
+        |---|---|
+        | `const id = setInterval(fn, ms)` | `clearInterval(id)` |
+        | `const id = setTimeout(fn, ms)` | `clearTimeout(id)` |
+        | `target.addEventListener(type, fn)` | `target.removeEventListener(type, fn)` — **та сама** `fn` |
+        | `addEventListener(type, fn, { signal })` | `controller.abort()` — знімає всі listeners із цим сигналом |
+
+        Номер таймера, `AbortController` — це [[resource-handle|дескриптори ресурсів]]: щоб вимкнути, їх треба зберегти.
+      en: |
+        When a widget starts a `setInterval` or adds a listener on `window` or `document`, they are held by **the browser**, not by the widget's element. So `element.remove()` removes only the picture: the timer keeps calling its function, the listener keeps reacting to events, and their closures keep data in memory.
+
+        Hence the rule: **every “switch on” has a partner “switch off”**, and all the pairs are gathered in one [[teardown]] function:
+
+        | Switch on | Switch off |
+        |---|---|
+        | `const id = setInterval(fn, ms)` | `clearInterval(id)` |
+        | `const id = setTimeout(fn, ms)` | `clearTimeout(id)` |
+        | `target.addEventListener(type, fn)` | `target.removeEventListener(type, fn)` — **the same** `fn` |
+        | `addEventListener(type, fn, { signal })` | `controller.abort()` — removes every listener with that signal |
+
+        A timer's id or an `AbortController` are [[resource-handle|resource handles]]: to switch something off, you have to keep them.
+
+  - id: predict-after-remove
+    kind: prediction
+    prompt:
+      uk: "Годинник запускає інтервал і listener на `window`, а потім його елемент прибирають зі сторінки — без жодного прибирання. Після цього двічі стається `resize`, а через 1050 мс програма друкує, скільки разів спрацював інтервал. Що з’явиться в консолі?"
+      en: "A clock starts an interval and a listener on `window`, then its element is removed from the page — with no cleanup at all. After that `resize` happens twice, and after 1050 ms the program prints how many times the interval fired. What appears in the console?"
+    code: |
+      let ticks = 0;
+
+      function mountClock(root) {
+        const clock = document.createElement("p");
+        root.append(clock);
+        setInterval(() => {
+          ticks = ticks + 1;
+        }, 300);
+        window.addEventListener("resize", () => {
+          console.log("resize");
+        });
+        return clock;
+      }
+
+      const clock = mountClock(document.body);
+      clock.remove();
+      window.dispatchEvent(new Event("resize"));
+      window.dispatchEvent(new Event("resize"));
+      setTimeout(() => {
+        console.log("ticks:", ticks);
+      }, 1050);
+    verify:
+      logs: ["resize", "resize", "ticks: 3"]
+    answer:
+      type: choice
+      options:
+        - id: both-keep-going
+          code: "resize\nresize\nticks: 3"
+        - id: all-stopped
+          code: "ticks: 0"
+          why:
+            uk: "Прибрати елемент — не означає прибрати те, що він запустив. Інтервал і listener на `window` тримає браузер, і вони працюють далі."
+            en: "Removing an element does not remove what it started. The interval and the listener on `window` are held by the browser, and they keep working."
+        - id: timer-stopped
+          code: "resize\nresize\nticks: 0"
+          why:
+            uk: "Інтервал не прив’язаний до елемента: він цокає, доки хтось не викличе `clearInterval` — за 1050 мс тричі (300, 600, 900)."
+            en: "The interval is not tied to the element: it ticks until someone calls `clearInterval` — three times within 1050 ms (300, 600, 900)."
+        - id: listener-stopped
+          code: "ticks: 3"
+          why:
+            uk: "Listener додано на `window`, а не на годинник, тож прибирання годинника його не зачіпає: обидва `resize` друкуються."
+            en: "The listener was added to `window`, not to the clock, so removing the clock does not affect it: both `resize` events are printed."
+      correct: [both-keep-going]
+    explanation:
+      uk: "Елемента вже немає, але інтервал спрацював тричі, а listener відповів на обидва `resize`. На сторінці нічого не видно — тому такі «привиди» легко пропустити, доки вони не почнуть заважати чи займати пам’ять."
+      en: "The element is gone, but the interval fired three times and the listener answered both `resize` events. Nothing is visible on the page — that is why such “ghosts” are easy to miss until they start to get in the way or take up memory."
+
+  - id: checkout
+    kind: analogy
+    body:
+      uk: "`teardown` — як виселення з готельного номера за списком, який ти склав під час заселення: увімкнув кондиціонер — вимкни, взяв ключ — поверни, замовив будильник — скасуй. Якщо під час заселення щось пішло не так, усе одно пройди список до кінця. А повторне виселення з уже порожнього номера нічого не ламає: усе вже вимкнено."
+      en: "`teardown` is like checking out of a hotel room using a list you made when you checked in: switched on the air conditioning — switch it off, took a key — return it, ordered a wake-up call — cancel it. If something went wrong during check-in, still go through the list to the end. And checking out again from an already empty room breaks nothing: everything is already off."
+    limits:
+      uk: "Готель нагадає про ключ на рецепції. Браузер не нагадає ні про що: забутий таймер мовчки цокає, доки сторінка відкрита, і жодної помилки ти не побачиш."
+      en: "A hotel reminds you about the key at the reception desk. The browser reminds you of nothing: a forgotten timer silently ticks while the page is open, and you will see no error."
+
+  - id: lifecycle
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Від mount до teardown — і що після нього"
+      en: "From mount to teardown — and what comes after"
+    textEquivalent:
+      uk: "Три учасники: віджет, window і таймер. Під час mount віджет додає на window два listeners — для resize і keydown — з одним сигналом AbortController, а таймеру дає setInterval і зберігає його номер. Поки віджет на сторінці, таймер регулярно викликає tick, а window — listener resize. Потім віджет викликає teardown(): controller.abort() знімає обидва listeners одним викликом, clearInterval(id) зупиняє таймер. Повторний виклик teardown() нічого не робить: прапорець показує, що прибирання вже відбулося. Після teardown жоден tick і жоден resize вже не мають доходити до віджета; якщо доходять — це дефект: якусь пару «увімкнув — вимкнув» пропущено."
+      en: "Three participants: the widget, window and the timer. During mount the widget adds two listeners to window — for resize and keydown — with one AbortController signal, and gives the timer a setInterval, keeping its id. While the widget is on the page, the timer calls tick regularly, and window calls the resize listener. Then the widget calls teardown(): controller.abort() removes both listeners in one call, clearInterval(id) stops the timer. Calling teardown() again does nothing: a flag shows that the cleanup has already happened. After teardown no tick and no resize should reach the widget any more; if one does, it is a defect: some “switch on — switch off” pair was missed."
+    spec:
+      actors:
+        - { id: widget, label: { uk: "віджет", en: "widget" } }
+        - { id: win, label: "window" }
+        - { id: timer, label: { uk: "таймер", en: "timer" } }
+      messages:
+        - from: widget
+          to: win
+          label: "addEventListener ×2, { signal }"
+          caption:
+            uk: "`mount`: два listeners (`resize`, `keydown`) з **одним** сигналом `controller.signal`."
+            en: "`mount`: two listeners (`resize`, `keydown`) with **one** signal `controller.signal`."
+        - from: widget
+          to: timer
+          label: "id = setInterval(tick, 300)"
+          caption:
+            uk: "Інтервал запущено, його номер `id` збережено — без нього таймер не зупинити."
+            en: "The interval is started and its `id` is kept — without it the timer cannot be stopped."
+        - from: timer
+          to: widget
+          label: "tick()"
+          kind: async
+          caption:
+            uk: "Поки віджет на сторінці, таймер регулярно викликає `tick`."
+            en: "While the widget is on the page, the timer calls `tick` regularly."
+        - from: win
+          to: widget
+          label: "resize"
+          kind: async
+          caption:
+            uk: "`window` викликає listener `resize`."
+            en: "`window` calls the `resize` listener."
+        - from: widget
+          to: win
+          label: "controller.abort()"
+          caption:
+            uk: "`teardown()`: один `abort()` знімає **обидва** listeners — не треба пам’ятати кожну функцію."
+            en: "`teardown()`: one `abort()` removes **both** listeners — no need to remember each function."
+        - from: widget
+          to: timer
+          label: "clearInterval(id)"
+          caption:
+            uk: "Таймер зупинено за збереженим номером."
+            en: "The timer is stopped by its kept id."
+        - from: widget
+          to: widget
+          label: "teardown() ×2"
+          kind: note
+          note:
+            uk: "прапорець: уже прибрано — нічого не робити"
+            en: "flag: already cleaned — do nothing"
+          caption:
+            uk: "Повторний `teardown()` перевіряє прапорець і нічого не робить. Так його можна безпечно викликати з кількох місць."
+            en: "A repeated `teardown()` checks the flag and does nothing. That way it can be called safely from several places."
+        - from: timer
+          to: widget
+          label: "tick() — defect!"
+          kind: async
+          caption:
+            uk: "Після `teardown` до віджета не має доходити нічого. Якщо ти бачиш `tick` чи `resize` після цього моменту — якусь пару пропущено."
+            en: "After `teardown` nothing should reach the widget. If you see a `tick` or a `resize` after this point, some pair was missed."
+
+  - id: clock
+    kind: example
+    runtime: browser-js
+    dir: clock
+    entry: index.js
+    strings:
+      clock: { uk: "Годинник", en: "Clock" }
+      resized: { uk: "годинник почув resize", en: "the clock heard resize" }
+      ticks: { uk: "спрацювань інтервалу після teardown:", en: "interval runs after teardown:" }
+    title:
+      uk: "teardown, який прибирає все"
+      en: "A teardown that cleans up everything"
+    body:
+      uk: |
+        Тут `mountClock` уже повертає `teardown`, але той прибирає лише елемент. Натисни **Запустити**: після `teardown()` годинник іще чує `resize`, а інтервал спрацював 3 рази.
+      en: |
+        Here `mountClock` already returns `teardown`, but it removes only the element. Press **Run**: after `teardown()` the clock still hears `resize`, and the interval fired 3 times.
+    tryIt:
+      uk: |
+        1. У `teardown` під `clock.remove();` додай `clearInterval(id);`. Запусти: спрацювань — `0`.
+        2. Над рядком `window.addEventListener(...)` додай `const controller = new AbortController();`. Третім аргументом `addEventListener` (після стрілкової функції, перед закривною дужкою) додай `{ signal: controller.signal }`, а в `teardown` — `controller.abort();`. Запусти: рядка про `resize` більше немає.
+        3. Під рядком `teardown();` додай ще один `teardown();`. Помилки немає: `remove`, `clearInterval` і `abort` можна безпечно викликати вдруге. Зважай: якщо `teardown` ще й змінює лічильник чи вміст, повторний виклик уже не безпечний — для цього потрібен прапорець, як у схемі вище.
+      en: |
+        1. In `teardown`, below `clock.remove();`, add `clearInterval(id);`. Run: the runs count is `0`.
+        2. Above the line `window.addEventListener(...)` add `const controller = new AbortController();`. As the third argument of `addEventListener` (after the arrow function, before the closing bracket) add `{ signal: controller.signal }`, and in `teardown` add `controller.abort();`. Run: the `resize` line is gone.
+        3. Below the line `teardown();` add one more `teardown();`. There is no error: `remove`, `clearInterval` and `abort` are safe to call a second time. Keep in mind: if `teardown` also changes a counter or content, a second call is no longer safe — that needs a flag, as in the diagram above.
+
+  - id: cleanup-on-failure
+    kind: explanation
+    title:
+      uk: "Налаштування впало на півдорозі"
+      en: "Setup failed part-way"
+    body:
+      uk: |
+        Буває, що віджет уже запустив таймер, а наступний крок (малювання, читання даних) кинув помилку. `teardown` ще ніхто не отримав — отже, ніхто його й не викличе. Прибирати треба там само, у `finally`, а помилку **не ковтати**: той, хто викликав, має дізнатися, що саме зламалося.
+
+        ```js
+        function showToast(root, text) {
+          const toast = document.createElement("p");
+          root.append(toast);
+          let timer = null;
+          let ready = false;
+          try {
+            timer = setTimeout(() => toast.remove(), 1000);
+            toast.textContent = formatToast(text);   // may throw
+            ready = true;
+            return () => { clearTimeout(timer); toast.remove(); };
+          } finally {
+            if (!ready) {                             // setup did not finish
+              clearTimeout(timer);
+              toast.remove();
+            }
+          }
+        }
+        ```
+
+        `catch` тут немає, тож помилка з `formatToast` після `finally` сама йде далі — та сама, з тим самим повідомленням. Функцію, яку повертає `showToast`, можна викликати й двічі: `clearTimeout` і `remove` для вже прибраного нічого не роблять. Але щойно прибирання змінює ще щось (лічильник, вміст `root`), потрібен прапорець [[idempotent-cleanup|ідемпотентного]] прибирання: `if (done) { return; }` на початку, `done = true;` одразу після нього.
+      en: |
+        Sometimes a widget has already started a timer, and the next step (drawing, reading data) throws an error. Nobody has received `teardown` yet — so nobody will call it. The cleanup has to happen right there, in `finally`, and the error must **not be swallowed**: the caller has to learn what exactly broke.
+
+        ```js
+        function showToast(root, text) {
+          const toast = document.createElement("p");
+          root.append(toast);
+          let timer = null;
+          let ready = false;
+          try {
+            timer = setTimeout(() => toast.remove(), 1000);
+            toast.textContent = formatToast(text);   // may throw
+            ready = true;
+            return () => { clearTimeout(timer); toast.remove(); };
+          } finally {
+            if (!ready) {                             // setup did not finish
+              clearTimeout(timer);
+              toast.remove();
+            }
+          }
+        }
+        ```
+
+        There is no `catch` here, so the error from `formatToast` carries on by itself after `finally` — the same one, with the same message. The function that `showToast` returns can also be called twice: `clearTimeout` and `remove` do nothing for what is already cleaned up. But as soon as cleanup changes anything else (a counter, the content of `root`), it needs the flag of [[idempotent-cleanup|idempotent cleanup]]: `if (done) { return; }` at the start, `done = true;` right after it.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: listeners і finally"
+      en: "Recall: listeners and finally"
+    items:
+      - id: fresh-arrow
+        from: js-06-10-events-default-behavior
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          const button = document.createElement("button");
+          button.addEventListener("click", () => console.log("click"));
+          button.removeEventListener("click", () => console.log("click"));
+          button.click();
+        verify:
+          logs: ["click"]
+        answer:
+          type: choice
+          options:
+            - id: still-there
+              code: "click"
+            - id: removed
+              code: "(nothing)"
+              why:
+                uk: "`removeEventListener` шукає **ту саму** функцію, що додали. Нова стрілкова функція з тим самим кодом — інший об’єкт, тож нічого не знято."
+                en: "`removeEventListener` looks for **the same** function that was added. A new arrow function with the same code is another object, so nothing is removed."
+          correct: [still-there]
+        explanation:
+          uk: "Щоб зняти listener, збережи функцію в змінну й передай її в обидва виклики — або використай `{ signal }` і `abort()`."
+          en: "To remove a listener, keep the function in a variable and pass it to both calls — or use `{ signal }` and `abort()`."
+      - id: finally-both-paths
+        from: js-07-03-try-catch-finally
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          function load(ok) {
+            try {
+              if (!ok) {
+                throw new Error("bad data");
+              }
+              return "loaded";
+            } finally {
+              console.log("cleanup");
+            }
+          }
+          console.log(load(true));
+          try {
+            load(false);
+          } catch (error) {
+            console.log(error.message);
+          }
+        verify:
+          logs: ["cleanup", "loaded", "cleanup", "bad data"]
+        answer:
+          type: choice
+          options:
+            - id: both
+              code: "cleanup\nloaded\ncleanup\nbad data"
+            - id: error-only
+              code: "loaded\ncleanup\nbad data"
+              why:
+                uk: "`finally` виконується й тоді, коли `try` завершується через `return`, — ще до того, як значення повернеться викликачу."
+                en: "`finally` also runs when `try` ends with a `return` — before the value gets back to the caller."
+            - id: swallowed
+              code: "cleanup\nloaded\ncleanup"
+              why:
+                uk: "`finally` без `catch` не ковтає помилку: після нього вона йде далі, і зовнішній `catch` друкує її повідомлення."
+                en: "`finally` without `catch` does not swallow the error: after it, the error carries on, and the outer `catch` prints its message."
+          correct: [both]
+        explanation:
+          uk: "`finally` виконується на обох шляхах і не змінює результат: значення повертається, помилка йде далі. Саме тому прибирання ставлять у `finally`."
+          en: "`finally` runs on both paths and does not change the outcome: the value is returned, the error carries on. That is exactly why cleanup goes into `finally`."
+
+  - id: mount-widget
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: mount-widget
+    entry: index.js
+    strings:
+      summary: { uk: "Витрат за тиждень: 6", en: "Expenses this week: 6" }
+      clean: { uk: "віджет прибрано", en: "the widget is cleaned up" }
+      left: { uk: "щось лишилося", en: "something is left" }
+      broken: { uk: "не вдалося намалювати віджет", en: "could not draw the widget" }
+    title:
+      uk: "Віджет, який прибирає за собою"
+      en: "A widget that cleans up after itself"
+    instructions:
+      uk: |
+        `mountWidget(root, render)` вже вміє вмикати: listener `resize` на `window`, listener `click` на `root`, інтервал раз на секунду й малювання через `render(root)`. Але `teardown` лише очищає вміст. Доведи віджет до ладу:
+
+        - `teardown()` знімає **обидва** listeners, зупиняє інтервал і спорожнює `root`;
+        - `teardown()` можна викликати двічі: другий виклик нічого не робить — навіть якщо в той самий `root` уже змонтовано новий віджет, його вміст, listeners і таймер лишаються цілими;
+        - якщо `render` кидає помилку, уже додані listeners і таймер прибрано, а з `mountWidget` вилітає **та сама** помилка (не нова й не загорнута).
+
+        Перевірки підміняють `setInterval` і `clearInterval`, щоб побачити, який таймер запущено і який зупинено, — тож викликай саме їх. Унизу файла готовий код: у консолі має з’явитися повідомлення про прибраний віджет і текст помилки малювання.
+      en: |
+        `mountWidget(root, render)` already knows how to switch things on: a `resize` listener on `window`, a `click` listener on `root`, an interval once a second and drawing through `render(root)`. But `teardown` only clears the content. Finish the widget:
+
+        - `teardown()` removes **both** listeners, stops the interval and empties `root`;
+        - `teardown()` can be called twice: the second call does nothing — even when a new widget has already been mounted into the same `root`, its content, listeners and timer stay intact;
+        - if `render` throws, the listeners and the timer already added are cleaned up, and **the same** error comes out of `mountWidget` (not a new one, not wrapped).
+
+        The checks replace `setInterval` and `clearInterval` to see which timer was started and which was stopped — so call exactly those. At the bottom of the file there is ready code: the console must show the message about the cleaned-up widget and the drawing error's text.
+    testTitles:
+      "the program prints the clean message and the render error":
+        uk: "Програма друкує повідомлення про прибрання і помилку малювання"
+        en: "The program prints the clean message and the render error"
+      "while mounted, resize and click update the widget and one timer runs":
+        uk: "Поки віджет змонтовано, resize і click оновлюють його, а таймер запущено один"
+        en: "While mounted, resize and click update the widget and one timer runs"
+      "teardown removes both listeners":
+        uk: "`teardown` знімає обидва listeners"
+        en: "`teardown` removes both listeners"
+      "teardown stops the timer":
+        uk: "`teardown` зупиняє таймер"
+        en: "`teardown` stops the timer"
+      "teardown empties root":
+        uk: "`teardown` спорожнює `root`"
+        en: "`teardown` empties `root`"
+      "teardown can be called twice without an error":
+        uk: "`teardown` можна викликати двічі без помилки"
+        en: "`teardown` can be called twice without an error"
+      "a second teardown call does not touch a newer widget":
+        uk: "Повторний `teardown` не чіпає новішого віджета"
+        en: "A second `teardown` call does not touch a newer widget"
+      "a failing render is cleaned up and its own error reaches the caller":
+        uk: "Після помилки `render` усе прибрано, а викликач отримує саме її"
+        en: "A failing `render` is cleaned up and its own error reaches the caller"
+    hints:
+      nudge:
+        uk: "Що треба зберегти під час увімкнення, щоб потім вимкнути: функції listeners, сигнал, номер інтервалу? А як `teardown` дізнається, що він уже відпрацював?"
+        en: "What must you keep while switching on in order to switch off later: the listener functions, a signal, the interval's id? And how does `teardown` know it has already run?"
+      explanation:
+        uk: "Збережи номер інтервалу й або функції listeners (тоді знімай **ті самі** функції), або один `AbortController`, чий `signal` передаєш обом `addEventListener`. Прапорець у замиканні (`let done = false`) робить `teardown` ідемпотентним: перший виклик ставить його й прибирає, наступні одразу виходять. Для помилки в `render` подивись на `showToast` з пояснення: `try` з прапорцем «налаштування завершено» і `finally`, що прибирає, коли прапорець не став `true`, — помилка тоді йде далі сама. Підійде й `catch`, що прибирає й кидає **ту саму** помилку."
+        en: "Keep the interval's id and either the listener functions (then remove **the same** functions) or one `AbortController` whose `signal` you pass to both `addEventListener` calls. A flag in the closure (`let done = false`) makes `teardown` idempotent: the first call sets it and cleans up, later calls leave at once. For an error in `render`, look at `showToast` in the explanation: a `try` with a “setup finished” flag and a `finally` that cleans up when the flag did not become `true` — the error then carries on by itself. A `catch` that cleans up and throws **the same** error works too."
+    solutionNote:
+      uk: "Один `AbortController` знімає обидва listeners, `clearInterval(timer)` зупиняє таймер, а прапорець `active` робить повторний `teardown` порожнім — тож він не спорожнить `root` нового віджета. Налаштування стоїть у `try`; якщо `render` кинув, `mounted` лишився `false`, і `finally` викликає `teardown`, а помилка йде до викликача без змін. Перевірки приймають і інший порядок — спершу `render`, потім listeners і таймер: тоді після помилки вмикати ще нічого не встигли. Але в справжньому віджеті налаштування часто не можна переставити, тож прийом із `finally` варто вміти."
+      en: "One `AbortController` removes both listeners, `clearInterval(timer)` stops the timer, and the `active` flag makes a repeated `teardown` empty — so it does not empty the `root` of a new widget. The setup sits in `try`; if `render` threw, `mounted` stayed `false`, `finally` calls `teardown`, and the error reaches the caller unchanged. The checks also accept the other order — `render` first, then the listeners and the timer: after a failure nothing has been switched on yet. But in a real widget setup often cannot be reordered, so the `finally` technique is worth knowing."
+    feedback:
+      - when: { test: "the program prints the clean message and the render error" }
+        message:
+          uk: "Ця перевірка очікує два рядки: повідомлення, що віджет прибрано (`root` порожній після `teardown`), і текст помилки, яку кинув `render` у другому виклику. Якщо другого рядка немає, помилку проковтнуто всередині `mountWidget`."
+          en: "This check expects two lines: the message that the widget is cleaned up (`root` is empty after `teardown`) and the text of the error `render` threw in the second call. If the second line is missing, the error was swallowed inside `mountWidget`."
+      - when: { test: "while mounted, resize and click update the widget and one timer runs" }
+        message:
+          uk: "Ця перевірка очікує, що змонтований віджет показує намальований вміст, `resize` записує ширину вікна в `data-width`, клік збільшує `data-clicks` до 1, а `setInterval` викликано рівно раз."
+          en: "This check expects a mounted widget to show the drawn content, `resize` to write the window width into `data-width`, a click to raise `data-clicks` to 1, and `setInterval` to be called exactly once."
+      - when: { test: "teardown removes both listeners" }
+        message:
+          uk: "Ця перевірка після `teardown()` надсилає `resize` і клік і очікує, що `data-width` і `data-clicks` не змінилися. `removeEventListener` має отримати **ту саму** функцію, яку додали, — або listeners мають бути додані з `signal`, який `teardown` скасовує."
+          en: "After `teardown()` this check sends a `resize` and a click and expects `data-width` and `data-clicks` to stay unchanged. `removeEventListener` must receive **the same** function that was added — or the listeners must be added with a `signal` that `teardown` aborts."
+      - when: { test: "teardown stops the timer" }
+        message:
+          uk: "Ця перевірка очікує, що `teardown()` передасть у `clearInterval` номер, який повернув `setInterval`."
+          en: "This check expects `teardown()` to pass the id returned by `setInterval` to `clearInterval`."
+      - when: { test: "teardown empties root" }
+        message:
+          uk: "Ця перевірка очікує порожній вміст `root` після `teardown()`."
+          en: "This check expects the content of `root` to be empty after `teardown()`."
+      - when: { test: "teardown can be called twice without an error" }
+        message:
+          uk: "Ця перевірка викликає `teardown()` двічі й очікує, що другий виклик не кидає помилку."
+          en: "This check calls `teardown()` twice and expects the second call not to throw."
+      - when: { test: "a second teardown call does not touch a newer widget" }
+        message:
+          uk: "Ця перевірка монтує віджет A, прибирає його, монтує B у той самий `root` і знову викликає `teardown` від A. Очікується, що вміст B лишився, його `resize` працює, а його таймер не зупинено: повторний виклик має нічого не робити."
+          en: "This check mounts widget A, cleans it up, mounts B into the same `root` and calls A's `teardown` again. It expects B's content to remain, its `resize` to work and its timer not to be stopped: a repeated call must do nothing."
+      - when: { test: "a failing render is cleaned up and its own error reaches the caller" }
+        message:
+          uk: "Ця перевірка дає `render`, що кидає помилку, і очікує, що з `mountWidget` вилетить саме цей об’єкт помилки, а після цього `resize` і клік нічого не змінюють, а інтервал, якщо його встигли запустити до помилки, зупинено."
+          en: "This check gives a `render` that throws and expects exactly that error object to come out of `mountWidget`; after that a `resize` and a click must change nothing, and the interval, if it was started before the failure, must be stopped."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-13
+    body:
+      uk: "На кроці проєкту сторінка отримає саме такий `teardown()`: зняти одним `AbortController` усі listeners — форми, списку, кнопок «Показати ще» й повтору, фільтра й пошуку, — скасувати таймер debounce пошуку й закрити генератор. Перевірки рахують listeners: після `teardown()` не має лишитися жодного, а другий виклик нічого не робить."
+      en: "In the project step the page gets exactly this kind of `teardown()`: remove with one `AbortController` every listener — of the form, the list, the “Show more” and retry buttons, the filter and the search — cancel the search debounce timer and close the generator. The checks count listeners: not a single one may be left after `teardown()`, and a second call does nothing."

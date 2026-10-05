@@ -1,0 +1,645 @@
+id: re-09-02-typed-reducers-context
+unit: RE-09
+title:
+  uk: "Типізовані reducers і context"
+  en: "Typed reducers and context"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Описати стан reducer як discriminated union, щоб неможливі поєднання (завантаження з даними й помилкою водночас) не можна було записати."
+    en: "Model reducer state as a discriminated union so impossible combinations (loading with both data and an error) cannot be written."
+  - uk: "Типізувати actions як union з вичерпною перевіркою `never` і дати типізований context, хук якого голосно падає поза своїм provider."
+    en: "Type actions as a union handled exhaustively with a `never` check, and provide a typed context whose hook fails loudly outside its provider."
+prerequisites: [re-09-01-typed-ui-review, re-04-03-reducers-typed, js-14-03-unions-narrowing]
+subskills:
+  - { family: P-05, skill: "typed reducers/context", depth: practice }
+  - { family: R-03, skill: "reducer state transitions", depth: practice }
+glossary: [impossible-state]
+selfCheck: [predict-loading-dispatches, records-context]
+
+blocks:
+  - id: three-flags
+    kind: explanation
+    title:
+      uk: "Три прапорці дають вісім станів, а потрібно чотири"
+      en: "Three flags give eight states, but four are needed"
+    body:
+      uk: |
+        Запит часто описують трьома полями:
+
+        ```ts
+        type TasksFlags = { isLoading: boolean; error: string | null; tasks: Task[] | null };
+        ```
+
+        Два значення в кожного — це вісім поєднань. Справжніх ситуацій чотири: нічого не запитано, запит іде, список прийшов, запит не вдався. Решта — [[impossible-state|неможливі стани]]: `{ isLoading: true, error: "…", tasks: [...] }` іде завантаження, є помилка і є список одночасно. `tsc` пропускає такий об’єкт, а екран мусить вирішувати, що з цього показати.
+
+        Discriminated union з розділу про TypeScript описує рівно чотири ситуації:
+
+        ```ts
+        type TasksState =
+          | { status: "idle" }
+          | { status: "loading" }
+          | { status: "success"; tasks: Task[] }
+          | { status: "failure"; message: string };
+        ```
+
+        Кожен варіант несе лише свої поля: у `loading` немає `tasks`, у `success` немає `message`. Записати неможливий стан тепер не вийде — `tsc` відхилить такий об’єкт. А екран після `if (state.status === "success")` знає, що `state.tasks` точно є.
+      en: |
+        A request is often described with three fields:
+
+        ```ts
+        type TasksFlags = { isLoading: boolean; error: string | null; tasks: Task[] | null };
+        ```
+
+        Two values each make eight combinations. There are four real situations: nothing requested, a request running, the list arrived, the request failed. The rest are [[impossible-state|impossible states]]: `{ isLoading: true, error: "…", tasks: [...] }` is loading, has an error and has a list at once. `tsc` lets such an object through, and the screen has to decide what to show.
+
+        A discriminated union from the TypeScript unit describes exactly four situations:
+
+        ```ts
+        type TasksState =
+          | { status: "idle" }
+          | { status: "loading" }
+          | { status: "success"; tasks: Task[] }
+          | { status: "failure"; message: string };
+        ```
+
+        Each member carries only its own fields: `loading` has no `tasks`, `success` has no `message`. An impossible state can no longer be written — `tsc` rejects such an object. And after `if (state.status === "success")` the screen knows `state.tasks` is there.
+
+  - id: two-guards
+    kind: explanation
+    title:
+      uk: "Дві лінії захисту: тип і reducer"
+      en: "Two guards: the type and the reducer"
+    body:
+      uk: |
+        Actions теж union, а reducer пропускає лише переходи, для яких є стрілка в автоматі станів:
+
+        ```ts
+        case "succeeded":
+          if (state.status !== "loading") return state;   // no request running: ignore
+          return { status: "success", tasks: action.tasks };
+        ```
+
+        Ці дві лінії захисту ловлять різне:
+
+        - **`tsc`** перевіряє **форму** action ще до запуску: невідомий `type`, пропущене поле. Котрий стан буде в момент `dispatch`, він не знає — це вирішиться лише під час виконання.
+        - **Reducer** перевіряє **порядок** під час виконання: відповідь сервера, що прийшла, коли запиту вже немає, повертає той самий стан, і React нічого не перемальовує.
+
+        Перевірка `never` у `default` зв’язує обидві: додаси новий action в union — `tsc` покаже `default`, куди він дійшов без свого `case`.
+      en: |
+        Actions are a union too, and the reducer lets through only the transitions that have an arrow in the state machine:
+
+        ```ts
+        case "succeeded":
+          if (state.status !== "loading") return state;   // no request running: ignore
+          return { status: "success", tasks: action.tasks };
+        ```
+
+        These two guards catch different things:
+
+        - **`tsc`** checks the **shape** of an action before running: an unknown `type`, a missing field. Which state there will be at the moment of `dispatch` it does not know — that is decided only at runtime.
+        - **The reducer** checks the **order** at runtime: a server answer that arrives when no request is running returns the same state, and React redraws nothing.
+
+        The `never` check in `default` ties the two together: add a new action to the union, and `tsc` points at the `default` it reached without its own `case`.
+
+  - id: predict-loading-dispatches
+    kind: prediction
+    lang: tsx
+    runnable: false
+    prompt:
+      uk: "Стан — `{ status: \"loading\" }`, reducer приймає `succeeded` і `failed` лише зі стану `loading`, а `started` — з будь-якого стану, крім `loading`; інакше повертає той самий стан. Кожен рядок A–D пробують окремо, щоразу з цього самого стану. Які твердження правдиві? Обери всі."
+      en: "The state is `{ status: \"loading\" }`, the reducer accepts `succeeded` and `failed` only from `loading`, and `started` from any state except `loading`; otherwise it returns the same state. Each line A–D is tried on its own, every time from this same state. Which statements are true? Choose all."
+    code: |
+      type TasksAction =
+        | { type: "started" }
+        | { type: "succeeded"; tasks: Task[] }
+        | { type: "failed"; message: string };
+
+      // state: { status: "loading" }
+      dispatch({ type: "succeeded", tasks: answer }); // A
+      dispatch({ type: "succeeded" });                // B
+      dispatch({ type: "started" });                  // C
+      dispatch({ type: "saved" });                    // D
+    answer:
+      type: multi
+      options:
+        - id: b-rejected
+          text:
+            uk: "`tsc` відхиляє B"
+            en: "`tsc` rejects B"
+        - id: d-rejected
+          text:
+            uk: "`tsc` відхиляє D"
+            en: "`tsc` rejects D"
+        - id: c-rejected
+          text:
+            uk: "`tsc` відхиляє C, бо запит уже йде"
+            en: "`tsc` rejects C, because a request is already running"
+          why:
+            uk: "Типи не знають, який стан буде в момент виклику. `{ type: \"started\" }` — правильна форма action, тож `tsc` його пропускає; порядок перевіряє reducer під час виконання."
+            en: "Types do not know which state there will be at the moment of the call. `{ type: \"started\" }` is a correct action shape, so `tsc` lets it through; the reducer checks the order at runtime."
+        - id: c-ignored
+          text:
+            uk: "Після C стан лишається тим самим об’єктом `{ status: \"loading\" }`"
+            en: "After C the state stays the same object `{ status: \"loading\" }`"
+        - id: a-ignored
+          text:
+            uk: "A теж ігнорується: список, що прийшов ззовні, reducer не приймає"
+            en: "A is ignored too: the reducer does not accept a list that came from outside"
+          why:
+            uk: "Для `loading` + `succeeded` стрілка є: це й є очікувана відповідь. Reducer повертає `{ status: \"success\", tasks: answer }`."
+            en: "There is an arrow for `loading` + `succeeded`: that is exactly the expected answer. The reducer returns `{ status: \"success\", tasks: answer }`."
+      correct: [b-rejected, d-rejected, c-ignored]
+    explanation:
+      uk: "Перевірено `tsc` 7.0.2 і в пісочниці. B — `TS2345`: у варіанті `succeeded` бракує `tasks`. D — `TS2322`: `\"saved\"` немає серед `\"failed\" | \"started\" | \"succeeded\"`. C має правильну форму, тож `tsc` мовчить, а reducer повертає той самий стан: другий запит, поки йде перший, не починається. A — звичайний перехід `loading → success`."
+      en: "Checked with `tsc` 7.0.2 and in the sandbox. B — `TS2345`: the `succeeded` member lacks `tasks`. D — `TS2322`: `\"saved\"` is not among `\"failed\" | \"started\" | \"succeeded\"`. C has a correct shape, so `tsc` is silent, and the reducer returns the same state: a second request does not start while the first is running. A is the ordinary transition `loading → success`."
+
+  - id: request-machine
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Автомат одного запиту"
+      en: "The state machine of one request"
+    textEquivalent:
+      uk: "Чотири стани: idle, loading, success і failure. Action started веде з idle у loading. З loading action succeeded веде в success, а failed — у failure. З success і з failure action started знову веде в loading: оновлення й нова спроба. Кожна стрілка — пара «стан + action», для якої reducer повертає новий стан. Для пари без стрілки, наприклад idle + succeeded, reducer повертає той самий стан. tsc таку пару не відхиляє: форма action правильна, а котрий стан буде в момент dispatch, відомо лише під час виконання. Відхиляє її reducer."
+      en: "Four states: idle, loading, success and failure. The action started leads from idle to loading. From loading the action succeeded leads to success, and failed to failure. From success and from failure the action started leads to loading again: a refresh and a new attempt. Every arrow is a “state + action” pair for which the reducer returns a new state. For a pair without an arrow, such as idle + succeeded, the reducer returns the same state. tsc does not reject such a pair: the action's shape is correct, and which state there will be at the moment of dispatch is known only at runtime. The reducer rejects it."
+    spec:
+      layout: grid
+      nodes:
+        - { id: idle, col: 0, row: 0, label: "idle", shape: round, w: 120 }
+        - { id: loading, col: 1, row: 0, label: "loading", shape: round, w: 120 }
+        - { id: failure, col: 0, row: 1, label: "failure", shape: round, w: 120 }
+        - { id: success, col: 1, row: 1, label: "success", shape: round, w: 120 }
+        - { id: rejected, col: 0, row: 2, label: { uk: "той самий стан", en: "same state" }, shape: note, w: 140 }
+      edges:
+        - { id: start, from: idle, to: loading, label: "started" }
+        - { id: ok, from: loading, to: success, label: "succeeded" }
+        - { id: fail, from: loading, to: failure, label: "failed" }
+        - { id: again, from: failure, to: loading, label: "started" }
+        - { id: refresh, from: success, to: loading, label: "started", kind: dashed }
+        - { id: stray, from: idle, to: rejected, label: "succeeded", kind: dashed }
+      hidden: [rejected, stray, refresh, again]
+      steps:
+        - caption:
+            uk: "На початку стан — `idle`: нічого не запитано. `started` веде в `loading`."
+            en: "At the start the state is `idle`: nothing has been requested. `started` leads to `loading`."
+          highlight: [idle, start, loading]
+        - caption:
+            uk: "З `loading` є дві стрілки: `succeeded` веде в `success` зі списком, `failed` — у `failure` з повідомленням."
+            en: "`loading` has two arrows: `succeeded` leads to `success` with the list, `failed` to `failure` with a message."
+          highlight: [loading, ok, fail, success, failure]
+        - caption:
+            uk: "`started` з `failure` — нова спроба, а з `success` — оновлення списку. Обидві стрілки ведуть назад у `loading`."
+            en: "`started` from `failure` is a new attempt, and from `success` a refresh. Both arrows lead back to `loading`."
+          show: [again, refresh]
+          highlight: [again, refresh, loading]
+        - caption:
+            uk: "`succeeded`, коли стан — `idle`: стрілки немає. Форма action правильна, тож `tsc` мовчить, а reducer повертає **той самий** стан."
+            en: "`succeeded` while the state is `idle`: there is no arrow. The action's shape is correct, so `tsc` is silent, and the reducer returns **the same** state."
+          show: [rejected, stray]
+          highlight: [idle, stray, rejected]
+          dim: [loading, success, failure]
+
+  - id: task-loader
+    kind: example
+    runtime: browser-react
+    dir: task-loader
+    entry: main.tsx
+    strings:
+      heading: { uk: "Справи з сервера", en: "Tasks from the server" }
+      start: { uk: "Почати запит", en: "Start request" }
+      answer: { uk: "Сервер відповів", en: "Server answered" }
+      fail: { uk: "Сервер не відповів", en: "Server failed" }
+      idleText: { uk: "Ще нічого не запитано.", en: "Nothing requested yet." }
+      loadingText: { uk: "Завантаження…", en: "Loading…" }
+      offline: { uk: "Немає зв’язку з сервером.", en: "No connection to the server." }
+      ignored: { uk: "проігноровано", en: "ignored" }
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+    title:
+      uk: "Reducer запиту з журналом переходів"
+      en: "A request reducer with a transition log"
+    body:
+      uk: |
+        Тут сервера немає: три кнопки на вкладці **Сторінка** самі надсилають actions, тож ти можеш надіслати їх у будь-якому порядку. `loggedReducer` у `tasksRequest.ts` виводить у консоль кожен перехід, а action, який нічого не змінив, позначає як «проігноровано». Натисни **Запустити** й спробуй звичайний шлях: «Почати запит», потім «Сервер відповів».
+      en: |
+        There is no server here: the three buttons on the **Page** tab send the actions themselves, so you can send them in any order. `loggedReducer` in `tasksRequest.ts` prints every transition to the console and marks an action that changed nothing as “ignored”. Press **Run** and try the normal path: “Start request”, then “Server answered”.
+    tryIt:
+      uk: |
+        1. Натисни **Запустити** ще раз і почни з «Сервер відповів»: у консолі `idle + succeeded → проігноровано`, сторінка не змінилась. Тепер «Почати запит» двічі: другий рядок теж `проігноровано`.
+        2. У `tasksReducer` у гілці `case "succeeded":` видали рядок коду `if (state.status !== "loading") return state;`. Запусти й знову почни з «Сервер відповів»: список з’явився без жодного запиту. Типи цього не помітили — порядок охороняв лише рядок, який ти прибрав. Поверни його.
+      en: |
+        1. Press **Run** again and start with “Server answered”: the console shows `idle + succeeded → ignored`, and the page did not change. Now press “Start request” twice: the second line is `ignored` too.
+        2. In `tasksReducer`, in the branch `case "succeeded":`, delete the line of code `if (state.status !== "loading") return state;`. Run and start with “Server answered” again: the list appears without any request. The types did not notice — only the line you removed guarded the order. Put it back.
+
+  - id: follow-the-compiler
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Неможливий стан і новий action під наглядом tsc"
+      en: "An impossible state and a new action under tsc"
+    intro:
+      uk: |
+        Ти працюєш у лабораторії `~/js-course/ts-lab`, як у попередньому уроці. Цьому файлу React не потрібен — лише `tsc`. Команди перевірено в macOS із Node.js v25.2.1, npm 11.6.2 і TypeScript 7.0.2; у Linux і Windows їх не запускали.
+
+        **Якщо теки `ts-lab` немає**, створи її так, а тоді створи в ній `tsconfig.json` із вмістом з локального завдання уроку «Типізовані props, state, події та hooks — глибше». Перший рядок потрібен, лише якщо немає й теки `~/js-course`.
+
+        ```sh
+        mkdir ~/js-course
+        mkdir ~/js-course/ts-lab
+        cd ~/js-course/ts-lab
+        npm init -y
+        npm pkg set type=module
+        npm install --save-dev typescript
+        ```
+
+        **Файл `src/re09/tasksRequest.ts` для кроку 2** — reducer з прикладу без журналу і два навмисно неможливі стани в кінці:
+
+        ```ts
+        export type Task = { readonly id: string; title: string; done: boolean };
+
+        // One request, four situations. Each status carries only the fields that exist in it.
+        export type TasksState =
+          | { status: "idle" }
+          | { status: "loading" }
+          | { status: "success"; tasks: Task[] }
+          | { status: "failure"; message: string };
+
+        export type TasksAction =
+          | { type: "started" }
+          | { type: "succeeded"; tasks: Task[] }
+          | { type: "failed"; message: string };
+
+        export function tasksReducer(state: TasksState, action: TasksAction): TasksState {
+          switch (action.type) {
+            case "started":
+              // A new request starts from idle, after a success (refresh) or after a failure.
+              if (state.status === "loading") return state;
+              return { status: "loading" };
+            case "succeeded":
+              // An answer means something only while a request is running.
+              if (state.status !== "loading") return state;
+              return { status: "success", tasks: action.tasks };
+            case "failed":
+              if (state.status !== "loading") return state;
+              return { status: "failure", message: action.message };
+            default: {
+              const unhandled: never = action;
+              throw new Error(`Unknown action: ${JSON.stringify(unhandled)}`);
+            }
+          }
+        }
+
+        export const stillLoading: TasksState = { status: "loading", tasks: [] };
+        export const emptySuccess: TasksState = { status: "success" };
+        ```
+
+        **Що показує `tsc` на кроці 2:**
+
+        ```text
+        src/re09/tasksRequest.ts(35,62): error TS2353: Object literal may only specify known properties, and 'tasks' does not exist in type '{ status: "loading"; }'.
+        src/re09/tasksRequest.ts(36,14): error TS2322: Type '{ status: "success"; }' is not assignable to type 'TasksState'.
+          Property 'tasks' is missing in type '{ status: "success"; }' but required in type '{ status: "success"; tasks: Task[]; }'.
+        ```
+
+        **Що показує `tsc` на кроці 5:**
+
+        ```text
+        src/re09/tasksRequest.ts(30,13): error TS2322: Type '{ type: "retried"; }' is not assignable to type 'never'.
+        ```
+
+        **Гілка для кроку 6** — встав її перед `default: {`:
+
+        ```ts
+            case "retried":
+              // "Try again" exists only on the failure screen.
+              if (state.status !== "failure") return state;
+              return { status: "loading" };
+        ```
+      en: |
+        You work in the lab `~/js-course/ts-lab`, as in the previous lesson. This file needs no React — only `tsc`. The commands were checked on macOS with Node.js v25.2.1, npm 11.6.2 and TypeScript 7.0.2; they were not run on Linux or Windows.
+
+        **If there is no `ts-lab` folder**, create it like this, then create a `tsconfig.json` in it with the contents from the local task of the lesson “Typed props, state, events and hooks, in depth”. The first line is needed only when there is no `~/js-course` folder either.
+
+        ```sh
+        mkdir ~/js-course
+        mkdir ~/js-course/ts-lab
+        cd ~/js-course/ts-lab
+        npm init -y
+        npm pkg set type=module
+        npm install --save-dev typescript
+        ```
+
+        **The file `src/re09/tasksRequest.ts` for step 2** — the reducer from the example without the log, and two impossible states at the end on purpose:
+
+        ```ts
+        export type Task = { readonly id: string; title: string; done: boolean };
+
+        // One request, four situations. Each status carries only the fields that exist in it.
+        export type TasksState =
+          | { status: "idle" }
+          | { status: "loading" }
+          | { status: "success"; tasks: Task[] }
+          | { status: "failure"; message: string };
+
+        export type TasksAction =
+          | { type: "started" }
+          | { type: "succeeded"; tasks: Task[] }
+          | { type: "failed"; message: string };
+
+        export function tasksReducer(state: TasksState, action: TasksAction): TasksState {
+          switch (action.type) {
+            case "started":
+              // A new request starts from idle, after a success (refresh) or after a failure.
+              if (state.status === "loading") return state;
+              return { status: "loading" };
+            case "succeeded":
+              // An answer means something only while a request is running.
+              if (state.status !== "loading") return state;
+              return { status: "success", tasks: action.tasks };
+            case "failed":
+              if (state.status !== "loading") return state;
+              return { status: "failure", message: action.message };
+            default: {
+              const unhandled: never = action;
+              throw new Error(`Unknown action: ${JSON.stringify(unhandled)}`);
+            }
+          }
+        }
+
+        export const stillLoading: TasksState = { status: "loading", tasks: [] };
+        export const emptySuccess: TasksState = { status: "success" };
+        ```
+
+        **What `tsc` shows in step 2:**
+
+        ```text
+        src/re09/tasksRequest.ts(35,62): error TS2353: Object literal may only specify known properties, and 'tasks' does not exist in type '{ status: "loading"; }'.
+        src/re09/tasksRequest.ts(36,14): error TS2322: Type '{ status: "success"; }' is not assignable to type 'TasksState'.
+          Property 'tasks' is missing in type '{ status: "success"; }' but required in type '{ status: "success"; tasks: Task[]; }'.
+        ```
+
+        **What `tsc` shows in step 5:**
+
+        ```text
+        src/re09/tasksRequest.ts(30,13): error TS2322: Type '{ type: "retried"; }' is not assignable to type 'never'.
+        ```
+
+        **The branch for step 6** — insert it before `default: {`:
+
+        ```ts
+            case "retried":
+              // "Try again" exists only on the failure screen.
+              if (state.status !== "failure") return state;
+              return { status: "loading" };
+        ```
+    tools:
+      - { name: "Node.js", version: { uk: "22 або новіший", en: "22 or newer" }, note: { uk: "перевірено з v25.2.1", en: "checked with v25.2.1" } }
+      - { name: "TypeScript", version: "7.x", note: { uk: "у теці `ts-lab`; дає команду `tsc`", en: "in the `ts-lab` folder; provides the `tsc` command" } }
+    steps:
+      - text:
+          uk: "Перейди в лабораторію. Якщо термінал каже, що такої теки немає, спершу створи її командами з початку завдання."
+          en: "Go to the lab. If the terminal says there is no such folder, create it first with the commands at the start of the task."
+        command: "cd ~/js-course/ts-lab"
+      - text:
+          uk: "Створи файл `src/re09/tasksRequest.ts` із вмістом для кроку 2 (тека `src/re09` уже є з попереднього уроку; якщо ні — створи її). Запусти перевірку."
+          en: "Create the file `src/re09/tasksRequest.ts` with the contents for step 2 (the folder `src/re09` exists from the previous lesson; if not, create it). Run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Дві помилки, як на початку завдання: `TS2353` — у варіанті `loading` немає поля `tasks`; `TS2322` — варіант `success` без обов’язкового `tasks`. Жоден неможливий стан не пройшов."
+          en: "Two errors, as at the start of the task: `TS2353` — the `loading` member has no `tasks` field; `TS2322` — a `success` member without the required `tasks`. Neither impossible state got through."
+      - text:
+          uk: "Видали два останні рядки коду (`stillLoading` і `emptySuccess`) і запусти перевірку."
+          en: "Delete the last two lines of code (`stillLoading` and `emptySuccess`) and run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Нічого: помилок немає."
+          en: "Nothing: there are no errors."
+      - text:
+          uk: "Додай до `TasksAction` новий варіант — кнопку «Спробувати ще раз»: заміни рядок коду `| { type: \"failed\"; message: string };` двома рядками `| { type: \"failed\"; message: string }` і `| { type: \"retried\" };`. Reducer не чіпай."
+          en: "Add a new member to `TasksAction` — the “Try again” button: replace the line of code `| { type: \"failed\"; message: string };` with the two lines `| { type: \"failed\"; message: string }` and `| { type: \"retried\" };`. Leave the reducer alone."
+      - text:
+          uk: "Запусти перевірку."
+          en: "Run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Одна помилка `TS2322` на рядку `const unhandled: never = action;`: варіант `{ type: \"retried\"; }` дійшов до `default`. Ти змінив лише тип, а `tsc` сам показав місце в reducer, яке про нього не знає."
+          en: "One error, `TS2322`, on the line `const unhandled: never = action;`: the member `{ type: \"retried\"; }` reached `default`. You changed only the type, and `tsc` itself pointed at the place in the reducer that does not know about it."
+      - text:
+          uk: "Встав гілку для кроку 6 перед `default: {` і запусти перевірку."
+          en: "Insert the branch for step 6 before `default: {` and run the check."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Нічого: помилок немає. Нова стрілка автомата — `failure + retried → loading` — тепер є і в типі, і в reducer."
+          en: "Nothing: there are no errors. The machine's new arrow — `failure + retried → loading` — is now both in the type and in the reducer."
+    verify:
+      - id: impossible-rejected
+        text:
+          uk: "`tsc` відхилив обидва неможливі стани (`TS2353` і `TS2322`)."
+          en: "`tsc` rejected both impossible states (`TS2353` and `TS2322`)."
+      - id: retried-handled
+        text:
+          uk: "Після додавання `retried` до union `tsc` показав `never` у `default`, а з новою гілкою перевірка чиста."
+          en: "After adding `retried` to the union `tsc` showed `never` in `default`, and with the new branch the check is clean."
+    troubleshooting:
+      - problem:
+          uk: "`npx tsc` пропонує встановити пакет `tsc` (`Need to install the following packages`)."
+          en: "`npx tsc` offers to install a package `tsc` (`Need to install the following packages`)."
+        fix:
+          uk: "Ти не в теці `ts-lab` або в ній ще немає TypeScript. Відмов (`n`), перейди в `~/js-course/ts-lab` і, якщо треба, виконай `npm install --save-dev typescript`."
+          en: "You are not in the `ts-lab` folder, or it has no TypeScript yet. Decline (`n`), go to `~/js-course/ts-lab` and, if needed, run `npm install --save-dev typescript`."
+      - problem:
+          uk: "На кроці 5 помилка стоїть на іншому рядку або їх кілька."
+          en: "In step 5 the error is on another line, or there are several."
+        fix:
+          uk: "Номер рядка залежить від того, скільки рядків у файлі; важливий код `TS2322` і текст про `never`. Якщо помилок кілька, перевір, що крапку з комою перенесено: вона стоїть лише після останнього варіанта union."
+          en: "The line number depends on how many lines the file has; what matters is the code `TS2322` and the text about `never`. If there are several errors, check that the semicolon moved: it stands only after the last member of the union."
+    recovery:
+      uk: "Усе це живе лише в `~/js-course/ts-lab/src/re09/tasksRequest.ts`. Якщо файл заплутався, видали його й створи знову з вмісту для кроку 2."
+      en: "All of this lives only in `~/js-course/ts-lab/src/re09/tasksRequest.ts`. If the file gets tangled, delete it and create it again from the contents for step 2."
+
+  - id: typed-context
+    kind: explanation
+    title:
+      uk: "Context, який чесно каже «provider немає»"
+      en: "A context that honestly says “there is no provider”"
+    body:
+      uk: |
+        Коли стан запиту потрібен кільком компонентам, його дають через context, як у RE-04. Тип context має пам’ятати, що поза provider значення немає:
+
+        ```tsx
+        type SettingsValue = { currency: string; setCurrency: (code: string) => void };
+
+        const SettingsContext = createContext<SettingsValue | null>(null);
+
+        function useSettings(): SettingsValue {
+          const value = useContext(SettingsContext);
+          if (value === null) throw new Error("useSettings must be used inside <SettingsProvider>");
+          return value;   // tsc: SettingsValue, null is excluded
+        }
+        ```
+
+        Спокусливий скорочений запис — `createContext({} as SettingsValue)`. Це приведення типу: `tsc` вірить, а компонент поза provider отримує порожній об’єкт. Тоді після `const { setCurrency } = useSettings()` виклик `setCurrency("EUR")` падає з `TypeError: setCurrency is not a function` — повідомленням про функцію, а не про забутий provider, і далеко від справжньої причини. Перевірка на `null` у хуку перетворює цю помилку на зрозуміле повідомлення в першому ж рендері.
+
+        Тип значення, яке ти кладеш у provider, — це тип **усього**, що бачать діти: якщо там `{ state, dispatch }`, кожен компонент отримає звужуваний `state.status` і типізований `dispatch`.
+      en: |
+        When several components need the request state, it is given through context, as in RE-04. The context's type must remember that outside a provider there is no value:
+
+        ```tsx
+        type SettingsValue = { currency: string; setCurrency: (code: string) => void };
+
+        const SettingsContext = createContext<SettingsValue | null>(null);
+
+        function useSettings(): SettingsValue {
+          const value = useContext(SettingsContext);
+          if (value === null) throw new Error("useSettings must be used inside <SettingsProvider>");
+          return value;   // tsc: SettingsValue, null is excluded
+        }
+        ```
+
+        A tempting shortcut is `createContext({} as SettingsValue)`. It is a type assertion: `tsc` believes it, and a component outside the provider gets an empty object. Then after `const { setCurrency } = useSettings()` the call `setCurrency("EUR")` crashes with `TypeError: setCurrency is not a function` — a message about a function, not about a forgotten provider, and far from the real cause. The `null` check in the hook turns that crash into a clear message on the very first render.
+
+        The type of the value you put into the provider is the type of **everything** the children see: if it is `{ state, dispatch }`, every component gets a narrowable `state.status` and a typed `dispatch`.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: що повертає reducer"
+      en: "Recall: what a reducer returns"
+    items:
+      - id: push-and-return
+        from: re-04-03-reducers-typed
+        prompt:
+          uk: "Гілка reducer звичок написана так. Що побачить людина після `dispatch({ type: \"added\", habit })`?"
+          en: "A branch of a habits reducer is written like this. What does the person see after `dispatch({ type: \"added\", habit })`?"
+        code: |
+          case "added":
+            habits.push(action.habit);
+            return habits;
+        lang: ts
+        runnable: false
+        answer:
+          type: choice
+          options:
+            - id: nothing
+              text:
+                uk: "Нічого не зміниться: reducer повернув той самий масив, і React не перемалює список"
+                en: "Nothing changes: the reducer returned the same array, and React does not redraw the list"
+            - id: new-item
+              text:
+                uk: "Нова звичка з’явиться в кінці списку"
+                en: "The new habit appears at the end of the list"
+              why:
+                uk: "Масив справді змінився, але React порівнює старий і новий стан через `Object.is`. Той самий масив означає «нічого не змінилося», тож нового рендеру немає."
+                en: "The array really changed, but React compares the old and the new state with `Object.is`. The same array means “nothing changed”, so there is no new render."
+            - id: type-error
+              text:
+                uk: "`tsc` відхилить цю гілку, бо масив змінюють"
+                en: "`tsc` rejects this branch, because the array is changed"
+              why:
+                uk: "Тип `Habit[]` дозволяє `push`. Від зміни захищає лише `readonly Habit[]` — і звичка повертати новий масив."
+                en: "The type `Habit[]` allows `push`. Only `readonly Habit[]` protects from changes — together with the habit of returning a new array."
+          correct: [nothing]
+        explanation:
+          uk: "Reducer — чиста функція: для зміни він повертає **новий** стан (`[...habits, action.habit]`), а для відхиленого action — **той самий**. Саме тому «той самий стан» у цьому уроці означає «нічого не сталося»: якби reducer змінював старий об’єкт, ці два випадки не можна було б розрізнити."
+          en: "A reducer is a pure function: for a change it returns a **new** state (`[...habits, action.habit]`), and for a rejected action **the same** one. That is why “the same state” in this lesson means “nothing happened”: if the reducer changed the old object, the two cases could not be told apart."
+
+  - id: records-context
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: records-context
+    entry: main.tsx
+    editable: [recordsState.ts, RecordsContext.tsx]
+    strings:
+      heading: { uk: "Звички", en: "Habits" }
+      count: { uk: "Звичок:", en: "Habits:" }
+      load: { uk: "Завантажити", en: "Load" }
+      loadFailing: { uk: "Завантажити (сервер не відповідає)", en: "Load (the server fails)" }
+      loading: { uk: "Завантаження…", en: "Loading…" }
+      retry: { uk: "Спробувати ще раз", en: "Try again" }
+      serverDown: { uk: "Сервер не відповідає.", en: "The server does not answer." }
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      words: { uk: "Вчити англійські слова", en: "Learn English words" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+    title:
+      uk: "Стан запиту звичок у context"
+      en: "The habit request state in a context"
+    instructions:
+      uk: |
+        `App.tsx` (лише для перегляду) уже користується `RecordsProvider` і `useRecordsContext`: лічильник угорі й екран зі списком читають той самий стан.
+
+        1. У `recordsState.ts` опиши `RecordsState` як discriminated union за полем `status` (варіанти — у коментарі) і напиши `recordsReducer` з п’ятьма дозволеними переходами з коментаря. Для кожної іншої пари «стан + action» повертай **той самий** об’єкт стану.
+        2. У `RecordsContext.tsx` створи context для `RecordsValue`, який поза provider не має значення (`null`), напиши `RecordsProvider` — він тримає reducer (початковий стан `{ status: "idle" }`) і дає дітям `{ state, dispatch }`, — і `useRecordsContext`, що повертає значення найближчого provider, а поза ним кидає `Error` з назвою хука в повідомленні.
+
+        Перевірки викликають `recordsReducer` для всіх пар «стан + action», малюють компонент поза provider і всередині нього, а потім натискають кнопки на сторінці.
+      en: |
+        `App.tsx` (read-only) already uses `RecordsProvider` and `useRecordsContext`: the counter at the top and the screen with the list read the same state.
+
+        1. In `recordsState.ts` describe `RecordsState` as a discriminated union on the field `status` (the members are in the comment) and write `recordsReducer` with the five allowed transitions from the comment. For every other “state + action” pair return **the same** state object.
+        2. In `RecordsContext.tsx` create a context for `RecordsValue` that has no value (`null`) outside a provider, write `RecordsProvider` — it holds the reducer (initial state `{ status: "idle" }`) and gives its children `{ state, dispatch }` — and `useRecordsContext`, which returns the nearest provider's value and outside one throws an `Error` whose message names the hook.
+
+        The checks call `recordsReducer` for every “state + action” pair, draw a component outside and inside a provider, and then press the buttons on the page.
+    testTitles:
+      "started moves idle and success to loading":
+        uk: "`started` веде `idle` і `success` у `{ status: \"loading\" }`"
+        en: "`started` takes `idle` and `success` to `{ status: \"loading\" }`"
+      "loaded and failed finish a loading request":
+        uk: "`loaded` і `failed` завершують `loading`: `success` з `habits` або `failure` з `message`"
+        en: "`loaded` and `failed` finish `loading`: `success` with `habits` or `failure` with `message`"
+      "retried moves failure to loading":
+        uk: "`retried` веде `failure` у `loading`"
+        en: "`retried` takes `failure` to `loading`"
+      "every other pair returns the same state object":
+        uk: "Кожна інша пара «стан + action» повертає той самий об’єкт стану"
+        en: "Every other “state + action” pair returns the same state object"
+      "outside a provider the hook throws an error that names it":
+        uk: "Поза provider `useRecordsContext` кидає помилку, у повідомленні якої є `useRecordsContext`"
+        en: "Outside a provider `useRecordsContext` throws an error whose message contains `useRecordsContext`"
+      "inside the provider the hook gives the idle state and a dispatch function":
+        uk: "Усередині provider хук дає `{ status: \"idle\" }` і функцію `dispatch`"
+        en: "Inside the provider the hook gives `{ status: \"idle\" }` and a `dispatch` function"
+      "the page loads, fails and retries through one shared state":
+        uk: "На сторінці невдале завантаження показує помилку, «Спробувати ще раз» — список, а лічильник бачить той самий стан"
+        en: "On the page a failed load shows the error, “Try again” shows the list, and the counter sees the same state"
+    hints:
+      nudge:
+        uk: "Почни з автомата: намалюй чотири стани й п’ять стрілок з коментаря. У reducer кожна гілка `case` спершу перевіряє, чи є стрілка з поточного `state.status`."
+        en: "Start with the machine: draw the four states and the five arrows from the comment. In the reducer every `case` first checks whether there is an arrow from the current `state.status`."
+      explanation:
+        uk: "Перехід, якого немає, — це `return state;` на початку гілки, як у прикладі з запитом справ: так ти повертаєш той самий об’єкт. Для context візьми шаблон `useSettings` з пояснення: union з `null` у `createContext`, `null` як значення за замовчуванням і перевірка в хуку. `useReducer` викликай у provider, а не в хуку: хук лише читає context, інакше кожен компонент отримає власний стан."
+        en: "A transition that does not exist is `return state;` at the start of the branch, as in the task request example: that way you return the same object. For the context take the `useSettings` pattern from the explanation: a union with `null` in `createContext`, `null` as the default, and the check in the hook. Call `useReducer` in the provider, not in the hook: the hook only reads the context, otherwise every component gets its own state."
+    solutionNote:
+      uk: "`RecordsState` не дозволяє записати список разом із помилкою, а reducer пропускає лише п’ять стрілок автомата — решту пар він ігнорує, повертаючи той самий стан. Provider тримає один `useReducer`, тому лічильник і екран бачать одне й те саме. `null` за замовчуванням і перевірка в хуку перетворюють забутий provider на зрозуміле повідомлення."
+      en: "`RecordsState` does not let a list and an error be written together, and the reducer lets through only the machine's five arrows — it ignores the other pairs by returning the same state. The provider holds a single `useReducer`, so the counter and the screen see the same thing. A `null` default and the check in the hook turn a forgotten provider into a clear message."
+    feedback:
+      - when: { test: "started moves idle and success to loading" }
+        message:
+          uk: "Ця перевірка чекає рівно `{ status: \"loading\" }` після `started` зі стану `idle` і зі стану `success` — без старих полів на кшталт `habits`. Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі."
+          en: "This check expects exactly `{ status: \"loading\" }` after `started` from `idle` and from `success` — without old fields such as `habits`. If every check fails at once, fix the first console error first."
+      - when: { test: "loaded and failed finish a loading request" }
+        message:
+          uk: "Зі стану `loading` перевірка чекає `{ status: \"success\", habits }` після `loaded` і `{ status: \"failure\", message }` після `failed`, з полями з action."
+          en: "From `loading` the check expects `{ status: \"success\", habits }` after `loaded` and `{ status: \"failure\", message }` after `failed`, with the fields from the action."
+      - when: { test: "every other pair returns the same state object" }
+        message:
+          uk: "Перевірка пробує всі пари без стрілки (наприклад, `idle + loaded` чи `loading + started`) і чекає **той самий** об’єкт стану, а не копію. Назва пари, що не пройшла, — у тексті помилки."
+          en: "The check tries every pair without an arrow (for example `idle + loaded` or `loading + started`) and expects **the same** state object, not a copy. The failing pair is named in the error text."
+      - when: { test: "outside a provider the hook throws an error that names it" }
+        message:
+          uk: "Поза provider `useContext` має повернути значення за замовчуванням `null`, а хук — кинути `Error`, у повідомленні якого є `useRecordsContext`. Значення за замовчуванням на кшталт `{}` чи заглушки помилки не дають."
+          en: "Outside a provider `useContext` must return the default `null`, and the hook must throw an `Error` whose message contains `useRecordsContext`. A default such as `{}` or a stub gives no error."
+      - when: { test: "the page loads, fails and retries through one shared state" }
+        message:
+          uk: "Ця перевірка натискає «Завантажити (сервер не відповідає)», чекає `role=\"alert\"` з повідомленням, потім «Спробувати ще раз» і три звички, а лічильник має показати 3. Якщо лічильник не змінюється, кожен компонент, імовірно, має власний `useReducer`: він має бути один — у `RecordsProvider`."
+          en: "This check presses “Load (the server fails)”, waits for `role=\"alert\"` with the message, then “Try again” and three habits, and the counter must show 3. If the counter does not change, each component probably has its own `useReducer`: there must be one — in `RecordsProvider`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-09
+    body:
+      uk: "У кроці проєкту reducer твого застосунку отримає стан запиту як discriminated union, а context — значення без «порожнього» за замовчуванням і хук, що падає поза provider. Неможливі стани зникнуть ще до запуску."
+      en: "In the project step your app's reducer gets the request state as a discriminated union, and the context gets a value without an “empty” default and a hook that fails outside its provider. Impossible states disappear before anything runs."

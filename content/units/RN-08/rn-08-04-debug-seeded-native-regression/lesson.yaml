@@ -1,0 +1,650 @@
+id: rn-08-04-debug-seeded-native-regression
+unit: RN-08
+title:
+  uk: "Налагодження: закладена нативна регресія"
+  en: "Debug: a seeded native regression"
+kind: local-task
+minutes: 25
+contentVersion: 1
+purpose:
+  uk: "Контрольна точка перевіряє не лише нове, а й те, що старе не зламалося. Тут ти отримуєш збірку 2.0.0 трекера звичок із двома закладеними регресіями: після оновлення звички зникають, а екран тижня реагує на зміни й після того, як ти з нього пішов. Спершу знаходиш і виправляєш обидві в перегляді, де їх перевіряють автоматично, а потім відтворюєш і доводиш виправлення на своїй заявленій цілі — перевірками перезапуску й фокуса, записаними як докази."
+  en: "A checkpoint checks not only what is new but also that nothing old broke. Here you get build 2.0.0 of a habit tracker with two seeded regressions: after the update the habits vanish, and the week screen keeps reacting to changes after you have left it. First you find and fix both in the preview, where they are checked automatically, then you reproduce them and prove the fix on your declared target — with restart and focus checks recorded as evidence."
+objectives:
+  - uk: "Знайти й виправити на заявленій цілі закладену регресію в копії нативного проєкту: записи зникають після перезапуску, а екран реагує на зміни після того, як із нього пішли."
+    en: "Find and repair, on the declared target, a seeded regression in a copy of the native capstone where records vanish after restart and a screen keeps reacting after it is left."
+  - uk: "Довести виправлення перевіркою перезапуску й перевіркою фону та фокуса, записаними як докази."
+    en: "Prove the fix with a restart check and a background/foreground check, recorded as evidence."
+prerequisites: [rn-08-03-capstone-cp-rn-enhancement, rn-05-05-restart-recovery-shared-models, rn-04-05-subscription-cleanup]
+subskills:
+  - { family: N-12, skill: "restart/offline/lifecycle/security/a11y/performance", depth: assess }
+glossary: []
+selfCheck: [data-still-there, seeded-habits]
+
+blocks:
+  - id: two-symptoms
+    kind: explanation
+    title:
+      uk: "Дві скарги після оновлення"
+      en: "Two complaints after an update"
+    body:
+      uk: |
+        Це навмисно зіпсована копія трекера звичок — не твій проєкт, а окрема лабораторія зі своєю історією версій. Версія 2.0.0 додала звичкам поле `frequency` (щодня чи щотижня) і новий екран «Тиждень» з відсотком виконання за сім днів. Після оновлення користувачі скаржаться:
+
+        - **«Мої звички зникли».** Після першого запуску 2.0.0 список порожній — провалена перевірка перезапуску.
+        - **«Тиждень рахує щось, коли я на нього навіть не дивлюся».** Після кількох відвідин кожна позначка запускає перерахунок кілька разів, і навіть коли екрана тижня вже немає, — провалена перевірка життєвого циклу.
+
+        Порядок той самий, що на будь-якому налагодженні: відтвори, прочитай докази (консоль, сховище), знайди причину, виправ і доведи виправлення **тими самими перевірками**, які провалилися.
+      en: |
+        This is a deliberately broken copy of a habit tracker — not your project, but a separate lab with its own version history. Version 2.0.0 added a `frequency` field to habits (daily or weekly) and a new “Week” screen with the completion rate over seven days. After the update users complain:
+
+        - **“My habits are gone.”** After the first launch of 2.0.0 the list is empty — a failed restart check.
+        - **“The week screen computes something even when I am not looking at it.”** After a few visits every mark triggers a recalculation several times, even when the week screen is no longer there — a failed lifecycle check.
+
+        The order is the same as in any debugging: reproduce, read the evidence (the console, the store), find the cause, fix it and prove the fix with **the same checks** that failed.
+
+  - id: data-still-there
+    kind: prediction
+    prompt:
+      uk: "Після оновлення до 2.0.0 список звичок порожній. Відновлення ловить будь-яку помилку читання й повертає порожній список. Користувач ще нічого не змінював. Де зараз звички, збережені версією 1.x?"
+      en: "After the update to 2.0.0 the habit list is empty. The restore step catches any read error and returns an empty list. The user has not changed anything yet. Where are the habits saved by version 1.x now?"
+    code: |
+      try {
+        return { ok: true, records: migrate(JSON.parse(raw)).records };
+      } catch {
+        // Something odd on disk: start with a clean list.
+        return { ok: true, records: [] };
+      }
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: on-disk
+          text:
+            uk: "Досі на диску без змін — але перше збереження порожнього списку їх перезапише"
+            en: "Still on disk, unchanged — but the first save of the empty list will overwrite them"
+        - id: deleted
+          text:
+            uk: "Видалені: оновлення застосунку стирає старе сховище"
+            en: "Deleted: an app update wipes the old store"
+          why:
+            uk: "Оновлення залишає дані застосунку на пристрої — саме тому існують міграції. Текст 1.x нікуди не подівся; його лише не змогли прочитати."
+            en: "An update keeps the app’s data on the device — that is exactly why migrations exist. The 1.x text has not gone anywhere; it just could not be read."
+        - id: in-memory
+          text:
+            uk: "У state екрана: їх прочитано, але не показано"
+            en: "In the screen’s state: they were read but not shown"
+          why:
+            uk: "`catch` повернув `records: []`, і саме порожній масив пішов далі. Прочитаний текст відкинуто разом із помилкою."
+            en: "The `catch` returned `records: []`, and that empty array went on. The text that was read was thrown away together with the error."
+      correct: [on-disk]
+    explanation:
+      uk: "`getItem` лише читає: знімок 1.x лежить на диску, доки його не перезапишуть. Але `{ ok: true, records: [] }` каже решті застосунку «все гаразд, звичок немає», і перше ж збереження покладе порожній список поверх старого — тоді дані втрачено назавжди. Тому збій відновлення повертають як збій (`ok: false`), а застосунок показує помилку й нічого не зберігає поверх."
+      en: "`getItem` only reads: the 1.x snapshot stays on disk until it is overwritten. But `{ ok: true, records: [] }` tells the rest of the app “all good, there are no habits”, and the very first save puts an empty list over the old one — then the data is lost for good. That is why a failed restore is returned as a failure (`ok: false`), and the app shows an error and saves nothing over it."
+
+  - id: seeded-habits
+    kind: exercise
+    mode: debug
+    runtime: concept-preview
+    dir: seeded-habits
+    entry: main.jsx
+    editable: [snapshot.js, WeekSummary.jsx]
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      words: { uk: "Вчити англійські слова", en: "Learn English words" }
+      loading: { uk: "Завантаження…", en: "Loading…" }
+      loadFailed: { uk: "Не вдалося прочитати збережені звички. Нічого не змінено.", en: "Could not read the saved habits. Nothing was changed." }
+      noHabits: { uk: "Звичок поки немає.", en: "No habits yet." }
+      openWeek: { uk: "Тиждень", en: "Week" }
+      notFound: { uk: "Звичку не знайдено.", en: "Habit not found." }
+      doneDays: { uk: "Виконано днів:", en: "Days done:" }
+      markToday: { uk: "Позначити сьогодні", en: "Mark today" }
+      unmarkToday: { uk: "Зняти позначку на сьогодні", en: "Unmark today" }
+      weekRate: { uk: "Виконання за тиждень:", en: "Done this week:" }
+      killed: { uk: "процес завершено, запуск знову", en: "process killed, starting again" }
+      kill: { uk: "Імітувати перезапуск застосунку", en: "Simulate an app restart" }
+      simHeaderBack: { uk: "Назад", en: "Back" }
+      simStack: { uk: "Стек (імітація)", en: "Stack (simulated)" }
+      simHardwareBack: { uk: "Android: «Назад»", en: "Android: Back" }
+      simSwipeBack: { uk: "iOS: свайп назад", en: "iOS: swipe back" }
+    title:
+      uk: "Полагодь збірку 2.0.0"
+      en: "Repair build 2.0.0"
+    instructions:
+      uk: |
+        Збірка 2.0.0 трекера звичок працює в перегляді. Як і раніше, «пристроєве» тут імітовано: `native-store.js` замінює AsyncStorage (на його «диску» вже лежить знімок 1.x), `navSim.jsx` — нативний стек React Navigation 7, а кнопка під телефоном імітує перезапуск. `habitRepo.js` — власне сховище застосунку: екрани читають звички через нього й підписуються на зміни (`subscribe` повертає функцію, що прибирає підписку).
+
+        Спершу відтвори обидві скарги: подивись на список після запуску; відкрий «Тиждень», повернися й познач звичку, стежачи за консоллю. Потім виправ `snapshot.js` і `WeekSummary.jsx`, щоб виконувалися всі правила:
+
+        1. Звички, збережені версією 1.x, після оновлення на місці: кожна стає щоденною (`frequency: 'daily'`), а всі інші її поля не змінюються.
+        2. Знімок версії 2 відновлюється без змін.
+        3. Знімок, який ця версія прочитати не може (новіший чи пошкоджений), — це збій `{ ok: false, … }`, а не порожній список.
+        4. Позначка, зроблена в списку, переживає перезапуск.
+        5. Екран «Тиждень» слухає зміни лише поки він у фокусі: жодної підписки після того, як з нього пішли, жодної — поки його закриває інший екран, і рівно одна — після будь-якої кількості відвідин.
+        6. Повернувшись на «Тиждень», користувач бачить поточний відсоток.
+
+        Перевірки рахують підписки через `repo.listenerCount()`. У цьому перегляді `useFocusEffect` імпортують із `./navSim.jsx`; у справжньому застосунку — з `@react-navigation/native`.
+      en: |
+        Build 2.0.0 of the habit tracker runs in the preview. As before, everything “device-like” is simulated here: `native-store.js` stands in for AsyncStorage (its “disk” already holds a 1.x snapshot), `navSim.jsx` for the React Navigation 7 native stack, and the button under the phone simulates a restart. `habitRepo.js` is the app’s own store: the screens read habits through it and subscribe to its changes (`subscribe` returns a function that removes the subscription).
+
+        First reproduce both complaints: look at the list after the launch; open “Week”, go back and mark a habit while watching the console. Then fix `snapshot.js` and `WeekSummary.jsx` so that all the rules hold:
+
+        1. The habits saved by version 1.x are there after the update: each becomes daily (`frequency: 'daily'`), and all its other fields stay unchanged.
+        2. A version 2 snapshot is restored unchanged.
+        3. A snapshot this version cannot read (newer or damaged) is a failure `{ ok: false, … }`, not an empty list.
+        4. A mark made on the list survives a restart.
+        5. The “Week” screen listens to changes only while it is focused: no subscription after it was left, none while another screen covers it, and exactly one after any number of visits.
+        6. Returning to “Week”, the user sees the current rate.
+
+        The checks count subscriptions through `repo.listenerCount()`. In this preview `useFocusEffect` is imported from `./navSim.jsx`; in a real app it comes from `@react-navigation/native`.
+    testTitles:
+      "after the update the list shows the habits saved by 1.x":
+        uk: "Після оновлення список показує звички, збережені версією 1.x"
+        en: "After the update the list shows the habits saved by 1.x"
+      "a 1.x snapshot restores every habit as a daily habit":
+        uk: "Знімок 1.x відновлює кожну звичку як щоденну, з усіма її полями"
+        en: "A 1.x snapshot restores every habit as a daily habit, with all its fields"
+      "a 2.0.0 snapshot restores unchanged":
+        uk: "Знімок версії 2 відновлюється без змін"
+        en: "A version 2 snapshot is restored unchanged"
+      "a snapshot this app cannot read is a failure, not an empty list":
+        uk: "Знімок, який застосунок не може прочитати, — збій, а не порожній список"
+        en: "A snapshot the app cannot read is a failure, not an empty list"
+      "a mark made on the list survives a restart":
+        uk: "Позначка, зроблена в списку, переживає перезапуск"
+        en: "A mark made on the list survives a restart"
+      "after leaving the week screen, it no longer listens to changes":
+        uk: "Після того як з «Тижня» пішли, він більше не слухає змін"
+        en: "After “Week” is left, it no longer listens to changes"
+      "while another screen covers the week screen, it does not listen":
+        uk: "Поки «Тиждень» закриває інший екран, він не слухає змін"
+        en: "While another screen covers “Week”, it does not listen"
+      "after three visits the week screen listens once":
+        uk: "Після трьох відвідин «Тиждень» слухає рівно один раз"
+        en: "After three visits “Week” listens exactly once"
+      "returning to the week screen shows the current rate":
+        uk: "Після повернення «Тиждень» показує поточний відсоток"
+        en: "After returning, “Week” shows the current rate"
+    hints:
+      nudge:
+        uk: "Дві окремі причини. Для першої прослідкуй, що робить цикл у `migrate`, коли `schemaVersion` дорівнює `1`, і що потім робить `catch`. Для другої подивись, що повертає ефект у `WeekSummary.jsx` і хто колись прибирає підписки, які він створює."
+        en: "Two separate causes. For the first, trace what the loop in `migrate` does when `schemaVersion` is `1`, and what the `catch` does next. For the second, look at what the effect in `WeekSummary.jsx` returns and who ever removes the subscriptions it creates."
+      explanation:
+        uk: |
+          Підвищення `CURRENT_VERSION` без кроку міграції ламає ланцюжок: `steps[1]` — `undefined`, і його виклик кидає `TypeError`. Кожна версія схеми потребує кроку від попередньої (як у RN-05: крок `0` перетворював `due` на `dueDate`), а помилку відновлення треба повертати як `ok: false`, щоб застосунок не зберіг порожній список поверх даних.
+
+          Підписка, яку відкривають на фокусі, має закриватися на blur. `useFocusEffect` робить це сам, якщо функція, яку ти йому передаєш, **повертає** функцію прибирання; наприклад, фокус-ефект, що відкриває `const sub = AppState.addEventListener('change', onChange)` і повертає `() => sub.remove()`, закриває підписку `AppState` щоразу, коли екран втрачає фокус. А те, що змінилося, поки екран був закритий, він побачить, лише якщо перерахує дані на самому фокусі.
+        en: |
+          Raising `CURRENT_VERSION` without a migration step breaks the chain: `steps[1]` is `undefined`, and calling it throws a `TypeError`. Every schema version needs a step from the previous one (as in RN-05: step `0` turned `due` into `dueDate`), and a restore error must be returned as `ok: false` so that the app does not save an empty list over the data.
+
+          A subscription opened on focus has to be closed on blur. `useFocusEffect` does that by itself if the function you pass it **returns** a cleanup function; for example, a focus effect that opens `const sub = AppState.addEventListener('change', onChange)` and returns `() => sub.remove()` closes the `AppState` subscription every time the screen loses focus. And what changed while the screen was covered, it sees only if it recalculates on the focus itself.
+    solutionNote:
+      uk: "Крок `1` доводить кожну звичку 1.x до схеми 2, розгортанням зберігаючи інші поля, а `catch` повертає `ok: false` — тоді `habitRepo` показує помилку й не зберігає поверх даних. `useFocusEffect` перераховує відсоток на кожному фокусі (дані могли змінитися, поки екран був закритий) і повертає функцію, яку повернув `repo.subscribe`, — її викликають на blur і під час демонтування, тож підписка живе лише поки екран у фокусі."
+      en: "Step `1` brings every 1.x habit to schema 2, keeping the other fields with a spread, and the `catch` returns `ok: false` — then `habitRepo` shows an error and saves nothing over the data. `useFocusEffect` recalculates the rate on every focus (the data may have changed while the screen was covered) and returns the function that `repo.subscribe` returned — it is called on blur and on unmount, so the subscription lives only while the screen is focused."
+    feedback:
+      - when: { test: "after the update the list shows the habits saved by 1.x" }
+        message:
+          uk: "Ця перевірка очікує, що після першого запуску список показує звички зі знімка 1.x. Якщо список порожній чи показує помилку, `restoreSnapshot` не довів знімок версії 1 до версії 2. Якщо всі перевірки падають одночасно, спершу виправ першу помилку в консолі: можливо, екран упав під час рендеру."
+          en: "This check expects the list to show the habits from the 1.x snapshot after the first launch. If the list is empty or shows an error, `restoreSnapshot` did not bring the version 1 snapshot to version 2. If every check fails at once, fix the first error in the console first: a screen may have crashed while rendering."
+      - when: { test: "a 1.x snapshot restores every habit as a daily habit" }
+        message:
+          uk: "Ця перевірка очікує від `restoreSnapshot` для знімка 1.x `{ ok: true, records }`, де кожна звичка має всі свої старі поля (`id`, `name`, `active`, `completions`) і `frequency: 'daily'`. Повідомлення про невдачу показує, які поля вийшли."
+          en: "This check expects `restoreSnapshot` to give `{ ok: true, records }` for a 1.x snapshot, where every habit has all its old fields (`id`, `name`, `active`, `completions`) plus `frequency: 'daily'`. The failure message shows which fields came out."
+      - when: { test: "a 2.0.0 snapshot restores unchanged" }
+        message:
+          uk: "Ця перевірка очікує, що знімок версії 2 (зі щотижневою звичкою) повертається як є: міграційний крок не має чіпати поточну версію."
+          en: "This check expects a version 2 snapshot (with a weekly habit) to come back as it is: a migration step must not touch the current version."
+      - when: { test: "a snapshot this app cannot read is a failure, not an empty list" }
+        message:
+          uk: "Ця перевірка очікує `ok: false` для знімка версії 3, для обрізаного тексту й для тексту без `records`. Порожній список з `ok: true` приховує збій, і застосунок збереже його поверх даних."
+          en: "This check expects `ok: false` for a version 3 snapshot, for cut-off text and for text without `records`. An empty list with `ok: true` hides the failure, and the app will save it over the data."
+      - when: { test: "a mark made on the list survives a restart" }
+        message:
+          uk: "Ця перевірка позначає «Читати 20 хвилин» у списку, перезапускає застосунок і очікує ту саму позначку. Вона можлива, лише коли звички завантажилися: спершу добийся, щоб пройшла перевірка про звички 1.x."
+          en: "This check marks “Read for 20 minutes” on the list, restarts the app and expects the same mark. It is possible only when the habits have loaded: first make the check about the 1.x habits pass."
+      - when: { test: "after leaving the week screen, it no longer listens to changes" }
+        message:
+          uk: "Ця перевірка відкриває «Тиждень», повертається й очікує стільки ж підписок `repo`, скільки було до відкриття. Якщо їх більше, підписка «Тижня» пережила екран: функцію, яку повертає `repo.subscribe`, ніхто не викликав."
+          en: "This check opens “Week”, goes back and expects as many `repo` subscriptions as before the visit. If there are more, the “Week” subscription outlived the screen: nobody called the function that `repo.subscribe` returns."
+      - when: { test: "while another screen covers the week screen, it does not listen" }
+        message:
+          uk: "Ця перевірка відкриває «Тиждень», поверх нього — деталі звички, і очікує лише підписки списку й деталей. Підписка, відкрита під час монтування, живе й під іншим екраном; потрібна та, що відкривається на фокусі й закривається на blur."
+          en: "This check opens “Week”, the habit detail on top of it, and expects only the subscriptions of the list and the detail. A subscription opened on mount stays alive under another screen; it needs one that opens on focus and closes on blur."
+      - when: { test: "after three visits the week screen listens once" }
+        message:
+          uk: "Ця перевірка тричі відкриває й закриває «Тиждень», відкриває його вчетверте й очікує рівно одну його підписку. Кожна зайва — це ще один перерахунок на кожну позначку."
+          en: "This check opens and closes “Week” three times, opens it a fourth time and expects exactly one of its subscriptions. Every extra one is one more recalculation on every mark."
+      - when: { test: "returning to the week screen shows the current rate" }
+        message:
+          uk: "Ця перевірка змінює позначку, поки «Тиждень» закритий екраном деталей, повертається й очікує новий відсоток. Екран без підписки під час blur має перерахувати дані на фокусі. Якщо звички не завантажилися, ця перевірка теж не пройде."
+          en: "This check changes a mark while “Week” is covered by the detail screen, goes back and expects the new rate. A screen with no subscription during blur has to recalculate on focus. If the habits did not load, this check fails too."
+    limits:
+      uk: "Перегляд react-native-web у браузері. «Перезапуск» лише монтує React-дерево заново над тим самим сховищем у пам’яті сторінки, а стек імітовано (`navSim.jsx`): справжнього завершення процесу, AsyncStorage, нативних екранів і переходу у фон тут немає. Їх перевіряєш у локальному завданні на заявленій цілі."
+      en: "A react-native-web preview in the browser. The “restart” only mounts the React tree again over the same store in the page’s memory, and the stack is simulated (`navSim.jsx`): there is no real process death, AsyncStorage, native screens or going to the background here. You check those in the local task on your declared target."
+
+  - id: on-target
+    kind: local-task
+    runtime: local-native
+    title:
+      uk: "Відтвори й доведи на заявленій цілі"
+      en: "Reproduce and prove on your declared target"
+    intro:
+      uk: |
+        Тепер та сама збірка на справжньому AsyncStorage й справжньому нативному стеку React Navigation. Ти створиш окремий лабораторний проєкт `rn-08-seeded-habits` у теці `~/js-course`, відтвориш обидві скарги на заявленій цілі, перенесеш свої виправлення й доведеш їх.
+
+        Команди кроків 1 і 2 запускали під час підготовки уроку на macOS з Node.js v25.2.1 і npm 11.6.2: шаблон дав Expo SDK 57 (`expo` ~57.0.26, `react-native` 0.86.3, `react` 19.2.3), а `npx expo install` записав у `package.json` `@react-native-async-storage/async-storage` 2.2.0, `@react-navigation/native` ^7.5.0, `@react-navigation/native-stack` ^7.20.0, `react-native-screens` ~4.26.0 і `react-native-safe-area-context` ~5.7.0. Код із цього вступу (із виправленнями й без них) зібрався командою `npx expo export` для Android та iOS. **Кроки на цілі (від 4-го) і команди `git` під час підготовки не запускали** — нативних інструментів не було; їх описано за документацією Expo SDK 57, React Native 0.86 і React Navigation 7. Що саме показує твоя ціль, записуй сам.
+
+        Якщо в тебе немає емулятора, симулятора чи телефона, натисни **«У мене немає емулятора чи пристрою»** нижче: завдання запишеться як невиконане, а частину в перегляді вправа вище вже перевірила.
+
+        **Крок 3 — файли.** `habits.js`, `habitRepo.js` і `HabitScreens.jsx` скопіюй із вправи вище без змін (вони лише для читання; редактор показує їх уже з текстом твоєю мовою). `snapshot.js` і `WeekSummary.jsx` — **закладені** версії нижче, а не твої виправлені: спершу треба відтворити скарги.
+
+        `snapshot.js` (закладена версія):
+
+        ```js
+        // snapshot.js: how the habit tracker turns the saved text back into habits.
+        //
+        // Schema history of the saved snapshot { schemaVersion, records }:
+        //   v1 (app 1.x):   a habit is { id, name, active, completions } — every habit was daily.
+        //   v2 (app 2.0.0): a habit also has frequency: 'daily' | 'weekly'.
+        export const CURRENT_VERSION = 2;
+
+        const steps = {};
+
+        export function migrate(snapshot) {
+          if (typeof snapshot?.schemaVersion !== 'number' || !Array.isArray(snapshot.records)) {
+            throw new Error('not a habits snapshot');
+          }
+          if (snapshot.schemaVersion > CURRENT_VERSION) {
+            throw new Error(`snapshot v${snapshot.schemaVersion} is newer than this app`);
+          }
+          let { schemaVersion, records } = snapshot;
+          while (schemaVersion < CURRENT_VERSION) {
+            records = steps[schemaVersion](records);
+            schemaVersion += 1;
+          }
+          return { schemaVersion, records };
+        }
+
+        // raw: the text from storage.getItem, or null when nothing was saved yet.
+        // → { ok: true, records } or { ok: false, reason }
+        export function restoreSnapshot(raw) {
+          if (raw === null) return { ok: true, records: [] };
+          try {
+            return { ok: true, records: migrate(JSON.parse(raw)).records };
+          } catch {
+            // Something odd on disk: start with a clean list.
+            return { ok: true, records: [] };
+          }
+        }
+        ```
+
+        `WeekSummary.jsx` (закладена версія):
+
+        ```jsx
+        // WeekSummary.jsx: the week screen — the completion rate of all habits over the last seven days.
+        import { useEffect, useState } from 'react';
+        import { Pressable, StyleSheet, Text, View } from 'react-native';
+        import { useRepo } from './habitRepo.js';
+        import { WEEK, weeklyRate } from './habits.js';
+
+        export function WeekScreen({ navigation }) {
+          const repo = useRepo();
+          const [rate, setRate] = useState(() => weeklyRate(repo.getHabits(), WEEK));
+
+          // Keep the rate up to date while the user marks habits.
+          useEffect(() => {
+            navigation.addListener('focus', () => {
+              repo.subscribe(() => {
+                console.log('week: recalculated');
+                setRate(weeklyRate(repo.getHabits(), WEEK));
+              });
+            });
+          }, [navigation, repo]);
+
+          return (
+            <View style={styles.column}>
+              <Text accessibilityRole="header" style={styles.rate}>
+                Виконання за тиждень: {rate}%
+              </Text>
+              {repo.getHabits().map((habit) => (
+                <Pressable key={habit.id} accessibilityRole="button" style={styles.row} onPress={() => navigation.push('Detail', { id: habit.id })}>
+                  <Text>{habit.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          column: { gap: 8 },
+          rate: { fontSize: 20, fontWeight: '600' },
+          row: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8, borderBottomWidth: 1, borderColor: '#d4d4d4' },
+        });
+        ```
+
+        `seed.js` — лише для лабораторії: записує знімок, який залишила б версія 1.x чи 2.0.0:
+
+        ```js
+        // seed.js: lab only. Writes the snapshot that app 1.x or app 2.0.0 would have left on the device.
+        import { KEY } from './habitRepo.js';
+
+        const habits = [
+          { id: 'h-01', name: 'Ранкова зарядка', active: true, completions: ['2026-02-27', '2026-02-28', '2026-03-01'] },
+          { id: 'h-02', name: 'Читати 20 хвилин', active: true, completions: ['2026-02-26', '2026-02-28', '2026-03-01'] },
+          { id: 'h-03', name: 'Пити воду', active: true, completions: ['2026-03-01'] },
+        ];
+
+        export function writeSnapshot(storage, schemaVersion) {
+          const records = schemaVersion === 1 ? habits : habits.map((habit) => ({ ...habit, frequency: 'daily' }));
+          return storage.setItem(KEY, JSON.stringify({ schemaVersion, records }));
+        }
+        ```
+
+        `App.js` — заміни ним файл шаблону:
+
+        ```jsx
+        // App.js: the seeded habit tracker 2.0.0 on real AsyncStorage and a React Navigation native stack.
+        import AsyncStorage from '@react-native-async-storage/async-storage';
+        import { NavigationContainer } from '@react-navigation/native';
+        import { createNativeStackNavigator } from '@react-navigation/native-stack';
+        import { useEffect } from 'react';
+        import { Button, View } from 'react-native';
+        import { DetailScreen, ListScreen } from './HabitScreens.jsx';
+        import { RepoContext, createHabitRepo } from './habitRepo.js';
+        import { writeSnapshot } from './seed.js';
+        import { WeekScreen } from './WeekSummary.jsx';
+
+        const Stack = createNativeStackNavigator();
+        const repo = createHabitRepo(AsyncStorage);
+
+        export default function App() {
+          useEffect(() => {
+            repo.load();
+          }, []);
+
+          return (
+            <View style={{ flex: 1 }}>
+              <RepoContext.Provider value={repo}>
+                <NavigationContainer>
+                  <Stack.Navigator>
+                    <Stack.Screen name="List" component={ListScreen} />
+                    <Stack.Screen name="Week" component={WeekScreen} />
+                    <Stack.Screen name="Detail" component={DetailScreen} />
+                  </Stack.Navigator>
+                </NavigationContainer>
+              </RepoContext.Provider>
+              <Button title="Лабораторія: дані 1.x" onPress={() => writeSnapshot(AsyncStorage, 1)} />
+              <Button title="Лабораторія: дані 2.0.0" onPress={() => writeSnapshot(AsyncStorage, 2)} />
+            </View>
+          );
+        }
+        ```
+
+        **Крок 7 — записи доказів** у `EVIDENCE.md`, з полями з уроку про походження доказів: перевірка, ціль, збірка, що зроблено, що побачено, результат, походження. Збірка тут — лабораторна debug-збірка: id — commit (`git rev-parse --short HEAD`), версія — «лабораторія, debug», відбиток — «не застосовно: debug-збірка лабораторії». Тому це докази виправлення, а не докази CP-RN: ті стосуються твоєї release-збірки.
+      en: |
+        Now the same build on real AsyncStorage and a real React Navigation native stack. You create a separate lab project `rn-08-seeded-habits` in the `~/js-course` folder, reproduce both complaints on your declared target, bring over your fixes and prove them.
+
+        The commands of steps 1 and 2 were run while preparing this lesson on macOS with Node.js v25.2.1 and npm 11.6.2: the template gave Expo SDK 57 (`expo` ~57.0.26, `react-native` 0.86.3, `react` 19.2.3), and `npx expo install` wrote `@react-native-async-storage/async-storage` 2.2.0, `@react-navigation/native` ^7.5.0, `@react-navigation/native-stack` ^7.20.0, `react-native-screens` ~4.26.0 and `react-native-safe-area-context` ~5.7.0 into `package.json`. The code of this introduction (with and without the fixes) bundled with `npx expo export` for Android and iOS. **The steps on the target (4 onward) and the `git` commands were not run while preparing** — there were no native tools; they follow the Expo SDK 57, React Native 0.86 and React Navigation 7 documentation. Write down what exactly your target shows yourself.
+
+        If you have no emulator, simulator or phone, press **“I have no emulator or device”** below: the task is recorded as not performed, and the exercise above has already checked the preview part.
+
+        **Step 3 — the files.** Copy `habits.js`, `habitRepo.js` and `HabitScreens.jsx` from the exercise above unchanged (they are read-only; the editor already shows them with the text in your language). `snapshot.js` and `WeekSummary.jsx` are the **seeded** versions below, not your fixed ones: first you need to reproduce the complaints.
+
+        `snapshot.js` (seeded version):
+
+        ```js
+        // snapshot.js: how the habit tracker turns the saved text back into habits.
+        //
+        // Schema history of the saved snapshot { schemaVersion, records }:
+        //   v1 (app 1.x):   a habit is { id, name, active, completions } — every habit was daily.
+        //   v2 (app 2.0.0): a habit also has frequency: 'daily' | 'weekly'.
+        export const CURRENT_VERSION = 2;
+
+        const steps = {};
+
+        export function migrate(snapshot) {
+          if (typeof snapshot?.schemaVersion !== 'number' || !Array.isArray(snapshot.records)) {
+            throw new Error('not a habits snapshot');
+          }
+          if (snapshot.schemaVersion > CURRENT_VERSION) {
+            throw new Error(`snapshot v${snapshot.schemaVersion} is newer than this app`);
+          }
+          let { schemaVersion, records } = snapshot;
+          while (schemaVersion < CURRENT_VERSION) {
+            records = steps[schemaVersion](records);
+            schemaVersion += 1;
+          }
+          return { schemaVersion, records };
+        }
+
+        // raw: the text from storage.getItem, or null when nothing was saved yet.
+        // → { ok: true, records } or { ok: false, reason }
+        export function restoreSnapshot(raw) {
+          if (raw === null) return { ok: true, records: [] };
+          try {
+            return { ok: true, records: migrate(JSON.parse(raw)).records };
+          } catch {
+            // Something odd on disk: start with a clean list.
+            return { ok: true, records: [] };
+          }
+        }
+        ```
+
+        `WeekSummary.jsx` (seeded version):
+
+        ```jsx
+        // WeekSummary.jsx: the week screen — the completion rate of all habits over the last seven days.
+        import { useEffect, useState } from 'react';
+        import { Pressable, StyleSheet, Text, View } from 'react-native';
+        import { useRepo } from './habitRepo.js';
+        import { WEEK, weeklyRate } from './habits.js';
+
+        export function WeekScreen({ navigation }) {
+          const repo = useRepo();
+          const [rate, setRate] = useState(() => weeklyRate(repo.getHabits(), WEEK));
+
+          // Keep the rate up to date while the user marks habits.
+          useEffect(() => {
+            navigation.addListener('focus', () => {
+              repo.subscribe(() => {
+                console.log('week: recalculated');
+                setRate(weeklyRate(repo.getHabits(), WEEK));
+              });
+            });
+          }, [navigation, repo]);
+
+          return (
+            <View style={styles.column}>
+              <Text accessibilityRole="header" style={styles.rate}>
+                Done this week: {rate}%
+              </Text>
+              {repo.getHabits().map((habit) => (
+                <Pressable key={habit.id} accessibilityRole="button" style={styles.row} onPress={() => navigation.push('Detail', { id: habit.id })}>
+                  <Text>{habit.name}</Text>
+                </Pressable>
+              ))}
+            </View>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          column: { gap: 8 },
+          rate: { fontSize: 20, fontWeight: '600' },
+          row: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 8, borderBottomWidth: 1, borderColor: '#d4d4d4' },
+        });
+        ```
+
+        `seed.js` — lab only: writes the snapshot that version 1.x or 2.0.0 would have left:
+
+        ```js
+        // seed.js: lab only. Writes the snapshot that app 1.x or app 2.0.0 would have left on the device.
+        import { KEY } from './habitRepo.js';
+
+        const habits = [
+          { id: 'h-01', name: 'Morning exercise', active: true, completions: ['2026-02-27', '2026-02-28', '2026-03-01'] },
+          { id: 'h-02', name: 'Read for 20 minutes', active: true, completions: ['2026-02-26', '2026-02-28', '2026-03-01'] },
+          { id: 'h-03', name: 'Drink water', active: true, completions: ['2026-03-01'] },
+        ];
+
+        export function writeSnapshot(storage, schemaVersion) {
+          const records = schemaVersion === 1 ? habits : habits.map((habit) => ({ ...habit, frequency: 'daily' }));
+          return storage.setItem(KEY, JSON.stringify({ schemaVersion, records }));
+        }
+        ```
+
+        `App.js` — replace the template’s file with it:
+
+        ```jsx
+        // App.js: the seeded habit tracker 2.0.0 on real AsyncStorage and a React Navigation native stack.
+        import AsyncStorage from '@react-native-async-storage/async-storage';
+        import { NavigationContainer } from '@react-navigation/native';
+        import { createNativeStackNavigator } from '@react-navigation/native-stack';
+        import { useEffect } from 'react';
+        import { Button, View } from 'react-native';
+        import { DetailScreen, ListScreen } from './HabitScreens.jsx';
+        import { RepoContext, createHabitRepo } from './habitRepo.js';
+        import { writeSnapshot } from './seed.js';
+        import { WeekScreen } from './WeekSummary.jsx';
+
+        const Stack = createNativeStackNavigator();
+        const repo = createHabitRepo(AsyncStorage);
+
+        export default function App() {
+          useEffect(() => {
+            repo.load();
+          }, []);
+
+          return (
+            <View style={{ flex: 1 }}>
+              <RepoContext.Provider value={repo}>
+                <NavigationContainer>
+                  <Stack.Navigator>
+                    <Stack.Screen name="List" component={ListScreen} />
+                    <Stack.Screen name="Week" component={WeekScreen} />
+                    <Stack.Screen name="Detail" component={DetailScreen} />
+                  </Stack.Navigator>
+                </NavigationContainer>
+              </RepoContext.Provider>
+              <Button title="Lab: 1.x data" onPress={() => writeSnapshot(AsyncStorage, 1)} />
+              <Button title="Lab: 2.0.0 data" onPress={() => writeSnapshot(AsyncStorage, 2)} />
+            </View>
+          );
+        }
+        ```
+
+        **Step 7 — evidence records** in `EVIDENCE.md`, with the fields from the lesson on provenance: check, target, build, procedure, observed, outcome, provenance. The build here is a lab debug build: the id is the commit (`git rev-parse --short HEAD`), the version is “lab, debug”, the fingerprint is “not applicable: lab debug build”. So these are evidence of the fix, not CP-RN evidence: that is about your release build.
+    tools:
+      - name: "Node.js"
+        version: "22.13 or newer"
+        note:
+          uk: "Мінімум для Expo SDK 57 за таблицею версій Expo; під час підготовки — v25.2.1."
+          en: "The minimum for Expo SDK 57 according to the Expo version table; v25.2.1 while preparing."
+      - name: "Expo SDK"
+        version: "57 (React Native 0.86)"
+        note:
+          uk: "Шаблон `blank@sdk-57`; `npx expo install` добирає версії бібліотек, сумісні з SDK."
+          en: "The `blank@sdk-57` template; `npx expo install` picks library versions compatible with the SDK."
+      - name: "React Navigation"
+        version: "7"
+        note:
+          uk: "`@react-navigation/native` і `@react-navigation/native-stack`."
+          en: "`@react-navigation/native` and `@react-navigation/native-stack`."
+      - name: "Declared target"
+        note:
+          uk: "Емулятор Android, симулятор iOS (лише macOS) чи телефон — з RN-01."
+          en: "An Android emulator, an iOS simulator (macOS only) or a phone — from RN-01."
+    steps:
+      - text:
+          uk: "Створи лабораторний проєкт у теці курсу."
+          en: "Create the lab project in your course folder."
+        command: "mkdir -p ~/js-course\ncd ~/js-course\nnpx create-expo-app@latest rn-08-seeded-habits --template blank@sdk-57 --no-agents-md"
+        expect:
+          uk: "Перший рядок виводу — `Creating rn-08-seeded-habits using the blank@sdk-57 template.`, наприкінці — `✅ Your project is ready!`; у `package.json` залежність `expo` версії ~57."
+          en: "The first output line is `Creating rn-08-seeded-habits using the blank@sdk-57 template.`, near the end `✅ Your project is ready!`; `package.json` lists `expo` at version ~57."
+      - text:
+          uk: "Перейди в проєкт і встанови сховище й навігацію."
+          en: "Change into the project and install the store and the navigation."
+        command: "cd rn-08-seeded-habits\nnpx expo install @react-native-async-storage/async-storage @react-navigation/native @react-navigation/native-stack react-native-screens react-native-safe-area-context"
+        expect:
+          uk: "У `package.json` з’явилися п’ять нових залежностей."
+          en: "Five new dependencies appeared in `package.json`."
+      - text:
+          uk: "Поклади в корінь проєкту файли з кроку 3 вступу (три з вправи, дві закладені версії, `seed.js`, новий `App.js`) і зафіксуй закладений стан окремим commit. Якщо `git status` каже, що це не репозиторій, спершу виконай `git init`."
+          en: "Put the files from step 3 of the introduction into the project root (three from the exercise, the two seeded versions, `seed.js`, the new `App.js`) and commit the seeded state on its own. If `git status` says this is not a repository, run `git init` first."
+        command: "git add -A\ngit commit -m \"Add the seeded RN-08 habit tracker 2.0.0\""
+        expect:
+          uk: "Commit створено; `git status` каже, що робоче дерево чисте."
+          en: "The commit is created; `git status` says the working tree is clean."
+      - text:
+          uk: "Перша скарга. Запусти застосунок на заявленій цілі, натисни «Лабораторія: дані 1.x», потім **повністю** закрий застосунок (Android: прибери його зі списку недавніх; iOS: змахни його вгору в перемикачі застосунків) і відкрий знову. Запиши, що показує список."
+          en: "The first complaint. Run the app on your declared target, press “Lab: 1.x data”, then close the app **completely** (Android: remove it from the recent apps; iOS: swipe it up in the app switcher) and open it again. Record what the list shows."
+        command: "npx expo start"
+        expect:
+          uk: "«Звичок поки немає.», хоча дані 1.x записано, — перша скарга відтворена."
+          en: "“No habits yet.” although the 1.x data was written — the first complaint is reproduced."
+      - text:
+          uk: "Друга скарга. Натисни «Лабораторія: дані 2.0.0» і повністю перезапусти застосунок — знімок версії 2 закладена версія читає, і звички з’являються. Відкрий «Тиждень», повернися й познач звичку, стежачи за терміналом, де працює `npx expo start`. Потім відкрий і закрий «Тиждень» ще двічі, відкрий його вчетверте, перейди в деталі звички й натисни «Позначити сьогодні». Запиши, скільки рядків `week: recalculated` дає кожне натискання."
+          en: "The second complaint. Press “Lab: 2.0.0 data” and fully restart the app — the seeded version does read a version 2 snapshot, and the habits appear. Open “Week”, go back and mark a habit while watching the terminal where `npx expo start` runs. Then open and close “Week” twice more, open it a fourth time, go to a habit’s detail and press “Mark today”. Record how many `week: recalculated` lines each press gives."
+        expect:
+          uk: "Позначка в списку після того, як «Тиждень» закрито, усе одно друкує `week: recalculated`, а з кожним відвідуванням рядків на одне натискання стає більше — друга скарга відтворена."
+          en: "A mark on the list after “Week” was closed still prints `week: recalculated`, and with every visit there are more lines per press — the second complaint is reproduced."
+      - text:
+          uk: "Перенеси обидва свої виправлення з вправи: увесь `snapshot.js` і `WeekSummary.jsx` (у ньому заміни `./navSim.jsx` на `@react-navigation/native`). Натисни «Лабораторія: дані 1.x» і повністю перезапусти застосунок; потім познач одну звичку й перезапусти ще раз. Далі: «Тиждень» → назад → позначка в списку; тричі «Тиждень» → назад; «Тиждень» → деталі → «Позначити сьогодні» → назад. Нарешті, на «Тижні» відправ застосунок у фон (на головний екран телефона), повернися й познач звичку в деталях. Запиши все, що бачив."
+          en: "Bring over both of your fixes from the exercise: the whole `snapshot.js` and `WeekSummary.jsx` (in it replace `./navSim.jsx` with `@react-navigation/native`). Press “Lab: 1.x data” and fully restart the app; then mark one habit and restart again. Next: “Week” → back → a mark on the list; three times “Week” → back; “Week” → detail → “Mark today” → back. Finally, on “Week” send the app to the background (go to the phone’s home screen), come back and mark a habit in the detail. Record everything you saw."
+        expect:
+          uk: "Після перезапуску — три звички, і позначка переживає ще один перезапуск. Позначка в списку після «Тижня» не друкує нічого; повернення на «Тиждень» друкує один рядок і показує новий відсоток; перехід у фон і назад нічого не подвоює."
+          en: "After the restart — three habits, and the mark survives another restart. A mark on the list after “Week” prints nothing; returning to “Week” prints one line and shows the new rate; going to the background and back doubles nothing."
+      - text:
+          uk: "Переконайся, що виправлення торкнулося лише двох файлів, запиши в `EVIDENCE.md` два записи (перезапуск і життєвий цикл) за вступом і зафіксуй роботу."
+          en: "Make sure the fix touched only the two files, write two records (restart and lifecycle) into `EVIDENCE.md` following the introduction, and commit the work."
+        command: "git diff --stat\ngit add -A\ngit commit -m \"Repair the RN-08 seeded migration and focus subscription\""
+        expect:
+          uk: "`git diff --stat` називає лише `snapshot.js` і `WeekSummary.jsx` (`EVIDENCE.md` — новий файл, тож його там немає); commit створено."
+          en: "`git diff --stat` names only `snapshot.js` and `WeekSummary.jsx` (`EVIDENCE.md` is a new file, so it is not listed); the commit is created."
+    verify:
+      - id: reproduced-both
+        text:
+          uk: "На своїй цілі я бачив порожній список після запису даних 1.x і перезапуску, а також рядки `week: recalculated` після того, як «Тиждень» закрито, — більше з кожним відвідуванням."
+          en: "On my target I saw an empty list after writing the 1.x data and restarting, and `week: recalculated` lines after “Week” was closed — more with every visit."
+      - id: restart-proven
+        text:
+          uk: "Після виправлення три звички 1.x з’явилися після перезапуску, а моя позначка пережила ще один повний перезапуск."
+          en: "After the fix the three 1.x habits appeared after a restart, and my mark survived another full restart."
+      - id: focus-proven
+        text:
+          uk: "Після виправлення «Тиждень» не реагував на зміни, коли його закрито чи покинуто, повернення показувало поточний відсоток, а фон і повернення нічого не подвоювали."
+          en: "After the fix “Week” did not react to changes while covered or left, returning showed the current rate, and the background and return doubled nothing."
+      - id: evidence-written
+        text:
+          uk: "`EVIDENCE.md` має два записи із ціллю, збіркою, діями, побаченим, результатом і походженням, і обидва commit створено."
+          en: "`EVIDENCE.md` has two records with the target, build, procedure, observed, outcome and provenance, and both commits are created."
+    troubleshooting:
+      - problem:
+          uk: "У тебе немає нативної цілі або її не вдається запустити."
+          en: "You have no native target, or it does not start."
+        fix:
+          uk: "Натисни «У мене немає емулятора чи пристрою»: завдання запишеться як невиконане, а частину в перегляді вже перевірено. Повернися сюди, коли налаштуєш ціль за RN-01."
+          en: "Press “I have no emulator or device”: the task is recorded as not performed, and the preview part is already checked. Come back here once you have set up a target following RN-01."
+      - problem:
+          uk: "Після виправлення список досі порожній."
+          en: "After the fix the list is still empty."
+        fix:
+          uk: "Знімок читається лише під час запуску, тож виправлення діє з наступного запуску. Натисни «Лабораторія: дані 1.x» ще раз і **повністю** перезапусти застосунок, як у кроці 4."
+          en: "The snapshot is read only on launch, so the fix takes effect from the next launch. Press “Lab: 1.x data” again and restart the app **completely**, as in step 4."
+      - problem:
+          uk: "У терміналі `npx expo start` немає рядків `week: recalculated`."
+          en: "The `npx expo start` terminal shows no `week: recalculated` lines."
+        fix:
+          uk: "За документацією Expo рядки `console.log` застосунку в режимі розробки з’являються в терміналі, де працює `npx expo start`; під час підготовки уроку цього не перевіряли. Якщо термінал мовчить, натисни в ньому `j`, щоб відкрити React Native DevTools, і подивись вкладку Console. Із `--no-dev` рядків у терміналі не буде."
+          en: "According to the Expo documentation, the app’s `console.log` lines appear in development mode in the terminal where `npx expo start` runs; this was not checked while preparing the lesson. If the terminal stays silent, press `j` in it to open React Native DevTools and look at the Console tab. With `--no-dev` there are no lines in the terminal."
+      - problem:
+          uk: "Список показує «Не вдалося прочитати збережені звички»."
+          en: "The list shows “Could not read the saved habits”."
+        fix:
+          uk: "Твій `restoreSnapshot` правильно не ховає збій, але не довів знімок 1.x до версії 2. Перевір крок `1` у `steps`: він має повертати масив звичок."
+          en: "Your `restoreSnapshot` correctly does not hide the failure, but it did not bring the 1.x snapshot to version 2. Check step `1` in `steps`: it must return an array of habits."
+    recovery:
+      uk: "Перший commit тримає закладений стан, тож `git diff` завжди показує саме твої виправлення, а `git restore <файл>` повертає закладену версію файла. Дані на цілі відновлюють кнопки «Лабораторія: …» і повний перезапуск."
+      en: "The first commit holds the seeded state, so `git diff` always shows exactly your fixes, and `git restore <file>` brings back the seeded version of a file. The “Lab: …” buttons and a full restart restore the data on the target."

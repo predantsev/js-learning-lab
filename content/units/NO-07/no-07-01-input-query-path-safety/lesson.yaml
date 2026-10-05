@@ -1,0 +1,416 @@
+id: no-07-01-input-query-path-safety
+unit: NO-07
+title:
+  uk: "Недовірені дані: запит, query-параметри й шляхи"
+  en: "Untrusted input, query and path safety"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Віднести кожну частину вхідного запиту (метод, шлях, query, заголовки, тіло) до недовірених даних і назвати, де саме кожна перевіряється."
+    en: "Classify every part of an incoming request (method, path, query, headers, body) as untrusted and name where each one is validated."
+  - uk: "Відхиляти query-параметр поза дозволеними значеннями й параметр шляху, що веде за межі теки з даними, відповіддю 400 — ще до виклику репозиторію чи файлової системи."
+    en: "Reject an out-of-range query parameter and a path parameter that resolves outside the data directory with 400, before any repository or file-system call."
+prerequisites: [no-04-02-schema-validation, no-02-01-fs-paths-safe]
+subskills:
+  - { family: B-07, skill: "input validation/query/path safety", depth: intro }
+glossary: [allowlist-validation]
+selfCheck: [predict-decoded-name, list-query]
+
+blocks:
+  - id: five-parts
+    kind: explanation
+    title:
+      uk: "Чужі всі п’ять частин запиту"
+      en: "All five parts of a request are foreign"
+    body:
+      uk: |
+        У темі NO-04 сервер перевіряв **тіло** запиту схемою. Але тіло — лише одна з п’яти частин, і жодну з них не написав твій код:
+
+        | Частина | Приклад | Де перевіряти |
+        |---|---|---|
+        | метод | `GET`, `DELETE` | таблиця маршрутів: невідомий метод — 405 |
+        | шлях | `/reports/week-10.txt` | маршрут + перевірка параметра шляху |
+        | query | `?limit=10&sort=price` | розбір query за списком дозволеного |
+        | заголовки | `Content-Type`, `Content-Length` | правила для кожного заголовка, який читаєш |
+        | тіло | `{ "name": "…" }` | схема (NO-04) |
+
+        «Адресу ж формує мій клієнт» — так, твій. Але запит на сервер може надіслати будь-хто: `curl`, скрипт, інший сервер. Тож це той самий [[untrusted-input|недовірений ввід]], що й поле форми в браузері, а сервер — його [[trust-boundary|межа довіри]].
+
+        Головне правило — [[allowlist-validation|перевірка за списком дозволеного]]: прийми лише те, що точно знаєш (`limit` — лише цифри від 1 до 50, `sort` — одне з трьох полів), і відхили решту з 400. Список заборонених значень (`limit` не від’ємний, `sort` не `__proto__`) завжди щось пропустить.
+      en: |
+        In topic NO-04 the server checked the request **body** with a schema. But the body is only one of five parts, and your code wrote none of them:
+
+        | Part | Example | Where to check it |
+        |---|---|---|
+        | method | `GET`, `DELETE` | the route table: an unknown method is 405 |
+        | path | `/reports/week-10.txt` | the route + a check of the path parameter |
+        | query | `?limit=10&sort=price` | parse the query against an allowlist |
+        | headers | `Content-Type`, `Content-Length` | a rule for every header you read |
+        | body | `{ "name": "…" }` | a schema (NO-04) |
+
+        “But my own client builds the address” — yes, yours does. Anyone can send a request to the server, though: `curl`, a script, another server. So this is the same [[untrusted-input]] as a form field in the browser, and the server is its [[trust-boundary]].
+
+        The main rule is [[allowlist-validation]]: accept only what you know exactly (`limit` is digits only, from 1 to 50; `sort` is one of three fields) and reject everything else with 400. A list of forbidden values (`limit` is not negative, `sort` is not `__proto__`) always misses something.
+
+  - id: encoded-paths
+    kind: explanation
+    title:
+      uk: "Закодована скісна риска"
+      en: "An encoded slash"
+    body:
+      uk: |
+        У темі NO-02 ти бачив [[path-traversal]]: ім’я `../secret.txt` веде з теки на рівень вище. Через HTTP таке ім’я приходить хитріше. `fetch` і `new URL` самі прибирають сегменти `..` з адреси, тож `/reports/../secret.txt` стає `/secret.txt` ще до відправлення. А от **закодована** скісна риска `%2F` для розбору адреси — звичайні символи:
+
+        ```js
+        new URL("http://x/reports/..%2Fsecret.txt").pathname;  // "/reports/..%2Fsecret.txt"
+        decodeURIComponent("..%2Fsecret.txt");                 // "../secret.txt"
+        ```
+
+        Маршрут бачить один сегмент після `/reports/`, а після декодування це вже шлях на рівень вище. Тому перевіряють **остаточний** шлях: спершу декодують ім’я, потім визначають, куди воно веде, через `path.resolve`, і лише тоді порівнюють із текою — як `resolveInside` з NO-02. Шукати в імені `../` марно: варіантів запису забагато. І ще: на зіпсованому записі на кшталт `100%.txt` сам `decodeURIComponent` кидає `URIError: URI malformed` — лови його й відповідай 400, бо це помилка клієнта, а не сервера.
+      en: |
+        In topic NO-02 you saw [[path-traversal]]: the name `../secret.txt` leads one level up out of a folder. Over HTTP such a name arrives in a sneakier way. `fetch` and `new URL` remove `..` segments from an address themselves, so `/reports/../secret.txt` becomes `/secret.txt` before it is even sent. An **encoded** slash `%2F`, however, is ordinary characters to the address parser:
+
+        ```js
+        new URL("http://x/reports/..%2Fsecret.txt").pathname;  // "/reports/..%2Fsecret.txt"
+        decodeURIComponent("..%2Fsecret.txt");                 // "../secret.txt"
+        ```
+
+        The route sees one segment after `/reports/`, and after decoding it is a path one level up. So you check the **final** path: decode the name first, then work out where it leads with `path.resolve`, and only then compare it with the folder — like `resolveInside` from NO-02. Searching the name for `../` is pointless: there are too many ways to write it. One more thing: on a broken escape such as `100%.txt`, `decodeURIComponent` itself throws `URIError: URI malformed` — catch it and answer 400, because it is the client's mistake, not the server's.
+
+  - id: edge-boxes
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Кожна частина запиту — через свою перевірку"
+      en: "Every part of a request through its own check"
+    textEquivalent:
+      uk: "Запит складається з п’яти частин: методу, шляху, query, заголовків і тіла. Кожна проходить свою перевірку на межі сервера: метод — таблицю маршрутів, шлях — resolveInside, query — parseListQuery зі списком дозволеного, заголовки — правила для кожного заголовка, тіло — схему. Запит ?limit=-1 зупиняє parseListQuery: відповідь 400, репозиторій не викликається. Запит /reports/..%2F..%2Fsecret.txt зупиняє resolveInside: декодоване ім’я ../../secret.txt веде за межі теки reports, тож 400, і файлова система не читає нічого. До репозиторію й файлів доходить лише те, що пройшло всі п’ять перевірок."
+      en: "A request has five parts: the method, the path, the query, the headers and the body. Each goes through its own check at the server's edge: the method through the route table, the path through resolveInside, the query through parseListQuery with an allowlist, the headers through a rule for each header, the body through a schema. The request ?limit=-1 is stopped by parseListQuery: the answer is 400 and the repository is not called. The request /reports/..%2F..%2Fsecret.txt is stopped by resolveInside: the decoded name ../../secret.txt leads outside the reports folder, so it is 400 and the file system reads nothing. Only what passed all five checks reaches the repository and the files."
+    spec:
+      layout: grid
+      nodes:
+        - { id: method, label: { uk: "метод", en: "method" }, shape: note, w: 110, col: 0, row: 0 }
+        - { id: path, label: { uk: "шлях", en: "path" }, shape: note, w: 110, col: 0, row: 1 }
+        - { id: query, label: "query", shape: note, w: 110, col: 0, row: 2 }
+        - { id: headers, label: { uk: "заголовки", en: "headers" }, shape: note, w: 110, col: 0, row: 3 }
+        - { id: body, label: { uk: "тіло", en: "body" }, shape: note, w: 110, col: 0, row: 4 }
+        - { id: routes, label: { uk: "таблиця маршрутів", en: "route table" }, w: 190, col: 1, row: 0 }
+        - { id: inside, label: "resolveInside", w: 190, col: 1, row: 1 }
+        - { id: parse, label: "parseListQuery", w: 190, col: 1, row: 2 }
+        - { id: rules, label: { uk: "правила заголовків", en: "header rules" }, w: 190, col: 1, row: 3 }
+        - { id: schema, label: { uk: "схема", en: "schema" }, w: 190, col: 1, row: 4 }
+        - { id: inner, label: { uk: "репозиторій, файли", en: "repository, files" }, shape: cylinder, w: 190, col: 1, row: 5 }
+      edges:
+        - { id: e-method, from: method, to: routes }
+        - { id: e-path, from: path, to: inside }
+        - { id: e-query, from: query, to: parse }
+        - { id: e-headers, from: headers, to: rules }
+        - { id: e-body, from: body, to: schema }
+        - { id: e-inner, from: schema, to: inner, label: { uk: "лише перевірене", en: "checked only" } }
+      steps:
+        - caption:
+            uk: "Запит приходить п’ятьма частинами, і всі п’ять сформував клієнт — будь-який, не обов’язково твій."
+            en: "A request arrives in five parts, and the client built all five — any client, not necessarily yours."
+          highlight: [method, path, query, headers, body]
+        - caption:
+            uk: "Метод і шлях спершу йдуть у таблицю маршрутів: невідома адреса — 404, відомий шлях із чужим методом — 405."
+            en: "The method and the path first go to the route table: an unknown address is 404, a known path with a foreign method is 405."
+          highlight: [method, routes, e-method]
+        - caption:
+            uk: "`GET /tasks?limit=-1`: `parseListQuery` приймає лише цифри від 1 до 50, тож `-1` дає 400. До репозиторію запит не дійшов."
+            en: "`GET /tasks?limit=-1`: `parseListQuery` accepts only digits from 1 to 50, so `-1` gives 400. The request never reached the repository."
+          highlight: [query, parse, e-query]
+          dim: [inner]
+          annotate:
+            - { id: parse, text: "400 limit" }
+        - caption:
+            uk: "`GET /reports/..%2F..%2Fsecret.txt`: після декодування ім’я — `../../secret.txt`; `resolveInside` бачить, що шлях виходить за теку, і дає 400. Файл не читається."
+            en: "`GET /reports/..%2F..%2Fsecret.txt`: after decoding the name is `../../secret.txt`; `resolveInside` sees that the path leaves the folder and gives 400. The file is not read."
+          highlight: [path, inside, e-path]
+          dim: [inner]
+          annotate:
+            - { id: inside, text: "400 name" }
+        - caption:
+            uk: "Заголовки й тіло мають свої правила: тип вмісту, розмір (наступний урок) і схема з NO-04."
+            en: "The headers and the body have their own rules: the content type, the size (next lesson) and the schema from NO-04."
+          highlight: [headers, rules, body, schema, e-headers, e-body]
+        - caption:
+            uk: "Лише запит, що пройшов усі п’ять перевірок, доходить до репозиторію й файлів — уже як перевірені значення."
+            en: "Only a request that passed all five checks reaches the repository and the files — as checked values by then."
+          highlight: [inner, e-inner]
+
+  - id: predict-naive-server
+    kind: prediction
+    prompt:
+      uk: "Сервер планувальника перевіряє лише JSON-тіло. Для списку він робить `Number(searchParams.get(\"limit\") ?? 10)` і бере функцію сортування як `SORTERS[sort]` з об’єкта `{ title, dueDate, priority }`; файл звіту читає з `path.join(REPORTS_DIR, decodeURIComponent(name))`. Сервер отримує чотири запити: `/tasks?limit=-1`, `/tasks?limit=abc`, `/tasks?sort=__proto__` і `/reports/..%2Fsecret.txt`. Скільки з них дійдуть до репозиторію чи файлової системи?"
+      en: "A planner server checks only the JSON body. For the list it does `Number(searchParams.get(\"limit\") ?? 10)` and takes the sort function as `SORTERS[sort]` from the object `{ title, dueDate, priority }`; it reads a report file from `path.join(REPORTS_DIR, decodeURIComponent(name))`. The server gets four requests: `/tasks?limit=-1`, `/tasks?limit=abc`, `/tasks?sort=__proto__` and `/reports/..%2Fsecret.txt`. How many of them reach the repository or the file system?"
+    answer:
+      type: choice
+      options:
+        - id: all-four
+          text:
+            uk: "Усі чотири: жодна частина адреси не перевіряється"
+            en: "All four: no part of the address is checked"
+        - id: none
+          text:
+            uk: "Жоден: адресу формує наш клієнт, тож дивних значень там не буває"
+            en: "None: our client builds the address, so there are no strange values in it"
+          why:
+            uk: "Запит може надіслати будь-хто — `curl`, скрипт, інший сервер. Адреса така ж недовірена, як і тіло."
+            en: "Anyone can send a request — `curl`, a script, another server. The address is as untrusted as the body."
+        - id: two-numbers-stop
+          text:
+            uk: "Два: `Number` кидає помилку на `-1` і на `abc`, тож ці два запити зупиняються"
+            en: "Two: `Number` throws on `-1` and on `abc`, so those two requests stop"
+          why:
+            uk: "`Number` нічого не кидає: `-1` — звичайне число, а `\"abc\"` дає `NaN`. Обидва значення спокійно йдуть далі в `slice`."
+            en: "`Number` throws nothing: `-1` is an ordinary number, and `\"abc\"` gives `NaN`. Both values travel on into `slice` quietly."
+        - id: url-normalizes
+          text:
+            uk: "Три: розбір адреси прибирає `..`, тож запит до `secret.txt` не вийде за теку"
+            en: "Three: parsing the address removes `..`, so the request for `secret.txt` cannot leave the folder"
+          why:
+            uk: "Розбір адреси прибирає лише сегменти `..` між справжніми скісними рисками. `%2F` для нього — звичайні символи, а `decodeURIComponent` перетворює їх на `/` вже в коді сервера."
+            en: "Parsing an address removes only `..` segments between real slashes. To it `%2F` is ordinary characters, and `decodeURIComponent` turns them into `/` later, inside the server's code."
+      correct: [all-four]
+    explanation:
+      uk: "Сервер не перевіряє ні query, ні шлях, тож усі чотири запити доходять углиб. `limit=-1` і `limit=abc` потрапляють у `slice` як `-1` і `NaN`; `SORTERS[\"__proto__\"]` знаходить не функцію, а успадкований `Object.prototype`, і сортування падає; а декодоване `../secret.txt` веде на рівень вище теки звітів."
+      en: "The server checks neither the query nor the path, so all four requests get deep inside. `limit=-1` and `limit=abc` land in `slice` as `-1` and `NaN`; `SORTERS[\"__proto__\"]` finds not a function but the inherited `Object.prototype`, and sorting crashes; and the decoded `../secret.txt` leads one level up, out of the reports folder."
+
+  - id: crafted-requests
+    kind: example
+    runtime: isolated-node
+    dir: crafted-requests
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      exportLine: { uk: "Тиждень 10: 3 справи", en: "Week 10: 3 tasks" }
+      repoLabel: { uk: "репозиторій", en: "repository" }
+      "yes": { uk: "так", en: "yes" }
+      "no": { uk: "ні", en: "no" }
+    title:
+      uk: "Чотири підготовлені запити"
+      en: "Four crafted requests"
+    body:
+      uk: |
+        Це той самий наївний сервер. `index.js` запускає його на вільному порту, надсилає чотири запити через `fetch` і для кожного друкує статус, чи дійшов запит до репозиторію, і початок відповіді. `data/secret.txt` лежить поруч із текою `data/reports`, але клієнтам не призначений.
+
+        Натисни **Запустити**. Подивись, що `limit=-1` віддає не всі справи, `limit=abc` — порожній список, `__proto__` закінчується 500 (повідомлення сервера — червоним рядком), а останній запит віддає вміст `secret.txt`.
+      en: |
+        This is the same naive server. `index.js` starts it on a free port, sends four requests with `fetch` and prints, for each, the status, whether the request reached the repository and the start of the answer. `data/secret.txt` lies next to the `data/reports` folder but is not meant for clients.
+
+        Press **Run**. See that `limit=-1` returns not all the tasks, `limit=abc` returns an empty list, `__proto__` ends in 500 (the server's message is a red line), and the last request returns the contents of `secret.txt`.
+    tryIt:
+      uk: |
+        1. У `app.js` заміни `path.join(REPORTS_DIR, name)` на `resolveInside(REPORTS_DIR, name)` (функцію вже імпортовано з `paths.js`) і запусти. Останній запит тепер отримує 400 з `outsideFolder`.
+        2. У маршруті `/tasks` перед `repo.list` додай рядок коду `if (!['title', 'dueDate', 'priority'].includes(sort)) throw new BadRequestError({ sort: 'notAllowed' });` і запусти. `__proto__` отримує 400, а в його рядку тепер «репозиторій: ні».
+        3. Два запити з `limit` усе ще доходять до репозиторію. Повну перевірку query ти напишеш у вправі цього уроку.
+      en: |
+        1. In `app.js` replace `path.join(REPORTS_DIR, name)` with `resolveInside(REPORTS_DIR, name)` (the function is already imported from `paths.js`) and run. The last request now gets 400 with `outsideFolder`.
+        2. In the `/tasks` route, before `repo.list`, add the line of code `if (!['title', 'dueDate', 'priority'].includes(sort)) throw new BadRequestError({ sort: 'notAllowed' });` and run. `__proto__` gets 400, and its line now says “repository: no”.
+        3. The two `limit` requests still reach the repository. You write the full query check in this lesson's exercise.
+
+  - id: predict-decoded-name
+    kind: prediction
+    prompt:
+      uk: "Сервер відхиляє ім’я файлу, якщо в ньому є `../`, і лише потім декодує його. Що надрукує цей код?"
+      en: "A server rejects a file name that contains `../`, and only then decodes it. What does this code print?"
+    code: |
+      const segment = new URL("http://x/reports/..%2Fsecret.txt").pathname.split("/")[2];
+      console.log(segment.includes("../"));
+      console.log(decodeURIComponent(segment));
+    verify: { logs: ["false", "../secret.txt"] }
+    answer:
+      type: choice
+      options:
+        - id: passes-then-climbs
+          text:
+            uk: "`false`, потім `../secret.txt`: перевірка пропускає ім’я, а декодування робить із нього шлях угору"
+            en: "`false`, then `../secret.txt`: the check lets the name through, and decoding turns it into a path upwards"
+        - id: caught
+          text:
+            uk: "`true`, потім `../secret.txt`: перевірка ловить `..`"
+            en: "`true`, then `../secret.txt`: the check catches the `..`"
+          why:
+            uk: "До декодування в сегменті стоїть `..%2F`, а не `../`: скісної риски там ще немає, тож `includes(\"../\")` дає `false`."
+            en: "Before decoding the segment holds `..%2F`, not `../`: there is no slash in it yet, so `includes(\"../\")` gives `false`."
+        - id: normalized
+          text:
+            uk: "`false`, потім `secret.txt`: декодування прибирає `..`"
+            en: "`false`, then `secret.txt`: decoding removes the `..`"
+          why:
+            uk: "`decodeURIComponent` лише замінює `%2F` на `/` і нічого не прибирає. Сегменти `..` прибирає розбір адреси, але `%2F` він не вважає скісною рискою."
+            en: "`decodeURIComponent` only replaces `%2F` with `/` and removes nothing. Address parsing removes `..` segments, but it does not treat `%2F` as a slash."
+      correct: [passes-then-climbs]
+    explanation:
+      uk: "Перевірка дивилась на текст **до** декодування, а файл відкривається **після**. Надійний порядок — декодувати, визначити остаточний шлях через `path.resolve` і порівняти його з текою. Тоді байдуже, як саме записано `..`."
+      en: "The check looked at the text **before** decoding, and the file is opened **after** it. The reliable order is: decode, work out the final path with `path.resolve` and compare it with the folder. Then it does not matter how the `..` was written."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: address-is-untrusted
+        from: js-16-06-untrusted-input-safe-output
+        prompt:
+          uk: "Сторінка списку бажань бере `name` з `location.search` і показує його в заголовку картки. Хто може вибрати це значення і як його безпечно показати?"
+          en: "A wishlist page takes `name` from `location.search` and shows it in a card heading. Who can choose that value, and how is it shown safely?"
+        answer:
+          type: choice
+          options:
+            - id: anyone-text
+              text:
+                uk: "Будь-хто, хто надішле посилання; показати як текст через `textContent`"
+                en: "Anyone who sends the link; show it as text with `textContent`"
+            - id: only-us
+              text:
+                uk: "Лише код нашої сторінки, бо адреса на нашому сайті; можна `innerHTML`"
+                en: "Only our page's code, because the address is on our site; `innerHTML` is fine"
+              why:
+                uk: "Адресу сторінки може надіслати будь-хто, тож `location.search` — недовірений ввід, а `innerHTML` розібрав би з нього розмітку."
+                en: "Anyone can send you the page address, so `location.search` is untrusted input, and `innerHTML` would parse markup out of it."
+            - id: validated-html
+              text:
+                uk: "Будь-хто, але після перевірки форми на межі можна `innerHTML`"
+                en: "Anyone, but after a shape check at the boundary `innerHTML` is fine"
+              why:
+                uk: "Перевірка форми каже, чи значення правильне (є назва), але не робить текст безпечним: `<b>` — цілком допустима назва."
+                en: "A shape check says whether a value is valid (there is a name), but it does not make the text safe: `<b>` is a perfectly valid name."
+          correct: [anyone-text]
+        explanation:
+          uk: "Недовірений текст лишається текстом аж до показу, а безпеку вирішує місце показу. На сервері так само: адресу запиту, як і адресу сторінки, може сформувати будь-хто."
+          en: "Untrusted text stays text until it is displayed, and the place of display decides about safety. It is the same on a server: anyone can build a request address, just like a page address."
+
+  - id: list-query
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: list-query
+    entry: index.js
+    editable: [query.js]
+    capabilities: { network: loopback }
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      tech: { uk: "Техніка", en: "Tech" }
+      home: { uk: "Дім", en: "Home" }
+      sport: { uk: "Спорт", en: "Sport" }
+    title:
+      uk: "parseListQuery за списком дозволеного"
+      en: "parseListQuery with an allowlist"
+    instructions:
+      uk: |
+        Маршрут `GET /items` списку бажань передає `url.searchParams` у `parseListQuery` (файл `query.js`) і викликає репозиторій лише тоді, коли результат `ok`. Напиши цю функцію. Вона повертає `{ ok: true, value: { limit, offset, sort } }` або `{ ok: false, errors }`, де `errors` — об’єкт «параметр → код»:
+
+        | Параметр | Дозволено | Типово | Код помилки |
+        |---|---|---|---|
+        | `limit` | ціле від 1 до 50 | `20` | `outOfRange` |
+        | `offset` | ціле від 0 | `0` | `notWholeNumber` |
+        | `sort` | `name`, `price` або `category` | `"name"` | `notAllowed` |
+        | будь-який інший, і `__proto__` теж | — | — | `unknownParam` |
+
+        Ще три правила:
+
+        - число — це **лише цифри** 0–9: `1e1`, ` 7`, `7.0`, `-0` і порожній текст відхиляються; у `value` числа вже мають тип `number`;
+        - параметр, переданий двічі (`limit=5&limit=500`), отримує код `repeated`;
+        - помилки збираються **всі одразу**, а не лише перша.
+      en: |
+        The wishlist's `GET /items` route passes `url.searchParams` to `parseListQuery` (the file `query.js`) and calls the repository only when the result is `ok`. Write that function. It returns `{ ok: true, value: { limit, offset, sort } }` or `{ ok: false, errors }`, where `errors` is an object “parameter → code”:
+
+        | Parameter | Allowed | Default | Error code |
+        |---|---|---|---|
+        | `limit` | a whole number from 1 to 50 | `20` | `outOfRange` |
+        | `offset` | a whole number from 0 | `0` | `notWholeNumber` |
+        | `sort` | `name`, `price` or `category` | `"name"` | `notAllowed` |
+        | any other, `__proto__` included | — | — | `unknownParam` |
+
+        Three more rules:
+
+        - a number is **digits only**, 0–9: `1e1`, ` 7`, `7.0`, `-0` and empty text are rejected; in `value` the numbers already have the type `number`;
+        - a parameter sent twice (`limit=5&limit=500`) gets the code `repeated`;
+        - errors are collected **all at once**, not just the first one.
+    testTitles:
+      "no parameters give the defaults":
+        uk: "Без параметрів — типові значення"
+        en: "No parameters give the defaults"
+      "valid values come back as numbers and an allowed sort":
+        uk: "Правильні значення повертаються числами й дозволеним `sort`"
+        en: "Valid values come back as numbers and an allowed `sort`"
+      "limit outside 1–50 is rejected":
+        uk: "`limit` поза 1–50 відхиляється"
+        en: "`limit` outside 1–50 is rejected"
+      "only plain digits count as a number":
+        uk: "Числом вважаються лише цифри"
+        en: "Only plain digits count as a number"
+      "sort accepts only name, price and category":
+        uk: "`sort` приймає лише `name`, `price` і `category`"
+        en: "`sort` accepts only `name`, `price` and `category`"
+      "a repeated parameter is rejected":
+        uk: "Повторений параметр відхиляється"
+        en: "A repeated parameter is rejected"
+      "an unknown parameter is rejected":
+        uk: "Невідомий параметр відхиляється"
+        en: "An unknown parameter is rejected"
+      "a parameter named __proto__ is rejected like any unknown one":
+        uk: "Параметр з назвою `__proto__` відхиляється, як будь-який невідомий"
+        en: "A parameter named `__proto__` is rejected like any unknown one"
+      "every problem is reported at once":
+        uk: "Усі проблеми повідомляються разом"
+        en: "Every problem is reported at once"
+      "over HTTP a bad query answers 400 before the repository is called":
+        uk: "Через HTTP поганий query отримує 400 ще до виклику репозиторію"
+        en: "Over HTTP a bad query answers 400 before the repository is called"
+    hints:
+      nudge:
+        uk: "`URLSearchParams` уміє більше, ніж `get`: `keys()` перелічує всі назви параметрів (з повторами), а `getAll(key)` повертає всі значення одного параметра."
+        en: "`URLSearchParams` can do more than `get`: `keys()` lists every parameter name (repeats included), and `getAll(key)` returns every value of one parameter."
+      explanation:
+        uk: "Почни з того, що відкидає зайве: пройди назви параметрів і познач невідомі та повторені. Далі перевір кожен дозволений параметр за точним шаблоном. Наприклад, для `page` (лише цифри) і `status` (лише `open` або `done`) це було б `/^\\d+$/.test(page)` і `['open', 'done'].includes(status)`. Масив і `includes` не бачать успадкованих властивостей, а `in` з об’єктом бачить: `\"toString\" in {}` дає `true`. Назва `__proto__` підступна й як ключ: після `const seen = {}; seen[\"__proto__\"] = 1;` об’єкт `seen` лишається порожнім, бо такий запис змінює прототип, а не додає властивість."
+        en: "Start with what throws the extra away: go through the parameter names and mark the unknown and the repeated ones. Then check each allowed parameter against an exact pattern. For `page` (digits only) and `status` (only `open` or `done`), for example, that would be `/^\\d+$/.test(page)` and `['open', 'done'].includes(status)`. An array with `includes` does not see inherited properties, while `in` with an object does: `\"toString\" in {}` gives `true`. The name `__proto__` is tricky as a key too: after `const seen = {}; seen[\"__proto__\"] = 1;` the object `seen` stays empty, because such an assignment changes the prototype instead of adding a property."
+    solutionNote:
+      uk: "Список дозволених параметрів відсікає невідомі й повторені, регулярний вираз `^\\d+$` приймає лише цифри (а `Number` прийняв би `1e1`, ` 7` і порожній текст), а `includes` по масиву не знаходить `__proto__` чи `constructor`. Помилки накопичуються в одному об’єкті без прототипу (`Object.create(null)`), тож клієнт бачить усі одразу, а параметр `__proto__` стає звичайним ключем помилки, а не зміною прототипу."
+      en: "The list of allowed parameters cuts off unknown and repeated ones, the regular expression `^\\d+$` accepts digits only (while `Number` would accept `1e1`, ` 7` and empty text), and `includes` on an array does not find `__proto__` or `constructor`. Errors pile up in one object without a prototype (`Object.create(null)`), so the client sees them all at once, and a parameter named `__proto__` becomes an ordinary error key instead of a prototype change."
+    feedback:
+      - when: { test: "only plain digits count as a number" }
+        message:
+          uk: "Ця перевірка надсилає `limit` як `1e1`, ` 7`, `7.0`, порожній текст, `0x10`, `abc`, а `offset` як `1e2`, порожній текст, `-0`, `2.5` і чекає відмови для кожного. `Number(\"1e1\")` дає `10`, а `Number(\"\")` — `0`: перевіряй сам текст, а не результат `Number`."
+          en: "This check sends `limit` as `1e1`, ` 7`, `7.0`, empty text, `0x10`, `abc` and `offset` as `1e2`, empty text, `-0`, `2.5`, and expects each to be rejected. `Number(\"1e1\")` gives `10` and `Number(\"\")` gives `0`: check the text itself, not the result of `Number`."
+      - when: { test: "sort accepts only name, price and category" }
+        message:
+          uk: "Ця перевірка надсилає `sort` як `__proto__`, `constructor`, `toString`, `Name` і `id` і чекає `notAllowed`. Якщо `__proto__` проходить, перевірка шукає значення в об’єкті через `in` чи `obj[key]` — порівнюй з масивом через `includes`."
+          en: "This check sends `sort` as `__proto__`, `constructor`, `toString`, `Name` and `id` and expects `notAllowed`. If `__proto__` gets through, the check looks the value up in an object with `in` or `obj[key]` — compare with an array using `includes`."
+      - when: { test: "a repeated parameter is rejected" }
+        message:
+          uk: "Ця перевірка надсилає `limit=5&limit=500` і чекає `{ limit: \"repeated\" }`. `get` бачить лише перше значення — порахуй усі через `getAll`."
+          en: "This check sends `limit=5&limit=500` and expects `{ limit: \"repeated\" }`. `get` sees only the first value — count them all with `getAll`."
+      - when: { test: "an unknown parameter is rejected" }
+        message:
+          uk: "Ця перевірка надсилає `debug=1` і `limit=5&isAdmin=true` і чекає `unknownParam` для невідомої назви. Пройди всі назви з `searchParams.keys()`, а не лише три відомі."
+          en: "This check sends `debug=1` and `limit=5&isAdmin=true` and expects `unknownParam` for the unknown name. Go through every name from `searchParams.keys()`, not just the three known ones."
+      - when: { test: "a parameter named __proto__ is rejected like any unknown one" }
+        message:
+          uk: "Ця перевірка надсилає `__proto__=1` і `limit=5&__proto__=x` і чекає відмови з `{ \"__proto__\": \"unknownParam\" }`. Якщо результат `ok: true` чи помилок не видно, запис `errors[\"__proto__\"] = …` у звичайний `{}` не створив властивості: він змінив прототип. Збирай помилки туди, де будь-яка назва — просто ключ: в об’єкт без прототипу або в `Map`."
+          en: "This check sends `__proto__=1` and `limit=5&__proto__=x` and expects a rejection with `{ \"__proto__\": \"unknownParam\" }`. If the result is `ok: true` or no error shows up, writing `errors[\"__proto__\"] = …` into a plain `{}` created no property: it changed the prototype. Collect the errors where any name is just a key: an object without a prototype, or a `Map`."
+      - when: { test: "every problem is reported at once" }
+        message:
+          uk: "Ця перевірка надсилає `limit=0&sort=size&offset=x` і чекає три помилки в одному об’єкті. Не повертай результат після першої знайденої помилки."
+          en: "This check sends `limit=0&sort=size&offset=x` and expects three errors in one object. Do not return after the first error you find."
+      - when: { test: "valid values come back as numbers and an allowed sort" }
+        message:
+          uk: "Ця перевірка чекає в `value` числа (`50`, а не `\"50\"`) і дозволений `sort`, а для параметрів, яких немає, — типові значення."
+          en: "This check expects numbers in `value` (`50`, not `\"50\"`) and the allowed `sort`, and the defaults for parameters that are absent."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-07
+    body:
+      uk: "У кроці проєкту цього розділу query твого API проходить такий самий список дозволеного — `PARAMS` у `src/list.ts`: невідома назва — `unknown-param`, повторена — `repeated`, `limit` — лише цифри; усі причини разом в одній відповіді `400` до репозиторію. Імен файлів з адреси API не бере: після `decodeURIComponent` `id` має відповідати `ID_PATTERN` твого проєкту в `src/api.ts`, тож `..%2Fpackage.json` — це `400` ще до читання сховища, а `resolveInside` і далі стереже шляхи, які сервер будує сам (сховище, резервні копії). Якщо твій справжній API колись братиме ім’я файлу з адреси, воно спершу пройде через `resolveInside`."
+      en: "In this unit’s project step your API’s query goes through the same kind of allowlist, `PARAMS` in `src/list.ts`: an unknown name is `unknown-param`, a repeated one is `repeated`, `limit` is digits only; all the reasons come together in one `400` before the repository. The API takes no file names from the address: after `decodeURIComponent` the `id` must match your project’s `ID_PATTERN` in `src/api.ts`, so `..%2Fpackage.json` is a `400` before the store is read, and `resolveInside` keeps guarding the paths the server builds itself (the store, the backups). If a real API of yours ever takes a file name from an address, that name goes through `resolveInside` first."

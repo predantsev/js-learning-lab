@@ -102,7 +102,7 @@ export type GitGraphSpec = {
 
 export type RenderSnapshot = { props: Record<string, unknown>; state: Record<string, unknown> };
 export type RenderTimelineSpec = {
-  kind: 'render-timeline'; code: string | null; language: string; component: string; renders: number[];
+  kind: 'render-timeline'; code: string | null; language: string; component: string; screen?: 'dom' | 'native'; renders: number[];
   steps: (StepBase & {
     phase: 'render' | 'commit' | 'effect' | 'event' | 'idle'; render: number; line: number | null; reason?: Localized; snapshot: RenderSnapshot | null; dom: string | null;
     cleanup?: string[]; run?: string[]; event?: { name: string; sees: Record<string, unknown>; actions: string[]; queued: Record<string, unknown> | null };

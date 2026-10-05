@@ -1,0 +1,2 @@
+// Your review write-up: how the category page gets its state and data (see the task).
+export const writeup = `CategoryPage reads the category id from the address with useParams, so the route parameter is the only input it depends on: moving to another category renders the same component again with the new id. The total and the list are derived during render from the expenses array and their amountMinor values instead of being copied into useState, so they cannot go stale. The heading gets focus in an effect only after a navigation, never on the first open.`;

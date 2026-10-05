@@ -4,7 +4,7 @@ import { ApiError } from '../lib/api';
 import { ContentError, loadLesson } from '../lib/content';
 import { type Key, pick } from '../lib/i18n';
 import type { Doc } from '../lib/persist';
-import { isLessonComplete, recordSelfCheck, requiredItems, skipLesson, unskipLesson, visitPage } from '../lib/progress';
+import { canSkipLesson, isLessonComplete, recordSelfCheck, requiredItems, skipLesson, unskipLesson, visitPage } from '../lib/progress';
 import { lessonHref, navigate } from '../lib/router';
 import { useStore } from '../lib/store';
 import type { Block, DraftsDoc, ExampleBlock, ExerciseBlock, Lesson, Question } from '../lib/types';
@@ -101,7 +101,7 @@ function LessonBody({ lesson, drafts, page, focusBlock }: { lesson: Lesson; draf
   const complete = progress ? progress.state === 'completed' || isLessonComplete(lesson, progress) : false;
 
   return (
-    <div className="lesson" ref={main} tabIndex={-1} aria-labelledby="lesson-title">
+    <div className="lesson" ref={main} tabIndex={-1} aria-labelledby="lesson-title" data-lesson={lesson.id} data-page={current + 1}>
       <header className="page-heading">
         <div>
           <span className="eyebrow">{ref ? `${pick(ref.unit.title, lang)} · ${ref.unit.id}` : lesson.unit}</span>
@@ -135,7 +135,9 @@ function LessonBody({ lesson, drafts, page, focusBlock }: { lesson: Lesson; draf
       </div>
 
       <footer className="lesson-footer">
-        {!skipped && progress?.state !== 'completed' && <button type="button" className="btn btn-quiet" onClick={() => setSkipOpen(true)}>{t('lesson.known')} <Icon name="skip" size={14} /></button>}
+        {!skipped && progress?.state !== 'completed' && (canSkipLesson(lesson)
+          ? <button type="button" className="btn btn-quiet" onClick={() => setSkipOpen(true)}>{t('lesson.known')} <Icon name="skip" size={14} /></button>
+          : <p className="ws-note lesson-no-skip">{t('lesson.assessmentNoSkip')}</p>)}
         <nav className="pager" aria-label={t('lesson.page', { n: current + 1, total: pageCount })}>
           <button type="button" className="btn" onClick={() => go(current - 1)} disabled={current === 0}><Icon name="arrowLeft" /> {t('lesson.prev')}</button>
           <ol className="pager-dots" aria-hidden="true">{lesson.pages.map((_, i) => <li key={i} className={i === current ? 'dot current' : i < current || progress?.seenBlocks.includes(lesson.pages[i][0]) ? 'dot seen' : 'dot'} />)}</ol>
@@ -152,7 +154,7 @@ function LessonBody({ lesson, drafts, page, focusBlock }: { lesson: Lesson; draf
           : remaining.length > 0 && <p className="lesson-remaining" role="status">{t('lesson.remaining', { items: remaining.join('; ') })}</p>
       )}
 
-      {skipOpen && !selfCheck && (
+      {skipOpen && !selfCheck && canSkipLesson(lesson) && (
         <Dialog title={t('skip.title')} onClose={() => setSkipOpen(false)} actions={<>
           <button type="button" className="btn" onClick={() => setSkipOpen(false)}>{t('skip.cancel')}</button>
           <button type="button" className="btn" onClick={doSkip}>{t('skip.without')}</button>

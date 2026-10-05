@@ -1,20 +1,27 @@
 // A fake clock: while a check runs, setTimeout only records timers, and the check moves time
-// forward itself. No check waits for real seconds.
+// forward itself. No check waits for real seconds. clearTimeout is replaced too, so a fake id
+// never clears a real timer.
 function useFakeClock() {
   const realSetTimeout = window.setTimeout;
+  const realClearTimeout = window.clearTimeout;
   const timers = [];
   let now = 0;
   let nextId = 1;
   window.setTimeout = (fn, ms = 0, ...args) => {
-    const id = nextId++;
-    timers.push({ id, at: now + Math.max(0, Number(ms) || 0), fn, args });
+    const id = `fake-${nextId}`;
+    timers.push({ id, seq: nextId++, at: now + Math.max(0, Number(ms) || 0), fn, args });
     return id;
+  };
+  window.clearTimeout = (id) => {
+    const index = timers.findIndex((timer) => timer.id === id);
+    if (index !== -1) timers.splice(index, 1);
+    else realClearTimeout(id);
   };
   return {
     advance(ms) {
       const end = now + ms;
       for (;;) {
-        timers.sort((a, b) => a.at - b.at || a.id - b.id);
+        timers.sort((a, b) => a.at - b.at || a.seq - b.seq);
         const next = timers[0];
         if (!next || next.at > end) break;
         timers.shift();
@@ -25,6 +32,7 @@ function useFakeClock() {
     },
     restore() {
       window.setTimeout = realSetTimeout;
+      window.clearTimeout = realClearTimeout;
     },
   };
 }

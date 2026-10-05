@@ -2,11 +2,13 @@
 
 A local-first desktop learning platform: **JavaScript → React → React Native → Node.js**, one continuous course with a chosen capstone, in Ukrainian and English.
 
-**Current status: partial.** The platform foundation (milestone M1) runs locally, and the first JavaScript units are authored and validated. The remaining JavaScript units and the whole React, React Native and Node.js stages are planned in the syllabus but not authored; the application shows them as not published yet. [Current state](docs/STATUS.md) lists exactly what exists, what was measured and what was not. There is no hosted deployment.
+**What it contains:** 528 lessons in 56 units — JavaScript (18 units, with the HTML and CSS a page needs), React (12), React Native (12) and Node.js (14) — each with explanations, step-through visuals, predictions, exercises that run real code, assessments and delayed review, in Ukrainian and English. A capstone project of your choice (wishlist, planner, habit tracker or simple expense tracker) grows step by step through all four stages: inside the platform at first, then as your own local project.
+
+**Current status: course authored, release partial.** Every lesson is validated and independently reviewed. Not done yet: any run on a native device or emulator, Windows and Linux, human or native-speaker review, independent review of the capstone steps, and the final release verification. [Current state](docs/STATUS.md) lists exactly what was measured and what was not. There is no hosted deployment.
 
 ## Quick start
 
-Prerequisites: Node.js 22.13 or newer, npm, and a current desktop Google Chrome. Internet access is needed once, for `npm install`.
+Requirements: Node.js 22.13 or newer, npm, and a current desktop Chromium-based browser (verified with Google Chrome). Internet access is needed once, for `npm install`; later local projects install their own packages.
 
 ```
 git clone https://github.com/predantsev/js-learning-lab.git
@@ -15,7 +17,7 @@ npm install
 npm start
 ```
 
-`npm start` builds the application and the course content on the first run (and again when sources change), then prints the address to open:
+`npm start` builds the application and the course content on the first run (and again when sources change), then prints the address to open in the browser:
 
 - http://js-learning-lab.localhost:7300
 - fallback: http://localhost:7300
@@ -24,7 +26,7 @@ Stop with Ctrl+C. No account, secret, paid API, database or cloud service is inv
 
 | Setting | Default | Change with |
 |---|---|---|
-| Port | 7300 | `JSLL_PORT=7310 npm start` |
+| Port | 7300 | `JSLL_PORT=7301 npm start` |
 | Learner data folder | `.learner-data/` in the repository | `JSLL_DATA_DIR=/path npm start` |
 | Export folder | `exports/` in the repository | `JSLL_EXPORTS_DIR=/path npm start` |
 
@@ -32,7 +34,7 @@ Your code, progress and settings are plain JSON files in the learner data folder
 
 ## Supported environment
 
-Verified: macOS 26 on Apple silicon, Google Chrome 154, Node.js 22, 24 and 25, viewport 1280×800 or larger.
+Verified: macOS 26 on Apple silicon, Google Chrome 154, Node.js 25 (the Node executor tests also on Node.js 22 and 24; some Node.js lessons and steps also on Node.js 22.13.1), viewport 1280×800 or larger.
 
 Not verified: Windows, Linux, Firefox, Safari, screen readers, and running with the network disconnected. They may work; nothing here claims that they do.
 
@@ -60,7 +62,7 @@ npm run content:smoke    # opens every authored lesson page in both languages
 python3 scripts/validate_competencies.py
 ```
 
-Course content lives in `content/` and follows the [authoring guide](content/README.md). The local API and its security model are described in [docs/platform/SERVER-API.md](docs/platform/SERVER-API.md); measured evidence is under [docs/evidence](docs/evidence/M1/README.md).
+Course content lives in `content/` and follows the [authoring guide](content/README.md). The local API and its security model are described in [docs/platform/SERVER-API.md](docs/platform/SERVER-API.md); measured evidence is under [docs/evidence](docs/evidence/M2-M5/README.md) (platform: [M1](docs/evidence/M1/README.md)).
 
 ## Read the package
 

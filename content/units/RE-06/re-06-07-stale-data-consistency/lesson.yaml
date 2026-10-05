@@ -1,0 +1,344 @@
+id: re-06-07-stale-data-consistency
+unit: RE-06
+title:
+  uk: "Застарілі дані й узгодженість"
+  en: "Stale data and consistency"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Знайти, де два екрани можуть показати різні версії одного запису (список і деталі), і змусити обидва читати одне кешоване джерело."
+    en: "Find where two views can show different versions of one record (list and detail) and make both read from one cached source."
+  - uk: "Обрати, коли перевіряти дані наново (після mutation, після повернення на екран, за таймером), і назвати ціну кожного вибору."
+    en: "Choose when to revalidate (after a mutation, on returning to a route, on a timer) and state the cost of each choice."
+prerequisites: [re-06-06-optimistic-rollback, re-02-05-derived-values-not-state]
+subskills:
+  - { family: R-06, skill: "stale data and consistency", depth: intro }
+glossary: [stale-data, revalidation]
+selfCheck: [predict-copy, revalidate-on-return]
+
+blocks:
+  - id: two-versions
+    kind: explanation
+    title:
+      uk: "Два екрани — дві версії одного запису"
+      en: "Two views — two versions of one record"
+    body:
+      uk: |
+        Список звичок ліворуч, деталі вибраної звички праворуч. Деталі самі завантажують звичку й кладуть її у **свій** стан. Людина перейменовує звичку в деталях — і що тепер у списку?
+
+        Кожна копія серверних даних у стані компонента — окрема версія. Змінив одну — інші не знають. Це те саме дублювання стану, що й у RE-02, тільки копії тепер ще й «старіють» самі: сервер міг змінитися, поки ти дивишся.
+
+        Дані, які могли змінитися з моменту отримання, — [[stale-data|застарілі]]. Те, що на екрані, — це лише остання **отримана** версія, а не обов’язково поточна.
+      en: |
+        The habit list on the left, the details of the selected habit on the right. The detail loads the habit itself and puts it into **its own** state. The person renames the habit in the detail — and what is in the list now?
+
+        Every copy of server data in a component's state is a separate version. Change one — the others do not know. It is the same duplicated state as in RE-02, except that the copies now also “age” by themselves: the server may have changed while you were looking.
+
+        Data that may have changed since it was received is [[stale-data]]. What is on the screen is only the latest **received** version, not necessarily the current one.
+
+  - id: predict-copy
+    kind: prediction
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      run: { uk: "Пробіжка", en: "Morning run" }
+    prompt:
+      uk: "Список і деталі видно одночасно. Список завантажив звички в одне місце, а деталі — `h-01` у власний стан, як у коді нижче. Людина перейменовує «Ранкова зарядка» на «Пробіжка» у деталях, і сервер відповідає `200`. Що показують список і заголовок деталей?"
+      en: "The list and the detail are visible at the same time. The list loaded the habits into one place, and the detail loaded `h-01` into its own state, as in the code below. The person renames “Morning exercise” to “Morning run” in the detail, and the server answers `200`. What do the list and the detail's heading show?"
+    code: |
+      function CopyDetail({ id }) {
+        const [habit, setHabit] = useState(null);
+        useEffect(() => {
+          fetch(`/api/habits/${id}`).then((response) => response.json()).then(setHabit);
+        }, [id]);
+        // after a save: setHabit(await saveName(id, name))
+        …
+      }
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: list-stale
+          text:
+            uk: "Заголовок — «Пробіжка», а в списку досі «Ранкова зарядка»"
+            en: "The heading says “Morning run”, while the list still says “Morning exercise”"
+        - id: both-new
+          text:
+            uk: "Обидва — «Пробіжка»: дані прийшли з одного сервера"
+            en: "Both say “Morning run”: the data came from one server"
+          why:
+            uk: "З одного сервера, але в дві різні копії. `setHabit` змінює лише копію деталей; список свою копію не перечитував і про зміну не знає."
+            en: "From one server, but into two different copies. `setHabit` changes only the detail's copy; the list did not reread its copy and knows nothing of the change."
+        - id: both-old
+          text:
+            uk: "Обидва — «Ранкова зарядка», доки сторінку не перезавантажать"
+            en: "Both say “Morning exercise” until the page is reloaded"
+          why:
+            uk: "Деталі кладуть у свій стан відповідь `PATCH` — уже з новою назвою, тож заголовок оновлюється одразу."
+            en: "The detail puts the `PATCH` answer — already with the new name — into its state, so the heading updates at once."
+      correct: [list-stale]
+    explanation:
+      uk: "Дві копії — дві версії. Деталі оновили свою, список — ні: на екрані одночасно стара й нова назва одного запису. Перевірено в пісочниці на прикладі нижче. Вихід — одне джерело: обидва екрани читають той самий запис кешу, а після mutation його інвалідують."
+      en: "Two copies — two versions. The detail updated its own, the list did not: the screen shows the old and the new name of one record at the same time. Checked in the sandbox with the example below. The way out is one source: both views read the same cache entry, and after a mutation it is invalidated."
+
+  - id: one-source
+    kind: visual
+    visual: diagram
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      run: { uk: "Пробіжка", en: "Morning run" }
+    title:
+      uk: "Дві копії проти одного запису кешу"
+      en: "Two copies versus one cache entry"
+    textEquivalent:
+      uk: >-
+        Перший варіант: список і деталі мають кожен свою копію звички h-01, отриману з сервера.
+        Людина перейменовує звичку в деталях на «%%run%%»: PATCH змінює запис на сервері, а
+        деталі кладуть відповідь у свою копію. Копія списку лишається з назвою «%%exercise%%» —
+        екран показує дві версії одного запису. Другий варіант: обидва компоненти читають один
+        запис кешу ["habits"]. Після PATCH обробник інвалідує цей запис, він запитується знову, і
+        список та деталі змінюються разом, бо копії лише одна.
+      en: >-
+        The first option: the list and the detail each have their own copy of habit h-01, received
+        from the server. The person renames the habit in the detail to "%%run%%": the PATCH changes
+        the record on the server, and the detail puts the answer into its copy. The list's copy
+        keeps the name "%%exercise%%" — the screen shows two versions of one record. The second
+        option: both components read one cache entry ["habits"]. After the PATCH the handler
+        invalidates that entry, it is requested again, and the list and the detail change
+        together, because there is only one copy.
+    spec:
+      layout: grid
+      nodes:
+        - { id: server, label: { uk: "сервер · h-01", en: "server · h-01" }, shape: cylinder, col: 0, row: 0 }
+        - { id: list-copy, label: { uk: "копія списку", en: "list's copy" }, col: 0, row: 1 }
+        - { id: detail-copy, label: { uk: "копія деталей", en: "detail's copy" }, col: 1, row: 1 }
+        - { id: entry, label: "[\"habits\"]", shape: cylinder, col: 0, row: 2 }
+        - { id: list, label: "HabitList", col: 0, row: 3 }
+        - { id: detail, label: "HabitDetail", col: 1, row: 3 }
+      edges:
+        - { id: to-list-copy, from: server, to: list-copy, label: "GET" }
+        - { id: to-detail-copy, from: server, to: detail-copy, label: "GET · PATCH" }
+        - { id: entry-list, from: entry, to: list }
+        - { id: entry-detail, from: entry, to: detail }
+      hidden: [entry, list, detail, entry-list, entry-detail]
+      steps:
+        - caption:
+            uk: "Дві копії одного запису: список і деталі кожен отримали свою."
+            en: "Two copies of one record: the list and the detail each received their own."
+          highlight: [server, list-copy, detail-copy, to-list-copy, to-detail-copy]
+          annotate:
+            - { id: list-copy, text: "%%exercise%%" }
+            - { id: detail-copy, text: "%%exercise%%" }
+        - caption:
+            uk: "Перейменування в деталях: `PATCH` змінює сервер, деталі кладуть відповідь у **свою** копію. Копія списку нічого не знає."
+            en: "Renaming in the detail: the `PATCH` changes the server, the detail puts the answer into **its own** copy. The list's copy knows nothing."
+          highlight: [detail-copy, to-detail-copy, server]
+          dim: [list-copy, to-list-copy]
+          annotate:
+            - { id: list-copy, text: { uk: "%%exercise%% · застаріла", en: "%%exercise%% · stale" } }
+            - { id: detail-copy, text: "%%run%%" }
+        - caption:
+            uk: "Одне джерело: обидва компоненти читають той самий запис кешу `[\"habits\"]` і похідне значення з нього — звичку за `id`."
+            en: "One source: both components read the same cache entry `[\"habits\"]` and a value derived from it — the habit by `id`."
+          show: [entry, list, detail, entry-list, entry-detail]
+          dim: [list-copy, detail-copy, to-list-copy, to-detail-copy, server]
+          highlight: [entry, list, detail, entry-list, entry-detail]
+        - caption:
+            uk: "Після `PATCH` обробник інвалідує `[\"habits\"]`, запис запитується знову — і список з деталями змінюються **разом**."
+            en: "After the `PATCH` the handler invalidates `[\"habits\"]`, the entry is requested again — and the list and the detail change **together**."
+          dim: [list-copy, detail-copy, to-list-copy, to-detail-copy]
+          highlight: [server, entry, list, detail, entry-list, entry-detail]
+          annotate:
+            - { id: entry, text: "%%run%%" }
+
+  - id: list-detail
+    kind: example
+    runtime: browser-react
+    dir: list-detail
+    entry: main.jsx
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      read: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      loading: { uk: "Завантажую…", en: "Loading…" }
+      nameField: { uk: "Назва звички", en: "Habit name" }
+      save: { uk: "Зберегти", en: "Save" }
+    title:
+      uk: "Копія в деталях проти спільного запису"
+      en: "A copy in the detail versus a shared entry"
+    body:
+      uk: |
+        `habitsQuery.js` — кешований список звичок: усі, хто викликає `useHabits()`, читають один запис. Список уже читає його. Деталі поки що (`SHARED = false`) завантажують звичку окремо у свій стан.
+
+        Натисни **Запустити**, на **Сторінці** зміни назву в полі й натисни **Зберегти**: заголовок деталей змінився, а кнопка в списку — ні.
+      en: |
+        `habitsQuery.js` is the cached habit list: everyone who calls `useHabits()` reads one entry. The list already reads it. The detail, for now (`SHARED = false`), loads the habit separately into its own state.
+
+        Press **Run**, on the **Page** change the name in the field and press **Save**: the detail's heading changed, but the button in the list did not.
+    tryIt:
+      uk: "У `App.jsx` зміни `SHARED` на `true` і запусти знову. Тепер деталі беруть звичку зі спільного списку (`habits.find(…)`), а після збереження викликають `invalidateHabits()`. Повтори перейменування: у консолі після `PATCH` іде ще один `GET /api/habits`, і змінюються обидва місця."
+      en: "In `App.jsx` change `SHARED` to `true` and run again. Now the detail takes the habit from the shared list (`habits.find(…)`) and calls `invalidateHabits()` after a save. Repeat the rename: in the console the `PATCH` is followed by one more `GET /api/habits`, and both places change."
+
+  - id: when-to-revalidate
+    kind: explanation
+    title:
+      uk: "Коли перевіряти дані наново"
+      en: "When to check the data again"
+    body:
+      uk: |
+        Навіть одне джерело старіє: дані міг змінити інший пристрій чи інша людина. Повторна перевірка, чи дані ще актуальні, — [[revalidation]]. Головне питання — **коли**:
+
+        | Коли | Що ловить | Ціна |
+        |---|---|---|
+        | після власної mutation | твої зміни | треба знати, які queries вона зачіпає |
+        | після повернення на екран | і чужі зміни, коли людина знову дивиться | запит на кожен перехід |
+        | за таймером | зміни, поки екран відкритий | постійні запити, навантаження, батарея — навіть коли ніхто не дивиться |
+
+        Перевіряючи наново, лишай старі дані на екрані ([[background-refresh|фонове оновлення]]) і покажи, **коли** їх отримано: «Оновлено о 10:05» чесно каже людині, наскільки свіже те, що вона бачить. Цей час бери з запису кешу, а не зі свого стану — інакше мітка сама стане застарілою копією.
+      en: |
+        Even one source ages: another device or another person may have changed the data. Checking again whether the data is still current is [[revalidation]]. The main question is **when**:
+
+        | When | What it catches | Cost |
+        |---|---|---|
+        | after your own mutation | your changes | you must know which queries it touches |
+        | on returning to a screen | others' changes too, when the person looks again | a request on every visit |
+        | on a timer | changes while the screen is open | constant requests, load, battery — even when nobody is looking |
+
+        When revalidating, keep the old data on the screen ([[background-refresh]]) and show **when** it was received: “Updated at 10:05” honestly tells the person how fresh what they see is. Take that time from the cache entry, not from your own state — otherwise the label itself becomes a stale copy.
+
+  - id: revalidate-on-return
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: revalidate-on-return
+    entry: main.jsx
+    editable: [ExpenseList.jsx]
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      monthlyPass: { uk: "Місячний проїзний", en: "Monthly pass" }
+      back: { uk: "До списку", en: "Back to the list" }
+      loading: { uk: "Завантажую…", en: "Loading…" }
+      updatedAt: { uk: "Оновлено о", en: "Updated at" }
+    title:
+      uk: "Перевірка після повернення й мітка «Оновлено о»"
+      en: "Revalidate on return and an “Updated at” label"
+    instructions:
+      uk: |
+        Список витрат читає кешований запис `useExpenses()`: `{ data, updatedAt, stale }`, де `updatedAt` — час, коли сервер відповів (`"10:00"`). Кнопка витрати відкриває її екран, «До списку» повертає назад. Годинник сервера-фікстури з кожним запитом списку йде на 5 хвилин уперед.
+
+        Допиши `ExpenseList.jsx`:
+
+        - щоразу, коли екран списку з’являється (зокрема після повернення), познач список застарілим готовою `invalidateExpenses()` — він запитається знову, а старі дані тим часом лишаться на екрані;
+        - над списком покажи абзац «Оновлено о 10:00» — час бери з `updatedAt` запису кешу.
+
+        Перевірки відкривають витрату й повертаються, змінюють дані на сервері «з іншого пристрою» й **рахують запити** `GET /api/expenses`: після повернення — рівно один, поки список просто відкритий, — жодного.
+      en: |
+        The expense list reads the cached entry `useExpenses()`: `{ data, updatedAt, stale }`, where `updatedAt` is the time the server answered (`"10:00"`). An expense's button opens its screen, “Back to the list” returns. The fixture server's clock moves 5 minutes forward with every list request.
+
+        Complete `ExpenseList.jsx`:
+
+        - every time the list screen appears (including after returning), mark the list stale with the ready-made `invalidateExpenses()` — it is requested again, and the old data stays on the screen meanwhile;
+        - above the list show a paragraph “Updated at 10:00” — take the time from the cache entry's `updatedAt`.
+
+        The checks open an expense and come back, change the data on the server “from another device” and **count** `GET /api/expenses` **requests**: after returning — exactly one, while the list just stays open — none.
+    testTitles:
+      "the list shows when its data was fetched":
+        uk: "Список показує, коли отримано його дані"
+        en: "The list shows when its data was fetched"
+      "returning to the list shows the cached expenses at once":
+        uk: "Після повернення кешовані витрати видно одразу"
+        en: "Returning to the list shows the cached expenses at once"
+      "returning to the list fetches it once more":
+        uk: "Повернення до списку запитує його ще раз"
+        en: "Returning to the list fetches it once more"
+      "a change made elsewhere shows after returning":
+        uk: "Зміну, зроблену деінде, видно після повернення"
+        en: "A change made elsewhere shows after returning"
+      "after returning the label shows the time of the new answer":
+        uk: "Після повернення мітка показує час нової відповіді"
+        en: "After returning the label shows the time of the new answer"
+      "the list does not fetch again while it stays on screen":
+        uk: "Поки список на екрані, він не запитується знову"
+        en: "The list does not fetch again while it stays on screen"
+    hints:
+      nudge:
+        uk: "«Щоразу, коли екран з’являється» — це монтування компонента `ExpenseList`. Який інструмент запускає код після того, як компонент з’явився, і лише тоді?"
+        en: "“Every time the screen appears” is the mounting of the `ExpenseList` component. Which tool runs code after a component has appeared, and only then?"
+      explanation:
+        uk: |
+          Ефект із порожнім масивом залежностей запускається після кожного монтування — а `ExpenseList` монтується знову щоразу, коли повертаєшся до списку. Саме там список і треба позначити застарілим готовою функцією з `expensesQuery.js`. Мітку не зберігай у власному стані: бери `updatedAt` просто з того, що повертає `useExpenses()`, — тоді вона оновиться разом із даними.
+
+          Схоже, з іншою задачею: панель новин, що перевіряє стрічку щоразу, коли її відкривають, — `useEffect(() => { markFeedStale(); }, []);` і `<p>Станом на {feed.receivedAt}</p>`.
+        en: |
+          An effect with an empty dependency array runs after every mount — and `ExpenseList` mounts again every time you return to the list. That is the place to mark the list stale with the ready-made function from `expensesQuery.js`. Do not keep the label in your own state: take `updatedAt` straight from what `useExpenses()` returns — then it updates together with the data.
+
+          Similar, with a different task: a news panel that rechecks the feed every time it is opened — `useEffect(() => { markFeedStale(); }, []);` and `<p>As of {feed.receivedAt}</p>`.
+    solutionNote:
+      uk: "Ефект з `[]` у `ExpenseList` запускається на кожному монтуванні — тобто після кожного повернення, — і `invalidateExpenses()` позначає запис застарілим. Список одразу показує кешовані дані й у фоні запитує свіжі, тож зміна з іншого пристрою з’являється без «Завантажую…». Мітка читає `updatedAt` з того самого запису, тому завжди каже правду про те, що на екрані. Таймер ловив би зміни й без повернення, але слав би запити, навіть коли людина нічого не робить."
+      en: "The effect with `[]` in `ExpenseList` runs on every mount — that is, after every return — and `invalidateExpenses()` marks the entry stale. The list shows the cached data at once and fetches fresh data in the background, so a change from another device appears without “Loading…”. The label reads `updatedAt` from the same entry, so it always tells the truth about what is on the screen. A timer would catch changes even without returning, but it would send requests even when the person does nothing."
+    feedback:
+      - when: { test: "the list shows when its data was fetched" }
+        message:
+          uk: "Ця перевірка після першого завантаження очікує абзац рівно «Оновлено о 10:00». Час бери з `updatedAt`, який повертає `useExpenses()`. Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі."
+          en: "After the first load this check expects a paragraph that is exactly “Updated at 10:00”. Take the time from the `updatedAt` that `useExpenses()` returns. If every check fails at once, fix the first error in the console first."
+      - when: { test: "returning to the list shows the cached expenses at once" }
+        message:
+          uk: "Ця перевірка відкриває витрату, повертається й одразу очікує три витрати в списку, а не повідомлення про завантаження. Не очищай дані під час повернення — лише познач їх застарілими."
+          en: "This check opens an expense, comes back and right away expects three expenses in the list, not a loading message. Do not clear the data on return — only mark it stale."
+      - when: { test: "returning to the list fetches it once more" }
+        message:
+          uk: "Ця перевірка рахує `GET /api/expenses` після повернення й очікує рівно 1. Нуль означає, що повернення нічого не перевіряє, — виклич `invalidateExpenses()` в ефекті списку; більше — що запит повторюється ще й з іншої причини."
+          en: "This check counts `GET /api/expenses` after returning and expects exactly 1. Zero means returning checks nothing — call `invalidateExpenses()` in the list's effect; more means the request also repeats for another reason."
+      - when: { test: "a change made elsewhere shows after returning" }
+        message:
+          uk: "Ця перевірка відкриває «Проїзний», змінює його назву на сервері на «Місячний проїзний», повертається й очікує нову назву в списку."
+          en: "This check opens “Transit pass”, changes its name on the server to “Monthly pass”, comes back and expects the new name in the list."
+      - when: { test: "after returning the label shows the time of the new answer" }
+        message:
+          uk: "Ця перевірка після повернення очікує «Оновлено о 10:05» — час другої відповіді сервера. Якщо мітка лишається «10:00», вона береться з власного стану компонента, а не з запису кешу, або список не запитувався знову."
+          en: "After returning this check expects “Updated at 10:05” — the time of the server's second answer. If the label stays at “10:00”, it comes from the component's own state rather than the cache entry, or the list was not requested again."
+      - when: { test: "the list does not fetch again while it stays on screen" }
+        message:
+          uk: "Ця перевірка тримає список відкритим 0,7 с і очікує жодного нового `GET /api/expenses`. Таймер, що перевіряє дані постійно, у цій вправі не потрібен."
+          en: "This check keeps the list open for 0.7 s and expects no new `GET /api/expenses`. A timer that checks the data all the time is not wanted in this exercise."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: derive-selected
+        from: re-02-05-derived-values-not-state
+        prompt:
+          uk: "Компонент має стан `wishes` (список) і має показувати вибране бажання. Який варіант не дасть двом версіям розійтися?"
+          en: "A component has the state `wishes` (a list) and must show the selected wish. Which option keeps two versions from drifting apart?"
+        answer:
+          type: choice
+          options:
+            - id: store-id
+              code: "const [selectedId, setSelectedId] = useState(null);\nconst selected = wishes.find((wish) => wish.id === selectedId);"
+            - id: store-copy
+              code: "const [selected, setSelected] = useState(null);\n// on click: setSelected(wish)"
+              why:
+                uk: "`selected` — копія об’єкта зі списку. Зміниш бажання в `wishes` — копія лишиться старою."
+                en: "`selected` is a copy of an object from the list. Change the wish in `wishes` — the copy stays old."
+            - id: sync-effect
+              code: "const [selected, setSelected] = useState(null);\nuseEffect(() => setSelected(wishes[0]), [wishes]);"
+              why:
+                uk: "Ефект, що копіює стан у стан, — зайвий рендер і та сама копія, лише із затримкою. Похідне значення обчислюють під час рендеру."
+                en: "An effect that copies state into state is an extra render and the same copy, only delayed. A derived value is computed during rendering."
+          correct: [store-id]
+        explanation:
+          uk: "Зберігай найменше — `id`, а сам запис обчислюй зі спільного джерела під час рендеру. Деталі в прикладі уроку з `SHARED = true` роблять саме це: `habits.find(…)` зі спільного запису кешу."
+          en: "Store the least — the `id` — and compute the record itself from the shared source during rendering. The detail in this lesson's example with `SHARED = true` does exactly that: `habits.find(…)` from the shared cache entry."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-06
+    body:
+      uk: "Перевір свій проєкт на копії: якщо екран деталей кладе запис у власний стан, а список — у свій, зроби одне джерело (запис кешу чи піднятий стан) і похідний запис за `id`. У кроці проєкту цього розділу список перевірятиметься наново після кожного запису й після повернення на його маршрут."
+      en: "Check your project for copies: if the detail screen puts a record into its own state and the list into its own, make one source (a cache entry or lifted state) and a record derived by `id`. In this unit's project step the list will be revalidated after every write and on returning to its route."

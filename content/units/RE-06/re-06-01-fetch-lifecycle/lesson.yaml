@@ -1,0 +1,430 @@
+id: re-06-01-fetch-lifecycle
+unit: RE-06
+title:
+  uk: "Завантаження даних у React: життєвий цикл запиту"
+  en: "Fetching in React: lifecycle"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Простежити один запит через рендер, commit, запуск ефекту, відповідь, оновлення стану й повторний рендер і назвати статус (loading, success, error), який видно на кожному кроці."
+    en: "Trace one request through render, commit, effect start, response, state update and re-render, naming the status (loading, success, error) shown at each step."
+  - uk: "Написати компонент, що завантажує записи з API-фікстури із затримкою в ефекті й показує стани завантаження, даних і помилки."
+    en: "Implement a component that loads records from the delayed fixture API in an effect and renders loading, data and error states."
+prerequisites: [re-03-02-effects-synchronize-external, js-08-06-fetch-basics, re-05-06-loading-empty-error-states]
+subskills:
+  - { family: R-06, skill: "fetch lifecycle/cancellation/races", depth: intro }
+glossary: [server-state, request-lifecycle]
+selfCheck: [predict-renders, use-records]
+
+blocks:
+  - id: data-elsewhere
+    kind: explanation
+    title:
+      uk: "Дані живуть деінде, а рендер не чекає"
+      en: "The data lives elsewhere, and rendering does not wait"
+    body:
+      uk: |
+        Досі дані компонента були під рукою: в коді, у стані, у `localStorage`. Справжній список бажань живе на сервері. Такі дані — [[server-state|серверний стан]]: власник у них сервер, компонент має лише копію, і щоб її отримати, треба чекати відповіді.
+
+        А рендер чекати не вміє. Функція-компонент має одразу повернути JSX — з тим, що є **зараз**. Тому компонент, який сам запускає запит, на першому рендері показує «ще завантажую» (кеш, про який буде далі в розділі, може віддати збережену відповідь одразу). Далі запит проходить [[request-lifecycle|життєвий цикл]]:
+
+        1. **Рендер 1** — статус `loading`, даних немає.
+        2. **Commit** — на екрані повідомлення про завантаження.
+        3. **Ефект** — запускає запит (як `fetch` із JS-08).
+        4. **Відповідь** — приходить пізніше; обробник викликає setter стану.
+        5. **Рендер 2** — статус `success` з даними або `error`.
+      en: |
+        So far a component's data was at hand: in the code, in state, in `localStorage`. A real wish list lives on a server. Such data is [[server-state]]: the server owns it, the component only has a copy, and getting that copy means waiting for an answer.
+
+        Rendering cannot wait. A component function must return JSX at once — with what it has **now**. So a component that starts the request itself shows “still loading” on its first render (a cache, coming later in this unit, can hand out a stored answer at once). Then the request goes through its [[request-lifecycle|lifecycle]]:
+
+        1. **Render 1** — status `loading`, no data.
+        2. **Commit** — the loading message is on the screen.
+        3. **Effect** — starts the request (like `fetch` from JS-08).
+        4. **Response** — arrives later; the handler calls a state setter.
+        5. **Render 2** — status `success` with the data, or `error`.
+
+  - id: predict-renders
+    kind: prediction
+    strings:
+      loading: { uk: "Завантажую бажання…", en: "Loading wishes…" }
+    prompt:
+      uk: "Компонент змонтовано без `<StrictMode>`. Фікстура `fetchWishes()` відповідає через 800 мс. Скільки разів спрацює `console.log` з `render:` і з якими статусами — коли відповідь успішна і коли запит відхилено?"
+      en: "The component is mounted without `<StrictMode>`. The fixture `fetchWishes()` answers after 800 ms. How many times does the `console.log` with `render:` run, and with which statuses — when the answer succeeds and when the request is rejected?"
+    code: |
+      function WishList() {
+        const [status, setStatus] = useState("loading");
+        const [wishes, setWishes] = useState([]);
+        console.log(`render: ${status}`);
+
+        useEffect(() => {
+          fetchWishes()
+            .then((data) => {
+              setWishes(data);
+              setStatus("success");
+            })
+            .catch(() => setStatus("error"));
+        }, []);
+
+        return status === "loading" ? <p>%%loading%%</p> : <ul>…</ul>;
+      }
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: two-renders
+          text:
+            uk: "Двічі в обох випадках: `loading`, потім `success` — або `loading`, потім `error`"
+            en: "Twice in both cases: `loading`, then `success` — or `loading`, then `error`"
+        - id: data-first
+          text:
+            uk: "Один раз: `success` (або `error`) — запит стартує ще до показу, тож дані вже будуть"
+            en: "Once: `success` (or `error`) — the request starts before anything is shown, so the data is already there"
+          why:
+            uk: "Перший рендер відбувається до того, як ефект узагалі запуститься: ефект працює **після** commit. Запит, який триває 800 мс, ніяк не встигне до першого рендеру, тож той бачить початковий стан `loading`."
+            en: "The first render happens before the effect even starts: the effect runs **after** the commit. A request that takes 800 ms cannot finish before the first render, so that render sees the initial state `loading`."
+        - id: render-per-setter
+          text:
+            uk: "Тричі при успіху (`loading`, `loading`, `success`) і двічі при помилці"
+            en: "Three times on success (`loading`, `loading`, `success`) and twice on failure"
+          why:
+            uk: "Два setter-и в одному обробнику React збирає в один пакет (batching), навіть коли вони стоять після відповіді на запит. Обидва оновлення застосовуються разом — один повторний рендер."
+            en: "React batches two setters in one handler, even when they run after a response arrives. Both updates are applied together — one re-render."
+        - id: error-no-render
+          text:
+            uk: "Двічі при успіху, але при помилці лише раз — відхилений запит не змінює стан"
+            en: "Twice on success, but only once on failure — a rejected request does not change state"
+          why:
+            uk: "Відхилений проміс потрапляє в `.catch`, а там стоїть `setStatus(\"error\")` — це така сама зміна стану, як і при успіху, тож буде другий рендер зі статусом `error`."
+            en: "A rejected promise reaches `.catch`, and there `setStatus(\"error\")` is called — the same kind of state change as on success, so there is a second render with status `error`."
+      correct: [two-renders]
+    explanation:
+      uk: "Рендер 1 бачить початковий `loading`. Після commit ефект запускає запит. Через 800 мс обробник викликає setter-и, React застосовує їх одним пакетом — рендер 2 бачить `success` (або `error`, якщо спрацював `.catch`). Перевірено в пісочниці з React 19.3: у консолі рівно два рядки `render:`."
+      en: "Render 1 sees the initial `loading`. After the commit the effect starts the request. 800 ms later the handler calls the setters, and React applies them as one batch — render 2 sees `success` (or `error` if `.catch` ran). Checked in the sandbox with React 19.3: exactly two `render:` lines in the console."
+
+  - id: request-timeline
+    kind: visual
+    visual: render-timeline
+    strings:
+      loading: { uk: "Завантажую бажання…", en: "Loading wishes…" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+    title:
+      uk: "Один запит від першого рендеру до списку"
+      en: "One request from the first render to the list"
+    textEquivalent:
+      uk: >-
+        Компонент WishList має стан status і wishes. Рендер 1 бачить status "loading" і порожній
+        масив wishes, тому повертає абзац «%%loading%%». Commit показує цей абзац на екрані. Після
+        commit ефект із порожнім масивом залежностей викликає fetchWishes(): запит пішов, а екран
+        далі показує завантаження. Через 800 мс приходить відповідь, обробник .then викликає
+        setWishes(data) і setStatus("success"); React застосовує обидва оновлення одним пакетом.
+        Рендер 2 бачить status "success" і чотири бажання, commit показує список. Ефект після
+        рендеру 2 не запускається, бо його масив залежностей порожній. Якби запит відхилили, .catch
+        викликав би setStatus("error"), і рендер 2 показав би повідомлення про помилку.
+      en: >-
+        The WishList component has the state status and wishes. Render 1 sees status "loading" and
+        an empty wishes array, so it returns the paragraph "%%loading%%". The commit puts that
+        paragraph on the screen. After the commit the effect with an empty dependency array calls
+        fetchWishes(): the request is on its way, and the screen still shows loading. 800 ms later
+        the answer arrives, the .then handler calls setWishes(data) and setStatus("success"); React
+        applies both updates as one batch. Render 2 sees status "success" and four wishes, and the
+        commit shows the list. The effect does not run after render 2, because its dependency array
+        is empty. Had the request been rejected, .catch would call setStatus("error"), and render 2
+        would show the error message.
+    spec:
+      component: WishList
+      code: |
+        function WishList() {
+          const [status, setStatus] = useState("loading");
+          const [wishes, setWishes] = useState([]);
+          useEffect(() => {
+            fetchWishes()
+              .then((data) => {
+                setWishes(data);
+                setStatus("success");
+              })
+              .catch(() => setStatus("error"));
+          }, []);
+          if (status === "loading") return <p>%%loading%%</p>;
+          return <ul>{wishes.map(…)}</ul>;
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 2
+          reason: { uk: "перший показ", en: "first display" }
+          snapshot: { state: { status: "loading", wishes: [] } }
+          caption:
+            uk: "Рендер 1 бачить початковий стан: `loading`, даних немає. Чекати відповіді він не може — мусить повернути JSX одразу."
+            en: "Render 1 sees the initial state: `loading`, no data. It cannot wait for an answer — it must return JSX at once."
+        - phase: commit
+          render: 1
+          line: 12
+          dom: "<p>%%loading%%</p>"
+          caption:
+            uk: "Commit: на екрані повідомлення про завантаження. Запит ще навіть не почався."
+            en: "Commit: the loading message is on the screen. The request has not even started yet."
+        - phase: effect
+          render: 1
+          line: 5
+          run: ["fetchWishes()"]
+          caption:
+            uk: "Після commit ефект запускає запит. Проміс у дорозі; на екрані досі завантаження."
+            en: "After the commit the effect starts the request. The promise is on its way; the screen still shows loading."
+        - phase: event
+          name: response
+          line: 7
+          sees: { status: "loading" }
+          actions: ["setWishes(data)", "setStatus(\"success\")"]
+          queued: { status: "success", wishes: ["w-01", "w-02", "w-03", "w-04"] }
+          caption:
+            uk: "Через 800 мс приходить відповідь. Обробник `.then` викликає два setter-и — React застосує їх **одним** пакетом."
+            en: "800 ms later the answer arrives. The `.then` handler calls two setters — React will apply them as **one** batch."
+        - phase: render
+          render: 2
+          line: 13
+          reason: { uk: "змінився стан після відповіді", en: "state changed after the answer" }
+          snapshot: { state: { status: "success", wishes: ["w-01", "w-02", "w-03", "w-04"] } }
+          caption:
+            uk: "Рендер 2 бачить `success` і чотири бажання й повертає список."
+            en: "Render 2 sees `success` and four wishes and returns the list."
+        - phase: commit
+          render: 2
+          line: 13
+          dom: "<ul><li>%%headphones%%</li>…</ul>"
+          caption:
+            uk: "Commit показує список. Ефект більше не запускається: масив залежностей порожній. Якби запит відхилили, `.catch` дав би рендер 2 зі статусом `error`."
+            en: "The commit shows the list. The effect does not run again: its dependency array is empty. Had the request been rejected, `.catch` would give render 2 with status `error`."
+
+  - id: wish-loader
+    kind: example
+    runtime: browser-react
+    dir: wish-loader
+    entry: main.jsx
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      loading: { uk: "Завантажую бажання…", en: "Loading wishes…" }
+      loadError: { uk: "Не вдалося завантажити бажання.", en: "Could not load the wishes." }
+    title:
+      uk: "Завантажувач із журналом рендерів"
+      en: "A loader with a render log"
+    body:
+      uk: |
+        `fixtureApi.js` — несправжній сервер, [[test-fixture|фікстура]]: мережі немає, відповідь береться з пам’яті через таймер. Зате його можна налаштувати: `settings.delayMs` — скільки триває відповідь, `settings.failNext` — скільки наступних запитів провалиться. Кожен запит він друкує в консоль: `→` — запит пішов, `←` — прийшла відповідь.
+
+        Натисни **Запустити** й відкрий **Консоль**: там по черзі `render: status loading`, `effect: the request starts`, рядки запиту й `render: status success`.
+      en: |
+        `fixtureApi.js` is a fake server, a [[test-fixture|fixture]]: there is no network, the answer comes from memory after a timer. In return you can configure it: `settings.delayMs` — how long an answer takes, `settings.failNext` — how many of the next requests fail. It prints every request to the console: `→` — the request went out, `←` — the answer arrived.
+
+        Press **Run** and open the **Console**: there, in order, `render: status loading`, `effect: the request starts`, the request lines and `render: status success`.
+    tryIt:
+      uk: |
+        1. У `main.jsx` зміни `settings.delayMs` на `1500` і запусти знову: повідомлення про завантаження на **Сторінці** тримається довше, а рядків `render:` у консолі так само два.
+        2. Тепер зміни `settings.failNext` на `1`: після `← #1 503` іде `render: status error, wishes 0`, і сторінка показує повідомлення про помилку. Поверни `0`.
+      en: |
+        1. In `main.jsx` change `settings.delayMs` to `1500` and run again: the loading message on the **Page** stays longer, and there are still two `render:` lines in the console.
+        2. Now change `settings.failNext` to `1`: after `← #1 503` comes `render: status error, wishes 0`, and the page shows the error message. Set it back to `0`.
+
+  - id: not-in-body
+    kind: explanation
+    title:
+      uk: "Чому не прямо в тілі компонента"
+      en: "Why not right in the component body"
+    body:
+      uk: |
+        Здається, ефект тут зайвий: «компонент і так виконується один раз — запущу запит просто в тілі». Але функцію-компонент React викликає на **кожному** рендері, а рендер має бути [[render-purity|чистим]]: лише обчислити JSX, без дій назовні.
+
+        Запит у тілі ламає це правило, і наслідки видно одразу. Спробуй передбачити.
+      en: |
+        It may look as if the effect is unnecessary: “the component runs once anyway — I will start the request right in the body”. But React calls a component function on **every** render, and rendering must be [[render-purity|pure]]: only compute JSX, with no actions outside.
+
+        A request in the body breaks that rule, and the consequences show at once. Try to predict them.
+
+  - id: predict-body-fetch
+    kind: prediction
+    prompt:
+      uk: "Запит тепер стоїть просто в тілі компонента, без ефекту. Фікстура відповідає через 800 мс. Що покаже журнал запитів у консолі за перші 3 секунди?"
+      en: "The request now sits right in the component body, without an effect. The fixture answers after 800 ms. What does the request log in the console show during the first 3 seconds?"
+    code: |
+      function WishList() {
+        const [wishes, setWishes] = useState([]);
+        fetchWishes().then(setWishes);
+        return <ul>{wishes.map((wish) => <li key={wish.id}>{wish.name}</li>)}</ul>;
+      }
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: endless
+          text:
+            uk: "Запит за запитом: `#1`, `#2`, `#3`, `#4`… — і так доти, доки сторінка відкрита"
+            en: "Request after request: `#1`, `#2`, `#3`, `#4`… — and so on for as long as the page is open"
+        - id: once
+          text:
+            uk: "Один запит `#1`: компонент виконується лише один раз"
+            en: "One request `#1`: the component runs only once"
+          why:
+            uk: "Компонент виконується на кожному рендері. Відповідь викликає `setWishes` з **новим** масивом — це новий рендер, а новий рендер знову запускає запит."
+            en: "The component runs on every render. The answer calls `setWishes` with a **new** array — that is a new render, and the new render starts the request again."
+        - id: too-many-rerenders
+          text:
+            uk: "Один запит і картка помилки React `Too many re-renders`"
+            en: "One request and the React error card `Too many re-renders`"
+          why:
+            uk: "Цю помилку React дає, коли setter викликають **синхронно** під час рендеру. Тут setter спрацьовує пізніше, у `.then`, тож React не бачить нічого підозрілого — запити просто йдуть один за одним без жодного попередження."
+            en: "React gives that error when a setter is called **synchronously** during rendering. Here the setter runs later, in `.then`, so React sees nothing suspicious — the requests just keep going one after another without any warning."
+      correct: [endless]
+    explanation:
+      uk: "Рендер запускає запит → відповідь змінює стан → новий рендер запускає наступний запит. Перевірено в пісочниці: за 4 секунди в консолі `#1`…`#5`, жодного попередження React, і рядки продовжують з’являтися, доки не натиснеш **Зупинити**, — навіть після того, як рядок стану покаже «Виконано.». Ефект з `[]` запускає запит один раз — після першого commit."
+      en: "A render starts a request → the answer changes state → the new render starts the next request. Checked in the sandbox: within 4 seconds the console shows `#1`…`#5`, no React warning at all, and the lines keep coming until you press **Stop** — even after the status line says “Finished.”. An effect with `[]` starts the request once — after the first commit."
+
+  - id: use-records
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: use-records
+    entry: main.jsx
+    editable: [useRecords.js, App.jsx]
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      loading: { uk: "Завантажую справи…", en: "Loading tasks…" }
+      loadError: { uk: "Не вдалося завантажити справи.", en: "Could not load the tasks." }
+    title:
+      uk: "Хук useRecords: три стани одного запиту"
+      en: "The useRecords hook: three states of one request"
+    instructions:
+      uk: |
+        Справи планувальника лежать на несправжньому сервері `fixtureApi.js`: `fetchTasks()` повертає проміс зі списком справ або відхиляється з `Error`.
+
+        1. У `useRecords.js` допиши хук `useRecords()`: він завантажує справи один раз, після першого commit, і повертає `{ status, records, error }`:
+           - спершу `{ status: "loading", records: [], error: null }`;
+           - після відповіді — `status: "success"` і справи в `records`;
+           - після відхилення — `status: "error"` і об’єкт `Error` в `error`.
+        2. У `App.jsx` покажи рівно один стан: `loading` — абзац, що вже є; `error` — `<p role="alert">` з текстом із коментаря; `success` — `<ul>`, де кожна справа — `<li>` зі своєю назвою.
+
+        Перевірки монтують власні копії компонента, роблять фікстуру швидкою (150 мс), а в одній перевірці — такою, що провалюється. Ще одна перевірка **рахує запити**: поки копія на екрані 0,6 с, запит має бути рівно один.
+      en: |
+        The planner's tasks live on the fake server `fixtureApi.js`: `fetchTasks()` returns a promise with the task list or rejects with an `Error`.
+
+        1. In `useRecords.js` complete the hook `useRecords()`: it loads the tasks once, after the first commit, and returns `{ status, records, error }`:
+           - first `{ status: "loading", records: [], error: null }`;
+           - after the answer — `status: "success"` and the tasks in `records`;
+           - after a rejection — `status: "error"` and the `Error` object in `error`.
+        2. In `App.jsx` show exactly one state: `loading` — the paragraph that is already there; `error` — a `<p role="alert">` with the text from the comment; `success` — a `<ul>` where every task is an `<li>` with its title.
+
+        The checks mount their own copies of the component, make the fixture fast (150 ms) and, in one check, make it fail. One more check **counts requests**: while a copy is on screen for 0.6 s, there must be exactly one request.
+    testTitles:
+      "the first display shows the loading message":
+        uk: "Перший показ — повідомлення про завантаження"
+        en: "The first display shows the loading message"
+      "after the answer every task title is listed":
+        uk: "Після відповіді в списку назви всіх справ"
+        en: "After the answer every task title is listed"
+      "a failed request shows the error message":
+        uk: "Невдалий запит показує повідомлення про помилку"
+        en: "A failed request shows the error message"
+      "one display sends exactly one request":
+        uk: "Один показ — рівно один запит"
+        en: "One display sends exactly one request"
+      "useRecords describes the request with status, records and error":
+        uk: "`useRecords` описує запит через `status`, `records` і `error`"
+        en: "`useRecords` describes the request with `status`, `records` and `error`"
+    hints:
+      nudge:
+        uk: "Дані з’являються пізніше за перший рендер. Де в компоненті місце для дії, яка має статися один раз — після того, як екран уже показав завантаження?"
+        en: "The data appears later than the first render. Where in a component is the place for an action that must happen once — after the screen already shows loading?"
+      explanation:
+        uk: |
+          Опиши запит станом, що починається з `loading`, а сам запит запусти в ефекті з порожнім масивом залежностей — він виконається один раз, після першого commit. Коли проміс виконається, поклади дані в стан і зміни статус; коли відхилиться — збережи помилку й постав статус `error`.
+
+          Схоже, з іншою задачею: годинник, що один раз питає в сервера часовий пояс, — `useEffect(() => { loadZone().then((zone) => setZone(zone)).catch(() => setZone("UTC")); }, []);`.
+        en: |
+          Describe the request with state that starts as `loading`, and start the request itself in an effect with an empty dependency array — it runs once, after the first commit. When the promise fulfils, put the data into state and change the status; when it rejects, keep the error and set the status to `error`.
+
+          Similar, with a different task: a clock that asks the server for its time zone once — `useEffect(() => { loadZone().then((zone) => setZone(zone)).catch(() => setZone("UTC")); }, []);`.
+    solutionNote:
+      uk: "Початковий стан `loading` — це чесний опис першого рендеру: даних ще немає. Ефект із `[]` запускає один запит після першого commit; `try`/`catch` (або `.then`/`.catch`) переводить відповідь у `success`, а відхилення — в `error`. Компонент лише обирає гілку за статусом. Запит у тілі або ефект без масиву залежностей дали б нескінченні запити: кожна відповідь міняє стан, а новий рендер запускає новий запит."
+      en: "The initial state `loading` honestly describes the first render: there is no data yet. The effect with `[]` starts one request after the first commit; `try`/`catch` (or `.then`/`.catch`) turns the answer into `success` and a rejection into `error`. The component only picks a branch by status. A request in the body or an effect without a dependency array would give endless requests: every answer changes state, and the new render starts a new request."
+    feedback:
+      - when: { test: "the first display shows the loading message" }
+        message:
+          uk: "Ця перевірка дивиться на копію одразу після першого показу й очікує абзац `role=\"status\"` з текстом «Завантажую справи…» і жодного `<li>`. Перший рендер ще не має даних, тож статус спершу має бути `loading`."
+          en: "This check looks at a copy right after the first display and expects the `role=\"status\"` paragraph with the text “Loading tasks…” and no `<li>`. The first render has no data yet, so the status must start as `loading`."
+      - when: { test: "after the answer every task title is listed" }
+        message:
+          uk: "Ця перевірка чекає відповіді фікстури й очікує `<li>` з назвами всіх чотирьох справ у тому самому порядку, а повідомлення про завантаження — вже ні. Дані з відповіді мають потрапити в стан, а статус — стати `success`."
+          en: "This check waits for the fixture's answer and expects `<li>` items with the titles of all four tasks in the same order, and no loading message any more. The answer's data must go into state, and the status must become `success`."
+      - when: { test: "a failed request shows the error message" }
+        message:
+          uk: "Ця перевірка змушує фікстуру провалитися й очікує `<p role=\"alert\">` з текстом «Не вдалося завантажити справи.» замість повідомлення про завантаження. Відхилений проміс треба перехопити (`catch`) і поставити статус `error`."
+          en: "This check makes the fixture fail and expects `<p role=\"alert\">` with the text “Could not load the tasks.” instead of the loading message. The rejected promise must be caught (`catch`) and the status set to `error`."
+      - when: { test: "one display sends exactly one request" }
+        message:
+          uk: "Ця перевірка рахує запити, поки одна копія на екрані 0,6 с, і очікує рівно 1. Якщо їх більше, запит запускається на кожному рендері — у тілі компонента або в ефекті без масиву залежностей."
+          en: "This check counts requests while one copy is on screen for 0.6 s and expects exactly 1. If there are more, the request starts on every render — in the component body or in an effect without a dependency array."
+      - when: { test: "useRecords describes the request with status, records and error" }
+        message:
+          uk: "Ця перевірка викликає `useRecords()` у власному компоненті. На першому рендері вона очікує рівно `{ status: \"loading\", records: [], error: null }`, після провалу — `status: \"error\"` і `Error` в `error`, після відповіді — `status: \"success\"`, чотири справи в `records` і `error: null`."
+          en: "This check calls `useRecords()` in its own component. On the first render it expects exactly `{ status: \"loading\", records: [], error: null }`, after a failure — `status: \"error\"` and an `Error` in `error`, after an answer — `status: \"success\"`, four tasks in `records` and `error: null`."
+      - when: { error: ReferenceError }
+        message:
+          uk: "Якщо картка каже `useEffect is not defined` чи `useState is not defined`, додай цей хук в імпорт із `\"react\"` на початку `useRecords.js`."
+          en: "If the card says `useEffect is not defined` or `useState is not defined`, add that hook to the import from `\"react\"` at the top of `useRecords.js`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: effect-after-commit
+        from: re-03-02-effects-synchronize-external
+        prompt:
+          uk: "Що надрукує консоль, коли цей компонент покажуть уперше?"
+          en: "What does the console print when this component is shown for the first time?"
+        code: |
+          function Heading() {
+            const shown = document.querySelector("h1");
+            console.log(`render: ${shown ? shown.textContent : "no heading yet"}`);
+            useEffect(() => {
+              console.log(`effect: ${document.querySelector("h1").textContent}`);
+            }, []);
+            return <h1>Wishes</h1>;
+          }
+        lang: jsx
+        runnable: false
+        answer:
+          type: choice
+          options:
+            - id: after-commit
+              code: "render: no heading yet\neffect: Wishes"
+            - id: effect-first
+              code: "effect: Wishes\nrender: Wishes"
+              why:
+                uk: "Ефект не запускається до рендеру: React спершу викликає компонент, робить commit і лише тоді запускає ефекти."
+                en: "An effect does not run before rendering: React first calls the component, commits and only then runs effects."
+            - id: effect-crashes
+              code: "render: no heading yet\nTypeError: Cannot read properties of null"
+              why:
+                uk: "Під час рендеру заголовка ще справді немає, але ефект працює **після** commit — коли `<h1>` уже в DOM."
+                en: "During rendering there really is no heading yet, but the effect runs **after** the commit — when the `<h1>` is already in the DOM."
+          correct: [after-commit]
+        explanation:
+          uk: "Рендер лише обчислює JSX — у DOM ще нічого немає. Ефект запускається після commit і вже бачить заголовок. Саме тому запит у ефекті стартує тоді, коли повідомлення про завантаження вже на екрані. Перевірено в пісочниці."
+          en: "Rendering only computes JSX — nothing is in the DOM yet. The effect runs after the commit and already sees the heading. That is why a request in an effect starts when the loading message is already on the screen. Checked in the sandbox."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-06
+    body:
+      uk: "У кроці проєкту цього розділу хук даних твого проєкту отримуватиме записи не з `localStorage` одразу, а з API-фікстури із затримкою. Опиши його результат так само: `status`, записи й помилка — і переконайся, що перший рендер чесно показує завантаження, а не порожній список, який виглядає як «записів немає»."
+      en: "In this unit's project step your project's data hook will get its records not straight from `localStorage` but from a delayed fixture API. Describe its result the same way: `status`, the records and the error — and make sure the first render honestly shows loading, not an empty list that looks like “there are no records”."

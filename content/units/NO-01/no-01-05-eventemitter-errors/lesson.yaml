@@ -1,0 +1,433 @@
+id: no-01-05-eventemitter-errors
+unit: NO-01
+title:
+  uk: "EventEmitter і життєвий цикл помилок"
+  en: "EventEmitter and the error lifecycle"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Передбачити, що станеться, коли `EventEmitter` випускає подію `'error'` зі слухачем помилки і без нього."
+    en: "Predict what happens when an `EventEmitter` emits `'error'` with and without an error listener."
+  - uk: "Додавати, рахувати й прибирати слухачів через `on`, `once` і `off` та пояснити, про що сигналізує `MaxListenersExceededWarning`."
+    en: "Register, count and remove listeners with `on`, `once` and `off`, and explain what `MaxListenersExceededWarning` signals."
+  - uk: "Відрізнити синхронний `throw` у слухачі від відхиленого проміса, що пізніше з’являється як необроблене відхилення."
+    en: "Tell a synchronous throw inside a listener from a rejected promise that surfaces later as an unhandled rejection."
+prerequisites: [no-01-04-event-loop-phases, js-07-03-try-catch-finally]
+subskills:
+  - { family: B-01, skill: "events/EventEmitter error lifecycle", depth: intro }
+glossary: [event-emitter, error-event, max-listeners-warning]
+selfCheck: [predict-no-error-listener, load-records]
+
+blocks:
+  - id: emitter-basics
+    kind: explanation
+    title:
+      uk: "EventEmitter: події без сторінки"
+      en: "EventEmitter: events without a page"
+    body:
+      uk: |
+        У браузері ти слухав події елементів через `addEventListener`. У Node подібну роль грає [[event-emitter|`EventEmitter`]] з модуля `node:events`: на ньому побудовані потоки, сервери, сокети.
+
+        ```js
+        import { EventEmitter } from "node:events";
+        const loader = new EventEmitter();
+        loader.on("record", (wish) => console.log(wish.name)); // add a listener
+        loader.emit("record", { name: "Термочашка" });          // call the listeners
+        ```
+
+        - `on(name, fn)` додає слухача, `once(name, fn)` — слухача, що прибере себе після першого виклику, `off(name, fn)` прибирає саме цю функцію. `listenerCount(name)` каже, скільки їх зараз.
+        - `emit(name, …args)` викликає слухачів **синхронно**, по черзі, у порядку додавання, і лише потім повертається. Це не `setTimeout`: коли `emit` повернув керування, усі слухачі вже відпрацювали.
+      en: |
+        In the browser you listened to element events with `addEventListener`. In Node a similar role is played by [[event-emitter|`EventEmitter`]] from the `node:events` module: streams, servers and sockets are built on it.
+
+        ```js
+        import { EventEmitter } from "node:events";
+        const loader = new EventEmitter();
+        loader.on("record", (wish) => console.log(wish.name)); // add a listener
+        loader.emit("record", { name: "Travel mug" });          // call the listeners
+        ```
+
+        - `on(name, fn)` adds a listener, `once(name, fn)` a listener that removes itself after its first call, `off(name, fn)` removes exactly that function. `listenerCount(name)` tells how many there are now.
+        - `emit(name, …args)` calls the listeners **synchronously**, one by one, in the order they were added, and only then returns. It is not `setTimeout`: once `emit` has returned, every listener has already run.
+
+  - id: predict-no-error-listener
+    kind: prediction
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+    prompt:
+      uk: "`RecordLoader` — нащадок `EventEmitter`. Його метод `load` випускає подію `'record'` для кожного бажання, а потім `'error'`. Слухача `'error'` ніхто не додав. Що буде в консолі?"
+      en: "`RecordLoader` extends `EventEmitter`. Its `load` method emits `'record'` for each wish and then `'error'`. Nobody added an `'error'` listener. What appears in the console?"
+    code: |
+      loader.on("record", (wish) => console.log(`wish: ${wish.name}`));
+      console.log("before load");
+      loader.load([{ name: "%%headphones%%" }, { name: "%%lamp%%" }]);
+      console.log("after load");
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: crash
+          text:
+            uk: "`before load`, два рядки `wish: …`, а потім програма падає із цією помилкою; `after load` не друкується"
+            en: "`before load`, two `wish: …` lines, then the program crashes with that error; `after load` is not printed"
+        - id: ignored
+          text:
+            uk: "`before load`, два рядки `wish: …`, `after load` — помилку, яку ніхто не слухає, пропущено"
+            en: "`before load`, two `wish: …` lines, `after load` — the error nobody listens to is skipped"
+          why:
+            uk: "Подія `'error'` особлива: якщо слухача немає, `emit('error', …)` **кидає** цю помилку. Мовчки її не пропускають ніколи."
+            en: "The `'error'` event is special: with no listener, `emit('error', …)` **throws** that error. It is never skipped silently."
+        - id: later
+          text:
+            uk: "`before load`, `after load`, потім два рядки `wish: …`, потім падіння"
+            en: "`before load`, `after load`, then two `wish: …` lines, then a crash"
+          why:
+            uk: "`emit` не відкладає слухачів на потім, як `setTimeout`, — він викликає їх синхронно, ще до свого повернення."
+            en: "`emit` does not postpone the listeners like `setTimeout` — it calls them synchronously, before it returns."
+      correct: [crash]
+    explanation:
+      uk: "Слухачі `'record'` виконуються синхронно всередині `load`, тому два рядки `wish` ідуть одразу після `before load`. Потім `emit('error', …)` без слухача кидає помилку; її ніхто не ловить, тож Node друкує стек, додає `Emitted 'error' event on RecordLoader instance` і завершує процес із кодом 1. Так поводився справжній Node.js під час підготовки уроку."
+      en: "The `'record'` listeners run synchronously inside `load`, so the two `wish` lines come right after `before load`. Then `emit('error', …)` with no listener throws the error; nobody catches it, so Node prints the stack, adds `Emitted 'error' event on RecordLoader instance` and ends the process with code 1. That is how real Node.js behaved while this lesson was prepared."
+
+  - id: record-loader
+    kind: example
+    runtime: isolated-node
+    dir: record-loader
+    entry: index.js
+    expectError: true
+    strings:
+      brokenFile: { uk: "файл із бажаннями пошкоджено", en: "the wishes file is broken" }
+      gotWish: { uk: "Бажання", en: "Wish" }
+      beforeLoad: { uk: "Перед завантаженням", en: "Before loading" }
+      afterLoad: { uk: "Після завантаження", en: "After loading" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+    title:
+      uk: "Подія error без слухача"
+      en: "An error event with no listener"
+    body:
+      uk: |
+        Натисни **Запустити**. Два бажання надрукуються, а потім процес упаде: червоний стек, рядок `Emitted 'error' event on RecordLoader instance at:` і код завершення 1. Рядка «Після завантаження» немає — програма до нього не дійшла.
+      en: |
+        Press **Run**. Two wishes are printed, then the process crashes: a red stack, the line `Emitted 'error' event on RecordLoader instance at:` and exit code 1. The line “After loading” is missing — the program never got there.
+    tryIt:
+      uk: |
+        1. Перед рядком коду `console.log('%%beforeLoad%%');` додай слухача помилки: `loader.on('error', (error) => console.error('Load failed:', error.message));` і запусти. Тепер помилку надруковано червоним, рядок «Після завантаження» на місці, а код завершення — 0.
+        2. Заміни `loader.on('record', …)` на `loader.once('record', …)` і запусти: надрукується лише перше бажання — слухач прибрав себе після першого виклику.
+      en: |
+        1. Before the line of code `console.log('%%beforeLoad%%');` add an error listener: `loader.on('error', (error) => console.error('Load failed:', error.message));` and run. Now the error is printed in red, the line “After loading” is there, and the exit code is 0.
+        2. Replace `loader.on('record', …)` with `loader.once('record', …)` and run: only the first wish is printed — the listener removed itself after its first call.
+
+  - id: emitter-timeline
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Хто кого викликає, коли спрацьовує emit"
+      en: "Who calls whom when emit runs"
+    textEquivalent:
+      uk: "Три учасники: код програми, емітер loader і слухач. Спершу програма додає слухача через on('record'). Потім викликає emit('record') — і емітер одразу, синхронно, викликає слухача з першим бажанням. Слухач повертається, і лише тоді emit повертає true програмі. Так само для другого бажання. Далі програма викликає emit('error', помилка). Слухача 'error' немає, тож emit кидає цю помилку назад у код програми. Її ніхто не ловить, і процес завершується з кодом 1. Зі слухачем 'error' емітер викликав би його, як будь-якого іншого слухача, і програма працювала б далі."
+      en: "Three participants: the program code, the loader emitter and a listener. First the program adds a listener with on('record'). Then it calls emit('record') — and the emitter calls the listener with the first wish at once, synchronously. The listener returns, and only then does emit return true to the program. The same happens for the second wish. Next the program calls emit('error', error). There is no 'error' listener, so emit throws that error back into the program code. Nobody catches it, and the process ends with code 1. With an 'error' listener the emitter would call it like any other listener, and the program would carry on."
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+    spec:
+      actors:
+        - { id: program, label: { uk: "Код програми", en: "Program code" } }
+        - { id: loader, label: "loader" }
+        - { id: listener, label: { uk: "Слухач record", en: "record listener" } }
+      intro:
+        uk: "Код програми, емітер `loader` і функція-слухач."
+        en: "The program code, the `loader` emitter and a listener function."
+      messages:
+        - from: program
+          to: loader
+          label: "on('record', fn)"
+          caption:
+            uk: "Програма додає слухача. Тепер `listenerCount('record')` — 1."
+            en: "The program adds a listener. Now `listenerCount('record')` is 1."
+        - from: program
+          to: loader
+          label: "emit('record', wish)"
+          caption:
+            uk: "Програма випускає подію з першим бажанням."
+            en: "The program emits the event with the first wish."
+        - from: loader
+          to: listener
+          label: "fn(wish)"
+          caption:
+            uk: "Емітер **одразу**, синхронно, викликає слухача: у консолі «%%headphones%%». Жодної черги між ними немає."
+            en: "The emitter calls the listener **at once**, synchronously: “%%headphones%%” appears in the console. There is no queue in between."
+        - from: listener
+          to: loader
+          label: "return"
+          kind: return
+          caption:
+            uk: "Слухач повертається до емітера."
+            en: "The listener returns to the emitter."
+        - from: loader
+          to: program
+          label: "true"
+          kind: return
+          caption:
+            uk: "Лише тепер `emit` повертає `true` (слухачі були) — уже після того, як усі відпрацювали."
+            en: "Only now does `emit` return `true` (there were listeners) — after all of them have run."
+        - from: program
+          to: loader
+          label: "emit('error', err)"
+          caption:
+            uk: "Програма випускає `'error'`. Слухачів цієї події немає."
+            en: "The program emits `'error'`. This event has no listeners."
+        - from: loader
+          to: program
+          label: "throw err"
+          kind: return
+          caption:
+            uk: "Без слухача `emit('error')` **кидає** помилку назад у код програми. Не спіймана — процес завершується з кодом 1."
+            en: "With no listener, `emit('error')` **throws** the error back into the program code. Uncaught, it ends the process with code 1."
+          note:
+            uk: "Emitted 'error' event on RecordLoader instance"
+            en: "Emitted 'error' event on RecordLoader instance"
+
+  - id: error-lifecycle
+    kind: explanation
+    title:
+      uk: "Три шляхи помилки й попередження про витік"
+      en: "Three error paths and a leak warning"
+    body:
+      uk: |
+        - **Подія [[error-event|`'error'`]] без слухача** — `emit` кидає помилку тому, хто її випустив. Тому кожен, хто працює з емітером, додає слухача `'error'`.
+        - **Синхронний `throw` у слухачі** вилітає з `emit()` назовні, як із будь-якого виклику функції: його можна спіймати `try`/`catch` навколо `emit`.
+        - **`async`-слухач, що кидає**, повертає відхилений проміс, а `emit` його не чекає й нічого про нього не знає. `try`/`catch` навколо `emit` нічого не спіймає: помилка з’явиться пізніше як необроблене відхилення, і Node (від версії 15) завершить процес із кодом 1.
+
+        Ще одне: коли на одну подію одного емітера додано **більше 10** слухачів, Node друкує [[max-listeners-warning|`MaxListenersExceededWarning: Possible EventEmitter memory leak detected`]]. Це сигнал, що код додає слухача знову й знову й не прибирає. Збільшити ліміт через `setMaxListeners` — означає вимкнути сигнал, а не полагодити витік.
+      en: |
+        - **An [[error-event|`'error'`]] event with no listener** — `emit` throws the error at whoever emitted it. That is why everyone working with an emitter adds an `'error'` listener.
+        - **A synchronous `throw` in a listener** flies out of `emit()`, as out of any function call: `try`/`catch` around `emit` can catch it.
+        - **An `async` listener that throws** returns a rejected promise, and `emit` neither waits for it nor knows about it. `try`/`catch` around `emit` catches nothing: the error surfaces later as an unhandled rejection, and Node (since version 15) ends the process with code 1.
+
+        One more thing: when **more than 10** listeners are added to one event of one emitter, Node prints [[max-listeners-warning|`MaxListenersExceededWarning: Possible EventEmitter memory leak detected`]]. It signals that code adds a listener again and again without removing it. Raising the limit with `setMaxListeners` switches the signal off, it does not fix the leak.
+
+  - id: predict-async-listener
+    kind: prediction
+    strings:
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      noPrice: { uk: "немає ціни", en: "price is missing" }
+    prompt:
+      uk: "Слухач тепер `async` і кидає помилку. Що надрукує програма і чим вона закінчиться?"
+      en: "The listener is now `async` and throws. What does the program print, and how does it end?"
+    code: |
+      loader.on("record", async () => {
+        throw new Error("%%noPrice%%");
+      });
+      try {
+        loader.emit("record", { name: "%%tickets%%" });
+        console.log("emit returned");
+      } catch {
+        console.log("caught");
+      }
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: returned-then-crash
+          text:
+            uk: "`emit returned`, а потім процес падає з `Error: %%noPrice%%` (необроблене відхилення)"
+            en: "`emit returned`, then the process crashes with `Error: %%noPrice%%` (an unhandled rejection)"
+        - id: caught
+          text:
+            uk: "`caught` — `try`/`catch` навколо `emit` ловить помилку слухача"
+            en: "`caught` — `try`/`catch` around `emit` catches the listener’s error"
+          why:
+            uk: "Так було б зі звичайним (синхронним) слухачем. `async`-функція не кидає назовні, а повертає відхилений проміс, якого `emit` не чекає."
+            en: "That would happen with an ordinary (synchronous) listener. An `async` function does not throw outward; it returns a rejected promise, which `emit` does not wait for."
+        - id: silent
+          text:
+            uk: "`emit returned`, і програма закінчується спокійно"
+            en: "`emit returned`, and the program ends quietly"
+          why:
+            uk: "Відхилений проміс, якого ніхто не обробив, Node не ігнорує: від версії 15 він завершує процес із кодом 1."
+            en: "Node does not ignore a rejected promise nobody handled: since version 15 it ends the process with code 1."
+      correct: [returned-then-crash]
+    explanation:
+      uk: "`emit` викликав `async`-слухача, отримав відхилений проміс і спокійно повернувся — тому `emit returned`. Відхилення ніхто не обробив, і Node завершив процес із кодом 1. Перевірено справжнім Node.js під час підготовки уроку."
+      en: "`emit` called the `async` listener, got a rejected promise and returned calmly — hence `emit returned`. Nobody handled the rejection, and Node ended the process with code 1. Checked with real Node.js while this lesson was prepared."
+
+  - id: recall-cleanup
+    kind: review
+    title:
+      uk: "Пригадай: прибирання слухачів"
+      en: "Recall: cleaning up listeners"
+    items:
+      - id: abort-removes
+        from: js-13-06-cleanup-listeners-timers
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          const button = document.createElement("button");
+          const controller = new AbortController();
+          let clicks = 0;
+          button.addEventListener("click", () => { clicks += 1; }, { signal: controller.signal });
+          button.click();
+          controller.abort();
+          button.click();
+          console.log(clicks);
+        verify: { logs: ["1"] }
+        answer:
+          type: choice
+          options:
+            - id: one
+              code: "1"
+            - id: two
+              code: "2"
+              why:
+                uk: "`abort()` прибрав слухача, доданого із цим `signal`. Друге натискання вже нікого не викликає."
+                en: "`abort()` removed the listener added with this `signal`. The second click calls nobody."
+            - id: zero
+              code: "0"
+              why:
+                uk: "Перше натискання сталося до `abort()`, коли слухач ще був на місці."
+                en: "The first click happened before `abort()`, while the listener was still there."
+          correct: [one]
+        explanation:
+          uk: "Кожен доданий слухач потребує пари — способу його прибрати. У браузері це `removeEventListener` чи `signal`; в `EventEmitter` — `off` з тією самою функцією."
+          en: "Every listener added needs a pair — a way to remove it. In the browser that is `removeEventListener` or a `signal`; in `EventEmitter` it is `off` with the same function."
+      - id: immediate-after-io
+        from: no-01-04-event-loop-phases
+        prompt:
+          uk: "Усередині колбека `readFile` заплановано `setTimeout(a, 0)` і `setImmediate(b)`. Що виконається першим?"
+          en: "Inside a `readFile` callback, `setTimeout(a, 0)` and `setImmediate(b)` are scheduled. Which runs first?"
+        answer:
+          type: choice
+          options:
+            - id: immediate
+              text:
+                uk: "`b` — після фази poll цикл іде у check"
+                en: "`b` — after the poll phase the loop goes to check"
+            - id: timeout
+              text:
+                uk: "`a` — його заплановано першим"
+                en: "`a` — it was scheduled first"
+              why:
+                uk: "Порядок рядків коду тут не вирішує. Таймер чекає фази timers, а до неї цикл дійде лише на наступному колі."
+                en: "The order of the lines of code does not decide here. The timer waits for the timers phase, which the loop reaches only on the next round."
+            - id: random
+              text:
+                uk: "Як пощастить — порядок не гарантований"
+                en: "It depends on luck — the order is not guaranteed"
+              why:
+                uk: "Не гарантований він лише на верхньому рівні модуля. Усередині колбека вводу-виводу `setImmediate` завжди перший."
+                en: "It is not guaranteed only at the top level of a module. Inside an I/O callback `setImmediate` always comes first."
+          correct: [immediate]
+        explanation:
+          uk: "Колбек `readFile` виконується у фазі poll, за нею — check (`setImmediate`), а timers — лише на наступному колі."
+          en: "The `readFile` callback runs in the poll phase, which is followed by check (`setImmediate`), while timers come only on the next round."
+
+  - id: load-records
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: load-records
+    entry: index.js
+    editable: [records.js]
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      loaded: { uk: "Завантажено", en: "Loaded" }
+      listenersLeft: { uk: "Слухачів лишилося", en: "Listeners left" }
+    title:
+      uk: "Зібрати записи й прибрати за собою"
+      en: "Collect the records and clean up after yourself"
+    instructions:
+      uk: |
+        `loadRecords(emitter)` у `records.js` повертає проміс і збирає події `'record'` емітера в масив. Зараз вона вміє лише щасливий шлях і лишає слухачів назавжди. Допиши її:
+
+        - на `'end'` — виконай проміс масивом записів у порядку надходження;
+        - на `'error'` — відхили проміс саме цією помилкою (для цього потрібен слухач `'error'`);
+        - і після `'end'`, і після `'error'` прибери **всі три** слухачі, які додала функція;
+        - не чіпай слухачів, яких додав хтось інший.
+
+        **Запустити** надсилає три бажання й друкує, скільки слухачів лишилося на емітері.
+      en: |
+        `loadRecords(emitter)` in `records.js` returns a promise and collects the emitter’s `'record'` events into an array. Right now it handles only the happy path and leaves its listeners forever. Finish it:
+
+        - on `'end'` — resolve the promise with the array of records in the order they came;
+        - on `'error'` — reject the promise with exactly that error (this needs an `'error'` listener);
+        - after `'end'` and after `'error'` alike, remove **all three** listeners the function added;
+        - do not touch listeners that someone else added.
+
+        **Run** sends three wishes and prints how many listeners are left on the emitter.
+    testTitles:
+      "resolves with the records in order on end":
+        uk: "На `'end'` проміс виконується записами в порядку надходження"
+        en: "On `'end'` the promise resolves with the records in the order they came"
+      "rejects with the emitted error":
+        uk: "На `'error'` проміс відхиляється тією самою помилкою"
+        en: "On `'error'` the promise rejects with that same error"
+      "removes its listeners after end":
+        uk: "Після `'end'` слухачів функції на `record`, `end`, `error` не лишилося"
+        en: "After `'end'` none of the function’s listeners on `record`, `end`, `error` remain"
+      "removes its listeners after error":
+        uk: "Після `'error'` слухачів функції теж не лишилося"
+        en: "After `'error'` none of the function’s listeners remain either"
+      "keeps listeners that others added":
+        uk: "Чужий слухач `'record'` після `'end'` працює далі"
+        en: "Someone else’s `'record'` listener keeps working after `'end'`"
+    hints:
+      nudge:
+        uk: "Щоб прибрати слухача через `off`, потрібна та сама функція, яку передали в `on`. Анонімну стрілку, написану просто в `on(…)`, потім не прибереш."
+        en: "To remove a listener with `off` you need the very function you passed to `on`. An anonymous arrow written right inside `on(…)` cannot be removed later."
+      explanation:
+        uk: |
+          Збережи кожного слухача в змінну й опиши прибирання один раз — у функції, яку викличуть обидва фінали. Схожий приклад з іншою подією:
+
+          ```js
+          const onTick = () => count += 1;
+          const stop = () => { clock.off("tick", onTick); clock.off("stop", stop); };
+          clock.on("tick", onTick);
+          clock.on("stop", stop);
+          ```
+
+          `removeAllListeners(name)` не підходить: він прибирає **всіх** слухачів події, і чужих теж.
+        en: |
+          Keep each listener in a variable and describe the cleanup once — in a function both endings call. A similar example with another event:
+
+          ```js
+          const onTick = () => count += 1;
+          const stop = () => { clock.off("tick", onTick); clock.off("stop", stop); };
+          clock.on("tick", onTick);
+          clock.on("stop", stop);
+          ```
+
+          `removeAllListeners(name)` does not fit: it removes **every** listener of the event, someone else’s too.
+    solutionNote:
+      uk: "Три слухачі збережено в змінних, а `cleanup()` знімає саме їх через `off` — і на `'end'`, і на `'error'`. Слухач `'error'` водночас рятує від падіння й передає помилку в `reject`. Так функцію можна викликати скільки завгодно разів, і слухачі на емітері не накопичуються."
+      en: "The three listeners are kept in variables, and `cleanup()` removes exactly them with `off` — on `'end'` and on `'error'`. The `'error'` listener both prevents the crash and passes the error to `reject`. Now the function can be called any number of times, and listeners do not pile up on the emitter."
+    feedback:
+      - when: { test: "rejects with the emitted error" }
+        message:
+          uk: "Ця перевірка випускає `'error'` і чекає, що проміс відхилиться саме цим об’єктом помилки. Без слухача `'error'` емітер кидає помилку в код перевірки, а проміс не завершується ніколи."
+          en: "This check emits `'error'` and expects the promise to reject with exactly that error object. Without an `'error'` listener the emitter throws the error into the check’s code, and the promise never settles."
+      - when: { test: "removes its listeners after end" }
+        message:
+          uk: "Ця перевірка після `'end'` чекає 0 слухачів на кожній із подій `record`, `end` і `error`. Слухачі не зникають самі, коли проміс виконано: прибери їх через `off` тими самими функціями."
+          en: "After `'end'` this check expects 0 listeners on each of `record`, `end` and `error`. Listeners do not vanish by themselves when the promise resolves: remove them with `off` using the same functions."
+      - when: { test: "removes its listeners after error" }
+        message:
+          uk: "Ця перевірка додає власного слухача `'error'`, випускає `'error'` і чекає, що лишиться лише він: `record` — 0, `end` — 0, `error` — 1. Прибирання потрібне й на шляху помилки — і лише твоїх слухачів."
+          en: "This check adds its own `'error'` listener, emits `'error'` and expects only that one to remain: `record` 0, `end` 0, `error` 1. Cleanup is needed on the error path too — and only of your listeners."
+      - when: { test: "keeps listeners that others added" }
+        message:
+          uk: "Ця перевірка додає власного слухача `'record'` до виклику функції й чекає, що він отримає обидва записи — і до `'end'`, і після. `removeAllListeners` прибирає й чужих слухачів: знімай лише свої через `off`."
+          en: "This check adds its own `'record'` listener before calling the function and expects it to receive both records — before and after `'end'`. `removeAllListeners` removes other people’s listeners too: remove only yours with `off`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-01
+    body:
+      uk: "Скрипт у кроці проєкту цього розділу обходиться без власних емітерів, але правило «кожен `on` має свій `off`, а кожен емітер — слухача `'error'`» знадобиться вже в наступних розділах: потоки файлів і HTTP-сервер, який з’явиться в кроці NO-03, — це `EventEmitter`."
+      en: "The script of this unit’s project step needs no emitters of its own, but the rule “every `on` has its `off`, and every emitter an `'error'` listener” is needed in the very next units: file streams and the HTTP server that arrives in step NO-03 are `EventEmitter`s."

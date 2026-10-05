@@ -1,0 +1,363 @@
+id: re-03-06-not-an-effect
+unit: RE-03
+title:
+  uk: "Можливо, ефект не потрібен"
+  en: "You might not need an effect"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Віднести шматок логіки до обчислення під час рендеру, роботи обробника події або синхронізації — і перенести його туди."
+    en: "Classify a piece of logic as render computation, event-handler work or synchronization, and move it there."
+  - uk: "Замінити ефект, що копіює props у стан, і ланцюжок ефектів, що реагує на прапорець «надіслано», похідним значенням і обробником події."
+    en: "Replace an effect that copies props into state and an effect chain that reacts to a submitted flag with a derived value and an event handler."
+prerequisites: [re-03-05-strict-mode-rechecks, re-02-05-derived-values-not-state]
+subskills:
+  - { family: R-04, skill: "synchronization vs events/derived values", depth: practice }
+glossary: [effect-chain, lazy-initializer]
+selfCheck: [predict-extra-render, wish-notice]
+
+blocks:
+  - id: three-homes
+    kind: explanation
+    title:
+      uk: "Три місця для логіки"
+      en: "Three homes for logic"
+    body:
+      uk: |
+        Ефекти — потужний інструмент, тому ними легко зловживати: «щось має статися, коли змінюється X — отже, ефект». Перш ніж писати `useEffect`, запитай, **чому** цей код має виконатися:
+
+        | Чому | Де йому місце |
+        |---|---|
+        | Значення можна **обчислити** з props і стану | просто в тілі компонента, під час рендеру |
+        | Це наслідок **конкретної дії** користувача (клік, надсилання форми) | в обробнику цієї події |
+        | Треба тримати **зовнішню систему** у відповідності з екраном | в ефекті |
+
+        Ефект, що лише копіює чи перераховує стан, коштує зайвого рендеру: спершу React показує старе, потім ефект ставить нове значення, і React рендерить ще раз.
+      en: |
+        Effects are powerful, which makes them easy to overuse: “something must happen when X changes — so, an effect”. Before you write `useEffect`, ask **why** this code has to run:
+
+        | Why | Where it belongs |
+        |---|---|
+        | The value can be **computed** from props and state | right in the component body, during render |
+        | It is the result of a **specific user action** (a click, a form submit) | in that event's handler |
+        | An **external system** must be kept in line with the screen | in an effect |
+
+        An effect that only copies or recomputes state costs an extra render: React first shows the old value, then the effect sets the new one, and React renders again.
+
+  - id: predict-extra-render
+    kind: prediction
+    prompt:
+      uk: "У `expenses` три витрати, дві з них — у категорії «Їжа». Скільки рядків `render:` надрукує консоль під час першого показу і скільки — після одного кліку на кнопку категорії «Їжа»?"
+      en: "`expenses` holds three expenses, two of them in the “Food” category. How many `render:` lines does the console print on the first display, and how many after one click on the “Food” category button?"
+    code: |
+      function ExpenseList({ expenses }) {
+        const [category, setCategory] = useState("all");
+        const [visible, setVisible] = useState([]);
+        console.log(`render: ${visible.length} shown`);
+        useEffect(() => {
+          setVisible(expenses.filter((e) => category === "all" || e.category === category));
+        }, [expenses, category]);
+        // … buttons that call setCategory, and a list of visible
+      }
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: two-two
+          text:
+            uk: "Під час першого показу два (спершу `0 shown`), після кліку — теж два"
+            en: "Two on the first display (`0 shown` first), and two after the click as well"
+        - id: one-one
+          text:
+            uk: "Один і один: ефект лише оновлює стан, рендер від цього не повторюється"
+            en: "One and one: the effect only updates state, that does not repeat the render"
+          why:
+            uk: "`setVisible` в ефекті — така сама зміна стану, як у кліку: React рендерить знову. Ефект іде **після** commit, тож це вже другий рендер."
+            en: "`setVisible` in an effect is a state change just like in a click: React renders again. The effect comes **after** the commit, so this is a second render."
+        - id: two-one
+          text:
+            uk: "Два під час першого показу, один після кліку"
+            en: "Two on the first display, one after the click"
+          why:
+            uk: "Після кліку рендер бачить нову категорію, але ще **старий** `visible` — його оновить лише ефект, після commit. Отже, знову два рендери."
+            en: "After the click the render sees the new category but still the **old** `visible` — only the effect updates it, after the commit. So, two renders again."
+        - id: one-first
+          text:
+            uk: "Один під час першого показу — одразу `3 shown`, бо ефект встигає до рендеру"
+            en: "One on the first display — `3 shown` right away, because the effect gets in before the render"
+          why:
+            uk: "Ефект ніколи не виконується до рендеру: React викликає його після commit. Тому перший рендер (і перший показ на екрані) — з порожнім списком."
+            en: "An effect never runs before the render: React calls it after the commit. So the first render (and the first thing on the screen) has an empty list."
+      correct: [two-two]
+    explanation:
+      uk: "Кожна зміна дає два рендери: перший — з **застарілим** `visible` (на першому показі — порожнім, і він навіть потрапляє на екран), другий — після того, як ефект поставив новий список. Перевірено в пісочниці з React 19.3: `render: 0 shown`, `render: 3 shown`, а після кліку `render: 3 shown`, `render: 2 shown`. Якби `visible` обчислювався в тілі компонента, був би один рендер на кожну зміну, і він одразу правильний."
+      en: "Every change gives two renders: the first with a **stale** `visible` (on the first display an empty one, which even reaches the screen), the second after the effect has set the new list. Checked in the sandbox with React 19.3: `render: 0 shown`, `render: 3 shown`, and after the click `render: 3 shown`, `render: 2 shown`. If `visible` were computed in the component body, there would be one render per change, right the first time."
+
+  - id: copied-filter
+    kind: example
+    runtime: browser-react
+    dir: copied-filter
+    entry: main.jsx
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      all: { uk: "Усі", en: "All" }
+      food: { uk: "Їжа", en: "Food" }
+      fun: { uk: "Розваги", en: "Fun" }
+    title:
+      uk: "Копія, яку тримає ефект, і значення, яке обчислюють"
+      en: "A copy kept by an effect, and a value that is computed"
+    body:
+      uk: |
+        Тут `visible` — копія того, що можна обчислити, і ефект тримає її в синхроні з категорією. Натисни **Запустити**, на **Сторінці** перемкни кілька категорій і відкрий **Консоль**: на кожну зміну — два рядки `render:`, і перший із них ще бачить старий список.
+      en: |
+        Here `visible` is a copy of something that can be computed, and an effect keeps it in sync with the category. Press **Run**, switch a few categories on the **Page** and open the **Console**: every change gives two `render:` lines, and the first of them still sees the old list.
+    tryIt:
+      uk: |
+        Прибери копію:
+
+        1. Видали рядок `const [visible, setVisible] = useState([]);` і весь `useEffect`, а з імпорту прибери `useEffect` (`useState` лишається).
+        2. На місці стану обчисли значення: `const visible = EXPENSES.filter((expense) => category === "all" || expense.category === category);` — **вище** за `console.log`.
+
+        Запусти знову: на кожну зміну — один рядок `render:` і одразу з правильною кількістю. Коду менше, рендерів менше, і немає моменту, коли екран показує застарілий список.
+      en: |
+        Remove the copy:
+
+        1. Delete the line `const [visible, setVisible] = useState([]);` and the whole `useEffect`, and remove `useEffect` from the import (`useState` stays).
+        2. In place of the state compute the value: `const visible = EXPENSES.filter((expense) => category === "all" || expense.category === category);` — **above** the `console.log`.
+
+        Run again: one `render:` line per change, with the right count straight away. Less code, fewer renders, and no moment when the screen shows a stale list.
+
+  - id: where-it-goes
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Куди йде кожен шматок логіки"
+      en: "Where each piece of logic goes"
+    textEquivalent:
+      uk: >-
+        Чотири шматки логіки зі списку бажань розкладено за трьома місцями. visible — відфільтрований
+        список — обчислюється з бажань і фільтра, тож іде в рендер. total — сума цін — теж
+        обчислюється з бажань і теж іде в рендер. savedNotice — повідомлення «Додано: …» — з’являється
+        через конкретну дію, надсилання форми, тож іде в обробник цієї події. document.title —
+        заголовок вкладки — зовнішня система, яку треба тримати у відповідності з екраном, тож іде в
+        ефект. Лише один із чотирьох потребує ефекту.
+      en: >-
+        Four pieces of logic from a wish list are sorted into three homes. visible — the filtered list —
+        is computed from the wishes and the filter, so it goes into render. total — the sum of the
+        prices — is also computed from the wishes and also goes into render. savedNotice — the “Added:
+        …” notice — appears because of a specific action, the form submit, so it goes into that event's
+        handler. document.title — the tab title — is an external system that has to be kept in line
+        with the screen, so it goes into an effect. Only one of the four needs an effect.
+    spec:
+      layout: grid
+      nodes:
+        - { id: visible, label: "visible", col: 0, row: 0, w: 120 }
+        - { id: total, label: "total", col: 0, row: 1, w: 120 }
+        - { id: notice, label: "savedNotice", col: 0, row: 2, w: 120 }
+        - { id: title, label: "document.title", col: 0, row: 3, w: 120 }
+        - { id: render, label: { uk: "рендер", en: "render" }, shape: round, col: 1, row: 0, w: 120 }
+        - { id: handler, label: { uk: "обробник", en: "handler" }, shape: round, col: 1, row: 2, w: 120 }
+        - { id: effect, label: { uk: "ефект", en: "effect" }, shape: round, col: 1, row: 3, w: 120 }
+      edges:
+        - { id: visible-render, from: visible, to: render }
+        - { id: total-render, from: total, to: render }
+        - { id: notice-handler, from: notice, to: handler }
+        - { id: title-effect, from: title, to: effect }
+      hidden: [visible-render, total-render, notice-handler, title-effect]
+      steps:
+        - caption:
+            uk: "Чотири шматки логіки й три місця. Питання до кожного: обчислюється? викликано дією? синхронізує зовнішнє?"
+            en: "Four pieces of logic and three homes. The question for each: is it computed? caused by an action? synchronizing something outside?"
+        - caption:
+            uk: "`visible` обчислюється з бажань і фільтра — у рендер."
+            en: "`visible` is computed from the wishes and the filter — into render."
+          show: [visible-render]
+          highlight: [visible, render, visible-render]
+        - caption:
+            uk: "`total` — сума цін, теж обчислення — у рендер."
+            en: "`total` — the sum of prices, also a computation — into render."
+          show: [total-render]
+          highlight: [total, render, total-render]
+        - caption:
+            uk: "`savedNotice` з’являється тому, що форму надіслали, — в обробник надсилання."
+            en: "`savedNotice` appears because the form was submitted — into the submit handler."
+          show: [notice-handler]
+          highlight: [notice, handler, notice-handler]
+        - caption:
+            uk: "`document.title` — зовнішня система — в ефект. Лише один із чотирьох."
+            en: "`document.title` — an external system — into an effect. Only one of the four."
+          show: [title-effect]
+          highlight: [title, effect, title-effect]
+
+  - id: chains-and-start
+    kind: explanation
+    title:
+      uk: "Ланцюжки ефектів і дані на старті"
+      en: "Effect chains and data at start"
+    body:
+      uk: |
+        **Ланцюжок ефектів.** Обробник ставить прапорець `submitted`, ефект помічає прапорець, показує повідомлення й скидає прапорець. Це [[effect-chain|ланцюжок ефектів]]: зайвий стан, зайвий рендер, а причина й наслідок рознесені по різних місцях. Обробник і так знає, що сталося, — хай він і показує повідомлення.
+
+        **Дані на старті.** Прочитати збережений список, коли компонент з’являється, — це не синхронізація, а **початкове значення**. Ефект `useEffect(() => setRecords(readStored()), [])` спершу покаже порожній список, а потім замінить його. Натомість передай у `useState` **функцію** — React викличе її лише на першому рендері:
+
+        ```jsx
+        const [records, setRecords] = useState(() => readStored());
+        ```
+
+        Таку функцію називають [[lazy-initializer|лінивим ініціалізатором]]. `useState(readStored)` — те саме: ти передаєш саму функцію. А от `useState(readStored())` із дужками викликав би `readStored` на **кожному** рендері й лише відкидав би результат.
+
+        StrictMode під час розробки викличе цю функцію двічі, тож вона має бути чистою: читати й перевіряти дані — так, змінювати щось назовні — ні. А от **записувати** список після кожної зміни — справжня синхронізація: це робота для ефекту.
+      en: |
+        **An effect chain.** A handler sets a `submitted` flag, an effect notices the flag, shows a notice and resets the flag. That is an [[effect-chain]]: extra state, an extra render, and cause and consequence scattered in different places. The handler already knows what happened — let it show the notice.
+
+        **Data at start.** Reading the stored list when the component appears is not synchronization, it is the **initial value**. The effect `useEffect(() => setRecords(readStored()), [])` first shows an empty list and then replaces it. Instead, pass a **function** to `useState` — React calls it only on the first render:
+
+        ```jsx
+        const [records, setRecords] = useState(() => readStored());
+        ```
+
+        Such a function is called a [[lazy-initializer|lazy initializer]]. `useState(readStored)` is the same: you pass the function itself. But `useState(readStored())` with parentheses would call `readStored` on **every** render and just throw the result away.
+
+        StrictMode calls this function twice during development, so it must be pure: reading and checking data — yes, changing anything outside — no. **Writing** the list after every change, on the other hand, is real synchronization: that is a job for an effect.
+
+  - id: wish-notice
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: wish-notice
+    entry: main.jsx
+    editable: [App.jsx]
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      bike: { uk: "Велосипед", en: "Bicycle" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      addedPrefix: { uk: "Додано:", en: "Added:" }
+      nameLabel: { uk: "Бажання", en: "Wish" }
+      add: { uk: "Додати", en: "Add" }
+    title:
+      uk: "Повідомлення з обробника, а не з ефекту"
+      en: "A notice from the handler, not from an effect"
+    instructions:
+      uk: |
+        `WishForm` додає бажання й показує «Додано: …». Зараз повідомлення ставить ефект, що стежить за прапорцем `submitted`: обробник ставить прапорець, ефект показує повідомлення й скидає прапорець.
+
+        Перенеси показ повідомлення в обробник надсилання й **видали** стан `submitted` разом з ефектом. Поведінка лишається тією самою:
+
+        - до першого додавання повідомлення порожнє;
+        - нове бажання з’являється в кінці списку, поле очищується, повідомлення називає саме його;
+        - порожня назва (або самі пробіли) нічого не додає й повідомлення не змінює.
+
+        Перевірки рахують, скільки разів React робить commit після одного надсилання форми, і очікують рівно один.
+      en: |
+        `WishForm` adds wishes and shows “Added: …”. Right now the notice is set by an effect that watches the `submitted` flag: the handler sets the flag, the effect shows the notice and resets the flag.
+
+        Move showing the notice into the submit handler and **delete** the `submitted` state together with the effect. The behavior stays the same:
+
+        - before the first addition the notice is empty;
+        - a new wish appears at the end of the list, the field is cleared, the notice names exactly that wish;
+        - an empty name (or only spaces) adds nothing and does not change the notice.
+
+        The checks count how many times React commits after one form submit and expect exactly one.
+    testTitles:
+      "there is no notice before anything is added":
+        uk: "До першого додавання повідомлення немає"
+        en: "There is no notice before anything is added"
+      "adding a wish puts it into the list and clears the field":
+        uk: "Додане бажання з’являється в списку, а поле очищується"
+        en: "Adding a wish puts it into the list and clears the field"
+      "the notice names the wish that was just added":
+        uk: "Повідомлення називає щойно додане бажання"
+        en: "The notice names the wish that was just added"
+      "an empty name adds nothing":
+        uk: "Порожня назва нічого не додає"
+        en: "An empty name adds nothing"
+      "one submit causes exactly one commit":
+        uk: "Одне надсилання дає рівно один commit"
+        en: "One submit causes exactly one commit"
+    hints:
+      nudge:
+        uk: "Обробник `handleSubmit` уже знає назву нового бажання. Що тоді робить прапорець `submitted`, крім того, що додає ще один рендер?"
+        en: "The `handleSubmit` handler already knows the new wish's name. What does the `submitted` flag do then, apart from adding one more render?"
+      explanation:
+        uk: |
+          Постав повідомлення тим самим обробником, що додає бажання: кілька викликів сеттерів в одному обробнику React об’єднує в один рендер. Бери назву з локальної змінної обробника, а не з `wishes`: `wishes` — знімок цього рендеру, нового бажання в ньому ще немає.
+
+          Для порівняння, з іншою задачею: замість ефекту, що стежить за `paid` і показує «Оплачено», обробник кнопки сам викликає `setPaid(true)` і `setMessage("Paid " + amount)`.
+        en: |
+          Set the notice in the same handler that adds the wish: React combines several setter calls in one handler into one render. Take the name from the handler's local variable, not from `wishes`: `wishes` is this render's snapshot, the new wish is not in it yet.
+
+          For comparison, with a different task: instead of an effect that watches `paid` and shows “Paid”, the button's handler itself calls `setPaid(true)` and `setMessage("Paid " + amount)`.
+    solutionNote:
+      uk: "Надсилання форми — конкретна дія, тож її наслідки живуть в обробнику: додати бажання, очистити поле, показати повідомлення. React об’єднує ці три зміни в один рендер і один commit. Без прапорця й ефекту немає ні зайвого рендеру, ні місця, де причина й наслідок розійшлися."
+      en: "A form submit is a specific action, so its consequences live in the handler: add the wish, clear the field, show the notice. React combines these three changes into one render and one commit. Without the flag and the effect there is no extra render and no place where cause and consequence drift apart."
+    feedback:
+      - when: { test: "there is no notice before anything is added" }
+        message:
+          uk: "Ця перевірка очікує порожній `<p role=\"status\">` на першому показі. Якщо там уже є текст, шукай ефект, який ставить повідомлення: ефект, що стежить за списком бажань, запускається й після першого рендеру, хоча нічого не додано."
+          en: "This check expects an empty `<p role=\"status\">` on the first display. If it already has text, look for an effect that sets the notice: an effect that watches the wish list also runs after the first render, although nothing was added."
+      - when: { test: "adding a wish puts it into the list and clears the field" }
+        message:
+          uk: "Ця перевірка додає «Велосипед» і очікує три назви в списку (нова — остання) та порожнє поле."
+          en: "This check adds “Bicycle” and expects three names in the list (the new one last) and an empty field."
+      - when: { test: "the notice names the wish that was just added" }
+        message:
+          uk: "Ця перевірка додає два бажання й після кожного очікує повідомлення «Додано: …» з назвою саме цього бажання. Якщо повідомлення називає попереднє бажання, обробник читає `wishes` — знімок, у якому нового бажання ще немає; візьми назву з локальної змінної."
+          en: "This check adds two wishes and after each expects the notice “Added: …” with the name of that very wish. If the notice names the previous wish, the handler reads `wishes` — a snapshot that does not contain the new wish yet; take the name from the local variable."
+      - when: { test: "an empty name adds nothing" }
+        message:
+          uk: "Ця перевірка надсилає самі пробіли й очікує, що список і повідомлення не змінилися. Перевірка `name === \"\"` має стояти до будь-якого сеттера, а повідомлення не має з’являтися само собою — наприклад, від ефекту, що спрацьовує вже на першому показі."
+          en: "This check submits only spaces and expects the list and the notice to stay unchanged. The `name === \"\"` check must come before any setter, and the notice must not appear by itself — for example, from an effect that already fires on the first display."
+      - when: { test: "one submit causes exactly one commit" }
+        message:
+          uk: "Ця перевірка рахує commit після одного надсилання й очікує рівно 1. Два означають, що після рендеру ще щось ставить стан — найчастіше ефект, який реагує на прапорець чи на список."
+          en: "This check counts the commits after one submit and expects exactly 1. Two mean that something sets state after the render — most often an effect that reacts to a flag or to the list."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: derive-total
+        from: re-02-05-derived-values-not-state
+        prompt:
+          uk: "Компонент тримає `expenses` у стані й окремо `total` у стані, а кожен обробник оновлює обидва. Що краще зробити з `total`?"
+          en: "A component keeps `expenses` in state and `total` in state separately, and every handler updates both. What is better to do with `total`?"
+        answer:
+          type: choice
+          options:
+            - id: compute
+              text:
+                uk: "Прибрати стан `total` і обчислювати суму з `expenses` під час рендеру"
+                en: "Remove the `total` state and compute the sum from `expenses` during render"
+            - id: effect-sync
+              text:
+                uk: "Лишити стан `total`, але оновлювати його одним ефектом, що стежить за `expenses`"
+                en: "Keep the `total` state, but update it with one effect that watches `expenses`"
+              why:
+                uk: "Так сума вже не розійдеться з витратами, але кожна зміна дасть два рендери, і перший покаже стару суму. Обчислення в рендері простіше й завжди правильне."
+                en: "That way the sum no longer drifts from the expenses, but every change gives two renders, and the first shows the old sum. Computing in render is simpler and always right."
+            - id: keep-both
+              text:
+                uk: "Лишити як є: окремий стан швидший, ніж рахувати щоразу"
+                en: "Leave it as it is: separate state is faster than computing every time"
+              why:
+                uk: "Сума кількох чисел обчислюється миттєво, а дубльований стан рано чи пізно розходиться з оригіналом — достатньо забути оновити його в одному обробнику."
+                en: "A sum of a few numbers is computed instantly, and duplicated state sooner or later drifts from the original — forgetting to update it in one handler is enough."
+          correct: [compute]
+        explanation:
+          uk: "`total` повністю визначається `expenses`, тож це похідне значення: його обчислюють під час рендеру, і воно не може застаріти. Ефект для такого значення — зайвий рендер і та сама копія, лише синхронізована пізніше."
+          en: "`total` is fully determined by `expenses`, so it is a derived value: it is computed during render and cannot go stale. An effect for such a value means an extra render and the same copy, just synchronized later."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-03
+    body:
+      uk: "У кроці проєкту цього розділу збережені записи читатиме **початкове значення** `useState(() => …)` з перевіркою даних — один раз, без ефекту. А ефект лишиться лише для того, що справді синхронізує: запису списку в `localStorage` після кожної зміни. Підсумки й відфільтровані списки проєкту обчислюй у рендері."
+      en: "In this unit's project step the stored records will be read by an **initial value** `useState(() => …)` with data validation — once, without an effect. The effect will remain only for what really synchronizes: writing the list to `localStorage` after every change. Compute the project's summaries and filtered lists in render."

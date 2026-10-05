@@ -352,8 +352,9 @@ test('a lost connection to the server is explained, the code is kept, and the ne
     await runButton(page).click();
     await waitStatus(page, t('uk', 'ws.finished'));
     assert.deepEqual(await consoleLines(page), ['back']);
-    // The broken stream is the scenario itself; nothing else may fail.
-    assert.deepEqual(problems.filter((p) => !/^requestfailed: .*\/api\/node\/run$/.test(p)), []);
+    // The broken stream is the scenario itself, and a document save that was in flight
+    // while the server restarted fails for the same reason; nothing else may fail.
+    assert.deepEqual(problems.filter((p) => !/^requestfailed: .*\/api\/(node\/run|store\/doc\?id=\w+)$/.test(p)), []);
     await context.close();
   } finally {
     await lab.dispose();

@@ -1,0 +1,317 @@
+id: js-12-14-debug-boundary-fixtures
+unit: JS-12
+title:
+  uk: "Налагодження: хибні числа, некерований regex і перехід дати"
+  en: "Debug: malformed numbers, runaway regex, date rollover"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знайти й виправити суму, зіпсовану `parseFloat('1,5')`, порожнє поле, прочитане як 0, і `NaN`, що прослизнув крізь перевірку."
+    en: "Diagnose and repair a total corrupted by `parseFloat('1,5')`, an empty field read as 0 and a `NaN` slipping past validation."
+  - uk: "Виправити шаблон перевірки, що «зависає» на підібраному введенні, неекранований запит у `new RegExp` і код дат, що переходить через кінець місяця чи показує інший день в іншому поясі."
+    en: "Repair a validation regex that runs away on a crafted input, an unescaped user query in `new RegExp` and date code that rolls over at month end or shows another day in another timezone."
+  - uk: "Сформулювати одним реченням припущення про прості календарні дати, на яке спирається проєкт."
+    en: "State in one sentence the plain-calendar-date assumption the capstone relies on."
+prerequisites: [js-12-13-weak-collections]
+subskills:
+  - { family: J-07, skill: "numeric precision/NaN/Infinity", depth: assess }
+  - { family: J-07, skill: "Math and parsing", depth: assess }
+  - { family: J-07, skill: "regex groups/flags/escaping and input limits", depth: assess }
+  - { family: J-07, skill: "regex character classes/anchors/quantifiers and backtracking risk", depth: assess }
+  - { family: J-08, skill: "Date parsing/storage vs presentation", depth: assess }
+  - { family: J-08, skill: "timestamps/calendar dates", depth: assess }
+  - { family: J-08, skill: "timezone/DST pitfalls", depth: assess }
+glossary: []
+selfCheck: [predict-numbers, predict-text-dates, fix-seven]
+
+blocks:
+  - id: green-is-not-safe
+    kind: explanation
+    title:
+      uk: "Усі мої приклади працюють — це ще не доказ"
+      en: "All my examples work — that is not proof yet"
+    body:
+      uk: |
+        Код для тексту, чисел і дат майже завжди «працює» на прикладах, які придумав автор: `"12.50"`, `"2026-03-15"`, запит `"лампа"`. Ламається він на **граничних випадках**, які трапляються в житті:
+
+        | Введення | Що ламається |
+        |---|---|
+        | `"1,5"`, `"12,50"` | `parseFloat` і `Number` не знають коми |
+        | `""` | `Number("")` — це `0` |
+        | `NaN` | `typeof NaN` — `"number"` |
+        | довге «майже правильне» введення | вкладений квантифікатор перебирає мільйони варіантів |
+        | `"1.5"`, `"c++"` у запиті | особливі символи шаблону |
+        | інший часовий пояс | момент — інший календарний день |
+        | 31 квітня, 29 лютого | `Date` мовчки переносить на наступний місяць |
+
+        Тому набір перевірок для такого коду завжди містить ці випадки. І всі вони мають давати **той самий результат на будь-якому комп’ютері**: фіксований день замість годинника, явний `timeZone` замість поясу машини.
+      en: |
+        Code for text, numbers and dates nearly always “works” on the examples its author thought of: `"12.50"`, `"2026-03-15"`, the query `"lamp"`. It breaks on the **boundary cases** that happen in real life:
+
+        | Input | What breaks |
+        |---|---|
+        | `"1,5"`, `"12,50"` | `parseFloat` and `Number` know no comma |
+        | `""` | `Number("")` is `0` |
+        | `NaN` | `typeof NaN` is `"number"` |
+        | a long “almost right” input | a nested quantifier tries millions of variants |
+        | `"1.5"`, `"c++"` in a query | special pattern characters |
+        | another time zone | an instant is another calendar day |
+        | 31 April, 29 February | `Date` silently carries over into the next month |
+
+        That is why the checks for such code always include these cases. And all of them must give **the same result on any computer**: a fixed day instead of the clock, an explicit `timeZone` instead of the machine’s zone.
+
+  - id: predict-numbers
+    kind: prediction
+    prompt:
+      uk: "Три дефекти з чисел. Що виведе `console.log`?"
+      en: "Three number defects. What does the `console.log` print?"
+    code: |
+      const total = parseFloat("1,5") + parseFloat("2,25");
+      const quantity = Number("");
+      const price = Number("12,50");
+      console.log(total, quantity, price, typeof price === "number");
+    verify:
+      logs: ["3 0 NaN true"]
+    answer:
+      type: choice
+      options:
+        - id: real
+          code: "3 0 NaN true"
+        - id: comma-ok
+          code: "3.75 0 12.5 true"
+          why:
+            uk: "Ні `parseFloat`, ні `Number` не розуміють коми: `parseFloat` зупиняється на ній, а `Number` повертає `NaN`."
+            en: "Neither `parseFloat` nor `Number` understands a comma: `parseFloat` stops at it, and `Number` returns `NaN`."
+        - id: empty-nan
+          code: "3 NaN NaN false"
+          why:
+            uk: "`Number(\"\")` — це `0`, а не `NaN`. А `typeof NaN` — `\"number\"`, тож перевірка типу `NaN` пропускає."
+            en: "`Number(\"\")` is `0`, not `NaN`. And `typeof NaN` is `\"number\"`, so a type check lets `NaN` through."
+        - id: nan-caught
+          code: "3 0 NaN false"
+          why:
+            uk: "`typeof NaN` — `\"number\"`. Перевірка типу не ловить `NaN`: для цього потрібен `Number.isNaN` чи `Number.isFinite`."
+            en: "`typeof NaN` is `\"number\"`. A type check does not catch `NaN`: that needs `Number.isNaN` or `Number.isFinite`."
+      correct: [real]
+    explanation:
+      uk: "Сума `1 + 2 = 3` замість `3.75` — тихо загублено 75 копійок. Порожнє поле стало нулем. А `NaN` пройшов перевірку типу. Жоден із трьох дефектів не кинув помилки — тому їх і треба ловити перевірками."
+      en: "The total is `1 + 2 = 3` instead of `3.75` — 75 kopiykas quietly lost. The empty field became zero. And `NaN` passed the type check. None of the three defects threw an error — that is exactly why checks have to catch them."
+
+  - id: predict-text-dates
+    kind: prediction
+    prompt:
+      uk: "Дефекти з тексту й дат. Що виведуть три виклики `console.log`?"
+      en: "Text and date defects. What do the three `console.log` calls print?"
+    code: |
+      console.log(new RegExp("1.5").test("125"));
+      const newYork = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", dateStyle: "medium" });
+      console.log(newYork.format(new Date("2026-03-01")));
+      const parts = new Date(2026, 3, 31);
+      console.log(parts.getMonth() + 1, parts.getDate());
+    verify:
+      logs: ["true", "Feb 28, 2026", "5 1"]
+    answer:
+      type: choice
+      options:
+        - id: real
+          code: "true\nFeb 28, 2026\n5 1"
+        - id: literal-dot
+          code: "false\nFeb 28, 2026\n5 1"
+          why:
+            uk: "У шаблоні крапка — «будь-який символ», тож `1.5` відповідає і `125`. Буквальною її робить лише екранування."
+            en: "In a pattern a dot is “any character”, so `1.5` matches `125` too. Only escaping makes it literal."
+        - id: same-day
+          code: "true\nMar 1, 2026\n5 1"
+          why:
+            uk: "`new Date(\"2026-03-01\")` — північ за UTC, а в Нью-Йорку це ще 28 лютого. Календарну дату показують з `timeZone: \"UTC\"`."
+            en: "`new Date(\"2026-03-01\")` is midnight UTC, and in New York it is still 28 February. A calendar date is shown with `timeZone: \"UTC\"`."
+        - id: april
+          code: "true\nFeb 28, 2026\n4 31"
+          why:
+            uk: "Місяць `3` — це квітень, а 31 квітня не існує: `Date` мовчки переносить зайвий день у травень — 1 травня."
+            en: "Month `3` is April, and 31 April does not exist: `Date` silently carries the extra day into May — 1 May."
+      correct: [real]
+    explanation:
+      uk: "Неекранований запит знайшов не те. Календарна дата в Нью-Йорку показалася як 28 лютого. А `new Date(2026, 3, 31)` — це 1 травня: місяць з нуля плюс тихе перенесення. І знову — жодної помилки."
+      en: "The unescaped query found the wrong thing. The calendar date showed as 28 February in New York. And `new Date(2026, 3, 31)` is 1 May: a zero-based month plus a silent carry. And again — not a single error."
+
+  - id: seeded-run
+    kind: example
+    runtime: browser-js
+    dir: seeded-run
+    entry: index.js
+    title:
+      uk: "Сім дефектів на фіксованих даних"
+      en: "Seven defects on fixed data"
+    body:
+      uk: |
+        Програма запускає всі сім дефектів на фіксованих введеннях — без годинника й без поясу комп’ютера. Запусти й звір кожен рядок у консолі зі своїми прогнозами: номер на початку рядка — номер дефекту. Рядок консолі з номером 4 вимірює вкладений шаблон на 23 символах: число мілісекунд залежить від комп’ютера, а результат — ні.
+      en: |
+        The program runs all seven defects on fixed inputs — without the clock and without the computer’s zone. Run it and match every console line with your predictions: the number at the start of a line is the defect’s number. The console line numbered 4 times the nested pattern on 23 characters: the milliseconds depend on the computer, the result does not.
+    tryIt:
+      uk: |
+        1. Заміни `viewerZone` на `"Asia/Tokyo"`: рядок консолі з номером 6 показує 1 березня. Дефект нікуди не дівся — просто в Токіо його не видно. Тому перевіряють саме пояс на захід від UTC.
+        2. Заміни `22` на `24` у виклику `"1".repeat(22)`: час у рядку консолі з номером 4 зросте приблизно вчетверо. Не йди далі за 26 — інакше чекатимеш секундами (тоді натисни «Зупинити»).
+      en: |
+        1. Replace `viewerZone` with `"Asia/Tokyo"`: the console line numbered 6 shows 1 March. The defect has not gone anywhere — it is just invisible in Tokyo. That is why a zone west of UTC is the one to check.
+        2. Replace `22` with `24` in the call `"1".repeat(22)`: the time on the console line numbered 4 grows about fourfold. Do not go beyond 26 — otherwise you will wait for seconds (then press Stop).
+
+  - id: recall-failing-test
+    kind: review
+    title:
+      uk: "Пригадай: тест вказує на дефект"
+      en: "Recall: a test points at the defect"
+    items:
+      - id: read-failing-test
+        from: js-09-07-debug-with-tests
+        prompt:
+          uk: "Після «Перевірити» червоною лишилася одна перевірка: «порожня кількість — `required`, а не нуль». З чого почати?"
+          en: "After Check one check stays red: “an empty quantity is `required`, not zero”. Where do you start?"
+        answer:
+          type: choice
+          options:
+            - id: read-test
+              text:
+                uk: "Прочитати, що саме чекає перевірка, і знайти функцію, яка обробляє порожнє поле"
+                en: "Read what exactly the check expects and find the function that handles an empty field"
+            - id: rewrite-all
+              text:
+                uk: "Переписати всі функції з нуля"
+                en: "Rewrite all the functions from scratch"
+              why:
+                uk: "Перевірка вже звузила пошук до однієї поведінки. Переписування всього ризикує зламати те, що працює."
+                en: "The check has already narrowed the search to one behaviour. Rewriting everything risks breaking what works."
+            - id: change-test
+              text:
+                uk: "Змінити перевірку, щоб вона чекала нуль"
+                en: "Change the check so that it expects zero"
+              why:
+                uk: "Перевірка описує потрібну поведінку. Підганяти її під код — значить заховати дефект."
+                en: "The check describes the required behaviour. Bending it to fit the code means hiding the defect."
+          correct: [read-test]
+        explanation:
+          uk: "Назва перевірки — це опис очікуваної поведінки. Вона вказує, яку функцію й на якому введенні дивитися першою, — так дефект знаходять за хвилини, а не за годину."
+          en: "The name of a check describes the expected behaviour. It tells you which function to look at first and on which input — that is how a defect is found in minutes, not in an hour."
+
+  - id: the-assumption
+    kind: explanation
+    title:
+      uk: "Припущення проєкту одним реченням"
+      en: "The project’s assumption in one sentence"
+    body:
+      uk: |
+        Багато пасток із дат зникають, якщо чесно записати, з чим працює проєкт:
+
+        > [!note]
+        > Дати в проєкті — прості календарні дні `"YYYY-MM-DD"` без часу й поясу; «сьогодні» передається параметром, дні порівнюються як текст і рахуються лише в UTC, а `Intl` показує їх з `timeZone: "UTC"`.
+
+        Таке речення — частина документації: воно пояснює наступному розробникові (і тобі через місяць), чому в коді немає `new Date()` без аргументів і чому серія звички не залежить від того, де людина відкрила застосунок.
+      en: |
+        Many date traps disappear once you honestly write down what the project works with:
+
+        > [!note]
+        > Dates in the project are plain calendar days `"YYYY-MM-DD"` without a time or a zone; “today” is passed in as a parameter, days are compared as text and counted only in UTC, and `Intl` shows them with `timeZone: "UTC"`.
+
+        Such a sentence is part of the documentation: it explains to the next developer (and to you a month later) why the code has no `new Date()` without arguments and why a habit streak does not depend on where the person opened the app.
+
+  - id: fix-seven
+    kind: exercise
+    mode: debug
+    runtime: browser-js
+    dir: fix-seven
+    entry: index.js
+    title:
+      uk: "Виправ сім дефектів"
+      en: "Fix seven defects"
+    instructions:
+      uk: |
+        У файлі сім функцій, і в кожній — один із дефектів цього уроку. Натисни **Перевірити**: кожна червона перевірка має номер функції й описує потрібну поведінку. Виправляй по одній і перевіряй знову.
+
+        - Дві допоміжні функції вгорі — `parseAmountMinor` і `escapeForRegex` — уже правильні: використовуй їх, не змінюючи. Вони написані коротким записом `if (умова) return значення;` — `if` без фігурних дужок виконує лише одну інструкцію одразу після умови.
+        - Назви функцій і їхні параметри не змінюй.
+        - Функцію 4 перевіряють на введеннях не довших за 21 символ, тож вона не «зависне» — але виправ і шаблон, і обмеження довжини.
+        - Функцію 7 перевіряють ще й так, ніби комп’ютер стоїть в іншому часовому поясі: результат не має від нього залежати.
+      en: |
+        The file has seven functions, and each holds one of this lesson’s defects. Press **Check**: every red check carries the function’s number and describes the required behaviour. Fix them one by one and check again.
+
+        - The two helpers at the top — `parseAmountMinor` and `escapeForRegex` — are already correct: use them without changing them. They use the short form `if (condition) return value;` — an `if` without curly braces runs just the one statement right after the condition.
+        - Do not change the functions’ names or parameters.
+        - Function 4 is checked on inputs of at most 21 characters, so it will not “freeze” — but fix both the pattern and the length limit.
+        - Function 7 is also checked as if the computer were in another time zone: the result must not depend on it.
+    testTitles:
+      "1. typed amounts with a comma add up exactly":
+        uk: "1. Введені суми з комою додаються точно"
+        en: "1. Typed amounts with a comma add up exactly"
+      '2. an empty quantity is "required", not zero':
+        uk: "2. Порожня кількість — `\"required\"`, а не нуль"
+        en: "2. An empty quantity is `\"required\"`, not zero"
+      "3. NaN and Infinity are not valid amounts":
+        uk: "3. `NaN` і `Infinity` — не правильні суми"
+        en: "3. `NaN` and `Infinity` are not valid amounts"
+      "4. digits-only refuses input longer than 20 characters":
+        uk: "4. Перевірка цифр відкидає введення, довше за 20 символів"
+        en: "4. The digits check refuses input longer than 20 characters"
+      "5. the query is searched as plain text":
+        uk: "5. Запит шукається як звичайний текст"
+        en: "5. The query is searched as plain text"
+      "6. a calendar date shows the same day in New York":
+        uk: "6. Календарна дата показує той самий день у Нью-Йорку"
+        en: "6. A calendar date shows the same day in New York"
+      "7. calendar dates use months 1–12 and refuse days that do not exist":
+        uk: "7. Календарні дати мають місяці 1–12 і відкидають неіснуючі дні"
+        en: "7. Calendar dates use months 1–12 and refuse days that do not exist"
+    hints:
+      nudge:
+        uk: "Почни з першої червоної перевірки й порівняй, що вона чекає, з тим, що робить функція з тим самим номером. Кожен дефект — одна з пасток із таблиці на початку уроку."
+        en: "Start with the first red check and compare what it expects with what the function with the same number does. Each defect is one of the traps from the table at the start of the lesson."
+      explanation:
+        uk: "Пари «дефект → ліки»: кома в сумі → готовий `parseAmountMinor`; порожнє поле → окрема перевірка до `Number`; `NaN` → перевірка, що число скінченне; вкладений квантифікатор → шаблон без вкладення плюс обмеження довжини до перевірки; запит → `escapeForRegex`; день у чужому поясі → показ календарної дати в UTC; номер місяця → `Date.UTC` з місяцем мінус один і перевірка, що рік, місяць і день після побудови не змінилися."
+        en: "“Defect → cure” pairs: a comma in an amount → the ready `parseAmountMinor`; an empty field → a separate check before `Number`; `NaN` → a check that the number is finite; a nested quantifier → a pattern without nesting plus a length limit before the check; a query → `escapeForRegex`; a day in another zone → showing the calendar date in UTC; the month number → `Date.UTC` with the month minus one and a check that the year, month and day did not change after building."
+    solutionNote:
+      uk: "Жоден дефект не кидав помилки — кожен давав правдоподібну, але хибну відповідь. Їх знайшли граничні введення: кома, порожнє поле, `NaN`, 21 цифра, `\"1.5\"`, Нью-Йорк, 31 квітня. Функцію 7 можна виправити й через таблицю днів у місяці: `Date.UTC(year, month, 0)` дає останній день місяця."
+      en: "No defect threw an error — each gave a plausible but wrong answer. Boundary inputs found them: a comma, an empty field, `NaN`, 21 digits, `\"1.5\"`, New York, 31 April. Function 7 can also be fixed with a days-in-month check: `Date.UTC(year, month, 0)` gives the last day of the month."
+    feedback:
+      - when: { test: "1. typed amounts with a comma add up exactly" }
+        message:
+          uk: "Ця перевірка чекає `375` для `[\"1,5\", \"2,25\"]` і `84579` для `[\"845,50\", \"0,29\"]`. `parseFloat(\"1,5\")` — це `1`: читай суми через `parseAmountMinor` і додавай її `value`."
+          en: "This check expects `375` for `[\"1,5\", \"2,25\"]` and `84579` for `[\"845,50\", \"0,29\"]`. `parseFloat(\"1,5\")` is `1`: read the amounts with `parseAmountMinor` and add its `value`."
+      - when: { test: '2. an empty quantity is "required", not zero' }
+        message:
+          uk: "Ця перевірка чекає `{ ok: false, error: \"required\" }` для `\"\"` і `\"   \"`, `\"invalid\"` для `\"0\"` і `{ ok: true, value: 12 }` для `\"12\"`. `Number(\"\")` — `0`, тож порожнє поле треба розпізнати до перетворення."
+          en: "This check expects `{ ok: false, error: \"required\" }` for `\"\"` and `\"   \"`, `\"invalid\"` for `\"0\"` and `{ ok: true, value: 12 }` for `\"12\"`. `Number(\"\")` is `0`, so an empty field has to be recognized before the conversion."
+      - when: { test: "3. NaN and Infinity are not valid amounts" }
+        message:
+          uk: "Ця перевірка чекає `false` для `NaN` і `Infinity` та `true` для `1250`. `typeof` для обох дає `\"number\"`."
+          en: "This check expects `false` for `NaN` and `Infinity` and `true` for `1250`. `typeof` gives `\"number\"` for both."
+      - when: { test: "4. digits-only refuses input longer than 20 characters" }
+        message:
+          uk: "Ця перевірка чекає `true` для 20 цифр і `false` для 21 цифри та для 20 цифр із `x`. Довжину перевір **до** шаблону, а сам шаблон запиши без квантифікатора в групі з квантифікатором."
+          en: "This check expects `true` for 20 digits and `false` for 21 digits and for 20 digits with an `x`. Check the length **before** the pattern, and write the pattern itself without a quantifier inside a group with a quantifier."
+      - when: { test: "5. the query is searched as plain text" }
+        message:
+          uk: "Ця перевірка чекає `1` для `\"1.5\"` у `\"1.5 or 125\"` і `2` для `\"c++\"`. Без екранування крапка — «будь-який символ», а `\"c++\"` дає `SyntaxError`."
+          en: "This check expects `1` for `\"1.5\"` in `\"1.5 or 125\"` and `2` for `\"c++\"`. Without escaping a dot is “any character”, and `\"c++\"` gives a `SyntaxError`."
+      - when: { test: "6. a calendar date shows the same day in New York" }
+        message:
+          uk: "Ця перевірка чекає для `\"2026-03-01\"` один і той самий день у Нью-Йорку й Токіо — той, що показує `timeZone: \"UTC\"`. Календарна дата не залежить від поясу глядача."
+          en: "This check expects the same day for `\"2026-03-01\"` in New York and in Tokyo — the one `timeZone: \"UTC\"` shows. A calendar date does not depend on the viewer’s zone."
+      - when: { test: "7. calendar dates use months 1–12 and refuse days that do not exist" }
+        message:
+          uk: "Ця перевірка чекає `\"2026-03-01\"` для `(2026, 3, 1)`, `\"2026-12-31\"`, `\"2028-02-29\"` і `null` для 31 квітня та 29 лютого 2026. У `Date` місяці з нуля, а зайві дні тихо переходять у наступний місяць — перевір, що рік, місяць і день лишилися тими самими. Ще перевірка запускає функцію так, ніби комп’ютер стоїть у поясах UTC+14 і UTC−11: якщо там дата зсувається на день, код змішує місцевий час (`new Date(y, m, d)`, `getDate()`) з UTC (`toISOString()`)."
+          en: "This check expects `\"2026-03-01\"` for `(2026, 3, 1)`, `\"2026-12-31\"`, `\"2028-02-29\"` and `null` for 31 April and 29 February 2026. Months in `Date` start at zero, and extra days quietly move into the next month — check that the year, month and day stayed the same. The check also runs the function as if the computer were in the UTC+14 and UTC−11 zones: if a date moves by a day there, the code mixes local time (`new Date(y, m, d)`, `getDate()`) with UTC (`toISOString()`)."
+      - when: { error: SyntaxError }
+        message:
+          uk: "`SyntaxError: Invalid regular expression` — запит потрапив у `new RegExp` без `escapeForRegex`. Якщо ж картка каже, що код не вдалося запустити, шукай незакриту дужку чи лапку у своєму виправленні."
+          en: "`SyntaxError: Invalid regular expression` — the query went into `new RegExp` without `escapeForRegex`. If instead the card says the code could not start, look for an unclosed bracket or quote in your fix."
+      - when: { error: RangeError }
+        message:
+          uk: "`RangeError: Invalid time value` означає, що `toISOString` отримав неправильну дату (`NaN` у `Date.UTC`). Перевір, що передаєш числа."
+          en: "`RangeError: Invalid time value` means `toISOString` got an invalid date (`NaN` in `Date.UTC`). Check that you pass numbers."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-12
+    body:
+      uk: "Наприкінці розділу перевірки кроку пройдуть такими пастками по твоєму проєкту (залежно від варіанта): дробова ціна `12.5`, сума з комою `\"45,50\"`, витрата без дати, дата з часом, запит в іншій формі Unicode і день, показаний у поясах UTC+14 та UTC−11. Твої тести мають упіймати дві зламані версії доменного модуля."
+      en: "At the end of this unit the step's checks will walk your project through these traps (depending on the variant): a fractional price `12.5`, an amount with a comma `\"45,50\"`, an expense without a date, a date with a time, a query in another Unicode form and a day shown in the UTC+14 and UTC−11 zones. Your tests must catch two broken versions of the domain module."

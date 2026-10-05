@@ -1,0 +1,514 @@
+id: rn-06-07-debug-host-address
+unit: RN-06
+title:
+  uk: "Налагодження: адреса хоста й мережевий збій"
+  en: "Debug: host address and network failure"
+kind: local-task
+minutes: 20
+contentVersion: 1
+purpose:
+  uk: "Екран даних, що не дістається mock-сервісу, — найчастіша перша зустріч з мережею в нативному застосунку. Причин зазвичай три: хост, який на цілі означає не те, що ти думаєш, політика платформи щодо простого HTTP і запит без дедлайну. Зовні вони схожі, але залишають різні сліди в журналах. Ти спершу знайдеш і полагодиш усі три в навчальному коді, а потім відтвориш і полагодиш дві з них на своїй заявленій цілі з запущеним mock-сервісом."
+  en: "A data screen that cannot reach the mock service is the most common first meeting with the network in a native app. There are usually three causes: a host that means something else on the target than you think, the platform's policy on plain HTTP, and a request without a deadline. They look alike from outside but leave different traces in the logs. You first find and repair all three in lab code, then reproduce and repair two of them on your declared target with the mock service running."
+objectives:
+  - uk: "Відтворити на заявленій цілі підготовлений екран даних, який не дістається запущеного mock-сервісу, і за журналами визначити, що причина — адреса хоста, політика простого HTTP чи відсутній тайм-аут."
+    en: "Reproduce on the declared target a seeded data screen that cannot reach the running mock service, and tell from the logs whether the cause is the host address, the cleartext policy or a missing timeout."
+  - uk: "Полагодити причини й підтвердити, що список завантажується, зупинений сервіс веде до стану офлайну, а повтори закінчуються на межі бюджету."
+    en: "Repair the causes, then confirm the list loads, a stopped service leads to the offline state and retries stop at the budget."
+prerequisites: [rn-06-06-permissions-capability-checks]
+subskills:
+  - { family: N-06, skill: "emulator/device addressing", depth: assess }
+  - { family: N-06, skill: "fetch/cancellation/timeouts/retry", depth: assess }
+  - { family: N-06, skill: "platform network configuration", depth: assess }
+glossary: []
+selfCheck: [seeded-source]
+
+blocks:
+  - id: three-traces
+    kind: explanation
+    title:
+      uk: "Три причини — три різні сліди"
+      en: "Three causes, three different traces"
+    body:
+      uk: |
+        Застосунок каже лише «не завантажилось». Що сталося насправді, видно з двох журналів: журналу застосунку (рядки `console.log` у терміналі dev-сервера) і журналу mock-сервісу (`[mock] …`).
+
+        | Причина | Журнал застосунку | Журнал mock-сервісу |
+        |---|---|---|
+        | хост не той (`localhost` з емулятора чи телефона) | швидко `TypeError: Network request failed` | **порожньо** — запит не дійшов |
+        | політика платформи блокує простий HTTP | так само відхилений `fetch`; на Android причину пояснює системний журнал (Logcat) — на пристрої ми цього не бачили | **порожньо** |
+        | немає тайм-ауту, а сервіс мовчить | «Завантаження…» без кінця, жодного рядка про збій | рядок є: запит **дійшов** і чекає |
+
+        Перші дві причини відрізняє те, що змінилося: з тим самим хостом `curl` з комп’ютера працює, і в debug-збірці теж працює — ламається лише збірка з іншою політикою. Порядок той самий, що й завжди: відтворити, прочитати обидва журнали, полагодити одну причину, перевірити тим самим способом.
+      en: |
+        The app only says “did not load”. What really happened shows in two logs: the app's log (the `console.log` lines in the dev server's terminal) and the mock service's log (`[mock] …`).
+
+        | Cause | App log | Mock service log |
+        |---|---|---|
+        | the wrong host (`localhost` from an emulator or phone) | a quick `TypeError: Network request failed` | **empty** — the request never arrived |
+        | the platform policy blocks plain HTTP | likewise a rejected `fetch`; on Android the system log (Logcat) explains the cause — we have not seen it on a device | **empty** |
+        | no timeout, and the service is silent | “Loading…” forever, no line about a failure | there is a line: the request **arrived** and waits |
+
+        The first two causes are told apart by what changed: with the same host `curl` from the computer works, and it works in a debug build too — only a build with a different policy breaks. The routine is the usual one: reproduce, read both logs, repair one cause, check the same way.
+
+  - id: seeded-source
+    kind: exercise
+    mode: debug
+    runtime: browser-js
+    dir: seeded-source
+    entry: index.js
+    editable: [devConfig.js, networkSecurityConfig.js, loadRecords.js]
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+    title:
+      uk: "Екран витрат не завантажується на емуляторі"
+      en: "The expenses screen does not load on the emulator"
+    instructions:
+      uk: |
+        Звіт про ваду: «На емуляторі Android екран витрат одразу показує помилку. Коли ж сервіс зависає, екран крутить "Завантаження…" без кінця». `index.js` відтворює обидва симптоми — натисни **Запустити** й прочитай консоль.
+
+        Знайди й полагодь три причини у трьох файлах:
+
+        - `devConfig.js` — кожна ціль має отримати хост, через який вона справді бачить комп’ютер (таблиця з уроку про адресу хоста);
+        - `networkSecurityConfig.js` — вміст файлу `network_security_config.xml`. Файлів `.xml` у пісочниці немає, тож XML лежить у рядку JavaScript; у проєкті це окремий файл `res/xml/network_security_config.xml`, на який посилається маніфест. Пам’ятай з уроку про транспорт: коли такий файл є, `usesCleartextTraffic="true"` з debug-маніфесту вже нічого не дозволяє — вирішує файл. Debug-конфігурація Android має дозволяти простий HTTP до хостів, якими користуються емулятор і телефон на USB, і **ні до чого більше**;
+        - `loadRecords.js` — запит, на який немає відповіді за `timeoutMs`, має бути скасований (`signal`, переданий у `fetchFn`, — `aborted`), а `loadRecords` — відхилитися з помилкою, назва якої `TimeoutError`.
+
+        `policy.js` читає XML так, як Android застосовує його до простого HTTP.
+      en: |
+        The bug report: “On the Android emulator the expenses screen shows an error at once. And when the service hangs, the screen spins "Loading…" forever.” `index.js` reproduces both symptoms — press **Run** and read the console.
+
+        Find and repair three causes in three files:
+
+        - `devConfig.js` — every target must get a host through which it really sees the computer (the table from the host-address lesson);
+        - `networkSecurityConfig.js` — the content of the `network_security_config.xml` file. The sandbox has no `.xml` files, so the XML sits in a JavaScript string; in a project it is a separate file `res/xml/network_security_config.xml` referenced from the manifest. Remember from the transport lesson: once such a file exists, `usesCleartextTraffic="true"` in the debug manifest no longer allows anything — the file decides. Android's debug configuration must allow plain HTTP to the hosts the emulator and a USB phone use, and **to nothing else**;
+        - `loadRecords.js` — a request with no answer within `timeoutMs` must be aborted (the `signal` passed to `fetchFn` is `aborted`), and `loadRecords` must reject with an error named `TimeoutError`.
+
+        `policy.js` reads the XML the way Android applies it to plain HTTP.
+    testTitles:
+      "each target gets a host it can reach":
+        uk: "Кожна ціль отримує хост, до якого може дістатися"
+        en: "Each target gets a host it can reach"
+      "the debug config permits plain HTTP to the Android development hosts":
+        uk: "Debug-конфігурація дозволяє простий HTTP до хостів розробки Android"
+        en: "The debug config permits plain HTTP to the Android development hosts"
+      "the debug config permits plain HTTP to nothing else":
+        uk: "Debug-конфігурація не дозволяє простий HTTP ні до чого іншого"
+        en: "The debug config permits plain HTTP to nothing else"
+      "a silent service ends in a TimeoutError and an aborted request":
+        uk: "Мовчазний сервіс закінчується `TimeoutError` і скасованим запитом"
+        en: "A silent service ends in a `TimeoutError` and an aborted request"
+      "a working service still loads the records":
+        uk: "Робочий сервіс, як і раніше, віддає записи"
+        en: "A working service still gives the records"
+    hints:
+      nudge:
+        uk: "Перший рядок консолі каже, куди йде запит з емулятора, другий — чи дозволено туди простий HTTP, третій — чим закінчився запит до мовчазного сервісу. Кожен рядок веде до одного файлу."
+        en: "The first console line says where the emulator's request goes, the second whether plain HTTP is allowed there, the third how the request to the silent service ended. Each line leads to one file."
+      explanation:
+        uk: |
+          `localhost` на емуляторі — сам емулятор; комп’ютер для нього має окрему адресу. У XML доменом є саме той хост, що стоїть в адресі запиту: виняток для `localhost` нічого не дає запиту на іншу адресу, а `base-config` з дозволом відкриває простий HTTP усім.
+
+          Дедлайн запиту — таймер, який скасовує контролер запиту, і прапорець, що це був саме тайм-аут. Таймер потрібно прибрати, коли відповідь прийшла вчасно.
+        en: |
+          `localhost` on the emulator is the emulator itself; the computer has a separate address for it. In the XML the domain is exactly the host in the request's address: an exception for `localhost` does nothing for a request to another address, and a `base-config` with permission opens plain HTTP to everyone.
+
+          A request's deadline is a timer that aborts the request's controller, plus a flag that it was the timeout. The timer has to be cleared when the answer came in time.
+    solutionNote:
+      uk: "Три причини — три різні шари: адреса (`devConfig.js`), політика платформи (XML) і час (`loadRecords.js`). Виняток у XML названо поіменно для хостів розробки, тож справжні сервери все одно отримують лише HTTPS. А таймер не лише перестає чекати, а й скасовує запит — інакше з’єднання висіло б далі."
+      en: "Three causes, three different layers: the address (`devConfig.js`), the platform policy (the XML) and time (`loadRecords.js`). The XML exception names the development hosts one by one, so real servers still get only HTTPS. And the timer does not just stop waiting — it aborts the request, otherwise the connection would keep hanging."
+    feedback:
+      - when: { test: "each target gets a host it can reach" }
+        message:
+          uk: "Ця перевірка чекає `10.0.2.2` для емулятора Android, `127.0.0.1` чи `localhost` для симулятора iOS і для телефона на USB після `adb reverse`, і `LAN_ADDRESS` для телефона у Wi-Fi."
+          en: "This check expects `10.0.2.2` for the Android emulator, `127.0.0.1` or `localhost` for the iOS simulator and for the USB phone after `adb reverse`, and `LAN_ADDRESS` for the Wi-Fi phone."
+      - when: { test: "the debug config permits plain HTTP to the Android development hosts" }
+        message:
+          uk: "Ця перевірка бере хости з твого `devConfig.js` для `android-emulator` і `android-usb` і чекає, що XML дозволяє до них простий HTTP. Домен у `domain-config` має збігатися з хостом в адресі запиту. Якщо в повідомленні сказано, що XML не well-formed, — кожен тег у рядку `networkSecurityConfig` має закриватися (`<domain …>…</domain>`, `<base-config … />`)."
+          en: "This check takes the hosts from your `devConfig.js` for `android-emulator` and `android-usb` and expects the XML to allow plain HTTP to them. The domain in `domain-config` must match the host in the request's address. If the message says the XML is not well-formed, every tag in the `networkSecurityConfig` string must be closed (`<domain …>…</domain>`, `<base-config … />`)."
+      - when: { test: "the debug config permits plain HTTP to nothing else" }
+        message:
+          uk: "Ця перевірка чекає, що до `api.expenses.example` і `example.com` простий HTTP заборонено. `base-config` з `cleartextTrafficPermitted=\"true\"` відкриває його для всіх хостів. Якщо в повідомленні сказано, що XML не well-formed, — закрий кожен тег у рядку `networkSecurityConfig`."
+          en: "This check expects plain HTTP to `api.expenses.example` and `example.com` to be forbidden. A `base-config` with `cleartextTrafficPermitted=\"true\"` opens it to every host. If the message says the XML is not well-formed, close every tag in the `networkSecurityConfig` string."
+      - when: { test: "a silent service ends in a TimeoutError and an aborted request" }
+        message:
+          uk: "Ця перевірка дає `fetchFn`, що ніколи не відповідає, з `timeoutMs: 100`, і чекає відхилення з назвою `TimeoutError` та скасованого `signal`, який отримав `fetchFn`. Таймер, що лише перестає чекати, лишає з’єднання відкритим."
+          en: "This check gives a `fetchFn` that never answers, with `timeoutMs: 100`, and expects a rejection named `TimeoutError` and an aborted `signal` received by `fetchFn`. A timer that only stops waiting leaves the connection open."
+      - when: { error: SyntaxError }
+        message:
+          uk: "Картка «Код не вдалося запустити» означає, що JavaScript не зміг прочитати один з файлів: файл і рядок указано в повідомленні. Перевір дужки й лапки там, де ти змінював код; у `networkSecurityConfig.js` — ще й зворотні лапки (`` ` ``) на початку й у кінці XML."
+          en: "The card “The code could not start” means JavaScript could not read one of the files: the message names the file and the line. Check the brackets and quotes where you changed the code; in `networkSecurityConfig.js` also the backticks (`` ` ``) at the start and the end of the XML."
+
+  - id: recall-http-vs-rejected
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: http-error-vs-rejection
+        from: js-16-09-debug-http-fetch-cors
+        prompt:
+          uk: "У першому випадку сервер відповів 503, у другому запит узагалі не дійшов до сервера. Чим вони відрізняються для коду, що викликав `fetch`?"
+          en: "In the first case the server answered 503, in the second the request never reached the server. How do they differ for the code that called `fetch`?"
+        answer:
+          type: choice
+          options:
+            - id: resolve-vs-reject
+              text:
+                uk: "503 — `fetch` виконується з відповіддю, де `ok` — `false`; недійшов запит — `fetch` відхиляється"
+                en: "503 — `fetch` resolves with a response whose `ok` is `false`; the request that never arrived — `fetch` rejects"
+            - id: both-reject
+              text:
+                uk: "В обох випадках `fetch` відхиляється"
+                en: "In both cases `fetch` rejects"
+              why:
+                uk: "503 — це відповідь сервера. `fetch` відхиляється лише тоді, коли відповіді немає."
+                en: "A 503 is the server's answer. `fetch` rejects only when there is no answer."
+            - id: same
+              text:
+                uk: "Нічим: в обох випадках `response.status` дорівнює 0"
+                en: "Nothing: in both cases `response.status` is 0"
+              why:
+                uk: "Коли запит не дійшов, відповіді немає зовсім — немає й `response`."
+                en: "When the request never arrived there is no answer at all — so no `response` either."
+          correct: [resolve-vs-reject]
+        explanation:
+          uk: "Саме тому порожній журнал сервісу й відхилений `fetch` разом кажуть «запит не дійшов», а рядок у журналі з 503 — «дійшов, але сервер не впорався»."
+          en: "That is why an empty service log and a rejected `fetch` together say “the request never arrived”, while a log line with a 503 says “it arrived, but the server failed”."
+
+  - id: on-target
+    kind: local-task
+    runtime: local-native
+    title:
+      uk: "Хост і тайм-аут на твоїй заявленій цілі"
+      en: "The host and the timeout on your declared target"
+    intro:
+      uk: |
+        Це завдання виконується на твоєму комп’ютері й на **заявленій цілі** з розділу RN-01. Потрібні mock-сервіс з уроку про фікстури (тека `~/js-course/rn06-mock`; якщо її немає — створи її кроками того уроку) і твій `fetchWithRetry` з уроку про тайм-аути й повтори (файли `retry.js` і `wait.js` вправи; якщо ти її не розв’язав, візьми розв’язок, показаний там).
+
+        Що перевірено під час підготовки уроку (macOS, Node.js v25.2.1, Expo SDK 57, React Native 0.86.3): проєкт із шаблону `blank-typescript@sdk-57` з файлами з кроків 3 і 9 проходить `npx tsc --noEmit` без жодного повідомлення, а `npx expo export --platform android` збирає його без помилок; вивід mock-сервісу справжній. **Запуск на пристрої (крок 5 і далі) не перевірено** — нативних інструментів там немає; що покаже твоя ціль і термінал dev-сервера, запиши сам.
+
+        Якщо емулятора, симулятора чи телефона немає, натисни **«У мене немає емулятора чи пристрою»**: завдання запишеться як не виконане, і ти підеш далі — вправа вище вже закрила частину в навчальному коді.
+
+        **Крок 3 — `data.js`** (новий файл поруч з `App.tsx`):
+
+        ```js
+        // RN-06 seeded data source: the host and the timeout are wrong on purpose.
+        const BASE_URL = 'http://localhost:7310'; // the same host for every target
+        const QUERY = '?lang=uk'; // later: '?lang=uk&hang=1'
+
+        export async function loadWishes(signal) {
+          const url = `${BASE_URL}/records/wishlist${QUERY}`;
+          console.log('GET', url);
+          const response = await fetch(url, { signal }); // no timeout
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        }
+        ```
+
+        **Крок 3 — `App.tsx`** (повністю заміни ним файл):
+
+        ```tsx
+        // RN-06 lab screen: shows what loadWishes() in data.js returns, or why it failed.
+        import { useEffect, useState } from 'react';
+        import { Pressable, StyleSheet, Text, View } from 'react-native';
+        import { loadWishes } from './data.js';
+
+        type Wish = { id: string; name: string };
+        type ScreenState = { status: 'loading' | 'ready' | 'error'; wishes: Wish[]; problem?: string };
+
+        export default function App() {
+          const [state, setState] = useState<ScreenState>({ status: 'loading', wishes: [] });
+          const [round, setRound] = useState(0);
+
+          useEffect(() => {
+            const controller = new AbortController();
+            setState((s) => ({ ...s, status: 'loading' }));
+            loadWishes(controller.signal).then(
+              (wishes: Wish[]) => setState({ status: 'ready', wishes }),
+              (error: Error) => {
+                if (error.name === 'AbortError') return;
+                console.log('load failed:', error.name, error.message);
+                setState((s) => ({ ...s, status: 'error', problem: `${error.name}: ${error.message}` }));
+              },
+            );
+            return () => controller.abort();
+          }, [round]);
+
+          return (
+            <View style={styles.screen}>
+              <Text style={styles.heading}>Список бажань</Text>
+              {state.status === 'loading' && <Text>Завантаження…</Text>}
+              {state.status === 'error' && <Text style={styles.problem}>{state.problem}</Text>}
+              {state.wishes.map((wish) => <Text key={wish.id}>{wish.name}</Text>)}
+              <Pressable accessibilityRole="button" onPress={() => setRound((n) => n + 1)} style={styles.button}>
+                <Text style={styles.buttonText}>Оновити</Text>
+              </Pressable>
+            </View>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, paddingTop: 64, paddingHorizontal: 16, gap: 8, backgroundColor: '#ffffff' },
+          heading: { fontSize: 20, fontWeight: '600' },
+          problem: { color: '#b91c1c' },
+          button: { alignSelf: 'flex-start', marginTop: 8, padding: 12, borderRadius: 6, backgroundColor: '#1d4ed8' },
+          buttonText: { color: '#ffffff', fontWeight: '600' },
+        });
+        ```
+
+        **Крок 7 — виправлений рядок `BASE_URL` у `data.js`:**
+
+        ```js
+        // Android emulator: the host alias. iOS simulator, or a USB phone after adb reverse: 127.0.0.1.
+        const BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:7310' : 'http://127.0.0.1:7310';
+        ```
+
+        і першим рядком файлу — `import { Platform } from 'react-native';`. Простий HTTP на `127.0.0.1` в iOS пропускає ключ `NSAllowsLocalNetworking`, який шаблон Expo вже ставить (урок про транспорт). Для телефона Android на кабелі спершу виконай `adb reverse tcp:7310 tcp:7310` і пиши `'http://127.0.0.1:7310'` для обох платформ. Телефон у Wi-Fi — LAN-адреса комп’ютера й сервіс, запущений з `--host 0.0.0.0` (див. урок про адресу хоста).
+
+        **Крок 9 — `data.js` з тайм-аутом і повторами** (повністю заміни ним файл; `retry.js` і `wait.js` лежать поруч):
+
+        ```js
+        // RN-06 data source, repaired: a host per target, a timeout and bounded retry.
+        import { Platform } from 'react-native';
+        import { fetchWithRetry } from './retry.js';
+
+        // Android emulator: the host alias. iOS simulator, or a USB phone after adb reverse: 127.0.0.1.
+        const BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:7310' : 'http://127.0.0.1:7310';
+        const QUERY = '?lang=uk&hang=1';
+
+        export async function loadWishes(signal) {
+          const url = `${BASE_URL}/records/wishlist${QUERY}`;
+          console.log('GET', url);
+          const response = await fetchWithRetry(url, { fetchFn: fetch, timeoutMs: 3000, maxAttempts: 3, baseDelayMs: 500, signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        }
+        ```
+      en: |
+        This task runs on your computer and on your **declared target** from unit RN-01. You need the mock service from the fixtures lesson (the folder `~/js-course/rn06-mock`; if it is missing, create it with the steps of that lesson) and your `fetchWithRetry` from the timeouts-and-retry lesson (the exercise's `retry.js` and `wait.js`; if you did not solve it, take the solution shown there).
+
+        What was checked while preparing this lesson (macOS, Node.js v25.2.1, Expo SDK 57, React Native 0.86.3): a project from the `blank-typescript@sdk-57` template with the files from steps 3 and 9 passes `npx tsc --noEmit` without any message, and `npx expo export --platform android` bundles it without errors; the mock service's output is real. **Running on a device (step 5 onwards) was not checked** — there are no native tools there; write down yourself what your target and the dev server's terminal show.
+
+        If you have no emulator, simulator or phone, press **“I have no emulator or device”**: the task is recorded as not performed, and you move on — the exercise above already covered a part in lab code.
+
+        **Step 3 — `data.js`** (a new file next to `App.tsx`):
+
+        ```js
+        // RN-06 seeded data source: the host and the timeout are wrong on purpose.
+        const BASE_URL = 'http://localhost:7310'; // the same host for every target
+        const QUERY = '?lang=en'; // later: '?lang=en&hang=1'
+
+        export async function loadWishes(signal) {
+          const url = `${BASE_URL}/records/wishlist${QUERY}`;
+          console.log('GET', url);
+          const response = await fetch(url, { signal }); // no timeout
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        }
+        ```
+
+        **Step 3 — `App.tsx`** (replace the whole file with it):
+
+        ```tsx
+        // RN-06 lab screen: shows what loadWishes() in data.js returns, or why it failed.
+        import { useEffect, useState } from 'react';
+        import { Pressable, StyleSheet, Text, View } from 'react-native';
+        import { loadWishes } from './data.js';
+
+        type Wish = { id: string; name: string };
+        type ScreenState = { status: 'loading' | 'ready' | 'error'; wishes: Wish[]; problem?: string };
+
+        export default function App() {
+          const [state, setState] = useState<ScreenState>({ status: 'loading', wishes: [] });
+          const [round, setRound] = useState(0);
+
+          useEffect(() => {
+            const controller = new AbortController();
+            setState((s) => ({ ...s, status: 'loading' }));
+            loadWishes(controller.signal).then(
+              (wishes: Wish[]) => setState({ status: 'ready', wishes }),
+              (error: Error) => {
+                if (error.name === 'AbortError') return;
+                console.log('load failed:', error.name, error.message);
+                setState((s) => ({ ...s, status: 'error', problem: `${error.name}: ${error.message}` }));
+              },
+            );
+            return () => controller.abort();
+          }, [round]);
+
+          return (
+            <View style={styles.screen}>
+              <Text style={styles.heading}>Wishlist</Text>
+              {state.status === 'loading' && <Text>Loading…</Text>}
+              {state.status === 'error' && <Text style={styles.problem}>{state.problem}</Text>}
+              {state.wishes.map((wish) => <Text key={wish.id}>{wish.name}</Text>)}
+              <Pressable accessibilityRole="button" onPress={() => setRound((n) => n + 1)} style={styles.button}>
+                <Text style={styles.buttonText}>Reload</Text>
+              </Pressable>
+            </View>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, paddingTop: 64, paddingHorizontal: 16, gap: 8, backgroundColor: '#ffffff' },
+          heading: { fontSize: 20, fontWeight: '600' },
+          problem: { color: '#b91c1c' },
+          button: { alignSelf: 'flex-start', marginTop: 8, padding: 12, borderRadius: 6, backgroundColor: '#1d4ed8' },
+          buttonText: { color: '#ffffff', fontWeight: '600' },
+        });
+        ```
+
+        **Step 7 — the repaired `BASE_URL` line in `data.js`:**
+
+        ```js
+        // Android emulator: the host alias. iOS simulator, or a USB phone after adb reverse: 127.0.0.1.
+        const BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:7310' : 'http://127.0.0.1:7310';
+        ```
+
+        and as the file's first line, `import { Platform } from 'react-native';`. On iOS plain HTTP to `127.0.0.1` is let through by the `NSAllowsLocalNetworking` key that the Expo template already sets (the transport lesson). For an Android phone on a cable run `adb reverse tcp:7310 tcp:7310` first and write `'http://127.0.0.1:7310'` for both platforms. A phone on Wi-Fi: the computer's LAN address and the service started with `--host 0.0.0.0` (see the host-address lesson).
+
+        **Step 9 — `data.js` with a timeout and retries** (replace the whole file with it; `retry.js` and `wait.js` sit next to it):
+
+        ```js
+        // RN-06 data source, repaired: a host per target, a timeout and bounded retry.
+        import { Platform } from 'react-native';
+        import { fetchWithRetry } from './retry.js';
+
+        // Android emulator: the host alias. iOS simulator, or a USB phone after adb reverse: 127.0.0.1.
+        const BASE_URL = Platform.OS === 'android' ? 'http://10.0.2.2:7310' : 'http://127.0.0.1:7310';
+        const QUERY = '?lang=en&hang=1';
+
+        export async function loadWishes(signal) {
+          const url = `${BASE_URL}/records/wishlist${QUERY}`;
+          console.log('GET', url);
+          const response = await fetchWithRetry(url, { fetchFn: fetch, timeoutMs: 3000, maxAttempts: 3, baseDelayMs: 500, signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return response.json();
+        }
+        ```
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "мінімум для Expo SDK 57 за таблицею версій Expo", en: "the minimum for Expo SDK 57 per Expo's version table" } }
+      - { name: "Expo SDK", version: "57 (React Native 0.86)", note: { uk: "ставиться командою з кроку 1", en: "installed by the command in step 1" } }
+      - { name: "mock-service.mjs", note: { uk: "з уроку про фікстури, тека `~/js-course/rn06-mock`", en: "from the fixtures lesson, the folder `~/js-course/rn06-mock`" } }
+      - { name: { uk: "Заявлена ціль", en: "Declared target" }, version: { uk: "з RN-01", en: "from RN-01" }, note: { uk: "емулятор Android, симулятор iOS або телефон з Expo Go для SDK 57", en: "an Android emulator, an iOS simulator or a phone with Expo Go for SDK 57" } }
+    steps:
+      - text:
+          uk: "Перейди в теку `~/js-course` і створи навчальний проєкт з шаблону TypeScript (та сама команда, що й для hello-екрана в RN-01)."
+          en: "Go to the `~/js-course` folder and create the lab project from the TypeScript template (the same command as for the hello screen in RN-01)."
+        command: "cd ~/js-course\nnpx create-expo-app@latest rn06-lab --template blank-typescript@sdk-57 --no-agents-md"
+        expect:
+          uk: "З’явилася тека `rn06-lab` з `App.tsx` і `package.json`, де `expo` ~57 і `react-native` 0.86.x."
+          en: "A folder `rn06-lab` appears with `App.tsx` and a `package.json` listing `expo` ~57 and `react-native` 0.86.x."
+      - text:
+          uk: "Перейди в проєкт і скопіюй у нього свої `retry.js` і `wait.js` з вправи про тайм-аути й повтори (з VS Code чи з редактора платформи). Вони знадобляться на кроці 9."
+          en: "Go into the project and copy your `retry.js` and `wait.js` from the timeouts-and-retry exercise into it (from VS Code or from the platform's editor). They are needed in step 9."
+        command: "cd rn06-lab"
+      - text:
+          uk: "Створи `data.js` і заміни `App.tsx` кодом «Крок 3» зі вступу. Потім перевір типи."
+          en: "Create `data.js` and replace `App.tsx` with the “Step 3” code from the introduction. Then check the types."
+        command: "npx tsc --noEmit"
+        expect:
+          uk: "Команда завершується без жодного повідомлення."
+          en: "The command finishes without any message."
+      - text:
+          uk: "У **другому** терміналі запусти mock-сервіс і не закривай цей термінал до кінця завдання."
+          en: "In a **second** terminal start the mock service and keep that terminal open until the end of the task."
+        command: "cd ~/js-course/rn06-mock\nnode mock-service.mjs"
+        expect:
+          uk: "`Mock service listening on http://127.0.0.1:7310` і ще два рядки."
+          en: "`Mock service listening on http://127.0.0.1:7310` and two more lines."
+      - text:
+          uk: "У першому терміналі запусти dev-сервер і відкрий застосунок на заявленій цілі: `a` — емулятор Android, `i` — симулятор iOS, або QR-код у Expo Go. Не перевірено під час підготовки уроку."
+          en: "In the first terminal start the dev server and open the app on your declared target: `a` for the Android emulator, `i` for the iOS simulator, or the QR code in Expo Go. Not checked while preparing this lesson."
+        command: "npx expo start"
+      - text:
+          uk: "Запиши в `DEBUG-NOTES.md` у проєкті: що показує екран, які рядки `GET …` і `load failed: …` надрукував термінал dev-сервера і чи з’явився рядок `[mock] …` у журналі сервісу. На емуляторі Android чи телефоні очікувано `TypeError: Network request failed` і порожній журнал сервісу; на симуляторі iOS список завантажиться — `localhost` там і є комп’ютер."
+          en: "Write into `DEBUG-NOTES.md` in the project: what the screen shows, which `GET …` and `load failed: …` lines the dev server's terminal printed, and whether a `[mock] …` line appeared in the service's log. On an Android emulator or a phone `TypeError: Network request failed` and an empty service log are expected; on the iOS simulator the list loads — `localhost` is the computer there."
+      - text:
+          uk: "Полагодь хост: зміни `BASE_URL` і додай імпорт `Platform`, як у «Крок 7» вступу, збережи й натисни «Оновити» на екрані."
+          en: "Repair the host: change `BASE_URL` and add the `Platform` import as in “Step 7” of the introduction, save and press “Reload” on the screen."
+        expect:
+          uk: "Список з шести бажань; у журналі сервісу — `[mock] GET /records/wishlist?lang=… → 200 from 127.0.0.1`."
+          en: "A list of six wishes; in the service's log, `[mock] GET /records/wishlist?lang=… → 200 from 127.0.0.1`."
+      - text:
+          uk: "Відтвори відсутній тайм-аут: у `QUERY` допиши `&hang=1`, збережи, натисни «Оновити» й почекай пів хвилини."
+          en: "Reproduce the missing timeout: append `&hang=1` to `QUERY`, save, press “Reload” and wait half a minute."
+        expect:
+          uk: "«Завантаження…» не зникає, `load failed` не з’являється, а в журналі сервісу є рядок `→ no answer (hang)`: запит дійшов і чекає."
+          en: "“Loading…” does not go away, no `load failed` appears, and the service's log has a `→ no answer (hang)` line: the request arrived and waits."
+      - text:
+          uk: "Полагодь тайм-аут: заміни `data.js` кодом «Крок 9» вступу (у ньому вже `hang=1`), збережи й натисни «Оновити». Засічи час до повідомлення про збій."
+          en: "Repair the timeout: replace `data.js` with the “Step 9” code from the introduction (it already has `hang=1`), save and press “Reload”. Time how long it takes until the failure message."
+        expect:
+          uk: "Приблизно за 10–11 секунд (три спроби по 3 с і паузи 0,5 с і 1 с) екран показує помилку з назвою `TimeoutError`; у журналі сервісу — рівно три нові рядки `no answer (hang)`."
+          en: "After about 10–11 seconds (three attempts of 3 s and pauses of 0.5 s and 1 s) the screen shows an error named `TimeoutError`; the service's log has exactly three new `no answer (hang)` lines."
+      - text:
+          uk: "Перевір офлайн: прибери `&hang=1` з `QUERY`, збережи, зупини mock-сервіс (Ctrl+C у другому терміналі) і натисни «Оновити»."
+          en: "Check offline: remove `&hang=1` from `QUERY`, save, stop the mock service (Ctrl+C in the second terminal) and press “Reload”."
+        expect:
+          uk: "За кілька секунд — `TypeError: Network request failed` після трьох спроб (у терміналі dev-сервера один рядок `GET …` і один `load failed`), а список не завантажився. Запусти сервіс знову й онови — список повертається."
+          en: "Within a few seconds, `TypeError: Network request failed` after three attempts (one `GET …` line and one `load failed` in the dev server's terminal), and the list did not load. Start the service again and refresh — the list comes back."
+      - text:
+          uk: "Закоміть ремонт разом з нотатками."
+          en: "Commit the repair together with the notes."
+        command: "git add -A\ngit commit -m \"Repair the mock service host and add a timeout with bounded retry\""
+    verify:
+      - id: host-failure-seen
+        text:
+          uk: "Я записав(-ла), як виглядав збій хоста на моїй цілі (або що на симуляторі iOS його немає) і що показував журнал сервісу."
+          en: "I wrote down what the host failure looked like on my target (or that the iOS simulator does not have it) and what the service's log showed."
+      - id: list-loads
+        text:
+          uk: "Після ремонту хоста список завантажився, а в журналі сервісу з’явився рядок зі статусом 200."
+          en: "After the host repair the list loaded, and a line with status 200 appeared in the service's log."
+      - id: bounded-timeout
+        text:
+          uk: "З `hang=1` і ремонтом тайм-ауту екран показав `TimeoutError`, а сервіс записав рівно три запити."
+          en: "With `hang=1` and the timeout repair the screen showed `TimeoutError`, and the service logged exactly three requests."
+      - id: offline
+        text:
+          uk: "Із зупиненим сервісом екран показав `Network request failed`, а після нового запуску сервісу список повернувся."
+          en: "With the service stopped the screen showed `Network request failed`, and after starting the service again the list came back."
+    troubleshooting:
+      - problem:
+          uk: "Після ремонту хоста на емуляторі Android усе одно `Network request failed`"
+          en: "After the host repair the Android emulator still says `Network request failed`"
+        fix:
+          uk: "Перевір, що сервіс працює: `curl -sS http://127.0.0.1:7310/health` з комп’ютера має дати `{\"ok\":true}`. Якщо так, а в журналі сервісу рядка немає — перевір, що збережено саме `data.js` з `10.0.2.2` і що застосунок перезавантажився (у терміналі dev-сервера натисни `r`)."
+          en: "Check the service runs: `curl -sS http://127.0.0.1:7310/health` from the computer must give `{\"ok\":true}`. If it does but the service's log has no line, check that `data.js` with `10.0.2.2` is really saved and the app reloaded (press `r` in the dev server's terminal)."
+      - problem:
+          uk: "Dev-сервер повідомляє, що не може знайти модуль `./retry.js`"
+          en: "The dev server reports it cannot find the module `./retry.js`"
+        fix:
+          uk: "`retry.js` і `wait.js` мають лежати в корені `rn06-lab`, поруч з `App.tsx` і `data.js` (крок 2)."
+          en: "`retry.js` and `wait.js` must sit in the root of `rn06-lab`, next to `App.tsx` and `data.js` (step 2)."
+      - problem:
+          uk: "Телефон у Wi-Fi не дістається сервісу навіть за LAN-адресою"
+          en: "A phone on Wi-Fi does not reach the service even at the LAN address"
+        fix:
+          uk: "Сервіс має бути запущений з `--host 0.0.0.0` (він тоді друкує попередження й LAN-адресу), телефон і комп’ютер — в одній мережі. Брандмауер комп’ютера може блокувати вхідні з’єднання для `node`; на iPhone система може спитати дозвіл на доступ до локальної мережі. Ці два пункти взято з документації платформ, під час підготовки не перевірено."
+          en: "The service must run with `--host 0.0.0.0` (it then prints a warning and the LAN address), the phone and the computer on one network. The computer's firewall may block incoming connections for `node`; on an iPhone the system may ask for permission to access the local network. These two points come from the platforms' documentation and were not checked while preparing this lesson."
+    recovery:
+      uk: "Шаблон створив Git-репозиторій з першим комітом. Якщо щось заплуталося, `git restore App.tsx` повертає екран шаблону, а `data.js` можна створити наново з кроку 3. Mock-сервіс нічого не зберігає: Ctrl+C і новий запуск повертають його до початку."
+      en: "The template created a Git repository with a first commit. If things get tangled, `git restore App.tsx` brings back the template's screen, and `data.js` can be created again from step 3. The mock service stores nothing: Ctrl+C and a new start return it to the beginning."
+
+  - id: release-gate-note
+    kind: explanation
+    title:
+      uk: "А третя причина на цілі?"
+      en: "And the third cause on the target?"
+    body:
+      uk: |
+        Політику простого HTTP Expo Go на заявленій цілі не покаже: це готовий застосунок зі своїми налаштуваннями, а налаштування твого проєкту діють лише у збірці з нього. Якщо в тебе вже встановлені інструменти для нативних збірок (Android Studio з Android SDK чи Xcode), можеш побачити її сам: release-збірка (`npx expo run:android --variant release`) з тим самим `http://10.0.2.2:7310` не дістанеться сервісу, а журнал сервісу лишиться порожнім. Ці команди під час підготовки уроку не запускали.
+
+        Правильний ремонт тут — не вмикати простий HTTP в release, а пам’ятати, що release ходить до справжнього API через HTTPS, а адреса mock-сервісу живе лише в debug-конфігурації — як у вправі з перевіркою транспорту.
+      en: |
+        Expo Go on the declared target will not show the plain-HTTP policy: it is a ready-made app with its own settings, and your project's settings apply only in a build made from it. If you already have the tools for native builds installed (Android Studio with the Android SDK, or Xcode), you can see it yourself: a release build (`npx expo run:android --variant release`) with the same `http://10.0.2.2:7310` does not reach the service, and the service's log stays empty. These commands were not run while preparing this lesson.
+
+        The right repair here is not to turn plain HTTP on in a release, but to remember that a release talks to the real API over HTTPS, while the mock service's address lives only in the debug configuration — as in the transport-check exercise.
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-06
+    body:
+      uk: "Перш ніж вмикати в проєкті джерело з mock-сервісу, перевір той самий ланцюжок на своїй цілі: сервіс відповідає на `curl`, у його журналі з’являється рядок від застосунку, а зупинений сервіс веде до стану офлайну після обмежених спроб."
+      en: "Before you turn on the mock-service source in the project, check the same chain on your target: the service answers `curl`, a line from the app appears in its log, and a stopped service leads to the offline state after bounded attempts."

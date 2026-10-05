@@ -1,0 +1,161 @@
+# Capstone step of unit NO-05 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of NO-05 from this file.
+# A local step: done in the learner's editor and terminal; no platform checks. The project page shows only
+# the intro of a local step, so the intro carries the whole procedure.
+# Every command was run on macOS in a scratch home on all four projects, continuing the NO-04 references, in a
+# Ukrainian and an English workspace, on Node.js 25.2.1 (npm 11.6.2) and on Node.js 22.13.1 (npm 10.9.2, with
+# NODE_OPTIONS=--experimental-strip-types): the NO-04 server wrote a version 1 data file (node try-api.mjs), then
+# npm start (refused: version 1), one record turned into the old v1 shape, npm run migrate (twice), npm run
+# backup, npm start + node try-api.mjs, a damaged store and a restart (restored), the backups moved away and a
+# restart (refused, exit 1), the backups back and a restart (restored), npm test, npm run check, npm run
+# check:server, npm run typecheck. Deliberately wrong variants were run against npm test on all four; each
+# failed at least one test (listed in the task files' headers and in the hand-back). Quoted output is from the
+# wishlist run in the Ukrainian workspace on Node.js 25.2.1. Not run: Linux, Windows.
+# reference/ is the NO-04 reference plus the files of this step (without node_modules/, package-lock.json and
+# the runtime folders server/data/ and server/.check/); sample names in tests/ are fixture strings.
+unit: NO-05
+mode: local
+entry: index.html
+title:
+  uk: "Надійне сховище сервера: контракт, міграція, резервні копії"
+  en: "A durable server store: contract, migration, backups"
+intro:
+  uk: |
+    Сервер твого проєкту отримує сховище, якому можна довіряти: контракт схеми, який перевіряє кожне читання й кожен запис; ініціалізацію з seed, що не повертає видалене; протестовану міграцію з версії 1 на 2 з пробним прогоном; резервну копію, перевірену відновленням; відновлення пошкодженого сховища на старті й чергу записів для одночасних запитів. API `/v1` не змінюється: ті самі адреси, тіла й помилки.
+
+    **Файл чи SQLite.** Ми лишаємо JSON-файл: сховище невелике, його пише один процес сервера, а в Node.js 22.13 (мінімум курсу) немає `sqlite.backup()` — він з’явився в 22.16. Запиши цю причину першим рядком коментаря в `src/fileRepository.ts`. Обереш SQLite — потрібні ті самі гарантії: `PRAGMA user_version`, `PRAGMA integrity_check`, backup через `sqlite.backup()` або `VACUUM INTO`.
+
+    | Проєкт | Міграція 1 → 2 (`migrate1to2`) | Факти перевірки |
+    |---|---|---|
+    | Список бажань | без `acquired` → `false`; `category: ""` → `null` | кількість, `id`, сума ще не отриманих |
+    | Планувальник | без `priority` → `"normal"`; `dueDate: ""` → `null` | кількість, `id`, невиконані з терміном на день `day` |
+    | Трекер звичок | без `frequency` → `"daily"`; `completions` без повторів і за зростанням | кількість, `id`, унікальні виконання, серії на день `day` |
+    | Трекер витрат | неправильна сума чи категорія → карантин у `data/expenses.quarantine.json` | кількість, `id`, суми за категоріями |
+
+    Будь-який інший зіпсований запис зупиняє всю міграцію (у трекері витрат — усе, крім суми й категорії): напівмігрованого сховища не буває, а мовчки записи не губляться.
+
+    Перевірено на macOS на всіх чотирьох проєктах в українському й англійському проєктах — на Node.js 25.2.1 і на Node.js 22.13.1; нижче — «Список бажань» в українському проєкті на 25.2.1. На Node.js 22.13–22.17 кожну команду `npm` запускай з `NODE_OPTIONS=--experimental-strip-types` (на 22.13.1 ми бачили ті самі рядки плюс `ExperimentalWarning` про type stripping, а `npm test`, виведений у файл, звітує у форматі TAP: `# pass`). На Linux і Windows не перевірялося; команди `node -e '…'` нижче — для терміналів macOS і Linux.
+
+    **1. Стан на початку.** `cd ~/js-course/<проєкт>/server`, `git status` — чисто, останній commit — `Expose the records as a /v1 CRUD API with validation, errors, pages and idempotent creates`. У `data/` — файл версії 1, який написав сервер кроку NO-04.
+
+    **2. Контракт — `src/contract.ts`.** Один модуль, який імпортують усі: репозиторій на кожному читанні й перед кожним записом, міграція, перевірка резервної копії, тести. `checkRecords` / `checkStore` / `parseStore(text)` збирають **усі** проблеми (`records[3].price: notWholeNonNegative`, `records[0].isAdmin: unknown`, `records: duplicate id …`) і кидають `ContractError` зі списком `problems`; правила полів — `parse…` з `data/model.ts`, а сховище додає рівно потрібний набір полів, порожній рядок як проблему й різні `id`. `storeText(records)` перевіряє записи **до** `JSON.stringify`. Файл, що не JSON, — теж `ContractError` (з `cause`), а не «записів немає».
+
+    **3. Черга записів — `src/lock.ts`.** `createWriteLock()` — один ланцюжок промісів на репозиторій: кожна зміна (прочитати → змінити → записати) іде після попередньої, помилка однієї не блокує наступні. У репозиторії — нові `create(build)` і `update(id, change)`; `POST` у `src/api.ts` обирає наступний `id` усередині `create`, а `PUT` і `PATCH` зливають поля з найновішим записом усередині `update`. Черга живе в одному процесі: файл, який пишуть два процеси, вона не захищає.
+
+    **4. Міграція — `src/migrate.ts`, `npm run migrate`.** `migrate1to2(store)` — чиста функція: повертає нове сховище, вхід не змінює; версію 2 повертає як є; невідому версію відкидає. `facts` рахує те, що не має змінитися, `dryRun(store)` проганяє міграцію на копії (`structuredClone`), порівнює факти й проганяє вдруге — і ніколи не кидає. `src/migrate-store.ts` (скрипт `"migrate"`) спершу робить пробний прогін, і лише потім одним `writeAtomic` записує версію 2 **разом** із даними; провал — файл не змінено. Сервер зупини перед міграцією.
+
+    **5. Резервна копія — `src/backup.ts`, `npm run backup`.** `backupStore(file, backupsDir, stamp)` читає файл один раз і пише копію `data/backups/<назва>.<stamp>.json` та маніфест `….manifest.json` із фактами й SHA-256 саме цього тексту; зіпсоване сховище не копіює. `verifyBackup(backupPath, scratchDir)` відновлює копію в окрему теку — ніколи поверх живого файлу — і порівнює SHA-256, контракт і факти; не кидає, а повертає `{ ok, count, problems }`. `data/` уже в `.gitignore`.
+
+    **6. Старт — `src/open.ts`, `initStore(config)`.** По черзі: прибрати `*.tmp` після збою; відмовити, якщо файл версії 1 («run "npm run migrate" first») чи новішої за 2; `recoverStore(file, backupsDir, stamp)` — цілий файл лишає, пошкоджений замінює **найновішою перевіреною** копією (спершу знайти копію, потім чіпати файл; файл перейменовується на `….corrupt-<stamp>`, не видаляється; звіт називає записи, яких у копії немає), без перевіреної копії — відмова стартувати; seed — лише в сховище, якого немає або в якому нуль записів. `src/server.ts` викликає `initStore` до `listen` і друкує звіт; `summary` і `acquire`/`complete…` теж відкривають сховище через `initStore`.
+
+    **7. Тести — `tests/storage.test.ts`.** `node:test` на справжніх файлах у `server/.check/storage/`: міграція з полями старої форми й незмінний вхід; запис, який не мігрує, зупиняє все, а `dryRun` повертає `ok: false`; `dryRun` ловить міграцію, що губить запис чи змінює факт; контракт збирає всі проблеми; перший старт — seed, видалений запис не повертається; відмова для версії 1 і 3; `npm run migrate` після провального прогону нічого не змінює; копія перевіряється відновленням, змінений байт чи немає маніфесту — `ok: false`; пошкоджене сховище — найновіша **перевірена** копія і звіт; без копії — відмова, файл на місці; 20 одночасних `POST` — 20 різних `id`. Кількість тестів твого проєкту — у завданні.
+
+    **8. Прогін.** Перевір руками весь шлях (вивід — «Список бажань», українська):
+
+    ```text
+    $ npm start
+    Cannot start: wishlist.json is schemaVersion 1: run "npm run migrate" first
+    $ node -e '…'   (один запис у старій формі версії 1 — команда у твоєму завданні)
+    {"id":"w-05","name":"Квитки на концерт","price":null,"category":""}
+    $ npm run migrate
+    Dry run: 7 wishes, the same ids and wanted total; a second run changes nothing.
+    Migrated wishlist.json to schemaVersion 2: 7 wishes.
+    $ npm run backup
+    Backup: backups/wishlist.<stamp>.json — 7 wishes, wanted total 395, sha256 …
+    Verified by a restore into a scratch folder: 7 wishes, the same sha256, ids and wanted total.
+    $ npm start   (і в другому терміналі node try-api.mjs: як у NO-04, новий запис — w-08), Ctrl+C
+    $ node -e '…'   (пошкодити сховище — команда у твоєму завданні), npm start
+    The store was damaged: moved aside as wishlist.json.corrupt-<stamp>, restored 7 wishes from wishlist.<stamp>.json
+    Not in the backup: w-08
+    Records server listening on http://127.0.0.1:4311
+    $ mv data/backups data/backups-aside, пошкодити ще раз, npm start; echo "exit $?"
+    Cannot start: wishlist.json is damaged and there is no verified backup in ~/js-course/wishlist/server/data/backups: refusing to start
+    exit 1
+    ```
+
+    Поверни теку: `mv data/backups-aside data/backups`, `npm start` — знову `restored`. `<stamp>` — час, `…` — скорочений хеш. `w-08` з’явився після копії, тож відновлення його втратило — і чесно про це сказало; файл `….corrupt-<stamp>` лишився доказом.
+
+    **9. Спробуй зламати.** Прибери перевірку «вже є записи» в `seed` — `✖ the first start seeds six wishes; a wish deleted later does not come back after a restart`; сортуй копії від найстарішої — `✖ a damaged store is moved aside and the newest VERIFIED backup restored; the report names the lost wishes`; перейменуй файл до того, як знайдено копію, — `✖ a damaged store without a verified backup refuses the start and stays where it is`; обери `id` до черги (`nextId(await repository.list())`, потім `save`) — `✖ twenty creates at the same moment get twenty different ids, and all of them are stored`. Назви тестів твого проєкту — у завданні. Поверни код.
+
+    **10. Доказ і commit.** `npm run typecheck` — жодного рядка; `npm run check` і `npm run check:server` — усі `✔`; `npm test` — `fail 0`. У `docs/server.md` — розділ «NO-05»: чому файл, команди й побачений вивід. `cd ..`, `git add -A`, `git commit -m "Give the server a durable store: a contract, a tested migration, verified backups and recovery"`.
+
+    **Самоперевірка:** кожне читання й кожен запис іде через контракт, а пошкоджене сховище ніколи не стає «порожнім»; seed не повертає видалене; міграція чиста, мігрує записи старої форми й записує версію разом із даними лише після пробного прогону; копія перевірена відновленням в окрему теку; відновлення бере найновішу перевірену копію, зберігає пошкоджений файл і без копії відмовляє; одночасні зміни йдуть через одну чергу; `/v1` відповідає як і раніше.
+
+    **Якщо щось не так:** `Cannot start: … schemaVersion 1` — так і має бути до `npm run migrate`. `Dry run failed: the store breaks the contract: records[0].price: notWholeNonNegative` і `… was not changed (schemaVersion 1)` — запис, який міграція не може перенести: виправ саме його у файлі й запусти знову. `Cannot back up: the store breaks the contract: …` — копія пошкодженого сховища нічого не варта: спершу відновлення на старті. `… no verified backup … refusing to start` — поверни теку `data/backups` або виправ файл сам: сервер не стартує з порожнім сховищем навмисно.
+
+    Референс кроку — `Завантажити: NO-05 — Надійне сховище сервера: контракт, міграція, резервні копії` після експорту; відкрий його після власної спроби.
+  en: |
+    Your project's server gets a store you can trust: a schema contract that checks every read and every write; initialization with a seed that never brings back what was deleted; a tested migration from version 1 to 2 with a dry run; a backup verified by a restore; recovery of a damaged store on start, and a queue for simultaneous writes. The `/v1` API does not change: the same addresses, bodies and errors.
+
+    **A file or SQLite.** We keep the JSON file: the store is small, one server process writes it, and Node.js 22.13 (the course minimum) has no `sqlite.backup()` — it arrived in 22.16. Write this reason as the first comment line of `src/fileRepository.ts`. If you choose SQLite, you need the same guarantees: `PRAGMA user_version`, `PRAGMA integrity_check`, a backup with `sqlite.backup()` or `VACUUM INTO`.
+
+    | Project | Migration 1 → 2 (`migrate1to2`) | Facts that are checked |
+    |---|---|---|
+    | Wishlist | no `acquired` → `false`; `category: ""` → `null` | count, `id`s, the total still wanted |
+    | Planner | no `priority` → `"normal"`; `dueDate: ""` → `null` | count, `id`s, pending tasks due by the day `day` |
+    | Habit tracker | no `frequency` → `"daily"`; `completions` unique and ascending | count, `id`s, unique completions, streaks on the day `day` |
+    | Expense tracker | a wrong amount or category → quarantined in `data/expenses.quarantine.json` | count, `id`s, totals per category |
+
+    Any other broken record stops the whole migration (in the expense tracker, anything but the amount and the category): a half-migrated store cannot exist, and no record is lost silently.
+
+    Checked on macOS on all four projects in a Ukrainian and an English project — on Node.js 25.2.1 and on Node.js 22.13.1; below is the Wishlist in a Ukrainian project on 25.2.1. On Node.js 22.13–22.17 run every `npm` command with `NODE_OPTIONS=--experimental-strip-types` (on 22.13.1 we saw the same lines plus an `ExperimentalWarning` about type stripping, and `npm test` written to a file reports in the TAP format: `# pass`). Not checked on Linux or Windows; the `node -e '…'` commands below are for macOS and Linux terminals.
+
+    **1. The starting state.** `cd ~/js-course/<project>/server`, `git status` — clean, the last commit is `Expose the records as a /v1 CRUD API with validation, errors, pages and idempotent creates`. `data/` holds the version 1 file the NO-04 server wrote.
+
+    **2. The contract — `src/contract.ts`.** One module everyone imports: the repository on every read and before every write, the migration, the backup check, the tests. `checkRecords` / `checkStore` / `parseStore(text)` collect **every** problem (`records[3].price: notWholeNonNegative`, `records[0].isAdmin: unknown`, `records: duplicate id …`) and throw a `ContractError` with the list in `problems`; the field rules are the `parse…` of `data/model.ts`, and the store adds exactly the right set of fields, an empty text as a problem and different `id`s. `storeText(records)` checks the records **before** `JSON.stringify`. A file that is not JSON is a `ContractError` too (with a `cause`), never "no records".
+
+    **3. The write queue — `src/lock.ts`.** `createWriteLock()` — one promise chain per repository: every change (read → change → write) runs after the previous one, and one change's failure does not block the next. The repository gets `create(build)` and `update(id, change)`; `POST` in `src/api.ts` picks the next `id` inside `create`, and `PUT` and `PATCH` merge the fields into the newest stored record inside `update`. The queue lives in one process: it does not protect a file that two processes write.
+
+    **4. The migration — `src/migrate.ts`, `npm run migrate`.** `migrate1to2(store)` is pure: it returns a new store and never changes its input; it returns version 2 as it is and refuses an unknown version. `facts` counts what must not change, `dryRun(store)` runs the migration on a copy (`structuredClone`), compares the facts and runs it a second time — and never throws. `src/migrate-store.ts` (the script `"migrate"`) does the dry run first, and only then writes version 2 **together** with the data in one `writeAtomic`; on a failure the file is not changed. Stop the server before the migration.
+
+    **5. The backup — `src/backup.ts`, `npm run backup`.** `backupStore(file, backupsDir, stamp)` reads the file once and writes the copy `data/backups/<name>.<stamp>.json` and the manifest `….manifest.json` with the facts and the SHA-256 of exactly that text; it does not copy a damaged store. `verifyBackup(backupPath, scratchDir)` restores the copy into a separate folder — never over the live file — and compares the SHA-256, the contract and the facts; it does not throw, it answers `{ ok, count, problems }`. `data/` is already in `.gitignore`.
+
+    **6. The start — `src/open.ts`, `initStore(config)`.** In order: remove the `*.tmp` a crash left; refuse a version 1 file ("run "npm run migrate" first") or one newer than 2; `recoverStore(file, backupsDir, stamp)` — a whole file stays, a damaged one is replaced by the **newest verified** backup (first find the backup, then touch the file; the file is renamed to `….corrupt-<stamp>`, never deleted; the report names the records the backup lacks), and without a verified backup the start is refused; the seed goes only into a store that is missing or holds zero records. `src/server.ts` calls `initStore` before `listen` and prints the report; `summary` and `acquire`/`complete…` open the store through `initStore` too.
+
+    **7. Tests — `tests/storage.test.ts`.** `node:test` on real files in `server/.check/storage/`: a migration of old-shape fields and an unchanged input; a record that cannot move stops everything, and `dryRun` answers `ok: false`; `dryRun` catches a migration that loses a record or changes a fact; the contract collects every problem; the first start seeds, a deleted record does not come back; version 1 and 3 are refused; `npm run migrate` changes nothing after a failed dry run; a backup is verified by a restore, a changed byte or a missing manifest is `ok: false`; a damaged store — the newest **verified** backup and the report; without a backup — a refusal, the file stays; 20 simultaneous `POST`s — 20 different `id`s. The number of tests of your project is in the task.
+
+    **8. The run.** Check the whole path by hand (the output is the Wishlist, Ukrainian):
+
+    ```text
+    $ npm start
+    Cannot start: wishlist.json is schemaVersion 1: run "npm run migrate" first
+    $ node -e '…'   (one record in the old version 1 shape — the command is in your task)
+    {"id":"w-05","name":"Квитки на концерт","price":null,"category":""}
+    $ npm run migrate
+    Dry run: 7 wishes, the same ids and wanted total; a second run changes nothing.
+    Migrated wishlist.json to schemaVersion 2: 7 wishes.
+    $ npm run backup
+    Backup: backups/wishlist.<stamp>.json — 7 wishes, wanted total 395, sha256 …
+    Verified by a restore into a scratch folder: 7 wishes, the same sha256, ids and wanted total.
+    $ npm start   (and node try-api.mjs in a second terminal: as in NO-04, the new record is w-08), Ctrl+C
+    $ node -e '…'   (damage the store — the command is in your task), npm start
+    The store was damaged: moved aside as wishlist.json.corrupt-<stamp>, restored 7 wishes from wishlist.<stamp>.json
+    Not in the backup: w-08
+    Records server listening on http://127.0.0.1:4311
+    $ mv data/backups data/backups-aside, damage it again, npm start; echo "exit $?"
+    Cannot start: wishlist.json is damaged and there is no verified backup in ~/js-course/wishlist/server/data/backups: refusing to start
+    exit 1
+    ```
+
+    Bring the folder back: `mv data/backups-aside data/backups`, `npm start` — `restored` again. `<stamp>` is a time, `…` a shortened hash. `w-08` appeared after the backup, so the restore lost it — and said so honestly; the file `….corrupt-<stamp>` stayed as evidence.
+
+    **9. Try to break it.** Remove the "there are records already" check from `seed` — `✖ the first start seeds six wishes; a wish deleted later does not come back after a restart`; sort the backups oldest first — `✖ a damaged store is moved aside and the newest VERIFIED backup restored; the report names the lost wishes`; rename the file before a backup is found — `✖ a damaged store without a verified backup refuses the start and stays where it is`; pick the `id` outside the queue (`nextId(await repository.list())`, then `save`) — `✖ twenty creates at the same moment get twenty different ids, and all of them are stored`. The test names of your project are in the task. Put the code back.
+
+    **10. Evidence and the commit.** `npm run typecheck` — not a single line; `npm run check` and `npm run check:server` — every check `✔`; `npm test` — `fail 0`. In `docs/server.md` — a section “NO-05”: why a file, the commands and the output you saw. `cd ..`, `git add -A`, `git commit -m "Give the server a durable store: a contract, a tested migration, verified backups and recovery"`.
+
+    **Self-check:** every read and every write goes through the contract, and a damaged store never becomes "empty"; the seed never brings back what was deleted; the migration is pure, moves old-shape records and writes the version together with the data only after a dry run; a backup is verified by a restore into a separate folder; recovery takes the newest verified backup, keeps the damaged file and refuses without a backup; simultaneous changes go through one queue; `/v1` answers as before.
+
+    **If something goes wrong:** `Cannot start: … schemaVersion 1` — that is right until `npm run migrate`. `Dry run failed: the store breaks the contract: records[0].price: notWholeNonNegative` and `… was not changed (schemaVersion 1)` — a record the migration cannot move: fix exactly that record in the file and run it again. `Cannot back up: the store breaks the contract: …` — a copy of a damaged store is worth nothing: recover on start first. `… no verified backup … refusing to start` — bring the `data/backups` folder back or repair the file yourself: the server does not start with an empty store on purpose.
+
+    The step's reference is `Download: NO-05 — A durable server store: contract, migration, backups` after the export; open it after your own attempt.
+purpose:
+  uk: "Це крок твого проєкту: контракт схеми, ініціалізацію з seed, протестовану міграцію, перевірену резервну копію, відновлення після пошкодження й чергу записів із цього розділу ти застосовуєш до сховища власного сервера. Платформа цей крок не перевіряє: доказ — `npm test`, вивід `npm run migrate` і `npm run backup`, звіт відновлення на старті, `docs/server.md` і commit."
+  en: "This is a step of your project: you apply this unit's schema contract, seeded initialization, tested migration, verified backup, corruption recovery and write queue to your own server's store. The platform does not check this step: the evidence is `npm test`, the output of `npm run migrate` and `npm run backup`, the recovery report on start, `docs/server.md` and the commit."
+objectives:
+  - uk: "Дати серверу проєкту сховище з контрактом схеми на кожному читанні й записі, seed лише в порожнє сховище й протестовану міграцію з версії 1 на 2, яка після пробного прогону записує версію разом із даними."
+    en: "Give the project's server a store with a schema contract on every read and write, a seed only into an empty store and a tested migration from version 1 to 2 that writes the version together with the data after a dry run."
+  - uk: "Робити резервні копії, перевірені відновленням в окрему теку, і на старті замінювати пошкоджене сховище найновішою перевіреною копією, зберігаючи пошкоджений файл і відмовляючись стартувати без копії."
+    en: "Take backups verified by a restore into a separate folder, and on start replace a damaged store with the newest verified backup, keeping the damaged file and refusing to start without a backup."
+transfer:
+  uk: "Цей крок виконується в редакторі й терміналі на твоєму комп’ютері: що зробити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor and a terminal on your computer: what to do, the expected output and the self-check list are above and on the step's page in your project."

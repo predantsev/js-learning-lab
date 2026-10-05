@@ -1,0 +1,400 @@
+id: no-02-08-independent-file-repository
+unit: NO-02
+title:
+  uk: "Самостійно: файловий репозиторій, що переживає збій"
+  en: "Independent: a file repository that survives failure"
+kind: assessment
+minutes: 30
+contentVersion: 1
+purpose:
+  uk: "Перевірити, що ти без підказок будуєш файлове сховище, на яке може покластися сервер: читає незалежні файли одночасно, не бере завеликих файлів, не лишає напівзаписаних даних після збою, розрізняє «файла ще немає» і справжню помилку та закриває кожен відкритий файл. А потім доводиш це справжнім вбиванням процесу у своєму терміналі."
+  en: "To check that you build, without hints, a file store a server can rely on: it reads independent files at the same time, refuses oversized files, never leaves half-written data after a crash, tells “no file yet” from a real error and closes every file it opens. Then you prove it by really killing the process in your own terminal."
+objectives:
+  - uk: "Без підказок написати файловий репозиторій (`list`, `get`, `save`, `remove`, `summary`, `recover`) для синтетичних витрат з одночасними незалежними читаннями, обмеженим читанням і записом, атомарним записом, розрізненням кодів помилок і гарантованим закриттям FileHandle."
+    en: "Implement, without hints, a file repository (`list`, `get`, `save`, `remove`, `summary`, `recover`) for synthetic expenses with concurrent independent reads, bounded reads and writes, atomic writes, error-code mapping and guaranteed FileHandle cleanup."
+  - uk: "Показати, вбиваючи процес посеред збереження й перезапускаючи його, що жоден підтверджений запис не втрачено й не записано наполовину."
+    en: "Show, by killing the process mid-save and restarting it, that no confirmed record is lost or half-written."
+prerequisites: [no-02-07-debug-traversal-partial-write]
+subskills:
+  - { family: B-02, skill: "asynchronous I/O", depth: assess }
+  - { family: B-02, skill: "bounded reads/writes", depth: assess }
+  - { family: B-02, skill: "errors and handle cleanup", depth: assess }
+glossary: []
+selfCheck: [expense-repo]
+
+blocks:
+  - id: what-is-checked
+    kind: explanation
+    title:
+      uk: "Що перевіряється"
+      en: "What is checked"
+    body:
+      uk: |
+        Тема — репозиторій витрат: записи лежать у `expenses.json` як `{ schemaVersion: 1, records }`, а назви категорій — у `categories.json`. Підказок немає: користуйся тим, що вивчив у цьому розділі.
+
+        Дві частини:
+
+        1. **У курсі** — репозиторій у `repository.js`. Автоматичні перевірки обривають запис посередині, вимірюють, скільки операцій іде одночасно, і рахують відкриті FileHandle.
+        2. **У твоєму терміналі** — той самий файл під справжнім збоєм: наданий скрипт 20 разів вбиває процес, що зберігає витрати, у випадкову мить, перезапускає репозиторій і перевіряє дані.
+      en: |
+        The topic is an expense repository: the records live in `expenses.json` as `{ schemaVersion: 1, records }`, and the category labels in `categories.json`. There are no hints: use what you learned in this unit.
+
+        Two parts:
+
+        1. **In the course** — the repository in `repository.js`. The automatic checks cut a write in the middle, measure how many operations run at the same time and count open FileHandles.
+        2. **In your terminal** — the same file under a real crash: a supplied script kills a process that saves expenses at a random moment 20 times, restarts the repository and checks the data.
+
+  - id: expense-repo
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: isolated-node
+    dir: expense-repo
+    entry: index.js
+    editable: [repository.js]
+    strings:
+      food: { uk: "Їжа", en: "Food" }
+      transport: { uk: "Транспорт", en: "Transport" }
+      fun: { uk: "Розваги", en: "Fun" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      pass: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      lunch: { uk: "Обід", en: "Lunch" }
+    title:
+      uk: "Репозиторій витрат"
+      en: "An expense repository"
+    instructions:
+      uk: |
+        Напиши `createFileRepository(dataDir, { maxBytes })` у `repository.js`. Записи — у `<dataDir>/expenses.json` як `{ schemaVersion: 1, records }`; категорії — масив `{ id, label }` у `<dataDir>/categories.json`. Методи (усі асинхронні):
+
+        - `list()` — усі записи; якщо `expenses.json` ще немає, `[]`;
+        - `get(id)` — запис або `null`;
+        - `save(record)` — додає запис або замінює запис з тим самим `id`;
+        - `remove(id)` — видаляє й повертає `true`; для невідомого `id` — `false`;
+        - `summary()` — `{ [categoryId]: { label, totalMinor } }`: сума `amountMinor` кожної категорії з назвою з `categories.json`; обидва файли читаються **одночасно**;
+        - `recover()` — видаляє з `dataDir` усі файли `*.tmp` і нічого іншого.
+
+        Правила:
+
+        - файл, більший за `maxBytes`, відхиляється з `RangeError` до читання хоч одного байта;
+        - збереження, після якого файл став би більшим за `maxBytes`, відхиляється з `RangeError` і нічого не змінює;
+        - запис іде в тимчасовий файл `*.tmp` у тій самій теці, скидається на диск через `sync()` (або `datasync()`) і лише потім одним `rename` стає `expenses.json`; збій посеред запису лишає старі записи цілими, а `save` відхиляється;
+        - зламаний `expenses.json` (не JSON) — це помилка з початковою `SyntaxError` у `cause`, а не «записів немає»;
+        - кожен відкритий FileHandle закрито на кожному шляху.
+
+        Перевірки підміняють функції `node:fs/promises` і методи FileHandle — користуйся ними.
+      en: |
+        Write `createFileRepository(dataDir, { maxBytes })` in `repository.js`. The records live in `<dataDir>/expenses.json` as `{ schemaVersion: 1, records }`; the categories are an array of `{ id, label }` in `<dataDir>/categories.json`. The methods (all asynchronous):
+
+        - `list()` — all records; if `expenses.json` does not exist yet, `[]`;
+        - `get(id)` — the record or `null`;
+        - `save(record)` — adds the record or replaces the record with the same `id`;
+        - `remove(id)` — deletes it and returns `true`; for an unknown `id`, `false`;
+        - `summary()` — `{ [categoryId]: { label, totalMinor } }`: the sum of `amountMinor` per category with the label from `categories.json`; both files are read **at the same time**;
+        - `recover()` — deletes every `*.tmp` file in `dataDir` and nothing else.
+
+        Rules:
+
+        - a file larger than `maxBytes` is refused with a `RangeError` before a single byte is read;
+        - a save after which the file would be larger than `maxBytes` is refused with a `RangeError` and changes nothing;
+        - a write goes into a temp file `*.tmp` in the same folder, is flushed with `sync()` (or `datasync()`) and only then becomes `expenses.json` with one `rename`; a crash in the middle of a write leaves the old records whole, and `save` rejects;
+        - a broken `expenses.json` (not JSON) is an error with the original `SyntaxError` in `cause`, not “no records”;
+        - every FileHandle it opens is closed on every path.
+
+        The checks replace functions of `node:fs/promises` and methods of FileHandle — use them.
+    testTitles:
+      "list() of a folder without expenses.json is []":
+        uk: "`list()` у теці без `expenses.json` дає `[]`"
+        en: "`list()` in a folder without `expenses.json` gives `[]`"
+      "save stores { schemaVersion: 1, records } and replaces a record with the same id":
+        uk: "`save` зберігає `{ schemaVersion: 1, records }` і замінює запис з тим самим `id`"
+        en: "`save` stores `{ schemaVersion: 1, records }` and replaces a record with the same `id`"
+      "get and remove of an unknown id give null and false; remove deletes a record":
+        uk: "`get` і `remove` невідомого `id` дають `null` і `false`; `remove` видаляє запис"
+        en: "`get` and `remove` of an unknown `id` give `null` and `false`; `remove` deletes a record"
+      "an expenses.json over maxBytes is refused with a RangeError before any byte is read":
+        uk: "`expenses.json` понад `maxBytes` відхилено з `RangeError` до читання першого байта"
+        en: "An `expenses.json` over `maxBytes` is refused with a `RangeError` before any byte is read"
+      "a save that would exceed maxBytes is refused with a RangeError and changes nothing":
+        uk: "Збереження понад `maxBytes` відхилено з `RangeError` і нічого не змінює"
+        en: "A save that would exceed `maxBytes` is refused with a `RangeError` and changes nothing"
+      "a crash in the middle of save leaves the old records whole":
+        uk: "Збій посеред `save` лишає старі записи цілими"
+        en: "A crash in the middle of `save` leaves the old records whole"
+      "save flushes a .tmp file in the same folder with sync() before renaming it":
+        uk: "`save` скидає файл `.tmp` у тій самій теці через `sync()` перед `rename`"
+        en: "`save` flushes a `.tmp` file in the same folder with `sync()` before the `rename`"
+      "a corrupt expenses.json rejects with the SyntaxError as cause":
+        uk: "Зламаний `expenses.json` дає помилку з `SyntaxError` у `cause`"
+        en: "A broken `expenses.json` rejects with the `SyntaxError` as `cause`"
+      "every FileHandle is closed after reads, saves, refusals and a corrupt file":
+        uk: "Кожен FileHandle закрито після читань, збережень, відмов і зламаного файла"
+        en: "Every FileHandle is closed after reads, saves, refusals and a broken file"
+      "summary() reads expenses.json and categories.json at the same time":
+        uk: "`summary()` читає `expenses.json` і `categories.json` одночасно"
+        en: "`summary()` reads `expenses.json` and `categories.json` at the same time"
+      "summary() totals amountMinor per category with its label":
+        uk: "`summary()` підсумовує `amountMinor` за категоріями з їхніми назвами"
+        en: "`summary()` totals `amountMinor` per category with its label"
+      "recover() removes only .tmp files":
+        uk: "`recover()` видаляє лише файли `.tmp`"
+        en: "`recover()` removes only `.tmp` files"
+    solutionNote:
+      uk: "Одна функція `readJson` читає обидва файли: `stat` з межею до `open`, `ENOENT` → значення «порожньо», інші помилки й `SyntaxError` — нова `Error` з `cause`, `close()` у `finally`. `write` вимірює `Buffer.byteLength` до запису, пише `*.tmp` поруч, викликає `sync()` і робить `rename`. `summary` запускає обидва читання через `Promise.all`. `recover` видаляє лише `*.tmp`. Варіант, що бере розмір з `handle.stat()`, читає шматками й видаляє тимчасовий файл після невдалого запису, теж правильний."
+      en: "One `readJson` function reads both files: `stat` with the limit before `open`, `ENOENT` → the “empty” value, other errors and a `SyntaxError` → a new `Error` with `cause`, `close()` in `finally`. `write` measures `Buffer.byteLength` before writing, writes a `*.tmp` next to the file, calls `sync()` and does a `rename`. `summary` starts both reads with `Promise.all`. `recover` deletes only `*.tmp`. A version that takes the size from `handle.stat()`, reads in chunks and deletes the temp file after a failed write is correct too."
+    feedback:
+      - when: { test: "list() of a folder without expenses.json is []" }
+        message:
+          uk: "Ця перевірка очікує `[]` від `list()` у новій теці, де `expenses.json` ще немає. Відсутній файл (`ENOENT`) тут — очікуваний випадок, а не помилка."
+          en: "This check expects `[]` from `list()` in a new folder where `expenses.json` does not exist yet. A missing file (`ENOENT`) is an expected case here, not an error."
+      - when: { test: "save stores { schemaVersion: 1, records } and replaces a record with the same id" }
+        message:
+          uk: "Ця перевірка зберігає `e-01`, `e-02` і знову `e-01` з іншою сумою й очікує два записи (порядок не важливий), новий `e-01` від `get` і `schemaVersion: 1` у файлі."
+          en: "This check saves `e-01`, `e-02` and `e-01` again with another amount and expects two records (the order does not matter), the new `e-01` from `get` and `schemaVersion: 1` in the file."
+      - when: { test: "get and remove of an unknown id give null and false; remove deletes a record" }
+        message:
+          uk: "Ця перевірка очікує `null` від `get('e-99')`, `false` від `remove('e-99')`, `true` від `remove('e-02')` і що після цього `list()` поверне лише `e-01`."
+          en: "This check expects `null` from `get('e-99')`, `false` from `remove('e-99')`, `true` from `remove('e-02')`, and `list()` to return only `e-01` afterwards."
+      - when: { test: "an expenses.json over maxBytes is refused with a RangeError before any byte is read" }
+        message:
+          uk: "Ця перевірка дає `maxBytes: 200` для більшого файла й очікує `RangeError` без жодного виклику читання."
+          en: "This check gives `maxBytes: 200` for a larger file and expects a `RangeError` without a single read call."
+      - when: { test: "a save that would exceed maxBytes is refused with a RangeError and changes nothing" }
+        message:
+          uk: "Ця перевірка дає ліміт, у який влазить наявний файл, але не файл із ще одним записом, і очікує `RangeError`, а `expenses.json` — байт у байт таким, як був."
+          en: "This check gives a limit that fits the existing file but not the file with one more record, and expects a `RangeError` with `expenses.json` byte for byte as it was."
+      - when: { test: "a crash in the middle of save leaves the old records whole" }
+        message:
+          uk: "Ця перевірка обриває кожен запис посередині й очікує, що `save` відхилиться, а `expenses.json` міститиме старі записи як правильний JSON."
+          en: "This check cuts every write in the middle and expects `save` to reject while `expenses.json` holds the old records as valid JSON."
+      - when: { test: "save flushes a .tmp file in the same folder with sync() before renaming it" }
+        message:
+          uk: "Ця перевірка очікує за одне збереження рівно один `rename` з `node:fs/promises`: з файла `*.tmp` у теці даних на `expenses.json`, і виклик `sync()` чи `datasync()` перед ним."
+          en: "This check expects exactly one `rename` from `node:fs/promises` per save: from a `*.tmp` file in the data folder onto `expenses.json`, with a call of `sync()` or `datasync()` before it."
+      - when: { test: "a corrupt expenses.json rejects with the SyntaxError as cause" }
+        message:
+          uk: "Ця перевірка очікує, що `list()` для зламаного JSON відхилиться з помилкою, `cause` якої — `SyntaxError`. Порожній список тут сховав би втрату даних."
+          en: "This check expects `list()` to reject for broken JSON with an error whose `cause` is a `SyntaxError`. An empty list here would hide the data loss."
+      - when: { test: "every FileHandle is closed after reads, saves, refusals and a corrupt file" }
+        message:
+          uk: "Ця перевірка рахує незакриті FileHandle після `list()`, `save`, `summary()`, зламаного файла й відмови за лімітом — щоразу має бути 0. Попередження «Closing file descriptor … on garbage collection» (Node 22) чи помилка «A FileHandle object was closed during garbage collection» (Node 25 і новіші) означають те саме: якийсь файл лишився відкритим."
+          en: "This check counts unclosed FileHandles after `list()`, `save`, `summary()`, a broken file and a refusal over the limit — it must be 0 every time. A line “Closing file descriptor … on garbage collection” (Node 22) or the error “A FileHandle object was closed during garbage collection” (Node 25 and newer) means the same: some file was left open."
+      - when: { test: "summary() reads expenses.json and categories.json at the same time" }
+        message:
+          uk: "Ця перевірка сповільнює кожну файлову операцію на 30 мс і очікує, що під час `summary()` принаймні дві йтимуть водночас. Два `await` поспіль читають файли по черзі."
+          en: "This check slows every file operation down by 30 ms and expects at least two of them to run at the same time during `summary()`. Two `await`s in a row read the files in turn."
+      - when: { test: "summary() totals amountMinor per category with its label" }
+        message:
+          uk: "Ця перевірка очікує для чотирьох витрат `food` — 105600, `transport` — 52000, `fun` — 18000, кожну з `label` із `categories.json`."
+          en: "This check expects, for four expenses, `food` — 105600, `transport` — 52000, `fun` — 18000, each with its `label` from `categories.json`."
+      - when: { test: "recover() removes only .tmp files" }
+        message:
+          uk: "Ця перевірка кладе в теку `expenses.json.c3.tmp` і очікує, що після `recover()` лишаться тільки `categories.json` і `expenses.json` зі старими записами."
+          en: "This check puts `expenses.json.c3.tmp` into the folder and expects only `categories.json` and `expenses.json` with the old records to remain after `recover()`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: повторюваний результат"
+      en: "Recall: a repeatable result"
+    items:
+      - id: repeatable-crash
+        from: js-09-04-deterministic-fixtures
+        prompt:
+          uk: "Скрипт у твоєму терміналі вбиває процес у випадкову мить, тож кожен запуск інший. Як автоматичні перевірки цієї вправи роблять збій повторюваним?"
+          en: "The script in your terminal kills the process at a random moment, so every run is different. How do the automatic checks of this exercise make the crash repeatable?"
+        answer:
+          type: choice
+          options:
+            - id: fixed-point
+              text:
+                uk: "Збій завжди в тому самому місці: кожен запис обривається рівно посередині, а вхідні дані щоразу однакові"
+                en: "The crash is always at the same point: every write is cut exactly in the middle, and the input data is the same every time"
+            - id: many-runs
+              text:
+                uk: "Перевірки запускають збереження тисячу разів, і хоча б раз збій точно влучить посередині"
+                en: "The checks run the save a thousand times, so at least once the crash is sure to land in the middle"
+              why:
+                uk: "Багато випадкових спроб не дають гарантії й роблять перевірку повільною та нестабільною. Повторюваність дає фіксована точка збою, як фіксоване «сьогодні» в JS-09."
+                en: "Many random attempts guarantee nothing and make the check slow and flaky. Repeatability comes from a fixed crash point, like the fixed “today” in JS-09."
+            - id: real-clock
+              text:
+                uk: "Перевірки чекають, доки запис триватиме довше за таймер, і тоді зупиняють процес"
+                en: "The checks wait until a write takes longer than a timer and then stop the process"
+              why:
+                uk: "Час запису залежить від комп’ютера й диска — саме тому вимірювання часу дає різний результат. Перевірка, що залежить від годинника, не детермінована."
+                en: "How long a write takes depends on the computer and the disk — that is exactly why timing gives different results. A check that depends on the clock is not deterministic."
+          correct: [fixed-point]
+        explanation:
+          uk: "Як у JS-09 «сьогодні» передають параметром, так тут точку збою задає перевірка: запис обривається посередині щоразу. Випадковий збій у терміналі — додатковий доказ на справжньому процесі, а не заміна повторюваних перевірок."
+          en: "Just as JS-09 passes “today” in as a parameter, here the check sets the crash point: the write is cut in the middle every time. The random crash in the terminal is extra evidence on a real process, not a replacement for repeatable checks."
+
+  - id: crash-check
+    kind: example
+    runtime: isolated-node
+    dir: crash-check
+    entry: index.js
+    strings:
+      lunch: { uk: "Обід", en: "Lunch" }
+      oldFile: { uk: "старий файл, одне непідтверджене збереження втрачено", en: "old file, one unconfirmed save lost" }
+      confirmedMissing: { uk: "бракує підтвердженого збереження", en: "a confirmed save is missing" }
+      halfWritten: { uk: "запис наполовину", en: "a half-written record" }
+    title:
+      uk: "Наданий скрипт справжнього збою"
+      en: "The supplied real-crash script"
+    body:
+      uk: |
+        Тут чотири файли для твого терміналу:
+
+        - `crash-check.mjs` — 20 разів запускає `save-loop.mjs` окремим процесом, через 100–250 мс вбиває його (`SIGKILL`: процес не встигає нічого прибрати), створює новий репозиторій, викликає `recover()` і `list()` та перевіряє дані;
+        - `save-loop.mjs` — зберігає витрати одну за одною й після кожного успішного `save` друкує `saved <id>`: такий запис **підтверджено**;
+        - `invariants.js` — що має виконуватися після кожного перезапуску: кожен запис цілий, `id` не повторюються, жоден підтверджений запис не зник;
+        - `index.js` — пробує `checkInvariants` на трьох вигаданих результатах.
+
+        Платформа не дозволяє запускати дочірні процеси, тож **Запустити** виконує лише `index.js`. Сам `crash-check.mjs` працює тільки у твоєму терміналі.
+      en: |
+        Here are four files for your terminal:
+
+        - `crash-check.mjs` — starts `save-loop.mjs` as a separate process 20 times, kills it after 100–250 ms (`SIGKILL`: the process gets no chance to clean up), creates a fresh repository, calls `recover()` and `list()` and checks the data;
+        - `save-loop.mjs` — saves expenses one after another and after every successful `save` prints `saved <id>`: such a record is **confirmed**;
+        - `invariants.js` — what must hold after every restart: every record whole, no repeated `id`, no confirmed record missing;
+        - `index.js` — tries `checkInvariants` on three made-up results.
+
+        The platform does not allow child processes, so **Run** executes only `index.js`. `crash-check.mjs` itself works only in your terminal.
+    tryIt:
+      uk: "У першому випадку `index.js` додай до масиву ще один `lunch('e-0001')` і запусти: `checkInvariants` повідомить про повторений `id`."
+      en: "In the first case of `index.js`, add one more `lunch('e-0001')` to the array and run: `checkInvariants` reports a repeated `id`."
+
+  - id: crash-locally
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Справжній збій: вбий процес 20 разів"
+      en: "A real crash: kill the process 20 times"
+    intro:
+      uk: |
+        Тут потрібні лише Node.js і термінал, жодних npm-пакетів. Почни, коли всі перевірки вправи «Репозиторій витрат» зелені.
+
+        Під час підготовки уроку ці кроки виконано на macOS з Node.js v25.2.1 і v20.18.0; вивід нижче справжній (уривки позначено `…`). Node 22 і Windows ми не перевіряли: у Windows `child.kill('SIGKILL')` теж зупиняє процес примусово, але цей шлях — неперевірений.
+
+        `SIGKILL` — не вимкнення живлення: дані, які операційна система вже прийняла, переживають убитий процес. Тому цей скрипт не може перевірити, чи був `sync()`, — це робить перевірка у вправі.
+
+        **Крок 4 — правильний репозиторій (уривок):**
+
+        ```text
+        round  1: killed after 248 ms, 36 records, 36 confirmed — ok
+        round  2: killed after 231 ms, 70 records, 70 confirmed — ok
+        …
+        round 10: killed after 134 ms, 214 records, 213 confirmed — ok
+        …
+        round 20: killed after 127 ms, 323 records, 320 confirmed — ok
+        all 20 rounds ok
+        ```
+
+        Записів може бути більше, ніж підтверджених: `save` завершився, але процес убито раніше, ніж його `saved` дійшло до скрипта. Таке може статися в кожному раунді, тож за 20 раундів різниця виростає до кількох записів. Це не втрата.
+
+        **Крок 6 — той самий скрипт із записом просто в `expenses.json` (уривок):**
+
+        ```text
+        round  1: killed after 182 ms, 118 records, 117 confirmed — ok
+        …
+        round 20: killed after 213 ms, 0 records, 250 confirmed — after the restart: cannot read expenses.json (cause: Unexpected end of JSON input)
+        17 of 20 rounds lost or damaged data
+        ```
+
+        Раунди після першої поломки теж зламані: новий процес збереження так само не може прочитати файл. Поломку видно лише тоді, коли вбивство влучає в коротку мить між спорожненням файла й кінцем запису. Під час підготовки уроку запис на місці зламався в 11 з 12 запусків скрипта (по 20 раундів, Node 25.2.1 і 20.18.0); тож якщо ти побачиш `all 20 rounds ok`, запусти ще раз-другий.
+
+        Числа мілісекунд і записів у тебе будуть інші: момент убивства випадковий.
+      en: |
+        You need only Node.js and a terminal here, no npm packages. Start when every check of the exercise “An expense repository” is green.
+
+        While preparing this lesson these steps were run on macOS with Node.js v25.2.1 and v20.18.0; the output below is real (excerpts are marked with `…`). We did not check Node 22 or Windows: on Windows `child.kill('SIGKILL')` also stops the process by force, but that path is unverified.
+
+        `SIGKILL` is not a power cut: data the operating system has already accepted survives a killed process. So this script cannot tell whether `sync()` was called — the check in the exercise does that.
+
+        **Step 4 — a correct repository (excerpt):**
+
+        ```text
+        round  1: killed after 248 ms, 36 records, 36 confirmed — ok
+        round  2: killed after 231 ms, 70 records, 70 confirmed — ok
+        …
+        round 10: killed after 134 ms, 214 records, 213 confirmed — ok
+        …
+        round 20: killed after 127 ms, 323 records, 320 confirmed — ok
+        all 20 rounds ok
+        ```
+
+        There may be more records than confirmed ones: the `save` finished, but the process was killed before its `saved` reached the script. That can happen in every round, so over 20 rounds the gap grows to a few records. That is not a loss.
+
+        **Step 6 — the same script with writes straight into `expenses.json` (excerpt):**
+
+        ```text
+        round  1: killed after 182 ms, 118 records, 117 confirmed — ok
+        …
+        round 20: killed after 213 ms, 0 records, 250 confirmed — after the restart: cannot read expenses.json (cause: Unexpected end of JSON input)
+        17 of 20 rounds lost or damaged data
+        ```
+
+        The rounds after the first break are broken too: the next saving process cannot read the file either. The break shows only when a kill lands in the short moment between emptying the file and finishing the write. While this lesson was prepared, the in-place write broke in 11 of 12 runs of the script (20 rounds each, Node 25.2.1 and 20.18.0); so if you see `all 20 rounds ok`, run it once or twice more.
+
+        Your numbers of milliseconds and records will differ: the moment of the kill is random.
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1 і v20.18.0", en: "checked with v25.2.1 and v20.18.0" } }
+    steps:
+      - text:
+          uk: "Створи теку для перевірки й перейди в неї."
+          en: "Create a folder for the check and go into it."
+        command: "mkdir -p ~/js-course/no02-crash\ncd ~/js-course/no02-crash"
+      - text:
+          uk: "Створи в цій теці у VS Code файл `package.json` з одним рядком `{ \"type\": \"module\" }` — так Node читатиме файли `.js` як модулі ES. Збережи його."
+          en: "In VS Code, create the file `package.json` in this folder with the single line `{ \"type\": \"module\" }` — so that Node reads `.js` files as ES modules. Save it."
+      - text:
+          uk: "Створи файли `crash-check.mjs`, `save-loop.mjs` і `invariants.js` і встав у кожен вміст однойменного файла з прикладу «Наданий скрипт справжнього збою». Потім створи `repository.js` і встав свій розв’язок вправи «Репозиторій витрат» — той, з яким усі перевірки зелені."
+          en: "Create the files `crash-check.mjs`, `save-loop.mjs` and `invariants.js` and paste into each the content of the file with the same name from the example “The supplied real-crash script”. Then create `repository.js` and paste your solution of the exercise “An expense repository” — the one with every check green."
+        expect:
+          uk: "У теці п’ять файлів: `package.json`, `crash-check.mjs`, `save-loop.mjs`, `invariants.js`, `repository.js`."
+          en: "The folder holds five files: `package.json`, `crash-check.mjs`, `save-loop.mjs`, `invariants.js`, `repository.js`."
+      - text:
+          uk: "Запусти перевірку. Вона триває кілька секунд: 20 разів по 100–250 мс."
+          en: "Run the check. It takes a few seconds: 20 times 100–250 ms."
+        command: "node crash-check.mjs"
+        expect:
+          uk: "20 рядків `round …— ok` і останній рядок `all 20 rounds ok`, як у кроці 4 вступу."
+          en: "20 lines `round … — ok` and the last line `all 20 rounds ok`, as in step 4 of the introduction."
+      - text:
+          uk: "Переконайся, що скрипт справді ловить поломку. Спершу збережи запасну копію правильного репозиторію."
+          en: "Make sure the script really catches a defect. First keep a backup of the correct repository."
+        command: "cp repository.js repository.ok.js"
+      - text:
+          uk: "Тепер у `repository.js` зміни `save` так, щоб він писав просто в `expenses.json`, без тимчасового файла й `rename`. Збережи файл і запусти перевірку ще раз."
+          en: "Now change `save` in `repository.js` so that it writes straight into `expenses.json`, without a temp file and `rename`. Save the file and run the check again."
+        command: "node crash-check.mjs"
+        expect:
+          uk: "Раунди з `after the restart: … Unexpected end of JSON input` чи схожою помилкою (`Unterminated string in JSON …`) і підсумок `… rounds lost or damaged data`, як у кроці 6 вступу. Скільки раундів зламається, залежить від того, куди влучило вбивство; якщо всі 20 — `ok`, запусти ту саму команду ще раз."
+          en: "Rounds with `after the restart: … Unexpected end of JSON input` or a similar error (`Unterminated string in JSON …`) and the summary `… rounds lost or damaged data`, as in step 6 of the introduction. How many rounds break depends on where the kill lands; if all 20 are `ok`, run the same command again."
+      - text:
+          uk: "Поверни правильний репозиторій і запусти ще раз."
+          en: "Restore the correct repository and run once more."
+        command: "cp repository.ok.js repository.js\nnode crash-check.mjs"
+        expect:
+          uk: "Знову `all 20 rounds ok`."
+          en: "`all 20 rounds ok` again."
+    verify:
+      - id: twenty-ok
+        text:
+          uk: "Мій `repository.js` пройшов 20 раундів із `SIGKILL`: останній рядок — `all 20 rounds ok`."
+          en: "My `repository.js` survived 20 rounds of `SIGKILL`: the last line is `all 20 rounds ok`."
+      - id: defect-caught
+        text:
+          uk: "Із записом просто в `expenses.json` скрипт показав зламані раунди, а після повернення правильної версії — знову всі `ok`."
+          en: "With writes straight into `expenses.json` the script showed broken rounds, and after restoring the correct version all were `ok` again."
+    troubleshooting:
+      - problem:
+          uk: "Node друкує `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '…/repository.js' imported from …/crash-check.mjs`"
+          en: "Node prints `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '…/repository.js' imported from …/crash-check.mjs`"
+        fix:
+          uk: "У теці немає `repository.js` або він має іншу назву. Перевір командою `ls`: потрібні саме `repository.js`, `save-loop.mjs` і `invariants.js` поруч із `crash-check.mjs`. (Відтворено з Node v25.2.1 і v20.18.0.)"
+          en: "The folder has no `repository.js`, or it has another name. Check with `ls`: you need exactly `repository.js`, `save-loop.mjs` and `invariants.js` next to `crash-check.mjs`. (Reproduced with Node v25.2.1 and v20.18.0.)"
+    recovery:
+      uk: "Скрипт щоразу видаляє й створює заново лише `crash-data/` у цій теці; твої файли він не змінює. Якщо зіпсував `repository.js` під час кроку 6 і не маєш копії, візьми свій розв’язок ще раз із вправи — платформа зберігає твою чернетку."
+      en: "The script deletes and recreates only `crash-data/` in this folder each time; it does not change your files. If you broke `repository.js` in step 6 and have no copy, take your solution from the exercise again — the platform keeps your draft."

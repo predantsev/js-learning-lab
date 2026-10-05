@@ -1,0 +1,512 @@
+id: no-12-02-profiling-service
+unit: NO-12
+title:
+  uk: "Профілювання й налагодження сервісу"
+  en: "Profiling and debugging a service"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Під’єднувати інспектор Node до запущеного сервісу, зупинятися в обробнику й розглядати стан запиту та стек викликів."
+    en: "Attach the Node inspector to a running service, pause in a handler and inspect the request’s state and call stack."
+  - uk: "Записувати CPU-профіль під синтетичним навантаженням і називати функцію, що має найбільший власний час (self time)."
+    en: "Record a CPU profile under synthetic load and name the function that dominates its self time."
+prerequisites: [no-12-01-metrics-traces, js-17-06-devtools-performance-memory]
+subskills:
+  - { family: B-09, skill: "profiling/debugging", depth: intro }
+glossary: [node-inspector, self-time]
+selfCheck: [predict-suspect, profile-note]
+
+blocks:
+  - id: two-tools
+    kind: explanation
+    title:
+      uk: "Два інструменти: зупинка й запис"
+      en: "Two tools: a pause and a recording"
+    body:
+      uk: |
+        Метрики з попереднього уроку кажуть, **що** маршрут повільний. Чому — покажуть два інструменти Node.js.
+
+        **[[node-inspector|Інспектор]]** (`node --inspect`) відкриває порт налагодження `127.0.0.1:9229`. До нього під’єднуються Chrome DevTools або VS Code, ставлять [[breakpoint]] в обробнику й бачать змінні запиту та стек викликів — як у браузері в JS-09. Але пам’ятай: у сервера один потік JavaScript. Пауза зупиняє **весь процес**: усі інші запити теж чекають.
+
+        **CPU-профіль** (`node --cpu-prof`) нічого не зупиняє. Приблизно щомілісекунди V8 записує, яка функція зараз на вершині стеку, а при виході процесу Node зберігає ці записи у файл `.cpuprofile` — це JSON. **[[self-time|Власний час]]** (self time) функції — скільки вона була на вершині сама, без функцій, які викликала. Саме його ти бачив у колонці **Self time** таблиці Bottom-up у JS-17; DevTools показує поруч і **Total time** — час функції разом із тими, які вона викликала.
+
+        Документація Node.js 22: [`--inspect`](https://nodejs.org/docs/latest-v22.x/api/cli.html#--inspecthostport), [`--cpu-prof`](https://nodejs.org/docs/latest-v22.x/api/cli.html#--cpu-prof).
+      en: |
+        The metrics of the previous lesson say **that** a route is slow. Why — two Node.js tools show that.
+
+        The **[[node-inspector|inspector]]** (`node --inspect`) opens the debugging port `127.0.0.1:9229`. Chrome DevTools or VS Code attach to it, set a [[breakpoint]] in a handler and see the request’s variables and the call stack — as in the browser in JS-09. But remember: a server has one JavaScript thread. A pause stops **the whole process**: every other request waits too.
+
+        A **CPU profile** (`node --cpu-prof`) stops nothing. About every millisecond V8 records which function is on top of the stack, and when the process exits Node saves these records in a `.cpuprofile` file — JSON. A function’s **[[self-time]]** is how long it was on top itself, without the functions it called. You saw it in the **Self time** column of the Bottom-up table in JS-17; DevTools also shows **Total time** next to it — the function’s time together with the functions it called.
+
+        Node.js 22 documentation: [`--inspect`](https://nodejs.org/docs/latest-v22.x/api/cli.html#--inspecthostport), [`--cpu-prof`](https://nodejs.org/docs/latest-v22.x/api/cli.html#--cpu-prof).
+
+  - id: paused-handler
+    kind: visual
+    visual: code-trace
+    strings:
+      mug: { uk: "Термочашка", en: "Travel mug" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      headphones: { uk: "Навушники", en: "Headphones" }
+    title:
+      uk: "Обробник на паузі: рядок, змінні, стек"
+      en: "A paused handler: the line, the variables, the stack"
+    textEquivalent:
+      uk: "Сервіс бажань відповідає на запит GET /records?sort=name&limit=2 функцією listByName. Точка зупинки стоїть на рядку const sorted = sortByName(wishes): на паузі видно i = 0, limit = 2 і масив wishes. Крок усередину показує стек викликів compareNames ← sortByName ← listByName: функція порівняння отримала два бажання a і b. sortByName повертає новий відсортований масив. На другому проході циклу, з i = 1, sortByName викликається знову й сортує весь масив ще раз — ще чотири порівняння, хоча з трьома бажаннями порядок не змінився. На 5000 бажаннях одне сортування — близько 51 000 порівнянь, а запит із limit=20 сортує 20 разів. Записаний CPU-профіль цього самого коду під навантаженням поставив sortByName і compareNames на перші два місця за власним часом."
+      en: "The wishlist service answers GET /records?sort=name&limit=2 with the function listByName. A breakpoint is on the line const sorted = sortByName(wishes): while paused you see i = 0, limit = 2 and the wishes array. A step inside shows the call stack compareNames ← sortByName ← listByName: the comparison function received two wishes, a and b. sortByName returns a new sorted array. On the loop’s second pass, with i = 1, sortByName is called again and sorts the whole array once more — four more comparisons, although with three wishes the order did not change. With 5000 wishes one sort is about 51,000 comparisons, and a request with limit=20 sorts 20 times. A recorded CPU profile of this same code under load put sortByName and compareNames in the top two places by self time."
+    spec:
+      file: visuals/paused-handler.js
+      captions:
+        - at: { line: 23 }
+          text:
+            uk: "Прийшов запит `GET /records?sort=name&limit=2` — обробник викликає `listByName(wishes, 2)`. Тут три бажання; у справжньому сервісі їх 5000."
+            en: "The request `GET /records?sort=name&limit=2` arrived — the handler calls `listByName(wishes, 2)`. There are three wishes here; the real service has 5000."
+        - at: { line: 12, hit: 1 }
+          text:
+            uk: "**Пауза на точці зупинки.** Інспектор показує змінні: `i` = 0, `limit` = 2, `wishes` — масив. Поки обробник стоїть, сервер не відповідає **нікому** — ні цьому запиту, ні іншим."
+            en: "**Paused at the breakpoint.** The inspector shows the variables: `i` = 0, `limit` = 2, `wishes` is an array. While the handler stands still, the server answers **nobody** — neither this request nor others."
+        - at: { line: 1, kind: call, hit: 1 }
+          text:
+            uk: "Крок усередину: стек викликів — `compareNames` ← `sortByName` ← `listByName`. Функція порівняння отримала два бажання, `a` і `b`."
+            en: "A step inside: the call stack is `compareNames` ← `sortByName` ← `listByName`. The comparison function received two wishes, `a` and `b`."
+        - at: { line: 6, kind: return, hit: 1 }
+          text:
+            uk: "`sortByName` повертає новий відсортований масив. На три бажання знадобилося чотири порівняння."
+            en: "`sortByName` returns a new sorted array. Three wishes needed four comparisons."
+        - at: { line: 12, hit: 2 }
+          text:
+            uk: "Другий прохід циклу, `i` = 1 — і **знову** `sortByName(wishes)`: увесь масив сортується ще раз, хоча його порядок не змінився."
+            en: "The loop’s second pass, `i` = 1 — and `sortByName(wishes)` **again**: the whole array is sorted once more, although its order did not change."
+        - at: { line: 1, kind: call, hit: 5 }
+          text:
+            uk: "Ті самі порівняння вдруге. На 5000 бажаннях одне сортування — близько 51 000 викликів `compareNames` (виміряно на Node v25.2.1 і v22.13.1), а запит із `limit=20` сортує 20 разів."
+            en: "The same comparisons a second time. With 5000 wishes one sort is about 51,000 calls of `compareNames` (measured on Node v25.2.1 and v22.13.1), and a request with `limit=20` sorts 20 times."
+        - at: { line: 24, kind: end }
+          text:
+            uk: "Відповідь готова. Записаний CPU-профіль цього самого коду під навантаженням (Node v25.2.1) поставив на перше місце за власним часом `sortByName` (1439 мс із 1869 мс запису), на друге — `compareNames` (244 мс)."
+            en: "The answer is ready. A recorded CPU profile of this same code under load (Node v25.2.1) put `sortByName` first by self time (1439 ms of a 1869 ms recording) and `compareNames` second (244 ms)."
+
+  - id: predict-suspect
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Сервіс бажань на кожен запит `GET /records?sort=name&limit=20` робить три речі: читає з диска маленький файл налаштувань `settings.json`; у циклі з 20 проходів щоразу сортує всі 5000 бажань за назвою й бере одне; перетворює 20 бажань на JSON. Сервіс пропустив 100 запитів під записом `node --cpu-prof`. Що займе найбільше власного часу в профілі?"
+      en: "On every request `GET /records?sort=name&limit=20` the wishlist service does three things: reads the small settings file `settings.json` from disk; in a loop of 20 passes sorts all 5000 wishes by name each time and takes one; turns 20 wishes into JSON. The service handled 100 requests while recorded with `node --cpu-prof`. What takes the most self time in the profile?"
+    answer:
+      type: choice
+      options:
+        - id: sort
+          text:
+            uk: "Сортування в циклі: `sortByName` і функція порівняння"
+            en: "The sort in the loop: `sortByName` and the comparison function"
+        - id: file-read
+          text:
+            uk: "Читання файла: диск — найповільніше, що є в комп’ютері"
+            en: "The file read: the disk is the slowest thing in a computer"
+          why:
+            uk: "Поки файл читається, JavaScript не працює: `readFile` віддає роботу операційній системі, а потік вільний. У CPU-профілі очікування диска виглядає як `(idle)`, а не як власний час твоєї функції. До того ж файл крихітний і, швидше за все, уже лежить у кеші ОС."
+            en: "While a file is being read, JavaScript is not working: `readFile` hands the work to the operating system, and the thread is free. In a CPU profile waiting for the disk looks like `(idle)`, not like your function’s self time. Besides, the file is tiny and most likely already in the OS cache."
+        - id: json
+          text:
+            uk: "`JSON.stringify`: серіалізація завжди дорога"
+            en: "`JSON.stringify`: serialization is always expensive"
+          why:
+            uk: "Серіалізувати 20 невеликих об’єктів — мікросекунди. Дорога серіалізація буває, коли у відповідь іде весь масив із тисяч записів; тут — лише сторінка."
+            en: "Serializing 20 small objects takes microseconds. Serialization gets expensive when the whole array of thousands of records goes into the response; here it is only one page."
+      correct: [sort]
+    explanation:
+      uk: "У профілі, записаному на Node v25.2.1, `sortByName` має 1439 мс власного часу, `compareNames` — 244 мс, а все інше разом — менше 200 мс із 1869. Ти, можливо, вгадав, читаючи код, — але здогадка лишається гіпотезою, доки профіль її не підтвердить: у реальному сервісі підозрюваних десятки, і повільним часто виявляється не той. Чому сортування власне в `sortByName`, а не всередині `toSorted`? Вбудоване сортування V8 приписує до функції, що його викликала."
+      en: "In the profile recorded on Node v25.2.1, `sortByName` has 1439 ms of self time, `compareNames` 244 ms, and everything else together under 200 ms of 1869. You may have guessed it from reading the code — but a guess stays a hypothesis until a profile confirms it: a real service has dozens of suspects, and the slow one often turns out to be a different one. Why is the sort in `sortByName` itself and not inside `toSorted`? V8 attributes its built-in sort to the function that called it."
+
+  - id: wishlist-load
+    kind: example
+    runtime: isolated-node
+    dir: wishlist-load
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      book: { uk: "Книжка про JavaScript", en: "A book about JavaScript" }
+      tickets: { uk: "Квитки на концерт", en: "Concert tickets" }
+      mug: { uk: "Термочашка", en: "Travel mug" }
+    title:
+      uk: "Навантаження на сервіс бажань"
+      en: "Load on the wishlist service"
+    body:
+      uk: |
+        Натисни **Запустити**. `index.js` запускає сервіс із 5000 синтетичних бажань, робить 5 запитів на розігрів (перші запити ще й «холодні»: V8 ще не оптимізував код), а потім 40 запитів `GET /records?sort=name&limit=20` і друкує p50 і p95.
+
+        Інспектор і `--cpu-prof` у пісочниці курсу недоступні: процес тут запускає платформа, і прапорці Node їй не передаються. Тому профілі, які ти читатимеш у вправі, записано заздалегідь із цим самим `service.js`, а свій профіль ти запишеш у терміналі в кінці уроку. Файл `profile-lab.mjs` — для того завдання; у пісочниці він не запускається.
+      en: |
+        Press **Run**. `index.js` starts the service with 5000 synthetic wishes, makes 5 warm-up requests (the first requests are also “cold”: V8 has not optimized the code yet), then 40 requests `GET /records?sort=name&limit=20` and prints p50 and p95.
+
+        The inspector and `--cpu-prof` are not available in the course sandbox: the platform starts the process here, and Node flags are not passed to it. So the profiles you read in the exercise were recorded in advance with this same `service.js`, and you record your own in the terminal at the end of the lesson. The file `profile-lab.mjs` is for that task; it does not run in the sandbox.
+    tryIt:
+      uk: |
+        1. Запусти й запиши p50. Під час рецензії уроку на Node v25.2.1 вийшло 16–17 мс на запит, а на Node v22.13.1 з українськими назвами бажань — близько 35 мс: на Node 22, судячи з профілю в кінці уроку, порівняння кириличних рядків помітно повільніше (з англійськими назвами — близько 16 мс, як на Node 25).
+        2. У `service.js` перенеси рядок `const sorted = sortByName(wishes);` із циклу на початок `listByName`, перед `const page = [];`, і запусти. p50 падає приблизно до 1–1,5 мс (на обох версіях Node): тепер на запит одне сортування замість двадцяти. Саме із цією зміною записано другий профіль вправи — `after.cpuprofile.json`.
+      en: |
+        1. Run it and note p50. When this lesson was reviewed, Node v25.2.1 gave 16–17 ms per request, and Node v22.13.1 with the Ukrainian wish names about 35 ms: on Node 22, judging by the profile at the end of the lesson, comparing Cyrillic strings is noticeably slower (with the English names about 16 ms, as on Node 25).
+        2. In `service.js`, move the line `const sorted = sortByName(wishes);` out of the loop to the start of `listByName`, before `const page = [];`, and run. p50 drops to about 1–1.5 ms (on both Node versions): there is now one sort per request instead of twenty. The exercise’s second profile, `after.cpuprofile.json`, was recorded with exactly this change.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: Self time і Total time"
+      en: "Recall: Self time and Total time"
+    items:
+      - id: self-vs-total
+        from: js-17-06-devtools-performance-memory
+        prompt:
+          uk: "У таблиці Bottom-up профілю є два рядки: `renderList` — Self time 4 мс, Total time 620 мс; `formatPrice` — Self time 540 мс, Total time 540 мс. `renderList` викликає `formatPrice` для кожного рядка. Яку функцію варто пришвидшувати першою?"
+          en: "The Bottom-up table of a profile has two rows: `renderList` — Self time 4 ms, Total time 620 ms; `formatPrice` — Self time 540 ms, Total time 540 ms. `renderList` calls `formatPrice` for every row. Which function is worth speeding up first?"
+        answer:
+          type: choice
+          options:
+            - id: format-price
+              text:
+                uk: "`formatPrice`: 540 мс роботи — її власні"
+                en: "`formatPrice`: 540 ms of work are its own"
+            - id: render-list
+              text:
+                uk: "`renderList`: у неї найбільший Total time"
+                en: "`renderList`: it has the largest Total time"
+              why:
+                uk: "Total time `renderList` включає час усіх функцій, які вона викликала. Сама вона працювала лише 4 мс; майже весь її Total — це `formatPrice`."
+                en: "The Total time of `renderList` includes the time of every function it called. It worked only 4 ms itself; almost all of its Total is `formatPrice`."
+          correct: [format-price]
+        explanation:
+          uk: "Self time — час самої функції, Total time — разом з усім, що вона викликала. Велика робота ховається там, де великий Self time. У CPU-профілі Node це той самий підхід, лише профіль записано не в браузері, а в процесі сервера."
+          en: "Self time is the function’s own time, Total time includes everything it called. Big work hides where Self time is large. A Node CPU profile works the same way, only the profile is recorded not in the browser but in the server process."
+
+  - id: profile-note
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: profile-note
+    entry: index.js
+    editable: [report.js]
+    strings:
+      recorded: { uk: "Профілі записано:", en: "Profiles recorded with:" }
+    title:
+      uk: "Звіт профілювання з двох справжніх профілів"
+      en: "A profiling note from two real profiles"
+    instructions:
+      uk: |
+        `before.cpuprofile.json` і `after.cpuprofile.json` — справжні профілі сервісу бажань до й після перенесення сортування із циклу. Їх записано командою `node --cpu-prof` на Node v25.2.1; для уроку повні шляхи файлів скорочено до назв і додано поле `recordedWith`, решту не змінено. Запис «до» коротший за той, що ти зробиш у терміналі (1,9 с замість ~5 с), тож мілісекунди в ньому менші. Профіль — це JSON:
+
+        - `nodes` — вузли дерева викликів; у кожного є `id` і `callFrame` з `functionName` (порожній текст для анонімної функції), `url` і `lineNumber` (рядки рахуються **з 0**);
+        - `samples[i]` — `id` вузла, який був на вершині стеку в момент i;
+        - `timeDeltas[i]` — скільки мікросекунд припадає на цей момент.
+
+        У `report.js` напиши дві функції.
+
+        `topSelfTime(profile, n)` повертає `n` функцій з найбільшим власним часом, від більшого до меншого, як `{ name, url, line, selfMs }`:
+
+        - власний час функції — сума `timeDeltas[i]` усіх моментів, коли на вершині був її вузол;
+        - одна функція може мати кілька вузлів (її викликали різними шляхами) — їхній час додається; функція — це однакові `functionName`, `url` і `lineNumber` разом;
+        - `(idle)` не рахується: процес тоді чекав, а не працював;
+        - `name` — `functionName` або `'(anonymous)'`, `line` — рядок **з 1**, `selfMs` — мілісекунди, округлені до десятих (число).
+
+        `profilingNote({ command, before, after, p95Before, p95After })` повертає текст звіту, у якому є команда, кожна функція обох списків з її `selfMs` і обидва значення p95. Формат — на твій смак.
+      en: |
+        `before.cpuprofile.json` and `after.cpuprofile.json` are real profiles of the wishlist service before and after the sort was moved out of the loop. They were recorded with `node --cpu-prof` on Node v25.2.1; for the lesson the full file paths were shortened to file names and a field `recordedWith` was added, nothing else was changed. The “before” recording is shorter than the one you make in the terminal (1.9 s rather than ~5 s), so its milliseconds are smaller. A profile is JSON:
+
+        - `nodes` — the nodes of the call tree; each has an `id` and a `callFrame` with `functionName` (empty text for an anonymous function), `url` and `lineNumber` (lines counted **from 0**);
+        - `samples[i]` — the `id` of the node that was on top of the stack at moment i;
+        - `timeDeltas[i]` — how many microseconds belong to that moment.
+
+        In `report.js`, write two functions.
+
+        `topSelfTime(profile, n)` returns the `n` functions with the most self time, largest first, as `{ name, url, line, selfMs }`:
+
+        - a function’s self time is the sum of `timeDeltas[i]` over all moments when its node was on top;
+        - one function can have several nodes (it was called along different paths) — their time is added up; a function is the same `functionName`, `url` and `lineNumber` together;
+        - `(idle)` is not counted: the process was waiting then, not working;
+        - `name` is `functionName` or `'(anonymous)'`, `line` is the line **from 1**, `selfMs` is milliseconds rounded to tenths (a number).
+
+        `profilingNote({ command, before, after, p95Before, p95After })` returns the note’s text, which contains the command, every function of both lists with its `selfMs`, and both p95 values. The format is up to you.
+    testTitles:
+      "adds up the sample times of each function, largest first":
+        uk: "Додає час моментів кожної функції й сортує від більшого"
+        en: "Adds up the sample times of each function, largest first"
+      "one function reached through two call paths is counted once":
+        uk: "Функцію, викликану двома шляхами, враховано один раз"
+        en: "A function reached through two call paths is counted once"
+      "functions with the same name in different places stay apart":
+        uk: "Однойменні функції в різних місцях не змішуються"
+        en: "Functions with the same name in different places stay apart"
+      "time when the process was idle is not counted":
+        uk: "Час `(idle)` не враховано"
+        en: "`(idle)` time is not counted"
+      "each entry has name, url, line counted from 1 and selfMs":
+        uk: "Кожен запис має `name`, `url`, `line` з 1 і `selfMs`"
+        en: "Each entry has `name`, `url`, `line` from 1 and `selfMs`"
+      "the recorded profile before the fix is led by sortByName":
+        uk: "Записаний профіль до виправлення очолює `sortByName`"
+        en: "The recorded profile before the fix is led by `sortByName`"
+      "the profiling note names the command, both top lists and both p95 values":
+        uk: "Звіт містить команду, обидва списки й обидва p95"
+        en: "The note names the command, both top lists and both p95 values"
+    hints:
+      nudge:
+        uk: "Пройди `samples` разом з індексом: за `id` знайди вузол, із його `callFrame` склади ключ функції й додай `timeDeltas[i]` до суми цього ключа. Сортуй і обрізай лише вже зібрані суми."
+        en: "Walk `samples` together with the index: find the node by its `id`, build the function’s key from its `callFrame` and add `timeDeltas[i]` to that key’s sum. Sort and cut only the totals you have collected."
+      explanation:
+        uk: "Та сама ідея на іншому прикладі — журнал відвідувань: `visits = ['h-1', 'h-2', 'h-1']`, `minutes = [5, 3, 7]`; хвилини кожної звички — сума за однаковим id: `h-1` → 12, `h-2` → 3. У профілі «id» — не `nodeId`, а функція, бо в дереві викликів одна функція з’являється стільки разів, скількома шляхами її викликали. Тому ключ складай із `functionName`, `url` і `lineNumber`: лише назви мало, анонімних функцій багато. Мікросекунди → мілісекунди: поділити на 1000; до десятих — `Math.round(x * 10) / 10`."
+        en: "The same idea on another example — a visit log: `visits = ['h-1', 'h-2', 'h-1']`, `minutes = [5, 3, 7]`; each habit’s minutes are the sum per identical id: `h-1` → 12, `h-2` → 3. In a profile the “id” is not the `nodeId` but the function, because in the call tree one function appears as many times as there are paths it was called along. So build the key from `functionName`, `url` and `lineNumber`: the name alone is not enough, there are many anonymous functions. Microseconds → milliseconds: divide by 1000; to tenths — `Math.round(x * 10) / 10`."
+    solutionNote:
+      uk: "Це той самий підрахунок, що й таблиця Bottom-up у DevTools: власний час, згрупований за функцією. DevTools відносить проміжок між двома моментами до попереднього, а не до поточного, тож її мілісекунди можуть трохи відрізнятися від твоїх — порядок функцій той самий. Зверни увагу на профіль після виправлення: `sortByName` усе ще перша, але з 64 мс замість 1439, а поруч з’явилися запуск Node (`compileForInternalLoader`) і `(program)` — запис став таким коротким, що їх стало видно."
+      en: "This is the same count as the Bottom-up table in DevTools: self time grouped by function. DevTools assigns the interval between two moments to the earlier one rather than the current one, so its milliseconds may differ slightly from yours — the order of functions is the same. Look at the profile after the fix: `sortByName` is still first, but with 64 ms instead of 1439, and Node’s startup (`compileForInternalLoader`) and `(program)` appeared next to it — the recording got so short that they became visible."
+    feedback:
+      - when: { test: "adds up the sample times of each function, largest first" }
+        message:
+          uk: "Ця перевірка очікує `[['sortByName', 3.5], ['handler', 1.2], ['stringify', 0.3]]`: суми `timeDeltas` у мілісекундах до десятих, від більшої до меншої. Кількість моментів (`hitCount`) тут не підходить — моменти мають різну тривалість."
+          en: "This check expects `[['sortByName', 3.5], ['handler', 1.2], ['stringify', 0.3]]`: sums of `timeDeltas` in milliseconds to tenths, largest first. The number of moments (`hitCount`) does not fit here — moments have different lengths."
+      - when: { test: "one function reached through two call paths is counted once" }
+        message:
+          uk: "Ця перевірка має два вузли `compareNames` з однаковими `url` і `lineNumber` та очікує один запис із сумою 3 мс. Групуй за функцією, а не за `id` вузла."
+          en: "This check has two `compareNames` nodes with the same `url` and `lineNumber` and expects one entry with the sum 3 ms. Group by function, not by node `id`."
+      - when: { test: "functions with the same name in different places stay apart" }
+        message:
+          uk: "Ця перевірка має дві анонімні функції в `service.js` і `load.js` та очікує два окремі записи `(anonymous)` з `line` 13 і 4. Ключ функції — `functionName`, `url` і `lineNumber` разом."
+          en: "This check has two anonymous functions in `service.js` and `load.js` and expects two separate `(anonymous)` entries with `line` 13 and 4. A function’s key is `functionName`, `url` and `lineNumber` together."
+      - when: { test: "time when the process was idle is not counted" }
+        message:
+          uk: "Ця перевірка дає 15 мс `(idle)` і 0.4 мс `handler` та очікує лише `[['handler', 0.4]]`. Пропускай моменти, коли на вершині вузол `(idle)`."
+          en: "This check gives 15 ms of `(idle)` and 0.4 ms of `handler` and expects only `[['handler', 0.4]]`. Skip the moments when the `(idle)` node is on top."
+      - when: { test: "each entry has name, url, line counted from 1 and selfMs" }
+        message:
+          uk: "Ця перевірка очікує рівно `{ name: 'sortByName', url: 'service.js', line: 10, selfMs: 1.2 }` для `lineNumber` 9: рядок з 1, а `selfMs` — число, не текст із `toFixed`."
+          en: "This check expects exactly `{ name: 'sortByName', url: 'service.js', line: 10, selfMs: 1.2 }` for `lineNumber` 9: the line from 1, and `selfMs` a number, not text from `toFixed`."
+      - when: { test: "the profiling note names the command, both top lists and both p95 values" }
+        message:
+          uk: "Ця перевірка шукає у звіті команду, назву й `selfMs` кожної функції обох списків і числа 19.8 та 2.6. Поверни текст, що містить їх усі."
+          en: "This check looks in the note for the command, the name and `selfMs` of every function of both lists, and the numbers 19.8 and 2.6. Return text that contains all of them."
+
+  - id: profile-yourself
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Запиши профіль і зупини обробник у своєму терміналі"
+      en: "Record a profile and pause a handler in your own terminal"
+    intro:
+      uk: |
+        Тобі знадобляться Node.js, два термінали й Chrome або VS Code. Усе живе в окремій теці `~/js-course/no12-profile`; наступні уроки на неї не покладаються.
+
+        Під час підготовки й рецензії уроку кроки 4–7 виконано на macOS з Node.js v25.2.1, v22.23.3 і v22.13.1; вивід нижче справжній, мілісекунди в тебе будуть свої. Паузу перевірено програмою, що під’єднувалася до порту інспектора так само, як DevTools (протокол Chrome DevTools): поки обробник стояв на точці зупинки в `listByName`, другий запит не отримав відповіді за 3 с, а перший відповів `200` після продовження — на v25.2.1 і v22.23.3 однаково. Самі кроки в інтерфейсі Chrome DevTools і VS Code (кроки 8–9) під час підготовки **не** перевіряли, як і Windows та Linux.
+
+        **Крок 3 — файл `top.mjs`:**
+
+        ```js
+        // Prints the five functions with the most self time in a .cpuprofile file.
+        import { readFile } from 'node:fs/promises';
+        import { topSelfTime } from './report.js';
+
+        const profile = JSON.parse(await readFile(process.argv[2], 'utf8'));
+        const top = topSelfTime(profile, 5);
+        console.table(top.map((f) => ({ name: f.name, place: `${f.url.split('/').pop()}:${f.line}`, selfMs: f.selfMs })));
+        ```
+
+        **Крок 5 — запис профілю (Node v25.2.1):**
+
+        ```text
+        $ node --cpu-prof --cpu-prof-dir=profiles profile-lab.mjs --load
+        300 requests: p50 17.8 ms, p95 21.1 ms
+        $ ls profiles
+        CPU.20261004.200008.54016.0.001.cpuprofile
+        ```
+
+        **Крок 6 — найбільший власний час (Node v25.2.1, українські назви бажань; з англійськими — той самий порядок: `sortByName` 3923.5 мс, `compareNames` 708.4 мс):**
+
+        ```text
+        $ node top.mjs profiles/CPU.20261004.200008.54016.0.001.cpuprofile
+        ┌─────────┬────────────────────────────┬─────────────────┬────────┐
+        │ (index) │ name                       │ place           │ selfMs │
+        ├─────────┼────────────────────────────┼─────────────────┼────────┤
+        │ 0       │ 'sortByName'               │ 'service.js:10' │ 4321.2 │
+        │ 1       │ 'compareNames'             │ 'service.js:6'  │ 760.8  │
+        │ 2       │ '(program)'                │ ':0'            │ 60.2   │
+        │ 3       │ 'compileForInternalLoader' │ 'realm:383'     │ 40.1   │
+        │ 4       │ '(garbage collector)'      │ ':0'            │ 13.3   │
+        └─────────┴────────────────────────────┴─────────────────┴────────┘
+        ```
+
+        На Node 22 з українськими назвами перші два рядки міняються місцями: v22.23.3 дав `compareNames` 7784.3 мс і `sortByName` 2512.5 мс (v22.13.1 — 7759.5 і 2558.8), а p50 — близько 35 мс замість 17. Судячи з профілю, порівняння кириличних рядків там дорожче, тож більше часу видно в самій функції порівняння. З англійськими назвами Node v22.23.3 дає той самий порядок, що й Node 25: `sortByName` 4403.5 мс, `compareNames` 789.5 мс. Висновок однаковий: час іде на сортування в циклі.
+
+        **Крок 7 — сервіс з інспектором (Node v25.2.1; Node v22.23.3 друкує в другому рядку `For help, see: https://nodejs.org/learn/getting-started/debugging`):**
+
+        ```text
+        $ node --inspect profile-lab.mjs
+        Debugger listening on ws://127.0.0.1:9229/aaa7b040-7004-47e6-b000-c910b2abbf11
+        For help, see: https://nodejs.org/en/docs/inspector
+        Wishlist service on http://127.0.0.1:7370/records?sort=name — stop it with Ctrl+C.
+        ```
+
+        Коли під’єднується DevTools, у цьому терміналі з’являється рядок `Debugger attached.`
+
+        > [!warning]
+        > Інспектор дає повний контроль над процесом: будь-хто, хто дістанеться до порту, виконає свій код. Тому `--inspect` слухає лише `127.0.0.1`. Ніколи не запускай `--inspect=0.0.0.0` — документація Node.js прямо називає прив’язку інспектора до публічної адреси небезпечною.
+      en: |
+        You need Node.js, two terminals and Chrome or VS Code. Everything lives in its own folder `~/js-course/no12-profile`; the next lessons do not rely on it.
+
+        While preparing and reviewing this lesson steps 4–7 were run on macOS with Node.js v25.2.1, v22.23.3 and v22.13.1; the output below is real, your milliseconds will differ. The pause was checked with a program that attached to the inspector port the same way DevTools does (the Chrome DevTools Protocol): while the handler stood at a breakpoint in `listByName`, a second request got no answer within 3 s, and the first one answered `200` after resuming — the same on v25.2.1 and v22.23.3. The steps in the Chrome DevTools and VS Code interface themselves (steps 8–9) were **not** checked while preparing, and neither were Windows and Linux.
+
+        **Step 3 — the file `top.mjs`:**
+
+        ```js
+        // Prints the five functions with the most self time in a .cpuprofile file.
+        import { readFile } from 'node:fs/promises';
+        import { topSelfTime } from './report.js';
+
+        const profile = JSON.parse(await readFile(process.argv[2], 'utf8'));
+        const top = topSelfTime(profile, 5);
+        console.table(top.map((f) => ({ name: f.name, place: `${f.url.split('/').pop()}:${f.line}`, selfMs: f.selfMs })));
+        ```
+
+        **Step 5 — recording a profile (Node v25.2.1):**
+
+        ```text
+        $ node --cpu-prof --cpu-prof-dir=profiles profile-lab.mjs --load
+        300 requests: p50 17.8 ms, p95 21.1 ms
+        $ ls profiles
+        CPU.20261004.200008.54016.0.001.cpuprofile
+        ```
+
+        **Step 6 — the largest self time (Node v25.2.1, the Ukrainian wish names; with the English ones the order is the same: `sortByName` 3923.5 ms, `compareNames` 708.4 ms):**
+
+        ```text
+        $ node top.mjs profiles/CPU.20261004.200008.54016.0.001.cpuprofile
+        ┌─────────┬────────────────────────────┬─────────────────┬────────┐
+        │ (index) │ name                       │ place           │ selfMs │
+        ├─────────┼────────────────────────────┼─────────────────┼────────┤
+        │ 0       │ 'sortByName'               │ 'service.js:10' │ 4321.2 │
+        │ 1       │ 'compareNames'             │ 'service.js:6'  │ 760.8  │
+        │ 2       │ '(program)'                │ ':0'            │ 60.2   │
+        │ 3       │ 'compileForInternalLoader' │ 'realm:383'     │ 40.1   │
+        │ 4       │ '(garbage collector)'      │ ':0'            │ 13.3   │
+        └─────────┴────────────────────────────┴─────────────────┴────────┘
+        ```
+
+        On Node 22 with the Ukrainian names the first two rows swap places: v22.23.3 gave `compareNames` 7784.3 ms and `sortByName` 2512.5 ms (v22.13.1: 7759.5 and 2558.8), and p50 about 35 ms instead of 17. Judging by the profile, comparing Cyrillic strings costs more there, so more time shows up in the comparison function itself. With the English names Node v22.23.3 gives the same order as Node 25: `sortByName` 4403.5 ms, `compareNames` 789.5 ms. The conclusion is the same: the time goes into the sort in the loop.
+
+        **Step 7 — the service with the inspector (Node v25.2.1; Node v22.23.3 prints `For help, see: https://nodejs.org/learn/getting-started/debugging` on the second line):**
+
+        ```text
+        $ node --inspect profile-lab.mjs
+        Debugger listening on ws://127.0.0.1:9229/aaa7b040-7004-47e6-b000-c910b2abbf11
+        For help, see: https://nodejs.org/en/docs/inspector
+        Wishlist service on http://127.0.0.1:7370/records?sort=name — stop it with Ctrl+C.
+        ```
+
+        When DevTools attaches, the line `Debugger attached.` appears in this terminal.
+
+        > [!warning]
+        > The inspector gives full control over the process: anyone who reaches the port runs their own code. That is why `--inspect` listens only on `127.0.0.1`. Never run `--inspect=0.0.0.0` — the Node.js documentation explicitly calls binding the inspector to a public address insecure.
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1, v22.23.3 і v22.13.1", en: "checked with v25.2.1, v22.23.3 and v22.13.1" } }
+      - { name: "curl", version: "8.7.1", note: { uk: "є в macOS, Linux і Windows 10/11 (у PowerShell — `curl.exe`)", en: "ships with macOS, Linux and Windows 10/11 (in PowerShell: `curl.exe`)" } }
+      - { name: { uk: "Chrome або VS Code", en: "Chrome or VS Code" }, note: { uk: "для кроків 8–9; не перевірено під час підготовки", en: "for steps 8–9; not checked while preparing" } }
+    steps:
+      - text:
+          uk: "Створи теку для профілювання й перейди в неї."
+          en: "Create a folder for profiling and go into it."
+        command: "mkdir -p ~/js-course/no12-profile\ncd ~/js-course/no12-profile"
+      - text:
+          uk: "Створи в VS Code файл `package.json` з одним рядком `{ \"type\": \"module\" }`. Потім створи `wishes.js`, `service.js` і `profile-lab.mjs` і встав у кожен вміст однойменної вкладки прикладу «Навантаження на сервіс бажань» — **без** переносу сортування з другого пункту під прикладом. Нарешті створи `report.js` зі своїм розв’язком вправи «Звіт профілювання з двох справжніх профілів», у якому всі перевірки зелені."
+          en: "In VS Code, create the file `package.json` with the single line `{ \"type\": \"module\" }`. Then create `wishes.js`, `service.js` and `profile-lab.mjs` and paste into each the content of the tab with the same name in the example “Load on the wishlist service” — **without** moving the sort from the second item under the example. Finally create `report.js` with your solution of the exercise “A profiling note from two real profiles” with every check green."
+      - text:
+          uk: "Створи `top.mjs` із текстом кроку 3 вступу."
+          en: "Create `top.mjs` with the text of step 3 of the introduction."
+        expect:
+          uk: "У теці шість файлів: `package.json`, `wishes.js`, `service.js`, `profile-lab.mjs`, `report.js`, `top.mjs`."
+          en: "The folder holds six files: `package.json`, `wishes.js`, `service.js`, `profile-lab.mjs`, `report.js`, `top.mjs`."
+      - text:
+          uk: "Запусти навантаження без профілю, щоб побачити вихідні p50 і p95."
+          en: "Run the load without a profile to see the starting p50 and p95."
+        command: "node profile-lab.mjs --load"
+        expect:
+          uk: "Один рядок `300 requests: p50 … ms, p95 … ms`."
+          en: "One line `300 requests: p50 … ms, p95 … ms`."
+      - text:
+          uk: "Запусти те саме під записом профілю. Профіль записується, коли процес завершується."
+          en: "Run the same while recording a profile. The profile is written when the process exits."
+        command: "node --cpu-prof --cpu-prof-dir=profiles profile-lab.mjs --load\nls profiles"
+        expect:
+          uk: "У теці `profiles` з’явився файл `CPU.<дата>.<час>.<pid>.0.001.cpuprofile`, як у кроці 5 вступу."
+          en: "A file `CPU.<date>.<time>.<pid>.0.001.cpuprofile` appeared in the folder `profiles`, as in step 5 of the introduction."
+      - text:
+          uk: "Надрукуй п’ять функцій із найбільшим власним часом. Підстав назву свого файла (Tab доповнює її)."
+          en: "Print the five functions with the most self time. Use your own file name (Tab completes it)."
+        command: "node top.mjs profiles/CPU.<your-file>.cpuprofile"
+        expect:
+          uk: "Перші два рядки — `sortByName` (`service.js:10`) і `compareNames` (`service.js:6`), як у кроці 6 вступу (на Node 22 з українськими назвами — у зворотному порядку)."
+          en: "The first two rows are `sortByName` (`service.js:10`) and `compareNames` (`service.js:6`), as in step 6 of the introduction (on Node 22 with the Ukrainian names, in the reverse order)."
+      - text:
+          uk: "Запусти сервіс з інспектором і лиши цей термінал відкритим."
+          en: "Start the service with the inspector and leave this terminal open."
+        command: "node --inspect profile-lab.mjs"
+        expect:
+          uk: "Рядки `Debugger listening on ws://127.0.0.1:9229/…` і `Wishlist service on http://127.0.0.1:7370/…`, як у кроці 7 вступу."
+          en: "The lines `Debugger listening on ws://127.0.0.1:9229/…` and `Wishlist service on http://127.0.0.1:7370/…`, as in step 7 of the introduction."
+      - text:
+          uk: "Під’єднай DevTools: у Chrome відкрий адресу `chrome://inspect`, знайди в розділі Remote Target свій `profile-lab.mjs` і натисни **inspect**. У вкладці **Sources** відкрий `service.js` і клацни номер рядка `const sorted = sortByName(wishes);` — з’явиться точка зупинки. (У VS Code те саме дає команда **Debug: Attach to Node Process**.) Не перевірено під час підготовки."
+          en: "Attach DevTools: in Chrome open the address `chrome://inspect`, find your `profile-lab.mjs` under Remote Target and click **inspect**. In the **Sources** tab open `service.js` and click the line number of `const sorted = sortByName(wishes);` — a breakpoint appears. (In VS Code the command **Debug: Attach to Node Process** does the same.) Not checked while preparing."
+      - text:
+          uk: "У другому терміналі надішли запит. Він «зависне»: обробник стоїть на точці зупинки. Роздивися в DevTools змінні `i`, `limit`, `wishes` і стек викликів (`listByName` над анонімним обробником). Потім натисни F8 (Resume) кілька разів або зніми точку зупинки й продовж."
+          en: "In the second terminal, send a request. It “hangs”: the handler stands at the breakpoint. Look in DevTools at the variables `i`, `limit`, `wishes` and the call stack (`listByName` above the anonymous handler). Then press F8 (Resume) several times, or remove the breakpoint and resume."
+        command: "curl -s \"http://127.0.0.1:7370/records?sort=name&limit=3\""
+        expect:
+          uk: "Після продовження `curl` друкує JSON із трьома бажаннями."
+          en: "After resuming, `curl` prints JSON with three wishes."
+      - text:
+          uk: "Доведи, що пауза зупиняє весь сервер: знову зупинись на точці зупинки першим запитом, а з третього терміналу надішли другий запит із межею 3 с. Потім продовж у DevTools і зупини сервіс через Ctrl+C."
+          en: "Prove that a pause stops the whole server: stop at the breakpoint again with a first request, and from a third terminal send a second request with a 3 s limit. Then resume in DevTools and stop the service with Ctrl+C."
+        command: "curl -sS -m 3 \"http://127.0.0.1:7370/records?sort=name&limit=1\""
+        expect:
+          uk: "Другий запит закінчується помилкою `curl: (28) Operation timed out after 300… milliseconds with 0 bytes received` (curl 8.7.1), хоча просить зовсім іншу сторінку."
+          en: "The second request ends with the error `curl: (28) Operation timed out after 300… milliseconds with 0 bytes received` (curl 8.7.1), although it asks for a different page entirely."
+    verify:
+      - id: profile-top
+        text:
+          uk: "У моєму профілі перші за власним часом — `sortByName` і `compareNames`."
+          en: "In my profile the first two by self time are `sortByName` and `compareNames`."
+      - id: paused-state
+        text:
+          uk: "Я бачив на паузі змінні запиту й стек викликів обробника."
+          en: "While paused I saw the request’s variables and the handler’s call stack."
+      - id: pause-blocks-all
+        text:
+          uk: "Поки обробник стояв на паузі, інший запит не отримав відповіді."
+          en: "While the handler was paused, another request got no answer."
+    troubleshooting:
+      - problem:
+          uk: "`node top.mjs` пише `Cannot find module …/report.js`."
+          en: "`node top.mjs` says `Cannot find module …/report.js`."
+        fix:
+          uk: "`report.js` має лежати в тій самій теці, що й `top.mjs`. Створи його зі свого розв’язку вправи (крок 2)."
+          en: "`report.js` must be in the same folder as `top.mjs`. Create it from your solution of the exercise (step 2)."
+      - problem:
+          uk: "`node --inspect` пише `Starting inspector on 127.0.0.1:9229 failed: address already in use`."
+          en: "`node --inspect` says `Starting inspector on 127.0.0.1:9229 failed: address already in use`."
+        fix:
+          uk: "Порт 9229 уже зайнятий іншим процесом з інспектором. Сервіс після цього рядка все одно запускається, але **без** інспектора — зупини його через Ctrl+C. Потім зупини інший процес або обери інший порт: `node --inspect=127.0.0.1:9230 profile-lab.mjs` — і додай `localhost:9230` у `chrome://inspect` → **Configure…** (повідомлення й запуск без інспектора відтворено на v25.2.1 і v22.23.3; кнопку Configure… не перевіряли)."
+          en: "Port 9229 is taken by another process with the inspector. After this line the service still starts, but **without** the inspector — stop it with Ctrl+C. Then stop the other process or pick another port: `node --inspect=127.0.0.1:9230 profile-lab.mjs` — and add `localhost:9230` in `chrome://inspect` → **Configure…** (the message and the start without the inspector were reproduced on v25.2.1 and v22.23.3; the Configure… button was not checked)."
+      - problem:
+          uk: "Сервіс пише `Error: listen EADDRINUSE: address already in use 127.0.0.1:7370`."
+          en: "The service says `Error: listen EADDRINUSE: address already in use 127.0.0.1:7370`."
+        fix:
+          uk: "Інша копія сервісу ще працює (як у NO-03). Зупини її через Ctrl+C у її терміналі або запусти на іншому порту: `PORT=7371 node --inspect profile-lab.mjs` і зміни порт у `curl`."
+          en: "Another copy of the service is still running (as in NO-03). Stop it with Ctrl+C in its terminal or start on another port: `PORT=7371 node --inspect profile-lab.mjs` and change the port in `curl`."
+    recovery:
+      uk: "Ця тека ні від чого не залежить: якщо щось заплуталося, видали її (`rm -rf ~/js-course/no12-profile`) і пройди кроки знову. Якщо процес із `--inspect` лишився висіти, зупини його через Ctrl+C у його терміналі."
+      en: "This folder depends on nothing: if something got tangled, delete it (`rm -rf ~/js-course/no12-profile`) and go through the steps again. If a process with `--inspect` is left hanging, stop it with Ctrl+C in its terminal."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-12
+    body:
+      uk: "У кроці проєкту цього розділу ти записуєш профіль сервера під навантаженням: `node --cpu-prof --cpu-prof-dir=…/profiles server/src/server.js` з розпакованого артефакту, `npm run load`, `SIGTERM`, а `npm run profile:top -- <файл>` (`scripts/top-self-time.mjs`) друкує п’ять функцій з найбільшим власним часом. У «Списку бажань» нагорі — `writeSync` з `node:fs` (рядок логу пишеться синхронно) і компаратор сортування з `src/list.js`; крок це записує, нічого не змінюючи. `RUNBOOK.md` дозволяє профіль лише локально — ніколи `--inspect` на сервері, яким користуються люди: пауза зупиняє всіх."
+      en: "In this unit’s project step you record a profile of the server under load: `node --cpu-prof --cpu-prof-dir=…/profiles server/src/server.js` from the unpacked artifact, `npm run load`, `SIGTERM`, and `npm run profile:top -- <file>` (`scripts/top-self-time.mjs`) prints the five functions with the most self time. In the Wishlist the top is `writeSync` of `node:fs` (the log line is written synchronously) and the sort comparator of `src/list.js`; the step records it without changing anything. `RUNBOOK.md` allows a profile only locally — never `--inspect` on a server people use: a pause stops everyone."

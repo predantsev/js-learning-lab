@@ -1,0 +1,470 @@
+id: re-04-04-context-boundaries
+unit: RE-04
+title:
+  uk: "Межі context проти prop drilling"
+  en: "Context boundaries vs prop drilling"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Розпізнати prop drilling і вибрати між передаванням `children` (композицією) та context."
+    en: "Recognize prop drilling and choose between passing children (composition) and a context."
+  - uk: "Створити типізований context із provider і хуком, що кидає зрозумілу помилку поза provider."
+    en: "Create a typed context with a provider and a hook that throws a clear error when used outside the provider."
+  - uk: "Пояснити, що кожен споживач перемальовується, коли змінюється значення provider, і тримати межу context малою."
+    en: "Explain that every consumer re-renders when the provider value changes, and keep the context's boundary small."
+prerequisites: [re-04-03-reducers-typed]
+subskills:
+  - { family: R-03, skill: "context boundaries", depth: intro }
+  - { family: R-03, skill: "composition vs prop drilling", depth: intro }
+glossary: [react-context, context-provider, prop-drilling]
+selfCheck: [predict-context-renders, expense-context]
+
+blocks:
+  - id: drilling
+    kind: explanation
+    title:
+      uk: "Props, що лише проходять крізь компонент"
+      en: "Props that only pass through a component"
+    body:
+      uk: |
+        Сторінка витрат володіє `dispatch` з `useReducer`, а кнопка «Прибрати» живе в рядку, чотирма рівнями нижче. Кожен проміжний компонент приймає `dispatch` і віддає його далі, хоча сам його не використовує:
+
+        ```jsx
+        <ExpensePanel expenses={expenses} dispatch={dispatch} />
+        // inside ExpensePanel:   <ExpenseSection … dispatch={dispatch} />
+        // inside ExpenseSection: <ExpenseList … dispatch={dispatch} />
+        // inside ExpenseList:    <ExpenseRow … dispatch={dispatch} />
+        ```
+
+        Це [[prop-drilling|prop drilling]]. Біда не в кількості рівнів, а в тому, що обгортки знають про дані, які їм не потрібні: перейменував prop — правиш чотири компоненти.
+
+        Передати prop на один-два рівні вниз — звичайна справа, і чинити нічого не треба. Коли ж ланцюжок довгий, є два інструменти: **композиція** через `children` і **context**.
+      en: |
+        An expense page owns `dispatch` from `useReducer`, while the “Remove” button lives in a row four levels below. Every component in between accepts `dispatch` and hands it on, although it never uses it itself:
+
+        ```jsx
+        <ExpensePanel expenses={expenses} dispatch={dispatch} />
+        // inside ExpensePanel:   <ExpenseSection … dispatch={dispatch} />
+        // inside ExpenseSection: <ExpenseList … dispatch={dispatch} />
+        // inside ExpenseList:    <ExpenseRow … dispatch={dispatch} />
+        ```
+
+        This is [[prop-drilling|prop drilling]]. The trouble is not the number of levels but that the wrappers know about data they do not need: rename the prop and you edit four components.
+
+        Passing a prop down one or two levels is perfectly normal and needs no cure. When the chain is long, there are two tools: **composition** through `children`, and **context**.
+
+  - id: recall-composition
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: has-a
+        from: js-11-07-inheritance-vs-composition
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          class Frame {
+            constructor(content) {
+              this.content = content;
+            }
+            draw() {
+              return `[ ${this.content.draw()} ]`;
+            }
+          }
+          const label = { draw: () => "lamp" };
+          console.log(new Frame(label).draw(), new Frame(new Frame(label)).draw());
+        verify:
+          logs: ["[ lamp ] [ [ lamp ] ]"]
+        answer:
+          type: choice
+          options:
+            - id: nested
+              code: "[ lamp ] [ [ lamp ] ]"
+            - id: flat
+              code: "[ lamp ] [ lamp ]"
+              why:
+                uk: "Зовнішня рамка малює свій вміст — внутрішню рамку, — а та малює своє. Рамки вкладаються, тож дужок дві пари."
+                en: "The outer frame draws its content — the inner frame — which draws its own. Frames nest, so there are two pairs of brackets."
+            - id: error
+              text: { uk: "`TypeError`: `Frame` не успадковує `draw` від `label`", en: "A `TypeError`: `Frame` does not inherit `draw` from `label`" }
+              why:
+                uk: "Наслідування тут не потрібне: `Frame` **має** вміст і лише викликає його `draw`. Будь-який об’єкт із методом `draw` підходить."
+                en: "No inheritance is needed: `Frame` **has** content and only calls its `draw`. Any object with a `draw` method fits."
+          correct: [nested]
+        explanation:
+          uk: "`Frame` не знає, що всередині, — лише що в нього можна вкласти. Так само компонент-обгортка з `children` малює рамку довкола будь-чого, що йому передали, не знаючи про дані всередині."
+          en: "`Frame` does not know what is inside — only that something can be put in it. In the same way a wrapper component with `children` draws a frame around whatever it was given, knowing nothing about the data inside."
+
+  - id: composition-first
+    kind: explanation
+    title:
+      uk: "Спершу композиція: обгортка отримує готовий вміст"
+      en: "Composition first: the wrapper receives ready-made content"
+    body:
+      uk: |
+        `ExpensePanel` і `ExpenseSection` — обгортки: рамка й заголовок. Їм не треба самим створювати `ExpenseList`. Нехай сторінка напише його сама й передасть обгорткам як [[children-prop|children]]:
+
+        ```jsx
+        <ExpensePanel>
+          <ExpenseSection title="Березень">
+            <ExpenseList expenses={expenses} dispatch={dispatch} />
+          </ExpenseSection>
+        </ExpensePanel>
+        ```
+
+        Тепер `dispatch` іде від власника прямо до списку, а обгортки приймають лише `children` і свій `title`. Це той самий підхід «має, а не є», що й у класів з `Frame`: обгортка тримає вміст, не знаючи, що в ньому. Часто цього досить, і context не потрібен.
+      en: |
+        `ExpensePanel` and `ExpenseSection` are wrappers: a frame and a heading. They do not need to create `ExpenseList` themselves. Let the page write it and pass it to the wrappers as [[children-prop|children]]:
+
+        ```jsx
+        <ExpensePanel>
+          <ExpenseSection title="March">
+            <ExpenseList expenses={expenses} dispatch={dispatch} />
+          </ExpenseSection>
+        </ExpensePanel>
+        ```
+
+        Now `dispatch` goes from the owner straight to the list, and the wrappers accept only `children` and their own `title`. It is the same “has, not is” approach as the `Frame` class: the wrapper holds content without knowing what it is. Often this is enough, and no context is needed.
+
+  - id: expense-drill
+    kind: example
+    runtime: browser-react
+    dir: expense-drill
+    entry: main.jsx
+    strings:
+      heading: { uk: "Мої витрати", en: "My expenses" }
+      march: { uk: "Березень", en: "March" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      remove: { uk: "Прибрати", en: "Remove" }
+    title:
+      uk: "Від prop drilling до композиції"
+      en: "From prop drilling to composition"
+    body:
+      uk: |
+        Тут `dispatch` проходить крізь `ExpensePanel` і `ExpenseSection`, щоб дістатися до `ExpenseRow`. Натисни **Запустити** й прибери витрату на **Сторінці** — усе працює, але подивись на заголовки обгорток у `App.jsx`: кожна приймає `expenses` і `dispatch` лише для того, щоб передати їх далі.
+      en: |
+        Here `dispatch` passes through `ExpensePanel` and `ExpenseSection` to reach `ExpenseRow`. Press **Run** and remove an expense on the **Page** — everything works, but look at the headers of the wrappers in `App.jsx`: each accepts `expenses` and `dispatch` only to pass them on.
+    tryIt:
+      uk: |
+        Заміни два рівні проходу композицією:
+
+        1. Заголовок `function ExpenseSection({ title, expenses, dispatch })` заміни на `function ExpenseSection({ title, children })`, а рядок `<ExpenseList expenses={expenses} dispatch={dispatch} />` у ньому — на `{children}`.
+        2. Заголовок `function ExpensePanel({ expenses, dispatch })` заміни на `function ExpensePanel({ children })`, а тег `<ExpenseSection … />` у ньому — на `{children}`.
+        3. У `ExpensePage` заміни `<ExpensePanel expenses={expenses} dispatch={dispatch} />` на вкладені теги: `<ExpensePanel>`, у ньому `<ExpenseSection title="…">` з тим самим текстом заголовка, у ньому `<ExpenseList expenses={expenses} dispatch={dispatch} />`, і закрий обидва теги.
+
+        Запусти: сторінка та сама, кнопки працюють, а обгортки більше не знають ні про витрати, ні про `dispatch`. Лишився один перехід — зі списку в рядок — і він нікому не заважає.
+      en: |
+        Replace two pass-through levels with composition:
+
+        1. Replace the header `function ExpenseSection({ title, expenses, dispatch })` with `function ExpenseSection({ title, children })`, and the line `<ExpenseList expenses={expenses} dispatch={dispatch} />` in it with `{children}`.
+        2. Replace the header `function ExpensePanel({ expenses, dispatch })` with `function ExpensePanel({ children })`, and the `<ExpenseSection … />` tag in it with `{children}`.
+        3. In `ExpensePage` replace `<ExpensePanel expenses={expenses} dispatch={dispatch} />` with nested tags: `<ExpensePanel>`, inside it `<ExpenseSection title="…">` with the same heading text, inside that `<ExpenseList expenses={expenses} dispatch={dispatch} />`, and close both tags.
+
+        Run: the page is the same, the buttons work, and the wrappers no longer know about either the expenses or `dispatch`. One hand-over is left — from the list to the row — and it bothers nobody.
+
+  - id: context-explained
+    kind: explanation
+    title:
+      uk: "Context: значення для всього піддерева"
+      en: "Context: a value for a whole subtree"
+    body:
+      uk: |
+        Буває, що значення потрібне багатьом компонентам на різній глибині — рядкам, формі, кнопці в шапці, — і композиція вже не рятує. Тоді допомагає [[react-context|context]]:
+
+        ```tsx
+        const CurrencyContext = createContext<string>("UAH");    // default value
+
+        <CurrencyContext value={currency}>                        // the provider
+          <ExpenseBoard />
+        </CurrencyContext>
+
+        const currency = useContext(CurrencyContext);              // in any component below
+        ```
+
+        `createContext(default)` створює context. Тег `<CurrencyContext value={…}>` — [[context-provider|provider]]: усі компоненти **всередині** нього, на будь-якій глибині, читають `value` через `useContext`, без props. Компонент поза provider отримує значення за замовчуванням. (У старішому коді provider пишуть як `<CurrencyContext.Provider value={…}>` — React 19 розуміє обидва записи.)
+      en: |
+        Sometimes a value is needed by many components at different depths — rows, a form, a button in the header — and composition no longer helps. Then a [[react-context|context]] does:
+
+        ```tsx
+        const CurrencyContext = createContext<string>("UAH");    // default value
+
+        <CurrencyContext value={currency}>                        // the provider
+          <ExpenseBoard />
+        </CurrencyContext>
+
+        const currency = useContext(CurrencyContext);              // in any component below
+        ```
+
+        `createContext(default)` creates a context. The tag `<CurrencyContext value={…}>` is the [[context-provider|provider]]: every component **inside** it, at any depth, reads `value` through `useContext`, without props. A component outside the provider gets the default value. (Older code writes the provider as `<CurrencyContext.Provider value={…}>` — React 19 understands both.)
+
+  - id: predict-context-renders
+    kind: prediction
+    prompt:
+      uk: "Кожен компонент на початку друкує `render` і свою назву. Користувач натискає кнопку **EUR**. Які рядки з’являться в консолі після кліку?"
+      en: "Every component prints `render` and its name at the start. The user presses the **EUR** button. Which lines appear in the console after the click?"
+    code: |
+      const CurrencyContext = createContext("UAH");
+
+      function PriceTag() {
+        const currency = useContext(CurrencyContext);
+        console.log("render PriceTag", currency);
+        return <span>{currency}</span>;
+      }
+
+      function Header() {
+        console.log("render Header");
+        return <h2>%%expenses%%</h2>;
+      }
+
+      function CurrencySwitch({ children }) {
+        const [currency, setCurrency] = useState("UAH");
+        console.log("render CurrencySwitch");
+        return (
+          <CurrencyContext value={currency}>
+            <button onClick={() => setCurrency("EUR")}>EUR</button>
+            {children}
+          </CurrencyContext>
+        );
+      }
+
+      export default function App() {
+        return (
+          <>
+            <CurrencySwitch>
+              <Header />
+              <PriceTag />
+            </CurrencySwitch>
+            <PriceTag />
+          </>
+        );
+      }
+    lang: jsx
+    runnable: false
+    strings:
+      expenses: { uk: "Витрати", en: "Expenses" }
+    answer:
+      type: choice
+      options:
+        - id: switch-and-inside
+          code: "render CurrencySwitch\nrender PriceTag EUR"
+        - id: everything-inside
+          code: "render CurrencySwitch\nrender Header\nrender PriceTag EUR"
+          why:
+            uk: "`Header` — це `children`, які створив `App`, а `App` не перемальовувався. React рендерить його знову лише тоді, коли він читає змінений context, а `Header` context не читає."
+            en: "`Header` is `children` created by `App`, and `App` did not re-render. React renders it again only if it reads the changed context, and `Header` reads no context."
+        - id: both-tags
+          code: "render CurrencySwitch\nrender PriceTag EUR\nrender PriceTag EUR"
+          why:
+            uk: "Другий `PriceTag` стоїть **поза** provider. Він читає значення за замовчуванням `\"UAH\"`, яке не змінюється, тож не перемальовується й далі показує `UAH`."
+            en: "The second `PriceTag` is **outside** the provider. It reads the default value `\"UAH\"`, which does not change, so it does not re-render and keeps showing `UAH`."
+        - id: global
+          code: "render App\nrender CurrencySwitch\nrender Header\nrender PriceTag EUR\nrender PriceTag EUR"
+          why:
+            uk: "Context — не глобальне сховище, яке перемальовує весь застосунок. Змінився стан `CurrencySwitch`, тож рендериться він і ті споживачі **всередині** його provider, чиє значення змінилося."
+            en: "A context is not a global store that re-renders the whole app. The state of `CurrencySwitch` changed, so it renders, and so do the consumers **inside** its provider whose value changed."
+      correct: [switch-and-inside]
+    explanation:
+      uk: "Рендериться власник стану `CurrencySwitch`, а з компонентів, переданих згори, — лише споживач `PriceTag` усередині provider. `Header` нічого не читає з context, а `PriceTag` поза provider бачить незмінне `\"UAH\"`. Перевірено в пісочниці з React 19.3: після кліку рівно ці два рядки, а сторінка показує `EUR`, «Витрати», `EUR`, `UAH`."
+      en: "The state owner `CurrencySwitch` renders, and of the components passed from above only the consumer `PriceTag` inside the provider does. `Header` reads nothing from the context, and the `PriceTag` outside the provider sees an unchanged `\"UAH\"`. Checked in the sandbox with React 19.3: exactly these two lines after the click, and the page shows `EUR`, “Expenses”, `EUR`, `UAH`."
+
+  - id: three-ways
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Одне дерево, три способи доставити dispatch"
+      en: "One tree, three ways to deliver dispatch"
+    textEquivalent:
+      uk: "Дерево: ExpensePage має ExpensePanel, той — ExpenseSection, далі ExpenseList і ExpenseRow, а ще ExpensePage показує форму AddExpenseForm. Спершу dispatch просвердлено крізь кожен рівень: усі проміжні компоненти приймають його лише для передачі. Композиція прибирає два проміжні рівні: сторінка сама пише ExpenseList усередині обгорток, і dispatch іде від сторінки прямо до списку. Context іде далі: сторінка ставить provider довкола дерева, а рядок і форма читають dispatch через useContext. Межа provider охоплює всіх споживачів і не більше; коли значення provider змінюється, перемальовуються саме споживачі всередині межі."
+      en: "The tree: ExpensePage has ExpensePanel, which has ExpenseSection, then ExpenseList and ExpenseRow, and ExpensePage also shows the AddExpenseForm form. At first dispatch is drilled through every level: all the components in between accept it only to hand it on. Composition removes two of those levels: the page writes ExpenseList inside the wrappers itself, and dispatch goes from the page straight to the list. Context goes further: the page puts a provider around the tree, and the row and the form read dispatch through useContext. The provider's boundary covers all consumers and no more; when the provider value changes, exactly the consumers inside the boundary re-render."
+    spec:
+      layout: grid
+      nodes:
+        - { id: page, label: "ExpensePage", col: 0, row: 0, w: 130 }
+        - { id: panel, label: "ExpensePanel", col: 1, row: 1, w: 130 }
+        - { id: section, label: "ExpenseSection", col: 1, row: 2, w: 130 }
+        - { id: list, label: "ExpenseList", col: 1, row: 3, w: 130 }
+        - { id: row, label: "ExpenseRow", col: 1, row: 4, w: 130 }
+        - { id: form, label: "AddExpenseForm", col: 0, row: 4, w: 130 }
+      edges:
+        - { id: d1, from: page, to: panel, label: "dispatch" }
+        - { id: d2, from: panel, to: section, label: "dispatch" }
+        - { id: d3, from: section, to: list, label: "dispatch" }
+        - { id: d4, from: list, to: row, label: "dispatch" }
+        - { id: direct, from: page, to: list, kind: dashed }
+        - { id: ctx-row, from: page, to: row, kind: dashed }
+        - { id: ctx-form, from: page, to: form, kind: dashed }
+      hidden: [direct, ctx-row, ctx-form]
+      steps:
+        - caption:
+            uk: "Prop drilling: `dispatch` проходить крізь `ExpensePanel` і `ExpenseSection`, які його не використовують."
+            en: "Prop drilling: `dispatch` passes through `ExpensePanel` and `ExpenseSection`, which do not use it."
+          highlight: [d1, d2, d3, d4, panel, section]
+        - caption:
+            uk: "Композиція: сторінка пише `ExpenseList` усередині обгорток як `children`. `dispatch` іде від сторінки прямо до списку, обгортки про нього не знають."
+            en: "Composition: the page writes `ExpenseList` inside the wrappers as `children`. `dispatch` goes from the page straight to the list; the wrappers know nothing about it."
+          show: [direct]
+          highlight: [direct, list, d4]
+          dim: [d1, d2, d3]
+          annotate:
+            - { id: direct, text: "dispatch" }
+        - caption:
+            uk: "Context: сторінка ставить provider довкола дерева. Рядок і форма беруть `dispatch` через `useContext`, без жодного prop."
+            en: "Context: the page puts a provider around the tree. The row and the form take `dispatch` through `useContext`, without a single prop."
+          show: [ctx-row, ctx-form]
+          highlight: [ctx-row, ctx-form, row, form]
+          dim: [d1, d2, d3, d4, direct]
+          annotate:
+            - { id: ctx-row, text: "useContext" }
+            - { id: ctx-form, text: "useContext" }
+        - caption:
+            uk: "Межа provider охоплює всіх споживачів — і рядок, і форму. Коли `value` змінюється, перемальовуються саме вони; компонент поза межею отримав би значення за замовчуванням."
+            en: "The provider boundary covers all consumers — both the row and the form. When `value` changes, exactly they re-render; a component outside the boundary would get the default value."
+          highlight: [row, form]
+          dim: [d1, d2, d3, d4, direct]
+
+  - id: boundaries
+    kind: explanation
+    title:
+      uk: "Типізований context, хук-охоронець і мала межа"
+      en: "A typed context, a guard hook and a small boundary"
+    body:
+      uk: |
+        Для `dispatch` розумного значення за замовчуванням немає: «порожня» функція `() => {}` лише сховала б помилку — кнопка мовчки нічого не робила б. Чесніше дати context тип `Dispatch<ExpenseAction> | null` (`Dispatch<A>` — тип React для функції `dispatch`, що приймає actions типу `A`) зі значенням `null` і читати його через маленьку функцію з назвою на `use`, що викликає `useContext` і кидає помилку, якщо provider немає. Так виглядає цей прийом для теми інтерфейсу:
+
+        ```tsx
+        const ThemeContext = createContext<"light" | "dark" | null>(null);
+
+        function useTheme(): "light" | "dark" {
+          const theme = useContext(ThemeContext);
+          if (theme === null) throw new Error("useTheme must be used inside <ThemeContext>");
+          return theme;
+        }
+        ```
+
+        Така функція — [[custom-hook|власний хук]]; докладно про них — за два уроки. Помилка з назвою хука одразу каже, що компонент опинився поза межею.
+
+        І пам’ятай про ціну: коли `value` provider змінюється, **кожен** споживач усередині перемальовується. Тому context — не сховище для всього стану застосунку. Клади в нього одне значення, яке справді потрібне на різній глибині, а provider став якомога нижче — довкола тих, кому воно потрібне.
+      en: |
+        For `dispatch` there is no sensible default: an “empty” function `() => {}` would only hide a mistake — the button would silently do nothing. It is more honest to give the context the type `Dispatch<ExpenseAction> | null` (`Dispatch<A>` is React's type for a `dispatch` function that takes actions of type `A`) with the value `null` and to read it through a small function with a `use` name that calls `useContext` and throws if there is no provider. Here is the technique for an interface theme:
+
+        ```tsx
+        const ThemeContext = createContext<"light" | "dark" | null>(null);
+
+        function useTheme(): "light" | "dark" {
+          const theme = useContext(ThemeContext);
+          if (theme === null) throw new Error("useTheme must be used inside <ThemeContext>");
+          return theme;
+        }
+        ```
+
+        Such a function is a [[custom-hook|custom hook]]; more about them in two lessons. An error that names the hook tells you at once that the component ended up outside the boundary.
+
+        And remember the price: when the provider's `value` changes, **every** consumer inside re-renders. So a context is not a store for all of the app's state. Put one value in it that is really needed at different depths, and place the provider as low as possible — around those who need it.
+
+  - id: expense-context
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: expense-context
+    entry: main.tsx
+    editable: [recordsDispatch.ts, App.tsx]
+    strings:
+      heading: { uk: "Мої витрати", en: "My expenses" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      remove: { uk: "Прибрати", en: "Remove" }
+      labelField: { uk: "Назва", en: "Label" }
+      amountField: { uk: "Сума", en: "Amount" }
+      add: { uk: "Додати", en: "Add" }
+      total: { uk: "Разом:", en: "Total:" }
+    title:
+      uk: "Dispatch витрат через context"
+      en: "The expense dispatch through a context"
+    instructions:
+      uk: |
+        `ExpensePage` володіє витратами через `useReducer`, а `dispatch` просвердлено крізь `ExpenseBoard` і `ExpenseList` до рядків і форми.
+
+        1. У `recordsDispatch.ts` дай `RecordsDispatchContext` тип: значення — `Dispatch<ExpenseAction>` або `null`, за замовчуванням `null`. Напиши `useRecordsDispatch()`: повертає `dispatch` з context, а поза provider кидає `Error`, у тексті якого є назва `useRecordsDispatch`.
+        2. У `App.tsx` постав provider так, щоб у межі були і рядки, і форма. `ExpenseRow` і `AddExpenseForm` беруть `dispatch` через `useRecordsDispatch()`; `ExpenseList` отримує лише `expenses`, `AddExpenseForm` — жодних props, а `ExpenseBoard` більше не знає про `dispatch`.
+
+        Перевірки малюють `ExpenseList` і `AddExpenseForm` окремо всередині `RecordsDispatchContext` з власною функцією-шпигуном, малюють компонент із `useRecordsDispatch()` поза provider і проходять сценарій на всій сторінці.
+      en: |
+        `ExpensePage` owns the expenses through `useReducer`, and `dispatch` is drilled through `ExpenseBoard` and `ExpenseList` down to the rows and the form.
+
+        1. In `recordsDispatch.ts` give `RecordsDispatchContext` a type: its value is `Dispatch<ExpenseAction>` or `null`, `null` by default. Write `useRecordsDispatch()`: it returns `dispatch` from the context, and outside a provider it throws an `Error` whose text contains the name `useRecordsDispatch`.
+        2. In `App.tsx` place the provider so that both the rows and the form are inside its boundary. `ExpenseRow` and `AddExpenseForm` take `dispatch` through `useRecordsDispatch()`; `ExpenseList` gets only `expenses`, `AddExpenseForm` gets no props, and `ExpenseBoard` no longer knows about `dispatch`.
+
+        The checks draw `ExpenseList` and `AddExpenseForm` on their own inside `RecordsDispatchContext` with their own spy function, draw a component with `useRecordsDispatch()` outside any provider and go through a scenario on the whole page.
+    testTitles:
+      "useRecordsDispatch returns the function given to the context":
+        uk: "`useRecordsDispatch` повертає функцію, передану в context"
+        en: "`useRecordsDispatch` returns the function given to the context"
+      "outside the context the hook throws an error that names it":
+        uk: "Поза context хук кидає помилку зі своєю назвою"
+        en: "Outside the context the hook throws an error that names it"
+      "a row sends removed through the context":
+        uk: "Рядок надсилає `removed` через context"
+        en: "A row sends `removed` through the context"
+      "the form sends added through the context":
+        uk: "Форма надсилає `added` через context"
+        en: "The form sends `added` through the context"
+      "the page still adds and removes expenses":
+        uk: "Сторінка, як і раніше, додає й прибирає витрати"
+        en: "The page still adds and removes expenses"
+    hints:
+      nudge:
+        uk: "Почни з `recordsDispatch.ts`: які два значення може мати context і що хук робить у кожному випадку? Потім знайди в `App.tsx` найнижчий компонент, у межі якого опиняться і рядки, і форма."
+        en: "Start with `recordsDispatch.ts`: which two values can the context have, and what does the hook do in each case? Then find the lowest component in `App.tsx` whose boundary contains both the rows and the form."
+      explanation:
+        uk: |
+          Тип context задають у `createContext<…>(…)`: union з `null` і `null` як значення за замовчуванням. Хук читає `useContext(…)`, перевіряє на `null` (тоді `throw new Error("…")` з назвою хука) і повертає значення — після перевірки `tsc` знає, що це вже не `null`.
+
+          Provider має обіймати і список, і форму, тож його ставлять там, де є `dispatch` і звідки видно обох. Схожий приклад з іншою задачею: тема інтерфейсу — `<ThemeContext value={theme}><Layout /></ThemeContext>` у компоненті, що володіє `theme`, і `const theme = useTheme();` у кнопці глибоко всередині `Layout`.
+        en: |
+          A context's type is given in `createContext<…>(…)`: a union with `null`, and `null` as the default. The hook reads `useContext(…)`, checks for `null` (then `throw new Error("…")` with the hook's name) and returns the value — after the check `tsc` knows it is no longer `null`.
+
+          The provider must enclose both the list and the form, so it goes where `dispatch` exists and from where both can be seen. A similar example with a different task: an interface theme — `<ThemeContext value={theme}><Layout /></ThemeContext>` in the component that owns `theme`, and `const theme = useTheme();` in a button deep inside `Layout`.
+    solutionNote:
+      uk: "Context має тип `Dispatch<ExpenseAction> | null` і значення `null` за замовчуванням, тож компонент поза provider не мовчить, а падає з помилкою, що називає `useRecordsDispatch`. Provider стоїть у `ExpensePage` — власника `dispatch` — і обіймає всю дошку, отже й рядки, і форму. Проміжні `ExpenseBoard` і `ExpenseList` більше не передають того, чим не користуються. `dispatch` з `useReducer` не змінюється між рендерами, тож context не перемальовує споживачів даремно."
+      en: "The context has the type `Dispatch<ExpenseAction> | null` and the default `null`, so a component outside the provider does not stay silent but fails with an error that names `useRecordsDispatch`. The provider sits in `ExpensePage` — the owner of `dispatch` — and encloses the whole board, so both the rows and the form. `ExpenseBoard` and `ExpenseList` in between no longer pass on what they do not use. The `dispatch` from `useReducer` does not change between renders, so the context does not re-render its consumers needlessly."
+    feedback:
+      - when: { test: "useRecordsDispatch returns the function given to the context" }
+        message:
+          uk: "Ця перевірка кладе в `RecordsDispatchContext` свою функцію й очікує, що `useRecordsDispatch()` усередині поверне саме її, без помилки. Хук має читати `useContext(RecordsDispatchContext)`."
+          en: "This check puts its own function into `RecordsDispatchContext` and expects `useRecordsDispatch()` inside to return exactly that function, without an error. The hook must read `useContext(RecordsDispatchContext)`."
+      - when: { test: "outside the context the hook throws an error that names it" }
+        message:
+          uk: "Ця перевірка малює компонент з `useRecordsDispatch()` поза будь-яким provider і очікує одну помилку, у тексті якої є `useRecordsDispatch`. Значення за замовчуванням має бути `null`, а хук — кидати на нього `Error`, а не повертати «порожню» функцію."
+          en: "This check draws a component with `useRecordsDispatch()` outside any provider and expects one error whose text contains `useRecordsDispatch`. The default value must be `null`, and the hook must throw an `Error` on it instead of returning an “empty” function."
+      - when: { test: "a row sends removed through the context" }
+        message:
+          uk: "Ця перевірка малює `<ExpenseList expenses={…} />` без `dispatch` усередині context зі своєю функцією, клацає «Прибрати» в другому рядку й очікує виклик з `{ type: \"removed\", id: \"e-08\" }`. Рядок має брати `dispatch` з `useRecordsDispatch()`, а не з props."
+          en: "This check draws `<ExpenseList expenses={…} />` without `dispatch` inside a context with its own function, clicks “Remove” in the second row and expects a call with `{ type: \"removed\", id: \"e-08\" }`. The row must take `dispatch` from `useRecordsDispatch()`, not from props."
+      - when: { test: "the form sends added through the context" }
+        message:
+          uk: "Ця перевірка малює `<AddExpenseForm />` без props усередині context, вводить «Квитки в кіно» й 300 і очікує один виклик з action `added`, де `label` — «Квитки в кіно», а `amountMinor` — 30000."
+          en: "This check draws `<AddExpenseForm />` without props inside a context, types “Cinema tickets” and 300 and expects one call with an `added` action whose `label` is “Cinema tickets” and whose `amountMinor` is 30000."
+      - when: { test: "the page still adds and removes expenses" }
+        message:
+          uk: "Ця перевірка на цілій сторінці прибирає першу витрату, додає «Квитки в кіно» на 300 і очікує три витрати, «Разом: 1000.00» і жодної помилки React. Помилка з `useRecordsDispatch` тут означає, що рядки чи форма опинилися поза межею provider."
+          en: "This check, on the whole page, removes the first expense, adds “Cinema tickets” for 300 and expects three expenses, “Total: 1000.00” and no React error. An error from `useRecordsDispatch` here means the rows or the form ended up outside the provider's boundary."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError: dispatch is not a function` означає, що компонент досі читає `dispatch` з props, а їх йому вже не передають. Такий компонент має брати `dispatch` з `useRecordsDispatch()`."
+          en: "`TypeError: dispatch is not a function` means a component still reads `dispatch` from props, which are no longer passed to it. Such a component must take `dispatch` from `useRecordsDispatch()`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-04
+    body:
+      uk: "У кроці проєкту цього розділу спершу спробуй композицію: обгортки з `children` часто прибирають увесь drilling. Якщо `dispatch` твого reducer усе ж потрібен на різній глибині, дай йому типізований context із хуком-охоронцем — і постав provider довкола тих частин, яким він потрібен, а не довкола всього застосунку."
+      en: "In this unit's project step try composition first: wrappers with `children` often remove all the drilling. If your reducer's `dispatch` is still needed at different depths, give it a typed context with a guard hook — and place the provider around the parts that need it, not around the whole app."

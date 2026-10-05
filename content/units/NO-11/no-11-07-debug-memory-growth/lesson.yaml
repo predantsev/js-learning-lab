@@ -1,0 +1,308 @@
+id: no-11-07-debug-memory-growth
+unit: NO-11
+title:
+  uk: "Налагодження: зростання пам’яті й незакритий handle"
+  en: "Debug: memory growth and a leaked handle"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знаходити причину зростання пам’яті під час потокового імпорту за вибірками пам’яті й двома знімками heap."
+    en: "Locate the cause of memory growth during a streamed import with memory sampling and two heap snapshots."
+  - uk: "Знаходити handle, що тримає процес живим після скасованої задачі, і закривати його на кожному шляху."
+    en: "Find the handle that keeps the process alive after a canceled job and close it on every path."
+prerequisites: [no-11-06-workers-processes-graceful]
+subskills:
+  - { family: B-08, skill: "read/write streams and backpressure", depth: assess }
+  - { family: B-08, skill: "pipeline/error/abort/cleanup", depth: assess }
+  - { family: B-08, skill: "graceful resource use", depth: assess }
+glossary: []
+selfCheck: [predict-symptoms, repair-import]
+
+blocks:
+  - id: three-suspects
+    kind: explanation
+    title:
+      uk: "Симптоми й підозрювані"
+      en: "Symptoms and suspects"
+    body:
+      uk: |
+        Імпорт звичок у тестовому середовищі працює, а на сервері — ні: пам’ять процесу росте з кожним імпортом, а після скасованого імпорту процес не завершується сам, коли його зупиняють. Ось код імпорту — `importFile` у файлі `app.js` вправи цього уроку. Він виглядає робочим, але в ньому три підозрілі місця:
+
+        1. модульний об’єкт `progress` для сторінки статусу складає в `lines` кожен прочитаний рядок;
+        2. `output.write(…)` викликається, а його відповідь ніхто не читає;
+        3. `setInterval` для прогресу прибирається лише після успіху.
+
+        Не вгадуй — збери докази. Вибірки `process.memoryUsage()` кажуть, **чи** росте пам’ять. Два [[heap-snapshot|знімки heap]] — до й після — кажуть, **що** саме додалося і хто це тримає. А `process.getActiveResourcesInfo()` після скасування каже, **що** тримає процес.
+      en: |
+        A habit import works in testing but not on the server: the process’s memory grows with every import, and after a canceled import the process does not end by itself when it is stopped. Here is the import code — `importFile` in the file `app.js` of this lesson’s exercise. It looks working, but it has three suspicious places:
+
+        1. the module-level `progress` object for the status page collects every line read into `lines`;
+        2. `output.write(…)` is called, and nobody reads its answer;
+        3. the `setInterval` for progress is cleared only after success.
+
+        Do not guess — gather evidence. Samples of `process.memoryUsage()` tell you **whether** memory grows. Two [[heap-snapshot|heap snapshots]] — before and after — tell you **what** was added and who holds it. And `process.getActiveResourcesInfo()` after an abort tells you **what** keeps the process alive.
+
+  - id: predict-symptoms
+    kind: prediction
+    prompt:
+      uk: "Імпорт з трьома підозрілими місцями — `progress.lines.push(line)` у модульному об’єкті, `output.write(…)` без перевірки відповіді, `setInterval`, прибраний лише після успіху. Познач **усі** правильні твердження."
+      en: "An import with three suspicious places — `progress.lines.push(line)` in a module-level object, `output.write(…)` without checking its answer, a `setInterval` cleared only after success. Mark **all** true statements."
+    answer:
+      type: multi
+      options:
+        - id: lines-grow
+          text:
+            uk: "`progress.lines` утримує кожен рядок і після кінця імпорту: пам’ять росте з кожним імпортом"
+            en: "`progress.lines` retains every line even after the import ends: memory grows with every import"
+        - id: queue-grows
+          text:
+            uk: "Без перевірки `write()` повільний `output` накопичує в черзі майже весь файл, поки імпорт триває"
+            en: "Without checking `write()`, a slow `output` queues almost the whole file while the import runs"
+        - id: interval-alive
+          text:
+            uk: "Після скасування інтервал прогресу лишається й тримає процес живим"
+            en: "After an abort the progress interval stays and keeps the process alive"
+        - id: gc-fault
+          text:
+            uk: "Пам’ять росте, бо збирач сміття не встигає: треба частіше запускати його вручну"
+            en: "Memory grows because the garbage collector cannot keep up: it should be run by hand more often"
+          why:
+            uk: "Збирач сміття звільняє лише недосяжне. Масив `lines` досяжний з модульної змінної `progress`, тож його не звільнить жоден запуск збирача — це дефект коду, а не збирача."
+            en: "The garbage collector frees only what is unreachable. The `lines` array is reachable from the module variable `progress`, so no run of the collector will free it — that is a defect of the code, not of the collector."
+        - id: interval-success
+          text:
+            uk: "Після **успішного** імпорту інтервал теж лишається"
+            en: "After a **successful** import the interval stays too"
+          why:
+            uk: "Після успіху виконання доходить до `clearInterval`. Лишається він лише тоді, коли функцію перервала помилка чи скасування."
+            en: "After success execution reaches `clearInterval`. It stays only when an error or an abort interrupted the function."
+      correct: [lines-grow, queue-grows, interval-alive]
+    runnable: false
+    explanation:
+      uk: "Два дефекти — пам’ять: один назавжди (масив у модульному об’єкті), один тимчасово (черга `output`, поки імпорт триває). Третій — процес: інтервал, що лишився після скасування, не дає йому завершитися. Збирач сміття тут ні до чого: усе це досяжне. Приклад уроку «Докази: вибірки, два знімки, таймери» показує кожен симптом."
+      en: "Two defects are about memory: one forever (an array in a module-level object), one temporary (the `output` queue while the import runs). The third is about the process: the interval left after an abort keeps it from ending. The garbage collector has nothing to do with it: all of this is reachable. The lesson’s example “Evidence: samples, two snapshots, timers” shows every symptom."
+
+  - id: what-holds-it
+    kind: visual
+    visual: memory-graph
+    title:
+      uk: "Хто тримає рядки й таймер після скасування"
+      en: "Who holds the lines and the timer after an abort"
+    textEquivalent:
+      uk: "Модульна змінна progress вказує на об’єкт з полями count і lines. Поле lines — масив, у якому лежить кожен прочитаний рядок: після першого імпорту в ньому три рядки з прикладу, після другого — шість. Змінна модуля — корінь, тож масив досяжний і жоден збирач сміття його не звільнить. Окремо інтервал прогресу: таймер, що чекає, теж корінь, і він тримає свою функцію, а та замикає progress. Після скасування імпорту clearInterval не викликано, тож таймер лишається й тримає процес живим. Після виправлення progress має лише count, а таймер прибрано у finally."
+      en: "The module variable progress points to an object with the fields count and lines. The field lines is an array holding every line read: after the first import it has the example’s three lines, after the second — six. A module variable is a root, so the array is reachable and no garbage collector will free it. Separately there is the progress interval: a waiting timer is a root too, and it holds its function, which closes over progress. After the import was aborted clearInterval was not called, so the timer stays and keeps the process alive. After the fix progress has only count, and the timer is cleared in finally."
+    spec:
+      code: |
+        export const progress = { count: 0, lines: [] };
+        const ticker = setInterval(() => onProgress(progress.count), 50);
+        progress.lines.push(line);
+        // aborted: clearInterval(ticker) never runs
+      states:
+        - caption:
+            uk: "Після першого імпорту з трьох рядків: `progress.lines` — масив з трьох рядків. `progress` — змінна модуля, тобто корінь."
+            en: "After a first import of three lines: `progress.lines` is an array of three lines. `progress` is a module variable, that is, a root."
+          line: 3
+          bindings:
+            - { name: progress, kind: const, value: { ref: progress } }
+          heap:
+            progress: { kind: object, props: { count: 3, lines: { ref: lines } } }
+            lines: { kind: array, items: ["{\"id\":\"h-1\"}", "{\"id\":\"h-2\"}", "{\"id\":\"h-3\"}"] }
+        - caption:
+            uk: "Другий імпорт тих самих трьох рядків: `count` знову 3, а `lines` — уже шість. Масив росте з кожним імпортом."
+            en: "A second import of the same three lines: `count` is 3 again, but `lines` now has six. The array grows with every import."
+          line: 3
+          bindings:
+            - { name: progress, kind: const, value: { ref: progress } }
+          heap:
+            progress: { kind: object, props: { count: 3, lines: { ref: lines } } }
+            lines: { kind: array, items: ["{\"id\":\"h-1\"}", "{\"id\":\"h-2\"}", "{\"id\":\"h-3\"}", "{\"id\":\"h-1\"}", "{\"id\":\"h-2\"}", "{\"id\":\"h-3\"}"] }
+          changed: [lines]
+        - caption:
+            uk: "Третій імпорт скасовано. `clearInterval` не виконався: таймер чекає й тримає свою функцію, а та — `progress`. Процес не завершиться сам."
+            en: "A third import is aborted. `clearInterval` did not run: the timer waits and holds its function, and that holds `progress`. The process will not end by itself."
+          line: 4
+          bindings:
+            - { name: progress, kind: const, value: { ref: progress } }
+            - { name: ticker, kind: const, value: { ref: timer } }
+          heap:
+            progress: { kind: object, props: { count: 0, lines: { ref: lines } } }
+            lines: { kind: array, items: ["{\"id\":\"h-1\"}", "{\"id\":\"h-2\"}", "{\"id\":\"h-3\"}", "{\"id\":\"h-1\"}", "{\"id\":\"h-2\"}", "{\"id\":\"h-3\"}"] }
+            timer: { kind: object, ctor: Timeout, props: { _onTimeout: { ref: tick } } }
+            tick: { kind: function, name: "(anonymous)" }
+          changed: [progress, timer, tick]
+        - caption:
+            uk: "Після виправлення: `progress` тримає лише лічильник, а таймер прибрано у `finally` — після скасування теж."
+            en: "After the fix: `progress` holds only a counter, and the timer is cleared in `finally` — after an abort too."
+          bindings:
+            - { name: progress, kind: const, value: { ref: progress } }
+          heap:
+            progress: { kind: object, props: { count: 0 } }
+          changed: [progress]
+
+  - id: measure-seeded
+    kind: example
+    runtime: isolated-node
+    dir: measure-seeded
+    entry: index.js
+    strings:
+      habit: { uk: "Звичка", en: "Habit" }
+      mb: { uk: "МБ", en: "MB" }
+      outputQueue: { uk: "у черзі output", en: "queued in output" }
+      strings: { uk: "рядків тексту в heap (знімок 1 → знімок 2)", en: "strings in the heap (snapshot 1 → snapshot 2)" }
+      bigArray: { uk: "великий масив у властивості", en: "a large array in the property" }
+      elements: { uk: "елементів", en: "elements" }
+      secondImport: { uk: "другий імпорт", en: "second import" }
+      timersLeft: { uk: "таймерів, що тримають процес", en: "timers holding the process" }
+    title:
+      uk: "Докази: вибірки, два знімки, таймери"
+      en: "Evidence: samples, two snapshots, timers"
+    body:
+      uk: |
+        Натисни **Запустити**. `seeded-import.js` — той самий код, що у вправі. Програма імпортує 40 000 звичок у повільний `output` і збирає чотири докази:
+
+        1. знімок heap **до** імпорту;
+        2. кожні 100 мс — `heapUsed` і скільки байтів чекає в черзі `output`;
+        3. знімок heap **після** і порівняння: скільки стало рядків тексту й чи з’явився великий масив (і в якій властивості він лежить);
+        4. другий імпорт, скасований одразу, — і скільки таймерів після нього тримає процес.
+
+        `heap-summary.js` робить справжній знімок V8 (`v8.getHeapSnapshot()`) і зводить його до цих чисел; повну картину з ланцюжками утримувачів дає панель Memory у DevTools. Наприкінці програма викликає `process.exit(0)` — без цього таймер, що лишився, не дав би їй завершитися.
+
+        У 10 запусках на Node.js v25.2.1 і v22.23.3 докази щоразу ті самі: рядків тексту в heap стає більше приблизно на 40 000 (12 241 → ~52 750 у v25, 12 101 → ~52 520 у v22), великий масив лежить у властивості `lines` і має 40 003 елементи (лічильник бере посилання зі сховища елементів масиву, тож їх на кілька більше, ніж рядків), після скасованого імпорту лишається 1 таймер. Імпорт триває близько пів секунди, тож вибірок лише дві, і в черзі `output` у них до ~2,3 МБ.
+      en: |
+        Press **Run**. `seeded-import.js` is the same code as in the exercise. The program imports 40,000 habits into a slow `output` and gathers four pieces of evidence:
+
+        1. a heap snapshot **before** the import;
+        2. every 100 ms — `heapUsed` and how many bytes wait in the `output` queue;
+        3. a heap snapshot **after**, and a comparison: how many strings there are now and whether a large array appeared (and in which property it sits);
+        4. a second import, aborted at once — and how many timers hold the process after it.
+
+        `heap-summary.js` takes a real V8 snapshot (`v8.getHeapSnapshot()`) and reduces it to these numbers; the full picture with chains of retainers is in the Memory panel of DevTools. At the end the program calls `process.exit(0)` — without it the timer left behind would keep it from ending.
+
+        In 10 runs on Node.js v25.2.1 and v22.23.3 the evidence was the same every time: the heap gains about 40,000 strings (12,241 → ~52,750 on v25, 12,101 → ~52,520 on v22), the large array sits in the property `lines` and has 40,003 elements (the counter takes the references of the array’s element store, so there are a few more than lines), and after the aborted import 1 timer is left. The import takes about half a second, so there are only two samples, with up to ~2.3 MB queued in `output`.
+    tryIt:
+      uk: "Зміни `HABITS` на `10000`: великий масив у `lines` тепер на 10 003 елементи — він росте разом з файлом, тобто це наш витік. Вибірок пам’яті тепер може не бути зовсім: імпорт закінчується швидше, ніж за 100 мс. Поверни `40_000`."
+      en: "Change `HABITS` to `10000`: the large array in `lines` now has 10,003 elements — it grows with the file, so that is our leak. There may now be no memory samples at all: the import ends in less than 100 ms. Set it back to `40_000`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: що тримає пам’ять"
+      en: "Recall: what holds memory"
+    items:
+      - id: retained-from-root
+        from: js-13-05-allocation-retained-references
+        prompt:
+          uk: "Масив на 10 000 записів більше ніде не показується, але на нього вказує змінна модуля `cache`. Чи звільнить його збирач сміття?"
+          en: "An array of 10,000 records is no longer shown anywhere, but the module variable `cache` points to it. Will the garbage collector free it?"
+        answer:
+          type: choice
+          options:
+            - id: retained
+              text:
+                uk: "Ні: змінна модуля — корінь, тож масив досяжний і утримується"
+                en: "No: a module variable is a root, so the array is reachable and retained"
+            - id: freed-later
+              text:
+                uk: "Так, але пізніше, коли збирач дійде до нього"
+                en: "Yes, but later, when the collector gets to it"
+              why:
+                uk: "Збирач звільняє лише недосяжне. Поки `cache` вказує на масив, він досяжний — і жоден запуск збирача його не прибере."
+                en: "The collector frees only the unreachable. While `cache` points to the array, it is reachable — and no run of the collector will remove it."
+            - id: freed-unused
+              text:
+                uk: "Так: його ніде не використовують"
+                en: "Yes: it is not used anywhere"
+              why:
+                uk: "«Не використовується» і «недосяжний» — різні речі. Збирач не знає твоїх намірів; він бачить лише, що від кореня є шлях до масиву."
+                en: "“Not used” and “unreachable” are different things. The collector does not know your intentions; it only sees that there is a path from a root to the array."
+          correct: [retained]
+        explanation:
+          uk: "Корені — змінні модуля, змінні функцій, що працюють, а також таймери й listeners, які ще чекають. Усе, до чого від них веде шлях, утримується."
+          en: "Roots are module variables, the variables of running functions, and the timers and listeners still waiting. Everything a path leads to from them is retained."
+
+  - id: repair-import
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: repair-import
+    entry: index.js
+    editable: [app.js]
+    strings:
+      habit: { uk: "Звичка", en: "Habit" }
+      kb: { uk: "КБ", en: "KB" }
+      imported: { uk: "імпортовано", en: "imported" }
+      progressSize: { uk: "розмір progress у JSON", en: "size of progress as JSON" }
+      peakQueued: { uk: "найбільше в черзі output", en: "most ever queued in output" }
+      limit: { uk: "ліміт", en: "limit" }
+      secondImport: { uk: "другий імпорт", en: "second import" }
+      timersLeft: { uk: "таймерів, що тримають процес", en: "timers holding the process" }
+    title:
+      uk: "Полагодь імпорт: пам’ять і процес"
+      en: "Repair the import: memory and the process"
+    instructions:
+      uk: |
+        `importFile` в `app.js` має три дефекти із цього уроку. Виправ їх, не змінюючи того, що функція робить:
+
+        - вона так само пише кожну звичку з відсортованими унікальними `completions` і виконується кількістю звичок;
+        - `progress` тримає лічильник, а не рядки (сторінці статусу потрібен лише `count`);
+        - повільний `output` ніколи не тримає більше за свій ліміт плюс один рядок;
+        - після скасування чи зламаного рядка не лишається жодного інтервалу.
+
+        `index.js` лише для читання: **Запустити** імпортує 30 000 звичок і друкує розмір `progress`, найбільшу чергу `output` і таймери після скасованого імпорту. Зі стартовим кодом (Node.js v25.2.1 і v22.23.3): `progress` — 2791 КБ, черга — 256 КБ за ліміту 64 КБ, 1 таймер лишився. Поки дефект з таймером не виправлено, програма не завершується сама, і платформа зупиняє її через 10 с.
+      en: |
+        `importFile` in `app.js` has the three defects from this lesson. Repair them without changing what the function does:
+
+        - it still writes every habit with sorted unique `completions` and fulfills with the number of habits;
+        - `progress` holds a counter, not the lines (the status page needs only `count`);
+        - a slow `output` never holds more than its limit plus one line;
+        - after an abort or a broken line no interval is left.
+
+        `index.js` is read-only: **Run** imports 30,000 habits and prints the size of `progress`, the largest `output` queue and the timers after an aborted import. With the starter code (Node.js v25.2.1 and v22.23.3): `progress` is 2791 KB, the queue 256 KB with a 64 KB limit, 1 timer left. Until the timer defect is repaired the program does not end by itself, and the platform stops it after 10 s.
+    testTitles:
+      "imports every habit with sorted, de-duplicated completions":
+        uk: "Імпортує кожну звичку з відсортованими унікальними `completions`"
+        en: "Imports every habit with sorted, de-duplicated `completions`"
+      "the progress object keeps a count, not the lines":
+        uk: "Об’єкт `progress` тримає лічильник, а не рядки"
+        en: "The `progress` object keeps a count, not the lines"
+      "a slow output never holds more than its limit plus one line":
+        uk: "Повільний `output` ніколи не тримає більше за ліміт плюс один рядок"
+        en: "A slow `output` never holds more than its limit plus one line"
+      "after an abort or a broken line no interval keeps the process alive":
+        uk: "Після скасування чи зламаного рядка жоден інтервал не тримає процес"
+        en: "After an abort or a broken line no interval keeps the process alive"
+    hints:
+      nudge:
+        uk: "Пройди три підозрілі місця з пояснення по черзі. Для кожного спитай: що це тримає і коли воно це відпускає?"
+        en: "Go through the three suspicious places from the explanation one by one. For each ask: what does it hold, and when does it let go?"
+      explanation:
+        uk: "Сторінці статусу досить числа: усе, що лежить у модульному об’єкті, живе стільки, скільки модуль. Відповідь `write()` — сигнал backpressure: коли вона `false`, цикл має чекати `'drain'`, як у першому уроці цього розділу. А те, що задача відкрила (тут — інтервал), закривається у `finally`, бо `throwIfAborted` і `JSON.parse` кидають посеред циклу."
+        en: "A number is enough for the status page: anything in a module-level object lives as long as the module. The answer of `write()` is the backpressure signal: when it is `false`, the loop has to wait for `'drain'`, as in this unit’s first lesson. And whatever the job opened (here, the interval) is closed in `finally`, because `throwIfAborted` and `JSON.parse` throw in the middle of the loop."
+    solutionNote:
+      uk: "`progress` тепер має лише `count`. Після `false` від `output.write` цикл чекає `'drain'`, тож черга не росте понад ліміт. Тіло функції загорнуто в `try`, а `clearInterval` стоїть у `finally` — і після скасування, і після `SyntaxError` інтервал зникає. Рівноцінно — `pipeline` з етапом-генератором і `{ signal }`: він сам стежить за backpressure і закриває потоки, а `finally` прибирає інтервал."
+      en: "`progress` now has only `count`. After `false` from `output.write` the loop waits for `'drain'`, so the queue never grows past the limit. The function body is wrapped in `try`, and `clearInterval` sits in `finally` — after an abort and after a `SyntaxError` alike the interval is gone. Equivalent: `pipeline` with a generator stage and `{ signal }`: it watches backpressure and closes the streams itself, and `finally` clears the interval."
+    feedback:
+      - when: { test: "imports every habit with sorted, de-duplicated completions" }
+        message:
+          uk: "Ця перевірка імпортує 300 звичок і очікує результат 300, 300 рядків у `output` і `completions` першої звички `['2026-03-01', '2026-03-02']`. Виправлення не мають змінювати того, що записується."
+          en: "This check imports 300 habits and expects the result 300, 300 lines in `output` and the first habit’s `completions` `['2026-03-01', '2026-03-02']`. The repairs must not change what is written."
+      - when: { test: "the progress object keeps a count, not the lines" }
+        message:
+          uk: "Ця перевірка імпортує 20 000 звичок і очікує, що `JSON.stringify(progress)` коротший за 2000 символів. Сторінці статусу потрібен лише `count`: не складай рядків у модульний об’єкт."
+          en: "This check imports 20,000 habits and expects `JSON.stringify(progress)` to be shorter than 2000 characters. The status page needs only `count`: do not collect lines in a module-level object."
+      - when: { test: "a slow output never holds more than its limit plus one line" }
+        message:
+          uk: "Ця перевірка пише 3000 звичок у повільний `output` з лімітом 4096 байтів і очікує, що в його черзі ніколи не буде більше 4396 байтів. Коли `output.write` відповідає `false`, чекай `'drain'`."
+          en: "This check writes 3000 habits into a slow `output` with a 4096-byte limit and expects its queue never to hold more than 4396 bytes. When `output.write` answers `false`, wait for `'drain'`."
+      - when: { test: "after an abort or a broken line no interval keeps the process alive" }
+        message:
+          uk: "Ця перевірка запускає імпорт з уже скасованим `signal` (очікує `AbortError`) і з файлом, де зламано рядок 50 (очікує `SyntaxError`), і після кожного рахує таймери через `activeResources()`. Інтервал має прибиратися у `finally`, а не лише після успіху."
+          en: "This check runs the import with an already aborted `signal` (expects `AbortError`) and with a file whose line 50 is broken (expects `SyntaxError`), and after each counts the timers through `activeResources()`. The interval has to be cleared in `finally`, not only after success."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-11
+    body:
+      uk: "У кроці проєкту цього розділу імпорт з’являється й у твоєму проєкті, а його тести вже перевіряють, що скасування нічого по собі не лишає: клієнт, що пішов посеред тіла, нічого не записує, і наступний імпорт запускається; скасований `exportToFile` не лишає тимчасового файлу. Вибірок пам’яті й знімків heap у кроці немає; коли імпорт поводитиметься дивно — пам’ять росте, сервер не зупиняється, — збирай ті самі докази, що й тут: вибірки пам’яті, два знімки heap і список активних ресурсів після скасування."
+      en: "In this unit’s project step your project gets an import too, and its tests already check that a cancel leaves nothing behind: a client that goes away mid-body writes nothing and the next import runs; a cancelled `exportToFile` leaves no temp file. Memory samples and heap snapshots are not part of the step; when the import behaves oddly — memory grows, the server does not stop — gather the same evidence as here: memory samples, two heap snapshots and the list of active resources after an abort."

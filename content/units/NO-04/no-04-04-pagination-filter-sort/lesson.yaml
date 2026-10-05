@@ -1,0 +1,402 @@
+id: no-04-04-pagination-filter-sort
+unit: NO-04
+title:
+  uk: "Пагінація, фільтрація і сортування"
+  en: "Pagination, filtering and sorting"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Застосувати фільтр, потім стабільне сортування з додатковим ключем, потім сторінку — саме в такому порядку — і передбачити вміст сторінки для заданих параметрів запиту."
+    en: "Apply filter, then a stable sort with a tie-breaker, then a page, in that order, and predict a page’s contents for given query parameters."
+  - uk: "Порівняти пагінацію за зсувом і за курсором, коли між запитами сторінок додаються записи, і перевіряти limit на максимум."
+    en: "Compare offset and cursor pagination when records are inserted between page requests, and validate limit against a maximum."
+prerequisites: [no-04-03-error-model, js-05-07-readable-chains]
+subskills:
+  - { family: B-03, skill: "pagination/filter/sort", depth: intro }
+glossary: [pagination, cursor-pagination, offset-pagination]
+selfCheck: [predict-offset, expense-list]
+
+blocks:
+  - id: why-pages
+    kind: explanation
+    title:
+      uk: "Ніхто не хоче всі записи одразу"
+      en: "Nobody wants every record at once"
+    body:
+      uk: |
+        У планувальника за рік набереться тисяча справ. Віддавати їх усі одним `GET /tasks` — повільно для сервера, мережі й екрана. Тому колекцію читають **сторінками** — це [[pagination|пагінація]], — а query string каже, що саме потрібно:
+
+        `GET /tasks?done=false&sort=dueDate&limit=4`
+
+        Сервер виконує три кроки **саме в такому порядку**:
+
+        1. **Фільтр** — лишає справи з `done: false`.
+        2. **Сортування** — за `dueDate`, а за однакової дати — за `id`. Цей додатковий ключ (tie-breaker) робить порядок однозначним. Без нього порядок двох справ з однаковою датою залежить від того, як вони лежать у сховищі, а сховище (наприклад, база даних) не обіцяє, що від запиту до запиту він буде той самий.
+        3. **Сторінка** — перші `limit` записів.
+
+        Якщо поміняти кроки місцями, вийде інша відповідь: сторінка, вирізана до фільтра, може містити лише виконані справи, а після фільтра — стати порожньою.
+
+        `limit` — теж ввід від клієнта, тож його перевіряють, як тіло: ціле від 1 до 50, інакше 400. Без межі один запит `?limit=1000000` змусить сервер віддати все.
+      en: |
+        A planner gathers a thousand tasks in a year. Sending them all in one `GET /tasks` is slow for the server, the network and the screen. So a collection is read **in pages** — that is [[pagination]] — and the query string says what exactly is needed:
+
+        `GET /tasks?done=false&sort=dueDate&limit=4`
+
+        The server does three steps **in exactly this order**:
+
+        1. **Filter** — keep the tasks with `done: false`.
+        2. **Sort** — by `dueDate`, and for equal dates by `id`. That extra key (a tie-breaker) makes the order unambiguous. Without it, the order of two tasks with the same date depends on how they happen to lie in storage, and a store (a database, for example) does not promise to keep it the same from request to request.
+        3. **Page** — the first `limit` records.
+
+        Swap the steps and the answer changes: a page cut before the filter may hold only finished tasks, and become empty after filtering.
+
+        `limit` is client input too, so it is checked like a body: a whole number from 1 to 50, otherwise 400. Without a maximum, one request with `?limit=1000000` makes the server send everything.
+
+  - id: page-pipeline
+    kind: visual
+    visual: pipeline
+    title:
+      uk: "Фільтр → сортування → сторінка"
+      en: "Filter → sort → page"
+    textEquivalent:
+      uk: "Дванадцять справ проходять три етапи. Фільтр лишає десять невиконаних (t-11 і t-12 виконано). Сортування впорядковує їх за датою, а t-04 і t-05 з однаковою датою 03-05 — за id, тож t-04 іде першою. Останній етап — сторінка: фільтр за позицією лишає перші чотири записи, t-01, t-02, t-03 і t-04. Наступну сторінку можна почати або з позиції 4 (зсув), або одразу після t-04 (курсор)."
+      en: "Twelve tasks go through three stages. The filter keeps ten unfinished ones (t-11 and t-12 are done). The sort orders them by date, and t-04 and t-05, which share the date 03-05, by id, so t-04 comes first. The last stage is the page: a filter by position keeps the first four records, t-01, t-02, t-03 and t-04. The next page can start either at position 4 (an offset) or right after t-04 (a cursor)."
+    spec:
+      code: |
+        const page = tasks
+          .filter((task) => !task.done)
+          .toSorted((a, b) => byText(a.due, b.due) || byText(a.id, b.id))
+          .filter((task, index) => index < 4);
+      input:
+        label: { uk: "12 справ", en: "12 tasks" }
+        items:
+          - { id: t-01, due: "03-01", done: false }
+          - { id: t-02, due: "03-02", done: false }
+          - { id: t-03, due: "03-03", done: false }
+          - { id: t-11, due: "03-04", done: true }
+          - { id: t-05, due: "03-05", done: false }
+          - { id: t-04, due: "03-05", done: false }
+          - { id: t-06, due: "03-07", done: false }
+          - { id: t-07, due: "03-08", done: false }
+          - { id: t-12, due: "03-08", done: true }
+          - { id: t-08, due: "03-09", done: false }
+          - { id: t-09, due: "03-10", done: false }
+          - { id: t-10, due: "03-12", done: false }
+        show:
+          uk: "task => `${task.id} · ${task.due}${task.done ? ' · виконано' : ''}`"
+          en: "task => `${task.id} · ${task.due}${task.done ? ' · done' : ''}`"
+        caption:
+          uk: "Дванадцять справ у тому порядку, в якому їх зберігає сервер. Зверни увагу: t-05 стоїть перед t-04, а дата в них однакова."
+          en: "Twelve tasks in the order the server stores them. Notice that t-05 stands before t-04, and they share a date."
+      stages:
+        - op: filter
+          fn: "(task) => !task.done"
+          caption:
+            uk: "**Фільтр** першим: лишилося {result} невиконаних справ із {count}."
+            en: "**Filter** first: {result} unfinished tasks of {count} remain."
+        - op: toSorted
+          fn: "(a, b) => (a.due < b.due ? -1 : a.due > b.due ? 1 : 0) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)"
+          label: "byText(a.due, b.due) || byText(a.id, b.id)"
+          caption:
+            uk: "**Сортування** за датою; за однакової дати вирішує `id`, тож t-04 тепер перед t-05 — і так буде за кожного запиту."
+            en: "**Sort** by date; for equal dates the `id` decides, so t-04 is now before t-05 — and it will be on every request."
+        - op: filter
+          fn: "(task, index) => index < 4"
+          label: "index < 4"
+          caption:
+            uk: "**Сторінка** останньою: перші 4 записи. Друга сторінка почнеться або з позиції 4, або одразу після t-04."
+            en: "**Page** last: the first 4 records. Page two starts either at position 4 or right after t-04."
+      result:
+        label: { uk: "Сторінка 1: {count} справи", en: "Page 1: {count} tasks" }
+
+  - id: offset-or-cursor
+    kind: explanation
+    title:
+      uk: "Зсув чи курсор"
+      en: "Offset or cursor"
+    body:
+      uk: |
+        Як попросити **другу** сторінку? Два способи:
+
+        - [[offset-pagination|Зсув]] (offset): `?limit=4&offset=4` — «пропусти 4 записи, дай наступні 4». Просто, і можна стрибнути на будь-яку сторінку.
+        - [[cursor-pagination|Курсор]]: `?limit=4&cursor=t-04` — «дай 4 записи, що в порядку сортування йдуть **після** t-04». Сервер повертає `nextCursor` разом зі сторінкою, а на останній сторінці — `null`.
+
+        Різниця з’являється, коли дані змінюються між запитами. Поки ти читаєш першу сторінку, інший клієнт додає справу з ранньою датою, і всі записи зсуваються на одну позицію. Зсув рахує позиції — тож друга сторінка почнеться на запис раніше. Курсор рахує від конкретного запису — тож продовжить рівно після нього.
+
+        Курсор працює лише з однозначним порядком: «після t-04» має сенс, тільки коли в кожного запису своє місце. Тому без tie-breaker курсор теж помиляється.
+      en: |
+        How do you ask for the **second** page? Two ways:
+
+        - [[offset-pagination|Offset]]: `?limit=4&offset=4` — “skip 4 records, give the next 4”. Simple, and you can jump to any page.
+        - [[cursor-pagination|Cursor]]: `?limit=4&cursor=t-04` — “give 4 records that come **after** t-04 in the sort order”. The server returns a `nextCursor` with each page, and `null` on the last one.
+
+        The difference shows when data changes between requests. While you read page one, another client adds a task with an early date, and every record shifts by one position. An offset counts positions — so page two starts one record earlier. A cursor counts from a specific record — so it continues exactly after it.
+
+        A cursor needs an unambiguous order: “after t-04” makes sense only when every record has its own place. That is why without a tie-breaker a cursor goes wrong too.
+
+  - id: predict-offset
+    kind: prediction
+    prompt:
+      uk: "Клієнт прочитав першу сторінку (`slice(0, 4)`), потім хтось додав справу t-13 на 02.03, і клієнт просить другу сторінку за зсувом. Що надрукує код?"
+      en: "A client read page one (`slice(0, 4)`), then someone added task t-13 due on 2 March, and the client asks for page two by offset. What does the code print?"
+    code: |
+      const tasks = [
+        { id: "t-01", due: "03-01" }, { id: "t-02", due: "03-02" },
+        { id: "t-03", due: "03-03" }, { id: "t-04", due: "03-05" },
+        { id: "t-05", due: "03-05" }, { id: "t-06", due: "03-07" },
+        { id: "t-07", due: "03-08" }, { id: "t-08", due: "03-09" },
+      ];
+      const byText = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+      const order = (a, b) => byText(a.due, b.due) || byText(a.id, b.id);
+
+      const page1 = tasks.toSorted(order).slice(0, 4);
+      tasks.push({ id: "t-13", due: "03-02" });
+      const page2 = tasks.toSorted(order).slice(4, 8);
+      console.log(page2.map((task) => task.id).join(" "));
+    verify: { logs: ["t-04 t-05 t-06 t-07"] }
+    answer:
+      type: choice
+      options:
+        - id: repeats
+          code: "t-04 t-05 t-06 t-07"
+        - id: clean
+          code: "t-05 t-06 t-07 t-08"
+          why:
+            uk: "Так було б без вставки. Але t-13 стала на позицію 2, і все після неї зсунулося на одну позицію, а зсув 4 рахує позиції, не записи."
+            en: "That would be the answer without the insert. But t-13 took position 2, everything after it moved one place, and offset 4 counts positions, not records."
+        - id: new-first
+          code: "t-13 t-05 t-06 t-07"
+          why:
+            uk: "Нову справу відсортовано разом з усіма: з датою 03-02 вона потрапляє на початок списку, тобто на першу сторінку, а не на другу."
+            en: "The new task is sorted with all the others: dated 03-02 it lands near the start of the list, on page one, not page two."
+      correct: [repeats]
+    explanation:
+      uk: "t-04 клієнт уже бачив на першій сторінці — і бачить знову. А t-13 він не побачить зовсім: вона потрапила на першу сторінку, яку вже прочитано. Отже, зсув за змін між запитами повторює **і** пропускає."
+      en: "The client already saw t-04 on page one — and sees it again. And it never sees t-13 at all: it landed on page one, which was already read. So with changes between requests an offset repeats **and** skips."
+
+  - id: predict-cursor
+    kind: prediction
+    prompt:
+      uk: "Клієнт прочитав першу сторінку, потім хтось додав справу t-13 на 02.03, а другу сторінку клієнт просить за курсором: усе, що в порядку сортування йде після останньої справи першої сторінки. Що надрукує код?"
+      en: "A client read page one, then someone added task t-13 due on 2 March, and the client asks for page two by cursor: everything that comes after the last task of page one in the sort order. What does the code print?"
+    code: |
+      const tasks = [
+        { id: "t-01", due: "03-01" }, { id: "t-02", due: "03-02" },
+        { id: "t-03", due: "03-03" }, { id: "t-04", due: "03-05" },
+        { id: "t-05", due: "03-05" }, { id: "t-06", due: "03-07" },
+        { id: "t-07", due: "03-08" }, { id: "t-08", due: "03-09" },
+      ];
+      const byText = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+      const order = (a, b) => byText(a.due, b.due) || byText(a.id, b.id);
+
+      const page1 = tasks.toSorted(order).slice(0, 4);
+      const cursor = page1.at(-1);
+      tasks.push({ id: "t-13", due: "03-02" });
+      const page2 = tasks.toSorted(order).filter((task) => order(task, cursor) > 0).slice(0, 4);
+      console.log(page2.map((task) => task.id).join(" "));
+    verify: { logs: ["t-05 t-06 t-07 t-08"] }
+    answer:
+      type: choice
+      options:
+        - id: continues
+          code: "t-05 t-06 t-07 t-08"
+        - id: repeats
+          code: "t-04 t-05 t-06 t-07"
+          why:
+            uk: "Так повторює зсув. Курсор не рахує позиції: він бере лише те, що в порядку сортування більше за t-04, а сама t-04 — не більша за себе."
+            en: "That is the offset repeating. A cursor does not count positions: it takes only what sorts after t-04, and t-04 does not sort after itself."
+        - id: skips
+          code: "t-06 t-07 t-08"
+          why:
+            uk: "Так сталося б без tie-breaker: t-05 має ту саму дату, що й t-04, і порівняння дало б 0, тобто «не після». Тут порядок доповнено `id`, тож t-05 > t-04."
+            en: "That would happen without a tie-breaker: t-05 has the same date as t-04, and the comparison would give 0, meaning “not after”. Here the order is completed by `id`, so t-05 > t-04."
+      correct: [continues]
+    explanation:
+      uk: "Курсор продовжує рівно після t-04, тож вставка перед ним нічого не зсуває. t-13 з’явиться, коли клієнт оновить список з початку — і це чесна поведінка: сторінки не повторюються й не губляться."
+      en: "The cursor continues exactly after t-04, so an insert before it shifts nothing. t-13 appears when the client reloads the list from the start — an honest behavior: pages neither repeat nor go missing."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: comparator-sign
+        from: js-05-05-sorting-comparator
+        prompt:
+          uk: "Що має повернути функція-comparator `(a, b) => …` для `sort`, щоб `a` стало **перед** `b`?"
+          en: "What must a comparator function `(a, b) => …` return for `sort` so that `a` goes **before** `b`?"
+        answer:
+          type: choice
+          options:
+            - id: negative
+              text: { uk: "Від’ємне число", en: "A negative number" }
+            - id: boolean
+              text: { uk: "`true`", en: "`true`" }
+              why:
+                uk: "Comparator повертає число, а не `true`/`false`. Булеве значення сортування перетворює на 1 чи 0, і порядок стає непередбачуваним."
+                en: "A comparator returns a number, not `true`/`false`. Sorting turns a boolean into 1 or 0, and the order becomes unpredictable."
+            - id: positive
+              text: { uk: "Додатне число", en: "A positive number" }
+              why:
+                uk: "Додатне число ставить `b` перед `a`."
+                en: "A positive number puts `b` before `a`."
+          correct: [negative]
+        explanation:
+          uk: "Від’ємне — `a` першим, додатне — `b` першим, 0 — «рівні». Tie-breaker — це другий comparator, якого питають лише тоді, коли перший дав 0: `byDate(a, b) || byId(a, b)`."
+          en: "Negative — `a` first, positive — `b` first, 0 — “equal”. A tie-breaker is a second comparator asked only when the first gave 0: `byDate(a, b) || byId(a, b)`."
+
+  - id: planner-pages
+    kind: example
+    runtime: isolated-node
+    dir: planner-pages
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      page: { uk: "сторінка", en: "page" }
+      t01: { uk: "Купити квіти", en: "Buy flowers" }
+      t02: { uk: "Полити квіти", en: "Water the plants" }
+      t03: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      t04: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+      t05: { uk: "Здати книжки", en: "Return library books" }
+      t06: { uk: "Написати бабусі", en: "Write to grandma" }
+      t07: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      t08: { uk: "Помити вікна", en: "Clean the windows" }
+      t09: { uk: "Купити подарунок", en: "Buy a present" }
+      t10: { uk: "Замінити лампочку", en: "Replace a bulb" }
+      t11: { uk: "Віднести посилку", en: "Post a parcel" }
+      t12: { uk: "Забрати окуляри", en: "Pick up the glasses" }
+      t13: { uk: "Подзвонити сантехніку", en: "Call the plumber" }
+    title:
+      uk: "Дві сторінки, поки хтось додає справу"
+      en: "Two pages while someone adds a task"
+    body:
+      uk: |
+        `app.js` віддає невиконані справи сторінками по 4 — за зсувом (`offset`) або за курсором (`cursor`). `index.js` двічі читає дві сторінки, і між ними інший клієнт додає справу t-13 на 02.03.
+
+        Натисни **Запустити**. За зсувом t-04 з’являється двічі. За курсором повтору немає — зате зникла t-05: у сортуванні цього сервера ще **немає tie-breaker**, тож t-05 з тією самою датою, що й t-04, не вважається «після» неї.
+      en: |
+        `app.js` returns unfinished tasks in pages of 4 — by offset (`offset`) or by cursor (`cursor`). `index.js` reads two pages twice, and between them another client adds task t-13 due on 2 March.
+
+        Press **Run**. By offset t-04 appears twice. By cursor there is no repeat — but t-05 is missing: this server's sort has **no tie-breaker** yet, so t-05, which shares t-04's date, does not count as “after” it.
+    tryIt:
+      uk: |
+        1. У `app.js` додай tie-breaker: заміни рядок `const compareTasks = …` на `const compareTasks = (a, b) => byText(a.dueDate, b.dueDate) || byText(a.id, b.id);` і запусти. За курсором друга сторінка тепер `t-05, t-06, t-07, t-08`, а зсув так само повторює t-04: tie-breaker лікує курсор, але не зсув.
+        2. У `index.js` зміни дату нової справи на `'2026-03-20'` і запусти: запис додано після другої сторінки, і обидва способи дають однакові сторінки.
+      en: |
+        1. In `app.js` add a tie-breaker: replace the line `const compareTasks = …` with `const compareTasks = (a, b) => byText(a.dueDate, b.dueDate) || byText(a.id, b.id);` and run. By cursor page two is now `t-05, t-06, t-07, t-08`, while the offset still repeats t-04: the tie-breaker cures the cursor, not the offset.
+        2. In `index.js` change the new task's date to `'2026-03-20'` and run: the record lands after page two, and both ways give the same pages.
+
+  - id: expense-list
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: expense-list
+    entry: index.js
+    editable: [list.js]
+    capabilities: { network: loopback }
+    strings:
+      page: { uk: "Сторінка", en: "Page" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      pass: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      taxi: { uk: "Таксі", en: "Taxi" }
+      bakery: { uk: "Пекарня", en: "Bakery" }
+      concert: { uk: "Концерт", en: "Concert" }
+      soap: { uk: "Мило", en: "Soap" }
+      market: { uk: "Ринок", en: "Market" }
+      museum: { uk: "Музей", en: "Museum" }
+    title:
+      uk: "listRecords для витрат"
+      en: "listRecords for expenses"
+    instructions:
+      uk: |
+        `app.js` передає параметри `GET /expenses` у `listRecords(records, query)` з `list.js`: `query` — об’єкт текстових значень, наприклад `{ category: "food", limit: "3" }`. Напиши `listRecords`:
+
+        - `category` (необов’язковий) — лишає лише цю категорію;
+        - `sort` — `"date"` (типово) або `"amountMinor"`, за зростанням; за однакових значень — за `id`; будь-яке інше значення — помилка `sort: "unknownSort"`;
+        - `limit` — ціле від 1 до 50 (типово 10), інакше помилка `limit: "outOfRange"`;
+        - `cursor` (необов’язковий) — `id` останньої витрати попередньої сторінки: сторінка починається з наступного за ним запису в порядку сортування; `id`, якого немає серед записів, — помилка `cursor: "unknownCursor"`.
+
+        Порядок: фільтр → сортування → курсор → сторінка. Поверни `{ ok: true, items, nextCursor }`, де `nextCursor` — `id` останнього запису сторінки, якщо після неї ще є записи, і `null` на останній сторінці. Помилки — `{ ok: false, errors }`; `app.js` перетворить їх на 400.
+      en: |
+        `app.js` passes the parameters of `GET /expenses` to `listRecords(records, query)` from `list.js`: `query` is an object of text values, for example `{ category: "food", limit: "3" }`. Write `listRecords`:
+
+        - `category` (optional) — keep only this category;
+        - `sort` — `"date"` (default) or `"amountMinor"`, ascending; for equal values by `id`; any other value is the error `sort: "unknownSort"`;
+        - `limit` — a whole number from 1 to 50 (default 10), otherwise the error `limit: "outOfRange"`;
+        - `cursor` (optional) — the `id` of the last expense of the previous page: the page starts with the record that follows it in the sort order; an `id` that is not among the records is the error `cursor: "unknownCursor"`.
+
+        Order: filter → sort → cursor → page. Return `{ ok: true, items, nextCursor }`, where `nextCursor` is the `id` of the page's last record when more records follow, and `null` on the last page. Errors are `{ ok: false, errors }`; `app.js` turns them into 400.
+    testTitles:
+      "filters by category before paging":
+        uk: "Фільтрує за категорією до поділу на сторінки"
+        en: "Filters by category before paging"
+      "sorts by date, and equal dates by id":
+        uk: "Сортує за датою, а однакові дати — за `id`"
+        en: "Sorts by date, and equal dates by `id`"
+      "sorts by amountMinor when asked":
+        uk: "Сортує за `amountMinor`, коли попросили"
+        en: "Sorts by `amountMinor` when asked"
+      "walking the pages by cursor returns every expense once, and the last nextCursor is null":
+        uk: "Прохід сторінками за курсором дає кожну витрату один раз, а останній `nextCursor` — `null`"
+        en: "Walking the pages by cursor returns every expense once, and the last `nextCursor` is `null`"
+      "limit must be a whole number from 1 to 50; the default is 10":
+        uk: "`limit` — ціле від 1 до 50, типово 10"
+        en: "`limit` is a whole number from 1 to 50; the default is 10"
+      "an unknown sort or cursor is refused":
+        uk: "Невідомий `sort` чи `cursor` відхилено"
+        en: "An unknown `sort` or `cursor` is refused"
+      "over HTTP a record added between two pages is neither repeated nor skipped":
+        uk: "Через HTTP запис, доданий між двома сторінками, не повторюється й не губиться"
+        en: "Over HTTP a record added between two pages is neither repeated nor skipped"
+    hints:
+      nudge:
+        uk: "Почни з перевірок `query` — вони можуть одразу повернути `{ ok: false, errors }`. Далі: `filter`, `toSorted`, курсор, `slice`."
+        en: "Start with the checks of `query` — they may return `{ ok: false, errors }` right away. Then: `filter`, `toSorted`, the cursor, `slice`."
+      explanation:
+        uk: "Comparator з tie-breaker має вигляд `(a, b) => byKey(a, b) || byId(a, b)`, а `a[sort]` бере поле за назвою з `query.sort`. Курсор — це запис: знайди його за `id` серед усіх записів і залиш лише ті, для яких comparator(запис, курсор) > 0. Чи є наступна сторінка, видно з того, чи залишилося записів більше, ніж `limit`. Текст `\"2.5\"` перетворює на число `Number`, а ціле воно чи ні, скаже `Number.isInteger`."
+        en: "A comparator with a tie-breaker looks like `(a, b) => byKey(a, b) || byId(a, b)`, and `a[sort]` reads the field named by `query.sort`. The cursor is a record: find it by `id` among all records and keep only those for which comparator(record, cursor) > 0. Whether there is a next page shows in whether more than `limit` records are left. `Number` turns the text `\"2.5\"` into a number, and `Number.isInteger` tells whether it is whole."
+    solutionNote:
+      uk: "Кроки йдуть у порядку фільтр → сортування → курсор → сторінка. Курсор — це запис, а не позиція: сторінка бере те, що в порядку сортування йде після нього, тому вставка раніше нічого не зсуває. Tie-breaker за `id` дає кожному запису своє місце, і курсор не губить записи з однаковою датою чи сумою."
+      en: "The steps go filter → sort → cursor → page. The cursor is a record, not a position: the page takes what sorts after it, so an earlier insert shifts nothing. The `id` tie-breaker gives every record its own place, so the cursor does not lose records with an equal date or amount."
+    feedback:
+      - when: { test: "filters by category before paging" }
+        message:
+          uk: "Ця перевірка чекає для `category=food&sort=amountMinor&limit=2` дві витрати з категорії food. Фільтруй до того, як вирізати сторінку."
+          en: "This check expects two food expenses for `category=food&sort=amountMinor&limit=2`. Filter before cutting the page."
+      - when: { test: "sorts by date, and equal dates by id" }
+        message:
+          uk: "Ця перевірка передає записи у зворотному порядку й чекає, що однакові дати впорядковано за `id`. Додай другий ключ, коли перший дав 0."
+          en: "This check passes the records in reverse order and expects equal dates to be ordered by `id`. Add a second key for when the first gave 0."
+      - when: { test: "walking the pages by cursor returns every expense once, and the last nextCursor is null" }
+        message:
+          uk: "Ця перевірка читає сторінки по 4 за `amountMinor` (там три суми по 18000) і чекає всі 12 витрат по разу, а на останній сторінці `nextCursor: null`. Якщо бракує записів з однаковою сумою — додай tie-breaker; якщо після останньої сторінки є ще одна порожня — `nextCursor` має бути `null`."
+          en: "This check reads pages of 4 by `amountMinor` (there are three amounts of 18000) and expects all 12 expenses once each, with `nextCursor: null` on the last page. If records with an equal amount are missing, add a tie-breaker; if an empty page follows the last one, `nextCursor` must be `null`."
+      - when: { test: "limit must be a whole number from 1 to 50; the default is 10" }
+        message:
+          uk: "Ця перевірка чекає `outOfRange` для `0`, `51`, `2.5` і `many`, по одному запису для `1`, усі 12 для `50` і 10 без `limit`."
+          en: "This check expects `outOfRange` for `0`, `51`, `2.5` and `many`, one record for `1`, all 12 for `50`, and 10 without `limit`."
+      - when: { test: "an unknown sort or cursor is refused" }
+        message:
+          uk: "Ця перевірка чекає `errors.sort: \"unknownSort\"` для `sort=label` і `errors.cursor: \"unknownCursor\"` для `cursor=e-99`. Не підміняй невідоме значення типовим мовчки."
+          en: "This check expects `errors.sort: \"unknownSort\"` for `sort=label` and `errors.cursor: \"unknownCursor\"` for `cursor=e-99`. Do not silently replace an unknown value with the default."
+      - when: { test: "over HTTP a record added between two pages is neither repeated nor skipped" }
+        message:
+          uk: "Ця перевірка читає сторінку 1, додає витрату з ранньою датою й чекає на сторінці 2 рівно `e-02, e-06, e-07, e-08`, а наприкінці — 400 для `limit=500`. `cursor` — це `id` запису, а не номер позиції."
+          en: "This check reads page 1, adds an expense with an early date and expects exactly `e-02, e-06, e-07, e-08` on page 2, and finally 400 for `limit=500`. The `cursor` is a record's `id`, not a position number."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` тут найчастіше означає `.at(-1)` чи `.id` на порожньому масиві чи `undefined` (наприклад, коли курсор не знайдено). Якщо всі перевірки падають разом, виправ першу помилку в консолі."
+          en: "A `TypeError` here most often means `.at(-1)` or `.id` on an empty array or on `undefined` (for example, when the cursor was not found). If every check fails at once, fix the first error in the console."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-04
+    body:
+      uk: "У кроці проєкту цього розділу `GET /v1/records` твого сервера приймає фільтр свого домену (`?acquired=`, `?done=`, `?active=` чи `?category=`), сортування за полями домену з `id` як tie-breaker, `limit` від 1 до 50 (типово 10) і курсор — `id` останнього запису попередньої сторінки — тим самим порядком кроків. `nextCursor` береться з `rest.length > limit`, а `npm test` перевіряє сторінку, що закінчується рівно на останньому записі."
+      en: "In this unit’s project step your server’s `GET /v1/records` accepts your domain’s filter (`?acquired=`, `?done=`, `?active=` or `?category=`), sorting by the domain’s fields with `id` as the tie-breaker, a `limit` from 1 to 50 (10 by default) and a cursor — the `id` of the last record of the previous page — in the same order of steps. `nextCursor` comes from `rest.length > limit`, and `npm test` checks a page that ends exactly at the last record."

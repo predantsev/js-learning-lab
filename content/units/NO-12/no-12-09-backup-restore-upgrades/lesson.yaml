@@ -1,0 +1,564 @@
+id: no-12-09-backup-restore-upgrades
+unit: NO-12
+title:
+  uk: "Backup/restore та оновлення залежностей"
+  en: "Backup/restore and dependency upgrades"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Відновлювати backup у нову порожню теку даних і перевіряти його за id записів і похідними підсумками, а не за розміром файла."
+    en: "Restore a backup into a fresh data directory and verify it by record ids and derived totals, not by file size."
+  - uk: "Оновлювати одну залежність на окремій гілці, проганяти CI-скрипт і перевірку відновлення та тримати попередній артефакт готовим до відкату."
+    en: "Upgrade one dependency on a branch, run the CI script and the restore check, and keep the previous artifact ready for rollback."
+prerequisites: [no-12-08-runbook-monitoring-rollback, no-05-04-backup-restore-verification]
+subskills:
+  - { family: B-10, skill: "backup/restore", depth: intro }
+  - { family: B-10, skill: "dependency upgrades", depth: intro }
+glossary: [restore-drill, staged-upgrade]
+selfCheck: [predict-torn-backup, verify-restore]
+
+blocks:
+  - id: drill
+    kind: explanation
+    title:
+      uk: "Тренування відновлення: у порожню теку, з тими самими питаннями"
+      en: "A restore drill: into an empty folder, with the same questions"
+    body:
+      uk: |
+        У NO-05 ти перевіряв [[backup-verification|backup відновленням]]: копію в тимчасове місце, кількість, контрольну суму. Для сервісу в роботі цього мало — потрібне **[[restore-drill|тренування відновлення]]**, тобто репетиція найгіршого дня за runbook:
+
+        1. backup відновлюють у **нову порожню** теку даних, а не поверх живої;
+        2. на відновлених даних запускають сервіс (або його код підсумків);
+        3. ставлять живим і відновленим даним **ті самі питання**: які id є, скільки справ не виконано, скільки з них мають строк до заданого дня;
+        4. засікають, скільки це тривало, — це й є реальний час відновлення.
+
+        Розмір файла тут нічого не доводить: обірваний JSON теж має розмір, а файл тієї самої довжини може містити інші id. Довіряють лише відповідям, які дав би людині застосунок.
+      en: |
+        In NO-05 you checked a [[backup-verification|backup by restoring it]]: a copy into a scratch location, a count, a checksum. For a running service that is not enough — you need a **[[restore-drill]]**, a rehearsal of the worst day by the runbook:
+
+        1. the backup is restored into a **new, empty** data folder, not over the live one;
+        2. the service (or its summary code) is started on the restored data;
+        3. the live and the restored data are asked **the same questions**: which ids exist, how many tasks are pending, how many of them are due by a given day;
+        4. the time it took is noted — that is the real restore time.
+
+        The file size proves nothing here: a torn JSON has a size too, and a file of the same length can hold other ids. Only the answers the app would give a person are trusted.
+
+  - id: staged
+    kind: explanation
+    title:
+      uk: "Оновлення залежності — поетапно"
+      en: "A dependency upgrade — in stages"
+    body:
+      uk: |
+        За [[semver]] мінорна версія «нічого не ламає». На ділі це обіцянка автора, а не перевірка: поведінка, на яку ти покладався, могла змінитися, а в журналі змін про це ані слова. Тому **[[staged-upgrade|поетапне оновлення]]**:
+
+        - **одна залежність за раз**, на окремій гілці git; `git diff` показує, що змінилося в `package.json` і lockfile;
+        - **нова версія релізу** (`npm version patch`), щоб новий артефакт не перезаписав попередній;
+        - **CI-скрипт і перевірки домену**: тести, перевірка контракту, тренування відновлення на копії даних;
+        - **попередній артефакт і lockfile лишаються** — відкат зводиться до запуску збереженого архіву, а невдала гілка просто видаляється.
+
+        Під час підготовки цього уроку `npm install --save-dev typescript@7` у лабораторному проєкті лише **попередив** про конфлікт peer-залежностей, а `npm ci` у CI-скрипті **відмовився** ставити такий lockfile — оновлення зупинилося ще до lint.
+      en: |
+        By [[semver]] a minor version “breaks nothing”. In practice that is the author’s promise, not a check: behavior you relied on may have changed with not a word in the changelog. So a **[[staged-upgrade]]**:
+
+        - **one dependency at a time**, on a separate git branch; `git diff` shows what changed in `package.json` and the lockfile;
+        - **a new release version** (`npm version patch`), so that the new artifact does not overwrite the previous one;
+        - **the CI script and the domain checks**: tests, the contract check, a restore drill on a copy of the data;
+        - **the previous artifact and lockfile stay** — a rollback comes down to starting the kept archive, and a failed branch is simply deleted.
+
+        While this lesson was prepared, `npm install --save-dev typescript@7` in the lab project only **warned** about a peer dependency conflict, while `npm ci` in the CI script **refused** to install such a lockfile — the upgrade stopped even before lint.
+
+  - id: upgrade-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Backup, тренування відновлення й невдале оновлення"
+      en: "A backup, a restore drill and a failed upgrade"
+    textEquivalent:
+      uk: "Оператор робить backup між записами, тож копія узгоджена. Потім відновлює її в порожню теку, і сервіс на відновлених даних дає ті самі id і ті самі підсумки, що й живий. Далі оператор оновлює допоміжну бібліотеку дат з 1.2.0 до 1.3.0, мінорної версії, і запускає перевірки. Перевірка підсумку падає: справ зі строком до 2 березня одна замість двох, бо нова версія вважає той самий день «не до». Оператор запускає попередній артефакт знову, і перевірка знову проходить."
+      en: "The operator takes a backup between writes, so the copy is consistent. Then restores it into an empty folder, and the service on the restored data gives the same ids and the same totals as the live one. Next the operator upgrades the date helper library from 1.2.0 to 1.3.0, a minor version, and runs the checks. The summary check fails: one task due by March 2 instead of two, because the new version treats the same day as not “on or before”. The operator starts the previous artifact again, and the check passes again."
+    spec:
+      actors:
+        - { id: operator, label: { uk: "Оператор", en: "Operator" } }
+        - { id: service, label: { uk: "Сервіс", en: "Service" } }
+        - { id: drill, label: { uk: "Порожня тека", en: "Empty folder" } }
+      messages:
+        - from: operator
+          to: service
+          label: { uk: "backup між записами", en: "backup between writes" }
+          caption:
+            uk: "Backup береться між записами (або з атомарно заміненого файла) — копія показує дані в одну мить."
+            en: "The backup is taken between writes (or from an atomically replaced file) — the copy shows the data at one moment."
+        - from: operator
+          to: drill
+          label: { uk: "відновити", en: "restore" }
+          caption:
+            uk: "Копію відновлюють у теку, якої ще не було, — не поверх живих даних."
+            en: "The copy is restored into a folder that did not exist — not over the live data."
+        - from: drill
+          to: operator
+          kind: return
+          label: { uk: "ті самі id і підсумки", en: "same ids and totals" }
+          caption:
+            uk: "Ті самі питання живим і відновленим даним: id збігаються, «не виконано 4, до 2 березня — 2» в обох."
+            en: "The same questions to the live and the restored data: the ids match, “4 pending, 2 due by March 2” in both."
+        - from: operator
+          to: service
+          label: "day-utils 1.2.0 → 1.3.0"
+          caption:
+            uk: "Мінорне оновлення бібліотеки дат на окремій гілці. Журнал змін каже лише про порівняння через `Date`."
+            en: "A minor upgrade of the date library on a separate branch. The changelog only mentions comparing through `Date`."
+        - from: service
+          to: operator
+          kind: return
+          label: { uk: "до 2 березня: 1 замість 2", en: "due by Mar 2: 1, not 2" }
+          caption:
+            uk: "Перевірка підсумку падає: нова версія вважає справу на той самий день «не до». Тести на форму відповіді цього б не помітили — лише перевірка з відомою відповіддю."
+            en: "The summary check fails: the new version treats a task on the same day as not “on or before”. Tests of the response shape would not notice — only a check with a known answer does."
+        - from: operator
+          to: service
+          label: { uk: "попередній артефакт", en: "previous artifact" }
+          caption:
+            uk: "Попередній артефакт і lockfile збережено: його запускають знову, і перевірка проходить. Невдалу гілку видаляють."
+            en: "The previous artifact and lockfile were kept: it is started again, and the check passes. The failed branch is deleted."
+
+  - id: predict-torn-backup
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Сервер планувальника записує `tasks.json` **на місці**: відкриває файл (той одразу стає порожнім) і пише текст частинами. Скрипт backup у цей час робить `copyFile`. Копія має розмір понад 60 КБ. Чи вдасться з неї відновитися і яка перевірка це покаже?"
+      en: "A planner server writes `tasks.json` **in place**: it opens the file (which instantly becomes empty) and writes the text in chunks. Meanwhile a backup script runs `copyFile`. The copy is over 60 KB. Can you restore from it, and which check shows that?"
+    answer:
+      type: choice
+      options:
+        - id: maybe-torn-parse
+          text:
+            uk: "Можливо, ні: копія може бути обірваним JSON. Покаже це лише відновлення з розбором і порівнянням id та підсумків, а не розмір"
+            en: "Maybe not: the copy may be a torn JSON. Only a restore that parses it and compares ids and totals shows that, not the size"
+        - id: size-ok
+          text:
+            uk: "Так: файл понад 60 КБ, отже, дані на місці"
+            en: "Yes: the file is over 60 KB, so the data is there"
+          why:
+            uk: "Розмір нічого не каже про вміст. Під час підготовки уроку така копія мала рівно 65 536 байтів із 991 144 — непорожня, але обірвана посередині JSON."
+            en: "The size says nothing about the content. While preparing this lesson such a copy had exactly 65,536 bytes of 991,144 — not empty, but cut off in the middle of the JSON."
+        - id: copyfile-atomic
+          text:
+            uk: "Так: `copyFile` копіює файл однією дією, тож копія завжди повна"
+            en: "Yes: `copyFile` copies the file in one step, so the copy is always complete"
+          why:
+            uk: "`copyFile` копіює те, що лежить у файлі в цю мить. Якщо запис іде на місці, у цю мить у файлі може бути лише його початок."
+            en: "`copyFile` copies what is in the file at that moment. If the write goes in place, at that moment the file may hold only its beginning."
+      correct: [maybe-torn-parse]
+    explanation:
+      uk: "Ми виміряли це: 20 копій посеред запису на місці 20 000 справ — під час підготовки уроку на Node v25.2.1 17 з них не розібралися як JSON, на v22.23.3 — 11; під час рецензії (інший скрипт, по 5 серій із 20 копій) — від 13 до 20 на v25.2.1 і від 16 до 20 на v22.23.3, здебільшого порожніх. Скільки саме — справа випадку й часу, а не версії Node: безпечної копії посеред такого запису не гарантує ніщо. Тому backup роблять або між записами, або з файла, який завжди замінюють атомарно (NO-02), а перевіряють — відновленням і тими самими питаннями, що й живі дані."
+      en: "We measured it: 20 copies taken in the middle of an in-place write of 20,000 tasks — while preparing the lesson, 17 of them did not parse as JSON on Node v25.2.1 and 11 on v22.23.3; during the review (another script, 5 series of 20 copies each), 13 to 20 on v25.2.1 and 16 to 20 on v22.23.3, mostly empty. How many exactly is a matter of chance and timing, not of the Node version: nothing guarantees a safe copy in the middle of such a write. That is why a backup is taken either between writes or from a file that is always replaced atomically (NO-02), and it is checked by a restore and the same questions as the live data."
+
+  - id: planner-drill
+    kind: example
+    runtime: isolated-node
+    dir: planner-drill
+    entry: index.js
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+      drill: { uk: "тренування відновлення", en: "restore drill" }
+      same: { uk: "однакові", en: "the same" }
+      differ: { uk: "різні", en: "differ" }
+      dueBy: { uk: "справ до", en: "tasks due by" }
+      expected: { uk: "очікується", en: "expected" }
+      got: { uk: "отримано", en: "got" }
+    title:
+      uk: "Тренування відновлення й мінорне оновлення"
+      en: "A restore drill and a minor upgrade"
+    body:
+      uk: |
+        Натисни **Запустити**. `index.js` записує дані планувальника, робить backup між записами, відновлює його в порожню теку `data/drill` і ставить живим і відновленим даним ті самі питання. Потім запускає перевірку, яку проганяють після кожного оновлення залежності: для відомих фікстур відповідь «справ до 2026-03-02» має бути 2.
+
+        `vendor/` — копія маленької бібліотеки дат у проєкті (так іноді тримають залежність, яку змінюють рідко). Яку версію бере сервіс, вирішує один рядок у `vendor/day-utils.js`.
+      en: |
+        Press **Run**. `index.js` writes the planner data, takes a backup between writes, restores it into the empty folder `data/drill` and asks the live and the restored data the same questions. Then it runs the check that runs after every dependency upgrade: for the known fixtures the answer to “tasks due by 2026-03-02” must be 2.
+
+        `vendor/` is a copy of a small date library inside the project (a dependency that rarely changes is sometimes kept this way). Which version the service takes is decided by one line in `vendor/day-utils.js`.
+    tryIt:
+      uk: |
+        1. Онови залежність: у `vendor/day-utils.js` заміни `day-utils-1.2.0.js` на `day-utils-1.3.0.js` і запусти. Тренування відновлення все ще «зелене» — живі й відновлені дані рахуються однаково неправильно, — а перевірка з відомою відповіддю показує `2` → `1` і `✖`, і процес виходить із кодом 1. Знайди в `day-utils-1.3.0.js`, чому: `a < b` замість «на той самий день або раніше».
+        2. «Відкотися»: поверни `day-utils-1.2.0.js` і запусти — знову `✔`. Ось чому тренування відновлення й перевірка оновлення — дві різні перевірки: перша порівнює копію з джерелом, друга — код з відомою правильною відповіддю.
+      en: |
+        1. Upgrade the dependency: in `vendor/day-utils.js`, replace `day-utils-1.2.0.js` with `day-utils-1.3.0.js` and run. The restore drill is still “green” — the live and the restored data are counted equally wrongly — while the check with a known answer shows `2` → `1` and `✖`, and the process exits with code 1. Find in `day-utils-1.3.0.js` why: `a < b` instead of “on the same day or earlier”.
+        2. “Roll back”: put back `day-utils-1.2.0.js` and run — `✔` again. This is why the restore drill and the upgrade check are two different checks: the first compares the copy with the source, the second the code with a known correct answer.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: перевірений backup"
+      en: "Recall: a verified backup"
+    items:
+      - id: scratch-not-live
+        from: no-05-04-backup-restore-verification
+        prompt:
+          uk: "Чому перевірку backup у NO-05 робили відновленням у тимчасове місце, а не поверх живого сховища?"
+          en: "Why was a backup check in NO-05 done by restoring into a scratch location instead of over the live store?"
+        answer:
+          type: choice
+          options:
+            - id: live-safe
+              text:
+                uk: "Якщо backup зіпсований, відновлення поверх живих даних знищило б і їх — а перевірка має нічого не ламати"
+                en: "If the backup is broken, restoring it over the live data would destroy that too — and a check must break nothing"
+            - id: faster
+              text:
+                uk: "Так швидше: тимчасова тека менша"
+                en: "It is faster: a scratch folder is smaller"
+              why:
+                uk: "Швидкість тут ні до чого: відновлюється той самий обсяг. Суть у тому, щоб невдалий backup не зачепив живих даних."
+                en: "Speed has nothing to do with it: the same amount is restored. The point is that a bad backup must not touch the live data."
+            - id: permissions
+              text:
+                uk: "У живе сховище під час роботи сервера писати заборонено"
+                en: "Writing to the live store while the server runs is forbidden"
+              why:
+                uk: "Сервер сам пише в живе сховище постійно. Перевірку тримають окремо, щоб її невдача нічого не зламала."
+                en: "The server itself writes to the live store all the time. The check is kept separate so that its failure breaks nothing."
+          correct: [live-safe]
+        explanation:
+          uk: "Тренування відновлення в NO-12 йде тим самим шляхом і додає дві речі: на відновлених даних працює код сервісу, а порівнюють відповіді, які він дав би людині."
+          en: "The restore drill in NO-12 follows the same path and adds two things: the service’s code runs on the restored data, and what is compared are the answers it would give a person."
+
+  - id: verify-restore
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: verify-restore
+    entry: index.js
+    editable: [verify-restore.js]
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      books: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+    title:
+      uk: "verifyRestore: id і підсумки, а не розмір"
+      en: "verifyRestore: ids and totals, not size"
+    instructions:
+      uk: |
+        У `verify-restore.js` напиши `verifyRestore(sourceDir, restoredDir, day)`. Обидві теки містять `tasks.json` планувальника; `readTasks(dir)` з `store.js` читає записи, а `summary(dir, day)` з `service.js` повертає `{ pending, dueBy }`.
+
+        Функція повертає `{ ok, problems }` і **ніколи не кидає**:
+
+        - відновлені дані не читаються (немає файла, обірваний JSON) → проблема;
+        - id, які є в джерелі, але немає у відновлених, → проблема, у тексті якої є ці id;
+        - зайві id у відновлених → проблема із цими id;
+        - `summary` джерела й відновлених даних для `day` відрізняються → проблема.
+
+        Порядок записів значення не має. Розмір файлів не порівнюй — він нічого не доводить. `ok` — `true` лише без проблем.
+      en: |
+        In `verify-restore.js`, write `verifyRestore(sourceDir, restoredDir, day)`. Both folders hold the planner’s `tasks.json`; `readTasks(dir)` from `store.js` reads the records, and `summary(dir, day)` from `service.js` returns `{ pending, dueBy }`.
+
+        The function returns `{ ok, problems }` and **never throws**:
+
+        - the restored data cannot be read (no file, a torn JSON) → a problem;
+        - ids that are in the source but not in the restored data → a problem whose text contains those ids;
+        - extra ids in the restored data → a problem with those ids;
+        - the `summary` of the source and of the restored data for `day` differ → a problem.
+
+        The order of records does not matter. Do not compare file sizes — they prove nothing. `ok` is `true` only with no problems.
+    testTitles:
+      "an exact copy passes":
+        uk: "Точна копія проходить"
+        en: "An exact copy passes"
+      "the same records in another order pass":
+        uk: "Ті самі записи в іншому порядку проходять"
+        en: "The same records in another order pass"
+      "a missing record is reported with its id":
+        uk: "Відсутній запис позначено з його id"
+        en: "A missing record is reported with its id"
+      "an extra record is reported with its id":
+        uk: "Зайвий запис позначено з його id"
+        en: "An extra record is reported with its id"
+      "the same ids with a changed summary are reported":
+        uk: "Ті самі id зі зміненим підсумком позначено"
+        en: "The same ids with a changed summary are reported"
+      "a file of the same size with other ids is reported":
+        uk: "Файл того самого розміру з іншими id позначено"
+        en: "A file of the same size with other ids is reported"
+      "a torn backup is reported, not thrown":
+        uk: "Обірваний backup позначено, а не кинуто"
+        en: "A torn backup is reported, not thrown"
+      "a restore folder without tasks.json is reported, not thrown":
+        uk: "Теку відновлення без `tasks.json` позначено, а не кинуто"
+        en: "A restore folder without `tasks.json` is reported, not thrown"
+    hints:
+      nudge:
+        uk: "Прочитай відновлені записи першими й у `try`: якщо не вдалося — одразу поверни звіт із проблемою. Далі два набори id (`Set`) і дві різниці між ними, а потім порівняння двох `summary`."
+        en: "Read the restored records first and inside a `try`: if that fails, return a report with a problem right away. Then two sets of ids (`Set`) and the two differences between them, and then a comparison of two `summary` results."
+      explanation:
+        uk: "Різниця множин на іншому прикладі — учні в класі й у списку на екскурсію: `const absent = [...classIds].filter((id) => !tripIds.has(id));` — це ті, кого в списку немає; і навпаки — ті, хто в списку зайвий. Набори не залежать від порядку, тож переставлені записи пройдуть. Для підсумку порівняй обидва поля, `pending` і `dueBy`: однакові id ще не означають однакових даних — справа могла стати виконаною."
+        en: "A set difference on another example — pupils in a class and on a trip list: `const absent = [...classIds].filter((id) => !tripIds.has(id));` — those missing from the list; and the other way round, those on the list who should not be. Sets do not depend on order, so reordered records pass. For the summary compare both fields, `pending` and `dueBy`: the same ids do not yet mean the same data — a task may have become done."
+    solutionNote:
+      uk: "id ловлять загублені й зайві записи, підсумок — змінені, а `try` — обірваний файл. Жодна з трьох перевірок окремо не достатня: файл того самого розміру з іншим id проходить перевірку розміру, а дані з тим самим числом записів, але іншим id — перевірку кількості. Тепер запускай `verifyRestore` після кожного тренування відновлення й виходь із ненульовим кодом, коли `ok` — `false`, як це робить `index.js`. Варіант, що порівнює відсортовані списки id і JSON двох підсумків, теж правильний."
+      en: "Ids catch lost and extra records, the summary catches changed ones, and the `try` a torn file. None of the three checks is enough alone: a file of the same size with another id passes a size check, and data with the same number of records but another id passes a count check. Now run `verifyRestore` after every restore drill and exit with a non-zero code when `ok` is `false`, as `index.js` does. A version that compares the sorted id lists and the JSON of the two summaries is correct too."
+    feedback:
+      - when: { test: "the same records in another order pass" }
+        message:
+          uk: "Ця перевірка відновлює ті самі записи у зворотному порядку й очікує `ok: true`. Порівнюй набори id, а не масиви за позиціями."
+          en: "This check restores the same records in reverse order and expects `ok: true`. Compare sets of ids, not arrays by position."
+      - when: { test: "a missing record is reported with its id" }
+        message:
+          uk: "Ця перевірка прибирає `t-03` з відновлених даних і очікує `ok: false` та `t-03` у тексті проблем."
+          en: "This check removes `t-03` from the restored data and expects `ok: false` and `t-03` in the text of the problems."
+      - when: { test: "an extra record is reported with its id" }
+        message:
+          uk: "Ця перевірка додає у відновлені дані запис `t-77` і очікує `ok: false` та `t-77` у тексті проблем. Шукай різницю в обидва боки."
+          en: "This check adds a record `t-77` to the restored data and expects `ok: false` and `t-77` in the text of the problems. Look for the difference both ways."
+      - when: { test: "the same ids with a changed summary are reported" }
+        message:
+          uk: "Ця перевірка позначає `t-02` виконаною у відновлених даних (id ті самі) й очікує `ok: false`. Порівняй `summary(sourceDir, day)` і `summary(restoredDir, day)`."
+          en: "This check marks `t-02` as done in the restored data (the ids are the same) and expects `ok: false`. Compare `summary(sourceDir, day)` and `summary(restoredDir, day)`."
+      - when: { test: "a file of the same size with other ids is reported" }
+        message:
+          uk: "Ця перевірка записує файл тієї самої довжини, де `t-01` замінено на `t-09`, і очікує `ok: false`. Розмір і кількість записів тут однакові — допомагають лише id."
+          en: "This check writes a file of the same length where `t-01` is replaced with `t-09` and expects `ok: false`. The size and the number of records are the same here — only the ids help."
+      - when: { test: "a torn backup is reported, not thrown" }
+        message:
+          uk: "Ця перевірка обриває відновлений `tasks.json` на 120-му символі й очікує звіт з `ok: false`, а не виняток. Читай відновлені дані в `try`."
+          en: "This check cuts the restored `tasks.json` off at the 120th character and expects a report with `ok: false`, not an exception. Read the restored data inside a `try`."
+      - when: { test: "a restore folder without tasks.json is reported, not thrown" }
+        message:
+          uk: "Ця перевірка дає порожню теку відновлення й очікує звіт з `ok: false`, а не виняток `ENOENT`."
+          en: "This check gives an empty restore folder and expects a report with `ok: false`, not an `ENOENT` exception."
+
+  - id: upgrade-locally
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Поетапне оновлення в лабораторному проєкті"
+      en: "A staged upgrade in the lab project"
+    intro:
+      uk: |
+        Тобі знадобиться проєкт `~/js-course/no12-lab` на версії 1.4.0 з уроку «Репетиція production-режиму на loopback» і його дані `~/js-course/no12-data`. Якщо версії 1.4.0 немає, спершу пройди кроки 1–4 того уроку. `npm version` потребує налаштованих у git імені й email — їх ти задав у JS-15 (`git config user.name` покаже ім’я).
+
+        Під час підготовки й рецензії уроку все виконано на macOS з Node.js v25.2.1, npm 11.6.2, git 2.51.0, а кроки 1–5 і 9–11 — ще й з Node.js v22.23.3 і npm 10.9.9; вивід нижче — з v25.2.1, твої хеші комітів і sha256 будуть свої. З npm 10 `git diff --stat` у кроці 2 показав для lockfile більше змінених рядків (`7 insertions(+), 13 deletions(-)` разом із `package.json`), бо npm 10 переписав lockfile, створений npm 11; решта збіглася. Windows не перевіряли.
+
+        **Крок 2 — оновлення ESLint 10.11.0 → 10.12.0:**
+
+        ```text
+        $ npm install --save-dev eslint@10.12.0
+        changed 1 package, and audited 99 packages in 782ms
+        …
+        $ git diff --stat
+         package-lock.json | 12 ++++++------
+         package.json      |  2 +-
+         2 files changed, 7 insertions(+), 7 deletions(-)
+        ```
+
+        **Кроки 4–5 — нова версія й CI:**
+
+        ```text
+        $ npm version patch -m "release %s"
+        v1.4.1
+        $ node scripts/ci.mjs
+        …
+        ✔ CI passed: artifacts/no12-lab-1.4.1.tgz
+          sha256 1efe0aa74d6e353d363e960df848c947dda579759fde716d0edc7122df3f6e55
+        ```
+
+        **Крок 7 — тренування відновлення на копії даних (порт 7373, щоб не заважати можливому серверу на 7372):**
+
+        ```text
+        planner 1.4.1 (pid 64350, NODE_ENV=production) listening on http://127.0.0.1:7373
+        {"status":"ready"}
+        tasks: 728 728 | same ids: true | pending: 727 727
+        ```
+
+        **Кроки 9–10 — спроба TypeScript 7 (уривок):**
+
+        ```text
+        $ npm install --save-dev typescript@7
+        npm warn ERESOLVE overriding peer dependency
+        …
+        npm warn Could not resolve dependency:
+        npm warn peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.0
+        …
+        $ node scripts/ci.mjs
+        ▶ install: npm ci --no-audit --no-fund
+        npm error code ERESOLVE
+        npm error ERESOLVE could not resolve
+        …
+        npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.0
+        …
+        ✖ CI stopped at "install" (exit code 1). No artifact was produced.
+        ```
+      en: |
+        You need the project `~/js-course/no12-lab` at version 1.4.0 from the lesson “Loopback production-mode rehearsal” and its data `~/js-course/no12-data`. If there is no version 1.4.0, first do steps 1–4 of that lesson. `npm version` needs a name and email configured in git — you set them in JS-15 (`git config user.name` shows the name).
+
+        While preparing and reviewing this lesson everything was run on macOS with Node.js v25.2.1, npm 11.6.2, git 2.51.0, and steps 1–5 and 9–11 also with Node.js v22.23.3 and npm 10.9.9; the output below is from v25.2.1, and your commit hashes and sha256 will be your own. With npm 10, `git diff --stat` in step 2 showed more changed lockfile lines (`7 insertions(+), 13 deletions(-)` together with `package.json`), because npm 10 rewrote a lockfile created by npm 11; the rest matched. Windows was not checked.
+
+        **Step 2 — upgrading ESLint 10.11.0 → 10.12.0:**
+
+        ```text
+        $ npm install --save-dev eslint@10.12.0
+        changed 1 package, and audited 99 packages in 782ms
+        …
+        $ git diff --stat
+         package-lock.json | 12 ++++++------
+         package.json      |  2 +-
+         2 files changed, 7 insertions(+), 7 deletions(-)
+        ```
+
+        **Steps 4–5 — a new version and CI:**
+
+        ```text
+        $ npm version patch -m "release %s"
+        v1.4.1
+        $ node scripts/ci.mjs
+        …
+        ✔ CI passed: artifacts/no12-lab-1.4.1.tgz
+          sha256 1efe0aa74d6e353d363e960df848c947dda579759fde716d0edc7122df3f6e55
+        ```
+
+        **Step 7 — a restore drill on a copy of the data (port 7373, so as not to collide with a possible server on 7372):**
+
+        ```text
+        planner 1.4.1 (pid 64350, NODE_ENV=production) listening on http://127.0.0.1:7373
+        {"status":"ready"}
+        tasks: 728 728 | same ids: true | pending: 727 727
+        ```
+
+        **Steps 9–10 — trying TypeScript 7 (an excerpt):**
+
+        ```text
+        $ npm install --save-dev typescript@7
+        npm warn ERESOLVE overriding peer dependency
+        …
+        npm warn Could not resolve dependency:
+        npm warn peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.0
+        …
+        $ node scripts/ci.mjs
+        ▶ install: npm ci --no-audit --no-fund
+        npm error code ERESOLVE
+        npm error ERESOLVE could not resolve
+        …
+        npm error peer typescript@">=4.8.4 <6.1.0" from typescript-eslint@8.71.0
+        …
+        ✖ CI stopped at "install" (exit code 1). No artifact was produced.
+        ```
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1 і v22.23.3", en: "checked with v25.2.1 and v22.23.3" } }
+      - { name: "npm", note: { uk: "перевірено з 11.6.2 і 10.9.9", en: "checked with 11.6.2 and 10.9.9" } }
+      - { name: "git", note: { uk: "перевірено з 2.51.0", en: "checked with 2.51.0" } }
+      - { name: "curl", version: "8.7.1", note: { uk: "у PowerShell — `curl.exe`", en: "in PowerShell: `curl.exe`" } }
+    steps:
+      - text:
+          uk: "Перейди в проєкт, переконайся, що робоча тека чиста, і створи гілку для оновлення."
+          en: "Go to the project, make sure the working tree is clean, and create a branch for the upgrade."
+        command: "cd ~/js-course/no12-lab\ngit status --short\ngit switch -c upgrade-eslint"
+        expect:
+          uk: "`git status --short` нічого не друкує, далі `Switched to a new branch 'upgrade-eslint'`."
+          en: "`git status --short` prints nothing, then `Switched to a new branch 'upgrade-eslint'`."
+      - text:
+          uk: "Онови **одну** залежність і подивись, що змінилося."
+          en: "Upgrade **one** dependency and look at what changed."
+        command: "npm install --save-dev eslint@10.12.0\ngit diff --stat"
+        expect:
+          uk: "`changed 1 package…`, а `git diff --stat` — лише `package.json` і `package-lock.json`, як у кроці 2 вступу."
+          en: "`changed 1 package…`, and `git diff --stat` shows only `package.json` and `package-lock.json`, as in step 2 of the introduction."
+      - text:
+          uk: "Закоміть оновлення."
+          en: "Commit the upgrade."
+        command: "git commit -am \"upgrade eslint to 10.12.0\""
+      - text:
+          uk: "Підніми версію релізу, щоб новий артефакт не перезаписав `no12-lab-1.4.0.tgz`. `npm version` сам робить коміт і тег."
+          en: "Raise the release version, so that the new artifact does not overwrite `no12-lab-1.4.0.tgz`. `npm version` makes a commit and a tag itself."
+        command: "npm version patch -m \"release %s\""
+        expect:
+          uk: "`v1.4.1`; `git log --oneline -2` показує коміти `release 1.4.1` і `upgrade eslint to 10.12.0`."
+          en: "`v1.4.1`; `git log --oneline -2` shows the commits `release 1.4.1` and `upgrade eslint to 10.12.0`."
+      - text:
+          uk: "Запусти CI й переконайся, що всі три артефакти на місці."
+          en: "Run CI and make sure all three artifacts are in place."
+        command: "node scripts/ci.mjs\nls artifacts"
+        expect:
+          uk: "`✔ CI passed: artifacts/no12-lab-1.4.1.tgz`, а в `artifacts` — архіви й записи 1.3.0, 1.4.0 і 1.4.1."
+          en: "`✔ CI passed: artifacts/no12-lab-1.4.1.tgz`, and `artifacts` holds the archives and records of 1.3.0, 1.4.0 and 1.4.1."
+      - text:
+          uk: "Підготуй тренування відновлення: скопіюй дані в нову теку й розпакуй новий артефакт."
+          en: "Prepare the restore drill: copy the data into a new folder and unpack the new artifact."
+        command: "mkdir -p ~/js-course/no12-drill ~/js-course/no12-run/1.4.1\ncp ~/js-course/no12-data/tasks.json ~/js-course/no12-drill/tasks.json\ntar -xzf artifacts/no12-lab-1.4.1.tgz -C ~/js-course/no12-run/1.4.1"
+      - text:
+          uk: "У терміналі 1 запусти 1.4.1 на копії даних і на порту 7373. У терміналі 2 постав сервісу й копії ті самі питання: скільки справ, чи ті самі id, скільки невиконаних — а не лише кількість. Потім зупини сервер через Ctrl+C."
+          en: "In terminal 1, start 1.4.1 on the copy of the data and on port 7373. In terminal 2, ask the service and the copy the same questions: how many tasks, whether the ids are the same, how many are pending — not only the count. Then stop the server with Ctrl+C."
+        command: "cd ~/js-course/no12-run/1.4.1/package\nNODE_ENV=production PORT=7373 HOST=127.0.0.1 DATA_DIR=$HOME/js-course/no12-drill node server.js\n# terminal 2:\ncurl -sS http://127.0.0.1:7373/readyz\ncurl -sS http://127.0.0.1:7373/tasks > ~/js-course/no12-drill/served.json\nnode -e \"const [served, copy] = [require(process.argv[1]), require(process.argv[2]).records]; const ids = (list) => list.map((t) => t.id).sort().join(); const pending = (list) => list.filter((t) => !t.done).length; console.log('tasks:', served.length, copy.length, '| same ids:', ids(served) === ids(copy), '| pending:', pending(served), pending(copy))\" ~/js-course/no12-drill/served.json ~/js-course/no12-drill/tasks.json"
+        expect:
+          uk: "`{\"status\":\"ready\"}`, однакові кількості, `same ids: true` і однакові числа невиконаних, як у кроці 7 вступу."
+          en: "`{\"status\":\"ready\"}`, equal counts, `same ids: true` and equal pending numbers, as in step 7 of the introduction."
+      - text:
+          uk: "Перенеси перевірене оновлення в `main`."
+          en: "Bring the verified upgrade into `main`."
+        command: "cd ~/js-course/no12-lab\ngit switch main\ngit merge --ff-only upgrade-eslint"
+        expect:
+          uk: "`Fast-forward`; `main` тепер на `release 1.4.1`."
+          en: "`Fast-forward`; `main` is now at `release 1.4.1`."
+      - text:
+          uk: "Спробуй мажорне оновлення на окремій гілці: TypeScript 7."
+          en: "Try a major upgrade on a separate branch: TypeScript 7."
+        command: "git switch -c upgrade-typescript\nnpm install --save-dev typescript@7\ngit commit -am \"try typescript 7\""
+        expect:
+          uk: "`npm install` лише попереджає: `npm warn ERESOLVE overriding peer dependency` і `peer typescript@\">=4.8.4 <6.1.0\" from typescript-eslint@8.71.0`, як у кроках 9–10 вступу."
+          en: "`npm install` only warns: `npm warn ERESOLVE overriding peer dependency` and `peer typescript@\">=4.8.4 <6.1.0\" from typescript-eslint@8.71.0`, as in steps 9–10 of the introduction."
+      - text:
+          uk: "Запусти CI на цій гілці."
+          en: "Run CI on this branch."
+        command: "node scripts/ci.mjs\nls artifacts"
+        expect:
+          uk: "`✖ CI stopped at \"install\" (exit code 1). No artifact was produced.`; в `artifacts` нового архіву немає."
+          en: "`✖ CI stopped at \"install\" (exit code 1). No artifact was produced.`; there is no new archive in `artifacts`."
+      - text:
+          uk: "Відмовся від невдалого оновлення: повернися на `main`, видали гілку й поверни `node_modules` до lockfile."
+          en: "Drop the failed upgrade: go back to `main`, delete the branch and bring `node_modules` back to the lockfile."
+        command: "git switch main\ngit branch -D upgrade-typescript\nnpm ci\nnpx tsc --version"
+        expect:
+          uk: "`Deleted branch upgrade-typescript`, `added 98 packages` і `Version 6.0.3`."
+          en: "`Deleted branch upgrade-typescript`, `added 98 packages` and `Version 6.0.3`."
+    verify:
+      - id: one-dependency
+        text:
+          uk: "Оновлення ESLint змінило лише `package.json` і lockfile, пройшло CI й дало `no12-lab-1.4.1.tgz`, а архіви 1.3.0 і 1.4.0 лишилися."
+          en: "The ESLint upgrade changed only `package.json` and the lockfile, passed CI and produced `no12-lab-1.4.1.tgz`, while the 1.3.0 and 1.4.0 archives stayed."
+      - id: drill-matched
+        text:
+          uk: "На копії даних 1.4.1 віддала ті самі id і стільки ж невиконаних справ, скільки є в копії."
+          en: "On the copy of the data 1.4.1 returned the same ids and as many pending tasks as the copy holds."
+      - id: failed-upgrade-dropped
+        text:
+          uk: "TypeScript 7 зупинив CI на `install`, а після видалення гілки й `npm ci` проєкт знову на TypeScript 6.0.3."
+          en: "TypeScript 7 stopped CI at `install`, and after deleting the branch and `npm ci` the project is back on TypeScript 6.0.3."
+    troubleshooting:
+      - problem:
+          uk: "`npm version` пише `npm error Git working directory not clean.`"
+          en: "`npm version` says `npm error Git working directory not clean.`"
+        fix:
+          uk: "Є незакомічені зміни — найчастіше пропущено крок 3. Зроби `git commit -am \"upgrade eslint to 10.12.0\"` і повтори. Саме цю помилку ми отримали під час підготовки."
+          en: "There are uncommitted changes — most often step 3 was skipped. Run `git commit -am \"upgrade eslint to 10.12.0\"` and repeat. We got exactly this error while preparing."
+      - problem:
+          uk: "`npm install --save-dev eslint@10.12.0` пише `up to date` і нічого не змінює."
+          en: "`npm install --save-dev eslint@10.12.0` says `up to date` and changes nothing."
+        fix:
+          uk: "ESLint уже 10.12.0 (наприклад, ти ставив `eslint` без версії). Візьми іншу залежність для вправи — `npm outdated` покаже, що можна оновити. Цей рядок під час підготовки не відтворювали."
+          en: "ESLint is already 10.12.0 (for example, you installed `eslint` without a version). Pick another dependency for the exercise — `npm outdated` shows what can be upgraded. This row was not reproduced while preparing."
+    recovery:
+      uk: "Кожен крок — у git, а попередні артефакти — в `artifacts`. Повернутися до стану до уроку: `git switch main`, `git reset --hard <коміт planner lab 1.4.0 з git log --oneline>` — **увага**: `reset --hard` відкидає незакомічені зміни, тож спершу переконайся через `git status`, що їх немає, — потім `npm ci`. Теки `~/js-course/no12-drill` і `~/js-course/no12-run/1.4.1` можна просто видалити."
+      en: "Every step is in git, and the earlier artifacts are in `artifacts`. To return to the state before the lesson: `git switch main`, `git reset --hard <the planner lab 1.4.0 commit from git log --oneline>` — **careful**: `reset --hard` discards uncommitted changes, so first make sure with `git status` that there are none — then `npm ci`. The folders `~/js-course/no12-drill` and `~/js-course/no12-run/1.4.1` can simply be deleted."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-12
+    body:
+      uk: "У кроці проєкту цього розділу `npm run restore-drill -- <нова тека>` (`src/restore-drill.ts`) відновлює найновіший перевірений backup у нову порожню теку — ніколи поверх живої — і порівнює кількість, `id` і похідні значення твого домену з живим сховищем; `check:deploy` на 4311 і 4312 дає однаковий рядок `summary:`. Потім оновлення 1.1.0 з дефектом твого проєкту: `npm run ci` зупиняється на `test`, а вручну запакований hotfix ловить `check:deploy` — перевірка з відомою відповіддю для фільтра чи сортування."
+      en: "In this unit’s project step `npm run restore-drill -- <new folder>` (`src/restore-drill.ts`) restores the newest verified backup into a new empty folder — never over the live one — and compares the count, the `id`s and your domain’s derived values with the live store; `check:deploy` on 4311 and 4312 gives the same `summary:` line. Then the 1.1.0 upgrade with your project’s defect: `npm run ci` stops at `test`, and a hand-packed hotfix is caught by `check:deploy` — a check with a known answer for a filter or a sort."

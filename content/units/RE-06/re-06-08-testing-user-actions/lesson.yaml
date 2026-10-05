@@ -1,0 +1,306 @@
+id: re-06-08-testing-user-actions
+unit: RE-06
+title:
+  uk: "Тестуємо асинхронний UI як дії користувача"
+  en: "Testing async UI as user actions"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Написати тест, що показує список, чекає завантаженого вмісту за роллю чи текстом, діє як людина й перевіряє те, що видно, а не внутрішній стан."
+    en: "Write a test that renders the list, waits for loaded content by role or text, acts as a user and asserts what is visible rather than internal state."
+  - uk: "Керувати затримкою й збоями фікстури так, щоб асинхронні тести ніколи не залежали від справжнього часу."
+    en: "Control fixture delay and failure deterministically so async tests never depend on real time."
+prerequisites: [re-06-07-stale-data-consistency, js-09-04-deterministic-fixtures]
+subskills:
+  - { family: R-06, skill: "loading/retry", depth: practice }
+glossary: [user-action-test, role-query]
+selfCheck: [predict-immediate, expense-tests]
+
+blocks:
+  - id: like-a-person
+    kind: explanation
+    title:
+      uk: "Тест, який поводиться як людина"
+      en: "A test that behaves like a person"
+    body:
+      uk: |
+        Людина не бачить `useState` і не викликає `setExpenses`. Вона бачить підписи, кнопки, рядки списку; вона вводить текст і клікає. [[user-action-test|Тест дій користувача]] робить те саме:
+
+        1. **Показати** компонент: `render(<ExpenseBoard />)`.
+        2. **Знайти** поле чи кнопку так, як їх знаходить людина або програма зчитування з екрана: за підписом, за текстом, за [[role-query|роллю]] — `screen.getByLabelText("Назва")`, `screen.getByRole("button", { name: "Зберегти" })`.
+        3. **Діяти:** `user.type(…)`, `user.click(…)`.
+        4. **Перевірити видиме:** рядок у списку, повідомлення в `role="alert"`.
+
+        Такий тест не ламається, коли ти перейменуєш змінну стану чи заміниш `useState` на reducer, — але ламається, коли людина справді перестала б бачити потрібне. А пошук за роллю й підписом заодно перевіряє, що елементи мають доступні назви.
+      en: |
+        A person does not see `useState` and does not call `setExpenses`. They see labels, buttons, list rows; they type text and click. A [[user-action-test]] does the same:
+
+        1. **Render** the component: `render(<ExpenseBoard />)`.
+        2. **Find** a field or a button the way a person or a screen reader finds it: by its label, by its text, by its [[role-query|role]] — `screen.getByLabelText("Label")`, `screen.getByRole("button", { name: "Save" })`.
+        3. **Act:** `user.type(…)`, `user.click(…)`.
+        4. **Check what is visible:** a row in the list, a message in `role="alert"`.
+
+        Such a test does not break when you rename a state variable or replace `useState` with a reducer — but it breaks when a person really would stop seeing what they need. And finding by role and label also checks that the elements have accessible names.
+
+  - id: predict-immediate
+    kind: prediction
+    strings:
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      titleField: { uk: "Нова справа", en: "New task" }
+      add: { uk: "Додати", en: "Add" }
+    prompt:
+      uk: "Сервер-фікстура відповідає за 300 мс. Справа з’являється в списку лише після відповіді на `POST`. Цей тест перевіряє список одразу після кліку. Він…"
+      en: "The fixture server answers in 300 ms. The task appears in the list only after the `POST` answer. This test checks the list right after the click. It…"
+    code: |
+      test("adds a task", async () => {
+        render(<TaskAdder />);
+        await user.type(screen.getByLabelText("%%titleField%%"), "%%dentist%%");
+        await user.click(screen.getByRole("button", { name: "%%add%%" }));
+        expect(screen.queryByText("%%dentist%%") !== null, "the task is in the list").toBe(true);
+      });
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: always-fails
+          text:
+            uk: "…падає щоразу: у момент перевірки відповіді ще немає"
+            en: "…fails every time: at the moment of the check there is no answer yet"
+        - id: passes
+          text:
+            uk: "…проходить: `await user.click` чекає, доки React усе оновить"
+            en: "…passes: `await user.click` waits until React has updated everything"
+          why:
+            uk: "`user.click` чекає, доки React обробить **клік**. Але клік лише надсилає запит; справа з’являється через 300 мс, коли прийде відповідь, — а до того часу тест уже перевірив список."
+            en: "`user.click` waits until React handles **the click**. But the click only sends the request; the task appears 300 ms later, when the answer arrives — and by then the test has already checked the list."
+        - id: flaky
+          text:
+            uk: "…то проходить, то падає — залежно від швидкості комп’ютера"
+            en: "…sometimes passes, sometimes fails — depending on the computer's speed"
+          why:
+            uk: "Фікстура завжди чекає рівно 300 мс, а перевірка відбувається за кілька мілісекунд після кліку. Жоден комп’ютер не встигне — тест падає стабільно. Нестабільним його зробить якраз «вдала» пауза на кшталт `sleep(310)`."
+            en: "The fixture always waits exactly 300 ms, and the check happens a few milliseconds after the click. No computer is fast enough — the test fails every time. What makes it flaky is precisely a “lucky” pause such as `sleep(310)`."
+      correct: [always-fails]
+    explanation:
+      uk: "Між кліком і появою справи — 300 мс запиту. Тест мусить **дочекатися** видимого результату: `await screen.findByText(\"…\")` перевіряє екран знову й знову, доки текст не з’явиться (у курсовому інструменті — до 2 с). Перевірено в прикладі нижче: такий тест падає з `очікувалося true, отримано false`."
+      en: "Between the click and the task appearing there are 300 ms of the request. The test must **wait for** the visible result: `await screen.findByText(\"…\")` checks the screen again and again until the text appears (up to 2 s in the course tool). Checked with the example below: such a test fails with `expected true, got false`."
+
+  - id: no-fixed-sleep
+    kind: explanation
+    title:
+      uk: "Чекати на подію, а не на годинник"
+      en: "Wait for an event, not for the clock"
+    body:
+      uk: |
+        Перша спокуса — пауза: `await sleep(500)`, «щоб сервер устиг». Такий тест:
+
+        - **повільний** — чекає 500 мс, навіть коли відповідь прийшла за 50;
+        - **крихкий** — падає, щойно сервер чи комп’ютер стане повільнішим за твою паузу. Це [[flaky-test|нестабільний тест]].
+
+        Тому чекай на те, що побачить людина: `findBy…` повертається, щойно елемент з’явився, і падає, лише якщо він не з’явився взагалі.
+
+        Друга половина — **детермінована фікстура**, як у JS-09: тест сам вирішує, чи провалиться збереження (`settings.failNext = 1`), а сервер щоразу починає з тих самих даних. Тест не має покладатися на щасливий випадок.
+      en: |
+        The first temptation is a pause: `await sleep(500)`, “so the server has time”. Such a test is:
+
+        - **slow** — it waits 500 ms even when the answer came in 50;
+        - **fragile** — it fails as soon as the server or the computer gets slower than your pause. That is a [[flaky-test]].
+
+        So wait for what a person would see: `findBy…` returns as soon as the element appears and fails only if it never appears.
+
+        The other half is a **deterministic fixture**, as in JS-09: the test itself decides whether saving fails (`settings.failNext = 1`), and the server starts from the same data every time. A test must not rely on luck.
+
+  - id: task-suite
+    kind: example
+    runtime: browser-react
+    dir: task-suite
+    entry: main.jsx
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      titleField: { uk: "Нова справа", en: "New task" }
+      add: { uk: "Додати", en: "Add" }
+      saved: { uk: "Збережено.", en: "Saved." }
+      saveFailed: { uk: "Не вдалося зберегти справу.", en: "Could not save the task." }
+      testAdd: { uk: "додана справа з’являється в списку", en: "an added task appears in the list" }
+      mInList: { uk: "справа в списку", en: "the task is in the list" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rNotFound: { uk: "на екрані немає", en: "not on the screen:" }
+      rStillMissing: { uk: "так і не з’явилося", en: "never appeared" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Від паузи до очікування"
+      en: "From a pause to waiting"
+    body:
+      uk: |
+        `testing.js` — курсовий запускач тестів із JS-09, тепер із помічниками для React: `render`, `screen.getBy…`/`findBy…`, `user.type`, `user.click`. `main.jsx` запускає тести з `TaskAdder.test.jsx` і друкує рядок на кожен тест. Сервер-фікстура відповідає за 300 мс.
+
+        Натисни **Запустити** й відкрий **Консоль**: тест падає — пауза 200 мс коротша за відповідь.
+      en: |
+        `testing.js` is the course test runner from JS-09, now with helpers for React: `render`, `screen.getBy…`/`findBy…`, `user.type`, `user.click`. `main.jsx` runs the tests from `TaskAdder.test.jsx` and prints one line per test. The fixture server answers in 300 ms.
+
+        Press **Run** and open the **Console**: the test fails — the 200 ms pause is shorter than the answer.
+    tryIt:
+      uk: |
+        1. Зміни `sleep(200)` на `sleep(400)` — тест проходить. Тепер у `fakeServer.js` зміни `delayMs: 300` на `500`: тест знову падає, хоча компонент не змінився. Поверни `300`.
+        2. Заміни дві останні команди тесту (`await sleep(…)` і `expect(…)`) одним рядком `await screen.findByText("…");` з назвою справи в лапках — тією самою, що в `user.type`. Тест проходить і з `delayMs: 500`, і з `delayMs: 50` — і не чекає зайвого.
+        3. Тепер зроби збереження невдалим: перед кліком додай `settings.failNext = 1;`, а очікування заміни на текст із `role="alert"`: `await screen.findByText("…");` з «Не вдалося зберегти справу.». Тест знову зелений — він перевіряє збій, який сам і замовив.
+      en: |
+        1. Change `sleep(200)` to `sleep(400)` — the test passes. Now in `fakeServer.js` change `delayMs: 300` to `500`: the test fails again, although the component did not change. Set it back to `300`.
+        2. Replace the test's last two commands (`await sleep(…)` and `expect(…)`) with one line `await screen.findByText("…");` with the task's title in the quotes — the same one as in `user.type`. The test passes with `delayMs: 500` and with `delayMs: 50` alike — and does not wait longer than needed.
+        3. Now make saving fail: before the click add `settings.failNext = 1;`, and replace the waiting with the `role="alert"` text: `await screen.findByText("…");` with “Could not save the task.”. The test is green again — it checks the failure it ordered itself.
+
+  - id: expense-tests
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: expense-tests
+    entry: main.jsx
+    editable: [ExpenseBoard.test.jsx]
+    capabilities: { testTimeoutMs: 15000 }
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      labelField: { uk: "Назва", en: "Label" }
+      amountField: { uk: "Сума, грн", en: "Amount, UAH" }
+      save: { uk: "Зберегти", en: "Save" }
+      saved: { uk: "Витрату збережено.", en: "Expense saved." }
+      saveFailed: { uk: "Не вдалося зберегти витрату.", en: "Could not save the expense." }
+      loading: { uk: "Завантажую…", en: "Loading…" }
+      listName: { uk: "Витрати", en: "Expenses" }
+      testAdd: { uk: "додана витрата з’являється в списку", en: "an added expense appears in the list" }
+      testFail: { uk: "невдале збереження показує помилку й не змінює список", en: "a failed save shows the error and leaves the list unchanged" }
+      mStatus: { uk: "повідомлення role=status", en: "the role=status message" }
+      mCount: { uk: "кількість рядків у списку", en: "the number of rows in the list" }
+      mNotAdded: { uk: "обіду немає в списку", en: "lunch is not in the list" }
+      mRows: { uk: "рядки списку", en: "the list rows" }
+      mAlert: { uk: "повідомлення role=alert", en: "the role=alert message" }
+      mInList: { uk: "витрата в списку", en: "the expense is in the list" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rNotFound: { uk: "на екрані немає", en: "not on the screen:" }
+      rStillMissing: { uk: "так і не з’явилося", en: "never appeared" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Два тести дій користувача"
+      en: "Two user-action tests"
+    instructions:
+      uk: |
+        `ExpenseBoard` — список витрат із формою: поля «Назва» і «Сума, грн», кнопка «Зберегти». Після успішного збереження `role="status"` каже «Витрату збережено.», а список перечитується; після збою `role="alert"` каже «Не вдалося зберегти витрату.». Кожен рядок списку — `назва — сума`, наприклад `Продукти на тиждень — 845.50`. Перед кожним тестом сервер починає з двох витрат, а `settings.failNext = 1` у тесті провалює наступне збереження.
+
+        Напиши в `ExpenseBoard.test.jsx` два тести, які діють як людина й перевіряють лише видиме:
+
+        1. Витрата «Обід» на 210.50, додана через форму, з’являється в списку.
+        2. Невдале збереження показує повідомлення про помилку, а в списку лишаються ті самі дві витрати.
+
+        Не чекай фіксованими паузами — чекай на видимий результат (`findBy…` або `waitFor`). Перевірки запускають твої тести з правильним `ExpenseBoard`, зі збереженням, що триває 1 с, і з трьома зламаними версіями — на кожній хоча б один твій тест має впасти.
+      en: |
+        `ExpenseBoard` is an expense list with a form: the fields “Label” and “Amount, UAH” and a “Save” button. After a successful save `role="status"` says “Expense saved.” and the list is read again; after a failure `role="alert"` says “Could not save the expense.”. Every list row is `label — amount`, for example `Weekly groceries — 845.50`. Before each test the server starts from two expenses, and `settings.failNext = 1` in a test makes the next save fail.
+
+        Write two tests in `ExpenseBoard.test.jsx` that act like a person and check only what is visible:
+
+        1. The expense “Lunch” for 210.50, added through the form, appears in the list.
+        2. A failed save shows the error message, and the list keeps the same two expenses.
+
+        Do not wait with fixed pauses — wait for the visible result (`findBy…` or `waitFor`). The checks run your tests with the correct `ExpenseBoard`, with a save that takes 1 s and with three broken versions — on each of them at least one of your tests must fail.
+    testTitles:
+      "your tests pass with the correct ExpenseBoard":
+        uk: "Твої тести проходять із правильним `ExpenseBoard`"
+        en: "Your tests pass with the correct `ExpenseBoard`"
+      "your tests still pass when saving takes 1 second":
+        uk: "Твої тести проходять і тоді, коли збереження триває 1 секунду"
+        en: "Your tests still pass when saving takes 1 second"
+      "one of your tests fails when a saved expense never appears in the list":
+        uk: "Один із твоїх тестів падає, коли збережена витрата не з’являється в списку"
+        en: "One of your tests fails when a saved expense never appears in the list"
+      "one of your tests fails when a failed save shows no error":
+        uk: "Один із твоїх тестів падає, коли невдале збереження не показує помилки"
+        en: "One of your tests fails when a failed save shows no error"
+      "one of your tests fails when a failed save still adds the expense to the list":
+        uk: "Один із твоїх тестів падає, коли невдале збереження все одно додає витрату в список"
+        en: "One of your tests fails when a failed save still adds the expense to the list"
+    hints:
+      nudge:
+        uk: "Пройди сценарій подумки, як людина: що ти бачиш, коли список завантажився? Що вводиш, на що тиснеш і за якою ознакою на екрані розумієш, що все вийшло — або що ні?"
+        en: "Walk through the scenario as a person: what do you see when the list has loaded? What do you type, what do you press, and by which sign on the screen do you know it worked — or that it did not?"
+      explanation:
+        uk: |
+          Кожен тест: `render(<ExpenseBoard />)`; дочекайся, доки список завантажиться (`await screen.findByText(…)` з наявним рядком); знайди поля через `screen.getByLabelText("Назва")` і `screen.getByLabelText("Сума, грн")`, введи значення `user.type`, клікни кнопку, знайдену через `screen.getByRole("button", { name: "Зберегти" })`. Далі **чекай** на видимий результат через `findByText`. Для збою спершу постав `settings.failNext = 1`, а наприкінці перевір кількість `queryAllByRole("listitem")`.
+
+          Схоже, з іншою задачею: `render(<Login />); await user.type(screen.getByLabelText("Пароль"), "1234"); await user.click(screen.getByRole("button", { name: "Увійти" })); await screen.findByText("Вітаємо!");`.
+        en: |
+          Each test: `render(<ExpenseBoard />)`; wait until the list has loaded (`await screen.findByText(…)` with an existing row); find the fields with `screen.getByLabelText("Label")` and `screen.getByLabelText("Amount, UAH")`, type the values with `user.type`, click the button found with `screen.getByRole("button", { name: "Save" })`. Then **wait** for the visible result with `findByText`. For the failure, first set `settings.failNext = 1`, and at the end check the number of `queryAllByRole("listitem")`.
+
+          Similar, with a different task: `render(<Login />); await user.type(screen.getByLabelText("Password"), "1234"); await user.click(screen.getByRole("button", { name: "Sign in" })); await screen.findByText("Welcome!");`.
+    solutionNote:
+      uk: "Обидва тести дивляться на екран так, як людина: поля за підписами, кнопку за роллю й назвою, результат — за текстом. `findByText` чекає рівно стільки, скільки треба, тож тести проходять і тоді, коли збереження триває секунду. Збій замовляє сам тест (`settings.failNext = 1`), а не випадок. Тому вони ловлять усі три поломки: витрата не з’явилася, помилки не видно, невдала витрата потрапила в список."
+      en: "Both tests look at the screen the way a person does: fields by their labels, the button by its role and name, the result by its text. `findByText` waits exactly as long as needed, so the tests pass even when saving takes a second. The test itself orders the failure (`settings.failNext = 1`), not chance. That is why they catch all three faults: the expense did not appear, no error is visible, the failed expense got into the list."
+    feedback:
+      - when: { test: "your tests pass with the correct ExpenseBoard" }
+        message:
+          uk: "Ця перевірка запускає твої тести з правильним `ExpenseBoard` і очікує щонайменше два тести, і жоден не має впасти. Подивись у **Консоль**: рядок `✗` каже, який тест упав і чому. Якщо там `… is not defined`, додай цю назву в імпорт на початку `ExpenseBoard.test.jsx`. Найчастіше ж перевірка відбулася раніше, ніж прийшла відповідь сервера: заміни її на `await screen.findByText(…)`."
+          en: "This check runs your tests with the correct `ExpenseBoard` and expects at least two tests, none of them failing. Look at the **Console**: a `✗` line says which test failed and why. If it says `… is not defined`, add that name to the import at the top of `ExpenseBoard.test.jsx`. Most often, though, the check happened before the server's answer arrived: replace it with `await screen.findByText(…)`."
+      - when: { test: "your tests still pass when saving takes 1 second" }
+        message:
+          uk: "Спершу твої тести мають пройти з правильним `ExpenseBoard` (перша перевірка). Ця перевірка робить збереження довжиною 1 с і очікує, що тести все одно проходять. Якщо ні — тест чекає фіксованою паузою (`sleep`), а не на видимий результат."
+          en: "First your tests must pass with the correct `ExpenseBoard` (the first check). This check makes saving take 1 s and expects the tests to pass anyway. If they do not, a test waits with a fixed pause (`sleep`) instead of for the visible result."
+      - when: { test: "one of your tests fails when a saved expense never appears in the list" }
+        message:
+          uk: "Спершу твої тести мають пройти з правильним `ExpenseBoard` (перша перевірка). Ця перевірка підставляє версію, де збереження вдається, але список не перечитується, і очікує, що хоча б один тест упаде. Тест на додавання має дочекатися рядка «Обід — 210.50» у списку — з `await` перед `screen.findByText(…)`: без нього тест закінчується раніше, ніж рядок мав би з’явитися."
+          en: "First your tests must pass with the correct `ExpenseBoard` (the first check). This check puts in a version where saving succeeds but the list is not read again, and expects at least one test to fail. The adding test must wait for the row “Lunch — 210.50” in the list — with `await` before `screen.findByText(…)`: without it the test ends before the row would appear."
+      - when: { test: "one of your tests fails when a failed save shows no error" }
+        message:
+          uk: "Спершу твої тести мають пройти з правильним `ExpenseBoard` (перша перевірка). Ця перевірка підставляє версію, яка після збою нічого не показує, і очікує, що хоча б один тест упаде. Тест на збій має дочекатися тексту «Не вдалося зберегти витрату.»."
+          en: "First your tests must pass with the correct `ExpenseBoard` (the first check). This check puts in a version that shows nothing after a failure, and expects at least one test to fail. The failure test must wait for the text “Could not save the expense.”."
+      - when: { test: "one of your tests fails when a failed save still adds the expense to the list" }
+        message:
+          uk: "Спершу твої тести мають пройти з правильним `ExpenseBoard` (перша перевірка). Ця перевірка підставляє версію, яка після збою показує помилку, але все одно додає витрату в список, і очікує, що хоча б один тест упаде. Тест на збій має перевірити, що в списку лишилося два рядки."
+          en: "First your tests must pass with the correct `ExpenseBoard` (the first check). This check puts in a version that shows the error after a failure but still adds the expense to the list, and expects at least one test to fail. The failure test must check that the list still has two rows."
+      - when: { error: ReferenceError }
+        message:
+          uk: "Картка `ReferenceError` означає, що `ExpenseBoard.test.jsx` зупинився ще під час завантаження: назву, використану поза тестом — найчастіше саму `test`, — не імпортовано або написано з помилкою. Додай її в імпорт на початку файла. Назва, якої бракує **всередині** тесту (`render`, `screen`, `user`, `waitFor`, `settings`), картки не дає: її ловить `testing.js`, і в консолі з’являється рядок `✗` цього тесту з `… is not defined`."
+          en: "A `ReferenceError` card means that `ExpenseBoard.test.jsx` stopped while loading: a name used outside any test — most often `test` itself — is not imported or is misspelled. Add it to the imports at the top of the file. A name missing **inside** a test (`render`, `screen`, `user`, `waitFor`, `settings`) gives no card: `testing.js` catches it, and the console shows that test’s `✗` line with `… is not defined`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: fixed-today
+        from: js-09-04-deterministic-fixtures
+        prompt:
+          uk: "Функція `countDueTasks(tasks, today)` рахує невиконані справи з терміном до `today` включно. Який тест детермінований?"
+          en: "The function `countDueTasks(tasks, today)` counts pending tasks due on or before `today`. Which test is deterministic?"
+        answer:
+          type: choice
+          options:
+            - id: fixed
+              code: "expect(countDueTasks(tasks, \"2026-03-02\")).toBe(2);"
+            - id: real-date
+              code: "expect(countDueTasks(tasks, new Date().toISOString().slice(0, 10))).toBe(2);"
+              why:
+                uk: "Справжня дата щодня інша: сьогодні тест зелений, а завтра той самий код дасть інше число."
+                en: "The real date is different every day: today the test is green, and tomorrow the same code gives another number."
+            - id: retry
+              code: "for (let i = 0; i < 3; i += 1) if (countDueTasks(tasks, today()) === 2) return;"
+              why:
+                uk: "Повтор не робить результат стабільним — він лише ховає нестабільність. Причина — залежність від справжнього часу."
+                en: "Repeating does not make the result stable — it only hides the instability. The cause is the dependency on real time."
+          correct: [fixed]
+        explanation:
+          uk: "Детермінований тест сам задає все, від чого залежить результат: дату, дані, а тепер ще й затримку та збої сервера-фікстури."
+          en: "A deterministic test sets everything the result depends on itself: the date, the data, and now also the fixture server's delay and failures."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-06
+    body:
+      uk: "У кроці проєкту цього розділу асинхронний шар даних перевірятимуть тести дій користувача, які запускаються локальною командою тестів: завантаження списку, створення запису й невдала зміна з відкатом. Пиши їх так само — за підписами й ролями, з очікуванням видимого результату й фікстурою, яку налаштовує сам тест."
+      en: "In this unit's project step the async data layer will be checked by user-action tests run with the local test command: loading the list, creating a record and a failed change with a rollback. Write them the same way — by labels and roles, waiting for the visible result, with a fixture the test configures itself."

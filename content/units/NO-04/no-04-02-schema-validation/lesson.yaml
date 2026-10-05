@@ -1,0 +1,381 @@
+id: no-04-02-schema-validation
+unit: NO-04
+title:
+  uk: "Валідація JSON за схемою на межі"
+  en: "JSON schema validation at the edge"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Перевірити тіло запиту за схемою на межі сервера, ще до репозиторію, і зібрати помилки всіх полів, а не зупинитися на першій."
+    en: "Validate a request body against a schema at the edge, before it reaches the repository, collecting every field error rather than stopping at the first."
+  - uk: "Відхилити невідомі поля, неправильні типи й значення поза межами та пояснити, чому валідатор передає далі розібране значення, а не сирий ввід."
+    en: "Reject unknown fields, wrong types and out-of-range values, and explain why the validator hands on a parsed value instead of the raw input."
+prerequisites: [no-04-01-rest-boundaries, no-03-03-routing-json-bodies]
+subskills:
+  - { family: B-03, skill: "JSON/schema validation", depth: intro }
+glossary: [edge-validation, parse-dont-validate]
+selfCheck: [predict-errors, notes-validation]
+
+blocks:
+  - id: anyone-can-send
+    kind: explanation
+    title:
+      uk: "Надіслати можуть що завгодно"
+      en: "Anyone can send anything"
+    body:
+      uk: |
+        Форма в React-клієнті перевіряє назву й ціну ще до натискання «Зберегти». Чи може сервер на це покластися? Ні. Запит на `POST /records` можна надіслати й без форми: командою `curl`, зі старої версії застосунку, із чужої програми. Сервер бачить лише байти, що прийшли, — це [[untrusted-input|неперевірений ввід]].
+
+        Тому сервер перевіряє тіло **сам і першим** — на межі, щойно розібрав JSON і ще до того, як щось потрапить у репозиторій. Це [[edge-validation|валідація на межі]]. Опис того, яким має бути тіло, називають **схемою**. Для бажання вона така:
+
+        | Поле | Правило |
+        |---|---|
+        | `name` | обов’язковий текст, 1–80 символів після обрізання пробілів |
+        | `price` | необов’язкове: `null` або ціле число від 0 |
+        | `acquired` | необов’язкове: `true` чи `false` |
+        | `category` | необов’язкове: `null` або текст до 30 символів |
+        | будь-яке інше поле | заборонене |
+      en: |
+        The form in the React client checks the name and price before “Save” is pressed. Can the server rely on that? No. A `POST /records` request can be sent without the form: with `curl`, from an old version of the app, from someone else's program. The server sees only the bytes that arrived — [[untrusted-input]].
+
+        So the server checks the body **itself and first** — at the edge, right after parsing the JSON and before anything reaches the repository. That is [[edge-validation|validation at the edge]]. The description of what the body must look like is called a **schema**. For a wish it is:
+
+        | Field | Rule |
+        |---|---|
+        | `name` | required text, 1–80 characters after trimming spaces |
+        | `price` | optional: `null` or a whole number from 0 |
+        | `acquired` | optional: `true` or `false` |
+        | `category` | optional: `null` or text of up to 30 characters |
+        | any other field | refused |
+
+  - id: four-checks
+    kind: explanation
+    title:
+      uk: "Чотири види перевірок і всі помилки разом"
+      en: "Four kinds of checks, and every error at once"
+    body:
+      uk: |
+        Перевірити, що `name` є, — замало. Валідатор перевіряє чотири речі:
+
+        - **тип**: `"45"` у лапках — текст, а не число;
+        - **обов’язковість**: немає `name` або в ньому самі пробіли;
+        - **межі**: назва з 300 символів, від’ємна ціна;
+        - **зайві ключі**: `isAdmin`, якого схема не обіцяла. Без цієї перевірки клієнт може підкинути поле, яке потім збережеться й щось увімкне.
+
+        І він **збирає всі помилки**: `{ ok: false, errors: { name: "required", price: "notNumber" } }`. Відповідь 400 з повним списком дозволяє виправити все за раз, а не надсилати запит знову й знову.
+      en: |
+        Checking that `name` is present is not enough. A validator checks four things:
+
+        - **type**: `"45"` in quotes is text, not a number;
+        - **required**: there is no `name`, or it is only spaces;
+        - **range**: a 300-character name, a negative price;
+        - **unknown keys**: `isAdmin`, which the schema never promised. Without this check a client can slip in a field that later gets stored and switches something on.
+
+        And it **collects every error**: `{ ok: false, errors: { name: "required", price: "notNumber" } }`. A 400 answer with the full list lets the client fix everything at once instead of sending the request again and again.
+
+  - id: edge-flow
+    kind: visual
+    visual: diagram
+    strings:
+      lamp: { uk: "Лампа", en: "Lamp" }
+    title:
+      uk: "Тіло проходить межу"
+      en: "A body crosses the edge"
+    textEquivalent:
+      uk: "Тіло запиту { name: \"   \", price: \"45\", isAdmin: true } проходить чотири перевірки валідатора по черзі. Перевірка типу знаходить, що price — текст, і додає до списку помилок price: notNumber. Перевірка обов’язковості знаходить, що name після обрізання порожнє, і додає name: required. Перевірка меж нічого не додає. Перевірка зайвих ключів додає isAdmin: unknownField. Список має три помилки, тож сервер відповідає 400 з усіма трьома, а репозиторій не отримує нічого. Тут перевірки згруповано за видами; справжній валідатор зазвичай іде поле за полем, тож у відповіді ті самі три помилки стоять у порядку полів: name, price, isAdmin. Друге тіло, { name: \"  %%lamp%% \" }, проходить усі перевірки; через межу йде вже розібране значення: обрізана назва й типові значення для решти полів."
+      en: "The request body { name: \"   \", price: \"45\", isAdmin: true } goes through the validator's four checks in turn. The type check finds that price is text and adds price: notNumber to the error list. The required check finds that name is empty after trimming and adds name: required. The range check adds nothing. The unknown-key check adds isAdmin: unknownField. The list has three errors, so the server answers 400 with all three, and the repository receives nothing. The checks are grouped by kind here; a real validator usually goes field by field, so the answer lists the same three errors in field order: name, price, isAdmin. A second body, { name: \"  %%lamp%% \" }, passes every check; what crosses the edge is the parsed value: the trimmed name and defaults for the other fields."
+    spec:
+      layout: grid
+      nodes:
+        - { id: body, label: { uk: "тіло запиту", en: "request body" }, shape: note, w: 170, col: 0, row: 0 }
+        - { id: type, label: { uk: "тип", en: "type" }, w: 170, col: 0, row: 1 }
+        - { id: required, label: { uk: "обов’язкові", en: "required" }, w: 170, col: 0, row: 2 }
+        - { id: range, label: { uk: "межі", en: "range" }, w: 170, col: 0, row: 3 }
+        - { id: unknown, label: { uk: "зайві ключі", en: "unknown keys" }, w: 170, col: 0, row: 4 }
+        - { id: errors, label: { uk: "помилки → 400", en: "errors → 400" }, shape: note, w: 150, col: 1, row: 2 }
+        - { id: repo, label: { uk: "репозиторій", en: "repository" }, shape: cylinder, w: 150, col: 1, row: 4 }
+      edges:
+        - { id: body-type, from: body, to: type }
+        - { id: type-required, from: type, to: required }
+        - { id: required-range, from: required, to: range }
+        - { id: range-unknown, from: range, to: unknown }
+        - { id: type-errors, from: type, to: errors, kind: dashed }
+        - { id: required-errors, from: required, to: errors, kind: dashed }
+        - { id: unknown-errors, from: unknown, to: errors, kind: dashed }
+        - { id: unknown-repo, from: unknown, to: repo, label: "value" }
+      steps:
+        - caption:
+            uk: "Приходить тіло `{ name: \"   \", price: \"45\", isAdmin: true }`. JSON розібрано, але жодному полю ще не можна вірити."
+            en: "The body `{ name: \"   \", price: \"45\", isAdmin: true }` arrives. The JSON is parsed, but no field can be trusted yet."
+          highlight: [body]
+        - caption:
+            uk: "Тип: `price` — текст `\"45\"`, а не число. До списку додається `price: notNumber`, і перевірка **йде далі**."
+            en: "Type: `price` is the text `\"45\"`, not a number. `price: notNumber` goes into the list, and checking **goes on**."
+          highlight: [type, errors, body-type, type-errors]
+          annotate:
+            - { id: errors, text: "price" }
+        - caption:
+            uk: "Обов’язковість: після обрізання пробілів `name` порожнє — `name: required`."
+            en: "Required: after trimming spaces `name` is empty — `name: required`."
+          highlight: [required, errors, type-required, required-errors]
+          annotate:
+            - { id: errors, text: "price, name" }
+        - caption:
+            uk: "Межі: ціни-числа немає, а назва вже має помилку, тож нічого нового тут немає."
+            en: "Range: there is no numeric price, and the name already has an error, so nothing new here."
+          highlight: [range, required-range]
+        - caption:
+            uk: "Зайві ключі: `isAdmin` схема не обіцяла — `isAdmin: unknownField`."
+            en: "Unknown keys: the schema never promised `isAdmin` — `isAdmin: unknownField`."
+          highlight: [unknown, errors, range-unknown, unknown-errors]
+          annotate:
+            - { id: errors, text: "price, name, isAdmin" }
+        - caption:
+            uk: "Три помилки — відповідь 400 з усіма трьома. До репозиторію не дійшло нічого. Тут перевірки згруповано за видами; справжній валідатор (як `validate.js` у прикладі нижче) зазвичай іде поле за полем, тож у відповіді помилки стоять у порядку полів: `name`, `price`, `isAdmin`. Список той самий."
+            en: "Three errors — the answer is 400 with all three. Nothing reached the repository. Here the checks are grouped by kind; a real validator (like `validate.js` in the example below) usually goes field by field, so the answer lists the errors in field order: `name`, `price`, `isAdmin`. The list is the same."
+          highlight: [errors]
+          dim: [repo, unknown-repo]
+        - caption:
+            uk: "Тіло `{ name: \"  %%lamp%% \" }` проходить усі чотири перевірки. Через межу йде **розібране значення**: `name: \"%%lamp%%\"`, `price: null`, `acquired: false`, `category: null`."
+            en: "The body `{ name: \"  %%lamp%% \" }` passes all four checks. What crosses the edge is the **parsed value**: `name: \"%%lamp%%\"`, `price: null`, `acquired: false`, `category: null`."
+          highlight: [body, type, required, range, unknown, repo, unknown-repo]
+          dim: [errors]
+
+  - id: predict-errors
+    kind: prediction
+    strings:
+      lamp: { uk: "Лампа", en: "Lamp" }
+    prompt:
+      uk: "Валідатор бажань збирає всі помилки за схемою: `name` — обов’язковий текст 1–80 символів; `price` — `null` або ціле число від 0; `acquired` — `true` чи `false`; `category` — `null` або текст до 30 символів; необов’язкові поля можна не надсилати, а інших полів бути не може. Для яких полів буде помилка в цьому тілі? Обери всі."
+      en: "The wish validator collects every error against this schema: `name` — required text of 1–80 characters; `price` — `null` or a whole number from 0; `acquired` — `true` or `false`; `category` — `null` or text of up to 30 characters; optional fields may be left out, and no other fields are allowed. Which fields get an error in this body? Pick all."
+    code: |
+      { "name": "%%lamp%%", "price": -5, "acquired": "no", "color": "green" }
+    lang: json
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: name
+          code: "name"
+          why:
+            uk: "`\"%%lamp%%\"` — непорожній текст до 80 символів: усе гаразд."
+            en: "`\"%%lamp%%\"` is non-empty text of up to 80 characters: all fine."
+        - id: price
+          code: "price"
+        - id: acquired
+          code: "acquired"
+        - id: category
+          code: "category"
+          why:
+            uk: "`category` не надіслано, а воно необов’язкове. Відсутнє необов’язкове поле — не помилка: значення отримає типове `null`."
+            en: "`category` was not sent, and it is optional. A missing optional field is not an error: the value gets the default `null`."
+        - id: color
+          code: "color"
+      correct: [price, acquired, color]
+    explanation:
+      uk: "Три помилки, і всі видно одразу: `price: \"negative\"` (межа), `acquired: \"notBoolean\"` (тип: `\"no\"` — текст), `color: \"unknownField\"` (зайвий ключ). Валідатор, що перевіряв би лише наявність `name`, пропустив би все це в репозиторій."
+      en: "Three errors, all visible at once: `price: \"negative\"` (range), `acquired: \"notBoolean\"` (type: `\"no\"` is text), `color: \"unknownField\"` (an unknown key). A validator that only checked that `name` is present would let all of it into the repository."
+
+  - id: parsed-value
+    kind: explanation
+    title:
+      uk: "Далі йде розібране значення"
+      en: "The parsed value goes on"
+    body:
+      uk: |
+        Коли всі перевірки пройдено, валідатор повертає `{ ok: true, value }`, і обробник далі працює **лише з `value`**, а не із сирим тілом. Чому?
+
+        - У `value` немає нічого зайвого: лише поля зі схеми.
+        - Текст уже обрізано: `"  Лампа "` стало `"Лампа"`.
+        - Відсутні необов’язкові поля отримали типові значення: `price: null`, `acquired: false`.
+
+        Код після межі вже не мусить сумніватися в даних. Цей принцип називають [[parse-dont-validate|parse, don’t validate]]: не просто відповісти «так/ні», а **перетворити** невідомий ввід на значення відомої форми. У React-клієнті ти робив те саме з відповідями сервера ([[runtime-schema|runtime-схема]]); тепер це межа самого сервера.
+      en: |
+        Once the checks pass, the validator returns `{ ok: true, value }`, and the handler works **only with `value`** from then on, not with the raw body. Why?
+
+        - `value` holds nothing extra: only the schema's fields.
+        - Text is already trimmed: `"  Lamp "` became `"Lamp"`.
+        - Missing optional fields got their defaults: `price: null`, `acquired: false`.
+
+        The code past the edge no longer has to doubt the data. The principle is called [[parse-dont-validate|parse, don’t validate]]: do not just answer yes or no, but **turn** unknown input into a value of a known shape. In the React client you did the same with server responses (a [[runtime-schema]]); now it is the server's own edge.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: why-unknown
+        from: re-09-03-api-models-runtime-schemas
+        prompt:
+          uk: "У React-клієнті функція розбору відповіді мала сигнатуру `parseExpense(input: unknown)`. Чому вхід — `unknown`, а не готовий тип `Expense`?"
+          en: "In the React client the response-parsing function had the signature `parseExpense(input: unknown)`. Why is the input `unknown` rather than the ready type `Expense`?"
+        answer:
+          type: choice
+          options:
+            - id: unchecked
+              text:
+                uk: "Дані прийшли ззовні й ще не перевірені; `unknown` не дає звернутися до полів, доки код їх не перевірить"
+                en: "The data came from outside and is not checked yet; `unknown` does not allow touching fields until the code has checked them"
+            - id: faster
+              text:
+                uk: "З `unknown` програма працює швидше, бо TypeScript нічого не перевіряє"
+                en: "With `unknown` the program runs faster, because TypeScript checks nothing"
+              why:
+                uk: "Типи TypeScript зникають до запуску й на швидкість не впливають. `unknown`, навпаки, змушує `tsc` вимагати перевірок."
+                en: "TypeScript types disappear before running and do not affect speed. `unknown`, on the contrary, makes `tsc` demand checks."
+            - id: tsc-checks
+              text:
+                uk: "`tsc` сам перевірить відповідь сервера, якщо вказати `unknown`"
+                en: "`tsc` itself checks the server's response if you write `unknown`"
+              why:
+                uk: "`tsc` не бачить даних: відповіді ще немає, коли йде перевірка типів. Дані перевіряє лише код під час виконання."
+                en: "`tsc` never sees the data: the response does not exist yet when types are checked. Only code at runtime checks data."
+          correct: [unchecked]
+        explanation:
+          uk: "Межа між «невідомо що» і «перевірене значення» та сама по обидва боки HTTP. Клієнт перевіряє відповіді, сервер — запити; жоден не довіряє іншому."
+          en: "The boundary between “who knows what” and “a checked value” is the same on both sides of HTTP. The client checks responses, the server checks requests; neither trusts the other."
+
+  - id: wishlist-validation
+    kind: example
+    runtime: isolated-node
+    dir: wishlist-validation
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      stored: { uk: "Збережено:", en: "Stored:" }
+    title:
+      uk: "Шість тіл проти схеми бажань"
+      en: "Six bodies against the wish schema"
+    body:
+      uk: |
+        `validate.js` — схема з таблиці уроку як функція `validateWishInput`, а `app.js` викликає її в `POST /records` ще до збереження. `index.js` надсилає шість тіл: правильне, без назви, із ціною `"45"` у лапках, із зайвим `isAdmin`, з назвою в 300 символів і тіло з малюнка, де помилок три.
+
+        Натисни **Запустити**: п’ять відповідей 400 зі списками помилок, і лише одне бажання в репозиторії.
+      en: |
+        `validate.js` is the schema from the lesson's table as the function `validateWishInput`, and `app.js` calls it in `POST /records` before storing anything. `index.js` sends six bodies: a valid one, one without a name, one with the price `"45"` in quotes, one with an extra `isAdmin`, one with a 300-character name, and the body from the picture with three errors.
+
+        Press **Run**: five 400 answers with error lists, and only one wish in the repository.
+    tryIt:
+      uk: |
+        1. У `index.js` зміни ціну в першому тілі на `45.5` і запусти: тепер і перше тіло отримує 400 з `price: "notWhole"`, а в репозиторії порожньо.
+        2. Поверни `45`. Тепер посиль правило: у `validate.js` після рядка з `'negative'` додай `else if (input.price > 1000) errors.price = 'tooLarge';`, а в `index.js` додай тіло `{ name: '%%lamp%%', price: 2400 }` і запусти: нова відповідь 400 з `price: "tooLarge"`.
+      en: |
+        1. In `index.js` change the price in the first body to `45.5` and run: now the first body also gets 400 with `price: "notWhole"`, and the repository is empty.
+        2. Put `45` back. Now tighten a rule: in `validate.js`, after the line with `'negative'`, add `else if (input.price > 1000) errors.price = 'tooLarge';`, and in `index.js` add the body `{ name: '%%lamp%%', price: 2400 }` and run: a new 400 answer with `price: "tooLarge"`.
+
+  - id: notes-validation
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: notes-validation
+    entry: index.js
+    editable: [validate.js, app.js]
+    capabilities: { network: loopback }
+    strings:
+      gifts: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      giftsText: { uk: "Книжка, шарф", en: "A book, a scarf" }
+      shopping: { uk: "Покупки", en: "Shopping" }
+      films: { uk: "Фільми на вихідні", en: "Films for the weekend" }
+      groceries: { uk: "Продукти", en: "Groceries" }
+      stored: { uk: "Збережено:", en: "Stored:" }
+    title:
+      uk: "Схема для нотаток"
+      en: "A schema for notes"
+    instructions:
+      uk: |
+        1. У `validate.js` напиши `validateNoteInput(input)` за схемою з коментаря на початку файлу. Помилку поля позначай ключем:
+           - `title`: немає або самі пробіли — `"required"`, не текст — `"notString"`, понад 60 символів після обрізання — `"tooLong"`;
+           - `text`: не текст — `"notString"`, понад 500 символів — `"tooLong"`;
+           - `pinned`: не `true`/`false` — `"notBoolean"`;
+           - будь-яке інше поле — `"unknownField"`;
+           - вхід — не об’єкт (немає тіла, `null`, масив, текст) — лише `{ body: "notObject" }`.
+
+           Збирай **усі** помилки в `{ ok: false, errors }`. Якщо помилок немає, поверни `{ ok: true, value }`, де `value` має рівно три поля: обрізаний `title`, `text` (типово `""`) і `pinned` (типово `false`).
+        2. У `app.js` створення й заміна вже викликають валідатор, а `PATCH` зберігає сире тіло. Зроби так, щоб і `PATCH` проходив схему: перевір нотатку такою, якою вона стане після зміни, і відповідай 400 з `errors`, нічого не змінюючи, якщо вона неправильна.
+      en: |
+        1. In `validate.js` write `validateNoteInput(input)` following the schema in the comment at the top of the file. Mark a field's error with a key:
+           - `title`: missing or only spaces — `"required"`, not text — `"notString"`, over 60 characters after trimming — `"tooLong"`;
+           - `text`: not text — `"notString"`, over 500 characters — `"tooLong"`;
+           - `pinned`: not `true`/`false` — `"notBoolean"`;
+           - any other field — `"unknownField"`;
+           - the input is not an object (no body, `null`, an array, text) — only `{ body: "notObject" }`.
+
+           Collect **every** error in `{ ok: false, errors }`. When there are none, return `{ ok: true, value }`, where `value` has exactly three fields: the trimmed `title`, `text` (default `""`) and `pinned` (default `false`).
+        2. In `app.js` create and replace already call the validator, but `PATCH` stores the raw body. Make `PATCH` pass the schema too: check the note as it will look after the change, and answer 400 with `errors`, changing nothing, when it is invalid.
+    testTitles:
+      "a valid note is created from the parsed value":
+        uk: "Правильна нотатка створюється з розібраного значення"
+        en: "A valid note is created from the parsed value"
+      'a missing or blank title is "required"':
+        uk: "Відсутній чи порожній `title` — `\"required\"`"
+        en: "A missing or blank `title` is `\"required\"`"
+      "wrong types are rejected":
+        uk: "Неправильні типи відхилено"
+        en: "Wrong types are rejected"
+      'values over the limits are "tooLong"':
+        uk: "Значення понад межі — `\"tooLong\"`"
+        en: "Values over the limits are `\"tooLong\"`"
+      "an unknown field is rejected":
+        uk: "Зайве поле відхилено"
+        en: "An unknown field is rejected"
+      "every error is collected, not only the first":
+        uk: "Зібрано всі помилки, а не лише першу"
+        en: "Every error is collected, not only the first"
+      "a body that is not an object is rejected":
+        uk: "Тіло, що не є об’єктом, відхилено"
+        en: "A body that is not an object is rejected"
+      "create and replace answer 400 with the errors and store nothing":
+        uk: "Створення й заміна відповідають 400 з помилками й нічого не зберігають"
+        en: "Create and replace answer 400 with the errors and store nothing"
+      "PATCH is validated too, and a bad patch changes nothing":
+        uk: "`PATCH` теж перевіряється, і поганий `PATCH` нічого не змінює"
+        en: "`PATCH` is validated too, and a bad patch changes nothing"
+    hints:
+      nudge:
+        uk: "Заведи порожній об’єкт `errors` і перевіряй кожне поле окремо, не повертаючись із функції після першої знахідки. Повертай результат лише в кінці."
+        en: "Start with an empty `errors` object and check each field separately, without returning from the function after the first finding. Return the result only at the end."
+      explanation:
+        uk: "Для бажань перевірка типу категорії виглядає так: `if (input.category !== undefined && input.category !== null && typeof input.category !== 'string') errors.category = 'notString';`. Зайві ключі знайде цикл по `Object.keys(input)`, що порівнює кожен ключ зі списком дозволених. Для `PATCH` збери нотатку «як буде»: поточні поля без `id` плюс поля з тіла, і передай валідатору саме її."
+        en: "For wishes the type check of the category looks like `if (input.category !== undefined && input.category !== null && typeof input.category !== 'string') errors.category = 'notString';`. Unknown keys are found by a loop over `Object.keys(input)` that compares each key with the list of allowed ones. For `PATCH`, build the note “as it will be”: the current fields without `id` plus the fields from the body, and pass exactly that to the validator."
+    solutionNote:
+      uk: "Валідатор перевіряє кожне поле незалежно й лише в кінці вирішує, `ok` чи ні, тому бачить усі помилки разом. `value` будується з нуля з трьох полів, тож зайве не просочиться, а `title` обрізано. `PATCH` перевіряє не латку, а нотатку після злиття: так правила схеми діють і для часткових змін."
+      en: "The validator checks each field independently and decides `ok` only at the end, so it sees every error together. `value` is built from scratch from three fields, so nothing extra leaks in, and `title` is trimmed. `PATCH` checks not the patch but the merged note: that way the schema's rules hold for partial updates too."
+    feedback:
+      - when: { test: "a valid note is created from the parsed value" }
+        message:
+          uk: "Ця перевірка створює нотатку з `title` у пробілах і чекає у відповіді рівно `{ id, title, text: \"\", pinned: false }` з обрізаним `title`. Поверни в `value` нове значення, а не сам `input`."
+          en: "This check creates a note with spaces around `title` and expects exactly `{ id, title, text: \"\", pinned: false }` with a trimmed `title` in the answer. Return a new value in `value`, not `input` itself."
+      - when: { test: "every error is collected, not only the first" }
+        message:
+          uk: "Ця перевірка надсилає три поганих поля й чекає три помилки разом. Не виходь із функції після першої знайденої помилки."
+          en: "This check sends three bad fields and expects three errors together. Do not leave the function after the first error found."
+      - when: { test: "an unknown field is rejected" }
+        message:
+          uk: "Ця перевірка чекає `{ isAdmin: \"unknownField\" }` для тіла з полем, якого немає в схемі. Пройди по всіх ключах входу й позначай ті, яких немає серед `title`, `text`, `pinned`."
+          en: "This check expects `{ isAdmin: \"unknownField\" }` for a body with a field that is not in the schema. Go through every key of the input and mark those that are not among `title`, `text`, `pinned`."
+      - when: { test: 'values over the limits are "tooLong"' }
+        message:
+          uk: "Ця перевірка чекає, що 60 символів у `title` і 500 у `text` ще можна, а 61 і 501 — уже `\"tooLong\"`."
+          en: "This check expects 60 characters in `title` and 500 in `text` to be allowed, and 61 and 501 to be `\"tooLong\"`."
+      - when: { test: "a body that is not an object is rejected" }
+        message:
+          uk: "Ця перевірка передає `undefined`, `null`, масив і текст і для кожного чекає рівно `{ body: \"notObject\" }`. Пам’ятай: `typeof null` і `typeof []` теж дають `\"object\"`."
+          en: "This check passes `undefined`, `null`, an array and text and expects exactly `{ body: \"notObject\" }` for each. Remember: `typeof null` and `typeof []` also give `\"object\"`."
+      - when: { test: "PATCH is validated too, and a bad patch changes nothing" }
+        message:
+          uk: "Ця перевірка надсилає `PATCH` з `pinned: \"yes\"` і чекає 400 та незмінну нотатку, а потім `PATCH` з `pinned: true` — і чекає 200. Перевір у `app.js` нотатку після злиття до того, як зберігати. Якщо навіть `pinned: true` отримує 400 з `id: \"unknownField\"`, прибери `id` з нотатки, яку передаєш валідатору: `id` визначає шлях, а не схема."
+          en: "This check sends a `PATCH` with `pinned: \"yes\"` and expects 400 and an unchanged note, then a `PATCH` with `pinned: true` and expects 200. In `app.js`, check the merged note before storing it. If even `pinned: true` gets 400 with `id: \"unknownField\"`, leave `id` out of the note you pass to the validator: the path decides the `id`, not the schema."
+      - when: { error: TypeError }
+        message:
+          uk: "`TypeError` у валідаторі найчастіше означає звернення до властивості `null` чи `undefined` або виклик `.trim()` не для тексту. Спершу перевір, що вхід — об’єкт, а поле — текст. Якщо всі перевірки падають разом, виправ першу помилку в консолі."
+          en: "A `TypeError` in the validator most often means reading a property of `null` or `undefined`, or calling `.trim()` on something that is not text. First check that the input is an object and the field is text. If every check fails at once, fix the first error in the console."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-04
+    body:
+      uk: "У твоєму проєкті вже є доменні функції `validate*`, що повертають `{ ok, value }` або `{ ok, errors }`. У кроці проєкту цього розділу `src/validate.ts` викликає їх на межі (`validateWishInput` — `validateItem` і так далі) для створення, заміни й злитого запису `PATCH`, додає те, чого форма ніколи не надсилає, — хибні типи, `unknown-field`, — і сервер відповідає `400 VALIDATION_FAILED` до того, як щось потрапить у файл."
+      en: "Your project already has domain `validate*` functions that return `{ ok, value }` or `{ ok, errors }`. In this unit’s project step `src/validate.ts` calls them at the edge (`validateWishInput` calls `validateItem`, and so on) for create, replace and the merged `PATCH` record, adds what a form never sends — wrong types, `unknown-field` — and the server answers `400 VALIDATION_FAILED` before anything reaches the file."

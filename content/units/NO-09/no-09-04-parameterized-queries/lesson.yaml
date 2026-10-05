@@ -1,0 +1,367 @@
+id: no-09-04-parameterized-queries
+unit: NO-09
+title:
+  uk: "Параметризовані запити"
+  en: "Parameterized queries"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Показати на синтетичній таблиці, як вклеєний у SQL пошуковий текст змінює будову запиту."
+    en: "Show on a synthetic table how a search term glued into SQL lets the input change the query’s structure."
+  - uk: "Переписати запити з плейсхолдерами й прив’язаними параметрами (`prepare`, потім `all` чи `run`), щоб вхід завжди лишався даними, зокрема в шаблонах `LIKE`, а ідентифікатори, які параметрами бути не можуть, брати зі списку дозволених."
+    en: "Rewrite queries with placeholders and bound parameters (`prepare`, then `all` or `run`) so input is always data, including `LIKE` patterns, and take identifiers that cannot be parameters from an allowlist."
+prerequisites: [no-09-03-crud-constraints-nulls, js-16-06-untrusted-input-safe-output]
+subskills:
+  - { family: B-04, skill: "parameterized queries", depth: intro }
+glossary: [sql-injection, parameterized-query, prepared-statement]
+selfCheck: [predict-injection, search-books]
+
+blocks:
+  - id: glued-text
+    kind: explanation
+    title:
+      uk: "Коли вхід стає частиною SQL"
+      en: "When input becomes part of the SQL"
+    body:
+      uk: |
+        Пошук за назвою легко зібрати із шаблонного рядка:
+
+        ```js
+        const sql = `SELECT title FROM books WHERE title = '${input}'`;
+        ```
+
+        Поки людина вводить назву, усе працює. Але база отримує **текст** і розбирає його як SQL цілком — разом із тим, що ввела людина. Введи `x' OR 1=1 --`, і запит стане таким:
+
+        ```sql
+        SELECT title FROM books WHERE title = 'x' OR 1=1 --'
+        ```
+
+        Лапка закрила рядок, `OR 1=1` справджується для кожного рядка, а `--` перетворив залишок на коментар. Вхід змінив **будову** запиту — це [[sql-injection|SQL-ін’єкція]]. Тут вона лише показує всі книжки; у `DELETE` чи `UPDATE` та сама вада змінить чужі дані.
+
+        Те саме ти бачив у JS-16 зі сторінками: недовірений текст в `innerHTML` стає розміткою. Захист теж той самий — тримати дані окремо від коду.
+      en: |
+        A search by title is easy to build from a template string:
+
+        ```js
+        const sql = `SELECT title FROM books WHERE title = '${input}'`;
+        ```
+
+        While people type titles, it works. But the database receives **text** and parses all of it as SQL — including what the person typed. Type `x' OR 1=1 --`, and the query becomes:
+
+        ```sql
+        SELECT title FROM books WHERE title = 'x' OR 1=1 --'
+        ```
+
+        The quote closed the string, `OR 1=1` is true for every row, and `--` turned the rest into a comment. The input changed the query’s **structure** — that is [[sql-injection]]. Here it only shows every book; in a `DELETE` or `UPDATE` the same defect changes other people’s data.
+
+        You saw the same in JS-16 with pages: untrusted text in `innerHTML` becomes markup. The defence is the same too — keep data apart from code.
+
+  - id: predict-injection
+    kind: prediction
+    prompt:
+      uk: "У таблиці `books` три книжки, жодна не називається `x`. Скільки рядків поверне кожна функція для вводу `x' OR 1=1 --`?"
+      en: "The `books` table holds three books, none of them titled `x`. How many rows does each function return for the input `x' OR 1=1 --`?"
+    code: |
+      function searchGlued(input) {
+        return db.prepare(`SELECT title FROM books WHERE title = '${input}'`).all();
+      }
+      function searchBound(input) {
+        return db.prepare('SELECT title FROM books WHERE title = ?').all(input);
+      }
+      console.log(searchGlued("x' OR 1=1 --").length);
+      console.log(searchBound("x' OR 1=1 --").length);
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: three-zero
+          code: "3\n0"
+        - id: zero-zero
+          code: "0\n0"
+          why:
+            uk: "Для вклеєного запиту введений текст — не назва, а шматок SQL: `OR 1=1` робить умову true для кожної з трьох книжок."
+            en: "For the glued query the typed text is not a title but a piece of SQL: `OR 1=1` makes the condition true for each of the three books."
+        - id: three-three
+          code: "3\n3"
+          why:
+            uk: "Прив’язаний параметр база не розбирає як SQL: вона порівнює назви з усім текстом `x' OR 1=1 --` як зі значенням, а такої назви немає."
+            en: "The database never parses a bound parameter as SQL: it compares the titles with the whole text `x' OR 1=1 --` as a value, and no title is like that."
+        - id: error-zero
+          text: { uk: "Помилка, потім 0", en: "An error, then 0" }
+          why:
+            uk: "Помилки немає: `--` закоментував зайву лапку, тож вийшов цілком правильний SQL. Саме тому ін’єкцію легко не помітити."
+            en: "There is no error: `--` commented out the extra quote, so the result is perfectly valid SQL. That is exactly why an injection is easy to miss."
+      correct: [three-zero]
+    explanation:
+      uk: "Вклеєний вхід перебудував умову на `title = 'x' OR 1=1`, тож повернулися всі 3 книжки. Прив’язаний вхід лишився значенням, з яким порівнюють назву, — 0 рядків. Приклад «Вклеєний і прив’язаний пошук» виконує обидві функції в справжньому Node."
+      en: "The glued input rebuilt the condition into `title = 'x' OR 1=1`, so all 3 books came back. The bound input stayed a value the title is compared with — 0 rows. The example “Glued and bound search” runs both functions in real Node."
+
+  - id: placeholders
+    kind: explanation
+    title:
+      uk: "Плейсхолдери й параметри"
+      en: "Placeholders and parameters"
+    body:
+      uk: |
+        [[parameterized-query|Параметризований запит]] пише на місці значення знак `?` (або назву `:title`), а саме значення передає окремо:
+
+        ```js
+        const find = db.prepare('SELECT title FROM books WHERE title LIKE ?');
+        find.all(`%${term}%`);              // % додано до значення, не до SQL
+        db.prepare('UPDATE books SET copies = :copies WHERE id = :id').run({ copies: 4, id: 2 });
+        ```
+
+        `prepare` розбирає SQL **до** того, як з’явилися значення, — так виходить [[prepared-statement|підготована інструкція]]. Будову вже визначено, і значення лише лягає в готове місце: лапки, `--` чи `;` у ньому — звичайні символи. Тому параметри надійніші за ручне «екранування» лапок: правила лапок у різних баз різні (SQLite, наприклад, не вважає `\'` екрануванням), а тут їх ніхто не застосовує.
+
+        Але параметр — це лише **значення**. Назви таблиці, стовпця чи напрямок `ASC`/`DESC` ним бути не можуть: `ORDER BY ?` з `'copies'` сортує за сталим текстом `'copies'`, однаковим для всіх рядків, тобто ніяк. Їх беруть зі **списку дозволених** — об’єкта, де кожне допустиме слово запиту відповідає SQL, який ти написав сам; на будь-яке інше слово — помилка.
+
+        > [!note]
+        > `LIKE` у SQLite не зважає на регістр лише для латинських літер: `'Маяк' LIKE '%мая%'` — false.
+      en: |
+        A [[parameterized-query]] writes `?` (or a name such as `:title`) where a value goes, and passes the value separately:
+
+        ```js
+        const find = db.prepare('SELECT title FROM books WHERE title LIKE ?');
+        find.all(`%${term}%`);              // the % goes into the value, not into the SQL
+        db.prepare('UPDATE books SET copies = :copies WHERE id = :id').run({ copies: 4, id: 2 });
+        ```
+
+        `prepare` parses the SQL **before** any value exists — the result is a [[prepared-statement]]. Its structure is fixed, and a value only drops into a ready slot: quotes, `--` or `;` inside it are ordinary characters. That is why parameters are more reliable than “escaping” quotes by hand: quoting rules differ between databases (SQLite, for example, does not treat `\'` as an escape), and here nobody applies them.
+
+        But a parameter is only a **value**. A table name, a column name or the direction `ASC`/`DESC` cannot be one: `ORDER BY ?` with `'copies'` sorts by the constant text `'copies'`, the same for every row — that is, not at all. They come from an **allowlist** — an object where each permitted word of the request maps to SQL you wrote yourself; any other word is an error.
+
+        > [!note]
+        > In SQLite, `LIKE` ignores case only for Latin letters: `'Маяк' LIKE '%мая%'` is false.
+
+  - id: two-paths
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Той самий вхід двома шляхами"
+      en: "The same input, two paths"
+    textEquivalent:
+      uk: "Вхід x' OR 1=1 -- іде двома шляхами. Верхній шлях вклеює його в текст SQL: парсер бази читає умову title = 'x' OR 1=1 як код, умова true для кожного рядка, і запит повертає всі книжки. Нижній шлях спершу готує SQL з місцем ? — парсер читає будову запиту без жодного вводу, — а вхід передається окремим параметром і лише порівнюється як значення з назвою кожної книжки: збігів немає, 0 рядків."
+      en: "The input x' OR 1=1 -- goes two ways. The upper path glues it into the SQL text: the database’s parser reads the condition title = 'x' OR 1=1 as code, the condition is true for every row, and the query returns every book. The lower path first prepares SQL with a ? slot — the parser reads the query’s structure without any input — and the input travels as a separate parameter and is only compared as a value with each book’s title: no match, 0 rows."
+    spec:
+      layout: grid
+      nodes:
+        - { id: input, label: "x' OR 1=1 --", col: 0, row: 1, shape: note, w: 140 }
+        - { id: glued, label: "'… title = ' + input", col: 1, row: 0, w: 184 }
+        - { id: parse1, label: { uk: "парсер: OR 1=1 — код", en: "parser: OR 1=1 is code" }, col: 1, row: 1, w: 184 }
+        - { id: all, label: { uk: "усі рядки", en: "every row" }, col: 1, row: 2, shape: round, w: 184 }
+        - { id: prepared, label: "prepare('… title = ?')", col: 1, row: 3, w: 184 }
+        - { id: slot, label: { uk: "параметр 1 = значення", en: "parameter 1 = a value" }, col: 1, row: 4, w: 184 }
+        - { id: none, label: { uk: "0 рядків", en: "0 rows" }, col: 1, row: 5, shape: round, w: 184 }
+      edges:
+        - { id: in-glued, from: input, to: glued }
+        - { id: glued-parse, from: glued, to: parse1 }
+        - { id: parse-all, from: parse1, to: all }
+        - { id: in-slot, from: input, to: slot }
+        - { id: prep-slot, from: prepared, to: slot }
+        - { id: slot-none, from: slot, to: none }
+      steps:
+        - caption:
+            uk: "Один і той самий ввід. Угорі його вклеюють у текст SQL, унизу — передають параметром."
+            en: "One and the same input. Above it is glued into the SQL text, below it is passed as a parameter."
+        - caption:
+            uk: "Вклеєний: парсер отримує один текст і не знає, де закінчився твій SQL і почався ввід. `OR 1=1` стає частиною умови."
+            en: "Glued: the parser gets one text and cannot tell where your SQL ends and the input begins. `OR 1=1` becomes part of the condition."
+          highlight: [input, glued, parse1, in-glued, glued-parse]
+          dim: [prepared, slot, none, in-slot, prep-slot, slot-none]
+        - caption:
+            uk: "Умова true для кожного рядка — запит повертає всю таблицю."
+            en: "The condition is true for every row — the query returns the whole table."
+          highlight: [parse1, all, parse-all]
+          dim: [prepared, slot, none, in-slot, prep-slot, slot-none]
+        - caption:
+            uk: "Прив’язаний: `prepare` розбирає SQL з місцем `?` ще до того, як з’явився ввід. Будову запиту вже визначено."
+            en: "Bound: `prepare` parses the SQL with a `?` slot before the input exists. The query’s structure is fixed."
+          highlight: [prepared, prep-slot, slot]
+          dim: [glued, parse1, all, in-glued, glued-parse, parse-all]
+        - caption:
+            uk: "Ввід лягає в місце параметра як значення й лише порівнюється з назвами. Такої назви немає — 0 рядків."
+            en: "The input drops into the parameter slot as a value and is only compared with the titles. No title like that — 0 rows."
+          highlight: [input, in-slot, slot, none, slot-none]
+          dim: [glued, parse1, all, in-glued, glued-parse, parse-all]
+
+  - id: printed-form
+    kind: analogy
+    body:
+      uk: "Параметризований запит — як надрукований бланк із фіксованими клітинками. Що б людина не написала в клітинці «ім’я», це лишиться ім’ям: дописати в бланк новий рядок чи викреслити старий клітинка не дає. Вклеєний запит — це бланк, який людина заповнює просто між рядками тексту, і хто завгодно може дописати «…і видати всі книжки»."
+      en: "A parameterized query is like a printed form with fixed boxes. Whatever a person writes in the “name” box stays a name: a box does not let anyone add a new line to the form or cross out an old one. A glued query is a form filled in between the lines of the text itself, where anyone can append “…and hand out every book”."
+    limits:
+      uk: "У клітинки йдуть лише значення. Назву таблиці, стовпця чи напрямок сортування клітинкою не зробиш — для них потрібен список дозволених варіантів. І бланк не перевіряє, чи має значення сенс: дату з минулого століття чи від’ємну кількість зупинять валідація й обмеження таблиці, а не параметри."
+      en: "Only values go into boxes. A table name, a column name or a sort direction cannot be a box — they need an allowlist. And the form does not check whether a value makes sense: a date from the last century or a negative count is stopped by validation and table constraints, not by parameters."
+
+  - id: injection-demo
+    kind: example
+    runtime: isolated-node
+    dir: injection-demo
+    entry: index.js
+    strings:
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+      garden: { uk: "Сад на даху", en: "A garden on the roof" }
+      stars: { uk: "Карта зоряного неба", en: "A map of the night sky" }
+      term: { uk: "на", en: "on the" }
+    title:
+      uk: "Вклеєний і прив’язаний пошук"
+      en: "Glued and bound search"
+    body:
+      uk: "Натисни **Запустити**. Програма шукає ту саму назву й той самий ввід-атаку двома функціями, потім шукає частину назви через `LIKE` з параметром і сортує двома способами: параметром `ORDER BY ?` і через список дозволених."
+      en: "Press **Run**. The program searches for the same title and the same attack input with both functions, then searches for part of a title through `LIKE` with a parameter and sorts in two ways: with the parameter `ORDER BY ?` and through an allowlist."
+    tryIt:
+      uk: "Подивись на рядок `ORDER BY ?`: книжки йдуть у тому порядку, в якому їх вставлено, — сортування не відбулося. Тепер зміни `const sort = 'copies';` на `const sort = 'copies DESC; DROP TABLE books';` і запусти: перші рядки не змінилися, а остання частина зупиняється з `unknown sort: …` — цього слова немає у списку дозволених, тож воно ніколи не потрапляє в SQL."
+      en: "Look at the `ORDER BY ?` line: the books come in the order they were inserted — no sorting happened. Now change `const sort = 'copies';` to `const sort = 'copies DESC; DROP TABLE books';` and run: the first lines are unchanged, and the last part stops with `unknown sort: …` — that word is not in the allowlist, so it never reaches the SQL."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: безпечні приймачі тексту"
+      en: "Recall: safe sinks for text"
+    items:
+      - id: safe-sink
+        from: js-16-07-xss-safe-sinks
+        prompt:
+          uk: "Відгук користувача — `<img src=x onerror=alert(1)>`. Який рядок показує його на сторінці лише як текст?"
+          en: "A user’s review is `<img src=x onerror=alert(1)>`. Which line shows it on the page only as text?"
+        answer:
+          type: choice
+          options:
+            - id: text-content
+              code: "card.textContent = review;"
+            - id: inner-html
+              code: "card.innerHTML = review;"
+              why:
+                uk: "`innerHTML` розбирає текст як розмітку: з’явиться елемент `img`, і його `onerror` виконає код — так само, як вклеєний SQL виконує вклеєну умову."
+                en: "`innerHTML` parses the text as markup: an `img` element appears, and its `onerror` runs code — just as glued SQL runs a glued condition."
+            - id: replace
+              code: "card.innerHTML = review.replace('<', '');"
+              why:
+                uk: "Ручне «чищення» прибирає лише перший `<` і пропускає інші способи. Як і з лапками в SQL, надійно — не лагодити текст, а покласти його туди, де його ніхто не розбирає."
+                en: "Hand “cleaning” removes only the first `<` and misses other ways in. As with quotes in SQL, the reliable way is not to repair the text but to put it where nobody parses it."
+          correct: [text-content]
+        explanation:
+          uk: "`textContent` — безпечний приймач: текст лишається текстом. Параметр SQL — такий самий приймач для бази: значення лишається значенням."
+          en: "`textContent` is a safe sink: text stays text. An SQL parameter is the same kind of sink for the database: a value stays a value."
+
+  - id: search-books
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: search-books
+    entry: index.js
+    editable: [app.js]
+    strings:
+      lighthouse: { uk: "Маяк на скелі", en: "The lighthouse on the rock" }
+      winter: { uk: "Зимовий сад", en: "The winter garden" }
+      stars: { uk: "Карта зоряного неба", en: "A map of the night sky" }
+      spring: { uk: "Весняний сад", en: "The spring garden" }
+      term: { uk: "сад", en: "garden" }
+    title:
+      uk: "Безпечний пошук книжок"
+      en: "A safe book search"
+    instructions:
+      uk: |
+        `searchBooks(db, { title, sort })` в `app.js` знаходить книжки, у назві яких є `title`, і повертає рядки `{ title, copies }`. Зараз вона вклеює обидва значення в SQL. Перепиши її так, щоб:
+
+        - пошук `'%%term%%'` знаходив книжки, у назві яких є `%%term%%` (порожній `title` — усі книжки);
+        - ввід з лапкою чи спробою ін’єкції лише шукався як текст: нічого не знайдено, без помилки;
+        - `sort: 'title'` впорядковував за назвою, `sort: 'copies'` — від найбільшої кількості примірників;
+        - будь-який інший `sort` викидав помилку ще до запиту, і таблиця лишалася цілою.
+
+        `index.js` пробує п’ять пошуків і друкує результат кожного.
+
+        > [!warning]
+        > П’ятий пошук вклеює в SQL заготовки `ORDER BY copies; DROP TABLE books`, і таблиця вціліє: `prepare` у `node:sqlite` компілює лише першу інструкцію й мовчки відкидає все після `;` (ми перевірили це на Node 25.2.1; у коді Node 22.13 `prepare` так само не читає решту тексту). Але слово із запиту все одно стало SQL. `db.exec` і багато інших бібліотек виконують кожну інструкцію, а навіть в одній інструкції вклеєний вираз на кшталт `ORDER BY (CASE WHEN … THEN title ELSE copies END)` дає змогу випитувати в бази дані інших таблиць за порядком рядків. Тиша — не захист; захищає список дозволених.
+      en: |
+        `searchBooks(db, { title, sort })` in `app.js` finds the books whose title contains `title` and returns `{ title, copies }` rows. Right now it glues both values into the SQL. Rewrite it so that:
+
+        - a search for `'%%term%%'` finds the books whose title contains `%%term%%` (an empty `title` finds every book);
+        - input with a quote or an injection attempt is only searched for as text: nothing found, no error;
+        - `sort: 'title'` orders by title, `sort: 'copies'` puts most copies first;
+        - any other `sort` throws an error before the query, and the table stays whole.
+
+        `index.js` tries five searches and prints the result of each.
+
+        > [!warning]
+        > The fifth search glues `ORDER BY copies; DROP TABLE books` into the starter’s SQL, and the table survives: `prepare` in `node:sqlite` compiles only the first statement and silently discards everything after the `;` (we checked this on Node 25.2.1; in the Node 22.13 source `prepare` does not read the rest of the text either). But the word from the request still became SQL. `db.exec` and many other libraries run every statement, and even within one statement a glued expression such as `ORDER BY (CASE WHEN … THEN title ELSE copies END)` lets someone pry data of other tables out of the database through the order of the rows. Silence is not protection; the allowlist is.
+    testTitles:
+      "finds the books whose title contains the text":
+        uk: "Знаходить книжки, у назві яких є цей текст"
+        en: "Finds the books whose title contains the text"
+      "a title with a quote finds nothing and does not crash":
+        uk: "Пошук лапки нічого не знаходить і не падає"
+        en: "A title with a quote finds nothing and does not crash"
+      "an injection attempt is only searched for, never run":
+        uk: "Спробу ін’єкції лише шукають як текст, а не виконують"
+        en: "An injection attempt is only searched for, never run"
+      "sort title orders the books by title":
+        uk: "`sort: 'title'` впорядковує книжки за назвою"
+        en: "`sort: 'title'` orders the books by title"
+      "sort copies puts the books with most copies first":
+        uk: "`sort: 'copies'` ставить першими книжки з найбільшою кількістю примірників"
+        en: "`sort: 'copies'` puts the books with most copies first"
+      "an unknown sort is refused and the table is untouched":
+        uk: "Невідомий `sort` відхилено, таблиця ціла"
+        en: "An unknown `sort` is refused and the table is untouched"
+    hints:
+      nudge:
+        uk: "Що з двох вхідних значень може стати параметром, а що — ні? Для того, що не може, підготуй заздалегідь усі допустимі варіанти SQL."
+        en: "Which of the two inputs can become a parameter, and which cannot? For the one that cannot, prepare every permitted SQL variant in advance."
+      explanation:
+        uk: |
+          Значення йде в параметр, а знаки `%` для `LIKE` — у саме значення. Для назв стовпців пиши об’єкт-список: ключ — слово із запиту, значення — SQL, який ти написав сам. Наприклад, для витрат:
+
+          ```js
+          const ORDERS = { date: 'spentOn DESC', amount: 'amount DESC' };
+          if (!Object.hasOwn(ORDERS, order)) throw new Error(`unknown order: ${order}`);
+          db.prepare(`SELECT * FROM expenses WHERE note LIKE ? ORDER BY ${ORDERS[order]}`).all(`%${note}%`);
+          ```
+
+          `Object.hasOwn` не дасть пройти словам на кшталт `toString`, які об’єкт успадковує.
+        en: |
+          The value goes into a parameter, and the `%` signs for `LIKE` go into the value itself. For column names write an object list: the key is the word from the request, the value is SQL you wrote yourself. For example, for expenses:
+
+          ```js
+          const ORDERS = { date: 'spentOn DESC', amount: 'amount DESC' };
+          if (!Object.hasOwn(ORDERS, order)) throw new Error(`unknown order: ${order}`);
+          db.prepare(`SELECT * FROM expenses WHERE note LIKE ? ORDER BY ${ORDERS[order]}`).all(`%${note}%`);
+          ```
+
+          `Object.hasOwn` keeps out words such as `toString` that the object inherits.
+    solutionNote:
+      uk: "Назва йде параметром `?` зі значенням `` `%${title}%` ``, тож лапки й `--` — лише символи пошуку. Сортування береться з об’єкта `SORTS`, а будь-яке інше слово викидає помилку ще до `prepare`. Варіант з іменованим параметром `:pattern` і `if`/`else` замість об’єкта теж правильний. Знаки `%` і `_`, введені людиною, і тут працюють як шаблон `LIKE`; якщо їх треба шукати буквально, SQLite має `ESCAPE`."
+      en: "The title goes in as the parameter `?` with the value `` `%${title}%` ``, so quotes and `--` are just characters to search for. The sort comes from the object `SORTS`, and any other word throws before `prepare`. A version with the named parameter `:pattern` and `if`/`else` instead of an object is correct too. The `%` and `_` a person types still act as `LIKE` wildcards here; to search for them literally, SQLite has `ESCAPE`."
+    feedback:
+      - when: { test: "finds the books whose title contains the text" }
+        message:
+          uk: "Ця перевірка шукає `%%term%%` із `sort: 'title'` й очікує дві книжки в порядку назв. Якщо всі перевірки не проходять разом, прочитай першу помилку в консолі після **Запустити**."
+          en: "This check searches for `%%term%%` with `sort: 'title'` and expects two books in title order. If every check fails at once, read the first error in the console after **Run**."
+      - when: { test: "a title with a quote finds nothing and does not crash" }
+        message:
+          uk: "Ця перевірка шукає `'` й очікує порожній список без помилки. Вклеєна лапка ламає SQL (`unrecognized token` чи `syntax error`); значення в параметрі — ні."
+          en: "This check searches for `'` and expects an empty list with no error. A glued quote breaks the SQL (`unrecognized token` or `syntax error`); a value in a parameter does not."
+      - when: { test: "an injection attempt is only searched for, never run" }
+        message:
+          uk: "Ця перевірка шукає `%' OR 1=1 --` й очікує порожній список. Якщо повернулися всі книжки, ввід досі стає частиною SQL — заміна лапок вручну цього не виправляє."
+          en: "This check searches for `%' OR 1=1 --` and expects an empty list. If every book came back, the input still becomes part of the SQL — replacing quotes by hand does not fix that."
+      - when: { test: "sort title orders the books by title" }
+        message:
+          uk: "Ця перевірка шукає порожній `title` із `sort: 'title'` й очікує всі книжки за назвою. Якщо порядок такий, як у вставці, сортування не відбулося: `ORDER BY ?` сортує за сталим текстом."
+          en: "This check searches with an empty `title` and `sort: 'title'` and expects every book by title. If the order is the insertion order, no sorting happened: `ORDER BY ?` sorts by a constant text."
+      - when: { test: "sort copies puts the books with most copies first" }
+        message:
+          uk: "Ця перевірка очікує всі книжки від найбільшої кількості примірників до найменшої — потрібен напрямок `DESC`."
+          en: "This check expects every book from most copies to fewest — that needs the direction `DESC`."
+      - when: { test: "an unknown sort is refused and the table is untouched" }
+        message:
+          uk: "Ця перевірка передає `sort: 'copies; DROP TABLE books'` й очікує помилку від `searchBooks` і чотири книжки в таблиці. Невідоме слово має зупинятися до того, як потрапить у SQL."
+          en: "This check passes `sort: 'copies; DROP TABLE books'` and expects an error from `searchBooks` and four books left in the table. An unknown word must stop before it reaches the SQL."
+
+  - id: to-project
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-09 немає. Але твій сервер з NO-04 уже приймає пошук і сортування з адреси запиту. Якщо в NO-05 за планом курсу обереш SQLite, кожне таке значення піде в запит лише параметром, а поле сортування — лише через список дозволених, як у цьому уроці."
+      en: "Your project does not change in this unit: NO-09 has no project step. But your server from NO-04 already takes search and sort values from the request address. If you choose SQLite in NO-05, as the course plan offers, every such value goes into a query only as a parameter, and the sort field only through an allowlist, as in this lesson."

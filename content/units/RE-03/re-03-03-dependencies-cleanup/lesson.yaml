@@ -1,0 +1,439 @@
+id: re-03-03-dependencies-cleanup
+unit: RE-03
+title:
+  uk: "Залежності та cleanup"
+  en: "Dependencies and cleanup"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Передбачити, коли ефект запускається знову, за масивом залежностей (немає, порожній, `[selectedId]`), і перелічити всі реактивні значення, які він читає."
+    en: "Predict when an effect re-runs from its dependency array (none, empty, `[selectedId]`) and list every reactive value it reads."
+  - uk: "Написати cleanup, що скасовує налаштування ефекту, і передбачити, що він запускається перед кожним повторним запуском і під час демонтування."
+    en: "Write a cleanup that undoes the effect's setup, and predict that it runs before each re-run and on unmount."
+  - uk: "Виправити підписку, яка «тече», бо в її ефекту немає cleanup."
+    en: "Repair a subscription that leaks because its effect has no cleanup."
+prerequisites: [re-03-02-effects-synchronize-external, js-13-06-cleanup-listeners-timers]
+subskills:
+  - { family: R-04, skill: "dependencies/cleanup", depth: intro }
+glossary: [dependency-array, effect-cleanup, react-mount]
+selfCheck: [predict-cleanup-order, saved-label]
+
+blocks:
+  - id: when-again
+    kind: explanation
+    title:
+      uk: "Масив залежностей: коли запускати знову"
+      en: "The dependency array: when to run again"
+    body:
+      uk: |
+        Ефект без другого аргументу запускається після кожного commit. Часто це зайве: підписуватися на ту саму стрічку оновлень після кожного рендеру — марна робота. Другий аргумент `useEffect` — [[dependency-array|масив залежностей]]: він каже React, від яких значень залежить ефект.
+
+        | Виклик | Коли ефект запускається |
+        |---|---|
+        | `useEffect(fn)` | після кожного commit |
+        | `useEffect(fn, [])` | лише після першого commit |
+        | `useEffect(fn, [selectedId])` | після першого commit і після кожного, де `selectedId` змінився |
+
+        React порівнює кожну залежність із її значенням на попередньому рендері (як `Object.is`). Не змінилося нічого — ефект пропускається.
+
+        У масив кладуть **кожне реактивне значення, яке читає ефект**: props, стан і все, що обчислено з них у тілі компонента. Значення, оголошені поза компонентом (імпортована функція, константа модуля), між рендерами не змінюються — їх не кладуть.
+      en: |
+        An effect without a second argument runs after every commit. Often that is too much: subscribing to the same update feed after every render is wasted work. The second argument of `useEffect` is the [[dependency-array|dependency array]]: it tells React which values the effect depends on.
+
+        | Call | When the effect runs |
+        |---|---|
+        | `useEffect(fn)` | after every commit |
+        | `useEffect(fn, [])` | only after the first commit |
+        | `useEffect(fn, [selectedId])` | after the first commit and after every commit in which `selectedId` changed |
+
+        React compares each dependency with its value on the previous render (as `Object.is` does). If nothing changed, the effect is skipped.
+
+        The array holds **every reactive value the effect reads**: props, state and anything computed from them in the component body. Values declared outside the component (an imported function, a module constant) do not change between renders — they are not listed.
+
+  - id: undo-setup
+    kind: explanation
+    title:
+      uk: "Cleanup скасовує те, що зробив ефект"
+      en: "Cleanup undoes what the effect did"
+    body:
+      uk: |
+        Ефект, що підписується, запускає таймер чи додає listener, має й **вимкнути** це. Для цього ефект повертає функцію — [[effect-cleanup|cleanup]]:
+
+        ```jsx
+        useEffect(() => {
+          const unsubscribe = feed.subscribe(wishId, setMessage); // setup
+          return () => unsubscribe();                              // cleanup
+        }, [wishId]);
+        ```
+
+        Це та сама пара «увімкнув — вимкнув», що й у [[teardown]] із JS-13, лише викликає її React. Нагадаємо слова, якими React описує життя компонента: коли компонент з’являється на сторінці, React його **монтує**, а коли компонент зникає (його прибрали з JSX або на тому місці тепер інший компонент) — **демонтує**; це [[react-mount|монтування й демонтування]]. Коли саме React викликає cleanup — спробуй передбачити.
+      en: |
+        An effect that subscribes, starts a timer or adds a listener must also **switch it off**. To do that, the effect returns a function — the [[effect-cleanup|cleanup]]:
+
+        ```jsx
+        useEffect(() => {
+          const unsubscribe = feed.subscribe(wishId, setMessage); // setup
+          return () => unsubscribe();                              // cleanup
+        }, [wishId]);
+        ```
+
+        It is the same “switch on — switch off” pair as the [[teardown]] of JS-13, except that React calls it. Two words React uses for a component's life: when a component appears on the page, React **mounts** it, and when the component goes away (it was removed from the JSX, or a different component now sits in that position), React **unmounts** it; see [[react-mount|mount and unmount]]. When exactly React calls the cleanup — try to predict.
+
+  - id: predict-cleanup-order
+    kind: prediction
+    prompt:
+      uk: "Батьківський компонент показує `<WishFeed wishId=\"w-01\" />`, потім передає `wishId=\"w-02\"`, а потім перестає показувати `WishFeed`. Що надрукує консоль?"
+      en: "A parent component shows `<WishFeed wishId=\"w-01\" />`, then passes `wishId=\"w-02\"`, and then stops showing `WishFeed`. What does the console print?"
+    code: |
+      function WishFeed({ wishId }) {
+        useEffect(() => {
+          console.log(`subscribe ${wishId}`);
+          const unsubscribe = feed.subscribe(wishId, () => {});
+          return () => {
+            console.log(`unsubscribe ${wishId}`);
+            unsubscribe();
+          };
+        }, [wishId]);
+        return <p>{wishId}</p>;
+      }
+    lang: jsx
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: before-each-rerun
+          code: "subscribe w-01\nunsubscribe w-01\nsubscribe w-02\nunsubscribe w-02"
+        - id: only-unmount
+          code: "subscribe w-01\nsubscribe w-02\nunsubscribe w-02"
+          why:
+            uk: "Cleanup запускається не лише під час демонтування. Перш ніж запустити ефект із новим `wishId`, React викликає cleanup попереднього запуску — інакше підписка на `w-01` жила б далі."
+            en: "Cleanup does not run only on unmount. Before running the effect with the new `wishId`, React calls the cleanup of the previous run — otherwise the `w-01` subscription would live on."
+        - id: setup-first
+          code: "subscribe w-01\nsubscribe w-02\nunsubscribe w-01\nunsubscribe w-02"
+          why:
+            uk: "React спершу прибирає старе, а вже тоді налаштовує нове. Так дві підписки ніколи не живуть одночасно."
+            en: "React cleans up the old one first and only then sets up the new one. That way two subscriptions never live at the same time."
+        - id: cleanup-sees-new
+          code: "subscribe w-01\nunsubscribe w-02\nsubscribe w-02\nunsubscribe w-02"
+          why:
+            uk: "Cleanup — це функція, створена під час **попереднього** запуску. Як будь-яке замикання, вона бачить `wishId` того рендеру — `w-01`."
+            en: "The cleanup is a function created during the **previous** run. Like any closure, it sees that render's `wishId` — `w-01`."
+      correct: [before-each-rerun]
+    explanation:
+      uk: "Коли `wishId` змінюється, React спершу викликає cleanup попереднього запуску (зі старим `w-01`), а тоді — новий setup. Коли компонент зникає, React викликає останній cleanup. Перевірено в пісочниці з React 19.3: рівно ці чотири рядки в цьому порядку."
+      en: "When `wishId` changes, React first calls the previous run's cleanup (with the old `w-01`), then the new setup. When the component goes away, React calls the last cleanup. Checked in the sandbox with React 19.3: exactly these four lines in this order."
+
+  - id: newsletter
+    kind: analogy
+    body:
+      uk: "Ефект — це підписка на розсилку на адресу, де ти живеш зараз, а cleanup — це відписка, яку надсилаєш перед переїздом. Тоді листи ніколи не приходять на дві адреси одразу, а після того як ти виїхав зовсім, не приходять узагалі."
+      en: "An effect is a newsletter subscription for the address you live at now, and its cleanup is the cancellation you send before moving. That way mail never arrives at two addresses at once, and once you have moved out for good, it stops coming at all."
+    limits:
+      uk: "Компонент «переїжджає» значно частіше за людину: cleanup запускається перед кожним повторним запуском, де змінилася залежність, а не лише наприкінці. І відписку пишеш ти, а надсилає її React — у потрібний момент, без нагадувань."
+      en: "A component “moves” far more often than a person: cleanup runs before every re-run whose dependencies changed, not only at the end. And you write the cancellation, but React sends it — at the right moment, without being reminded."
+
+  - id: feed-timeline
+    kind: visual
+    visual: render-timeline
+    title:
+      uk: "Підписка на w-01, перехід на w-02, демонтування"
+      en: "Subscribing to w-01, switching to w-02, unmounting"
+    textEquivalent:
+      uk: >-
+        Компонент WishFeed отримує проп wishId. Рендер 1 бачить w-01; після commit ефект
+        підписується на w-01 — живих підписок одна. Батьківський компонент передає w-02. Рендер 2
+        бачить w-02; після commit React спершу викликає cleanup попереднього запуску, який відписує
+        w-01, — живих нуль, — а потім новий setup підписується на w-02, і живих знову одна. Коли
+        батьківський компонент перестає показувати WishFeed, React викликає останній cleanup: відписка
+        від w-02, живих підписок нуль. Ні в який момент живих підписок не буває дві.
+      en: >-
+        The WishFeed component receives the prop wishId. Render 1 sees w-01; after the commit the
+        effect subscribes to w-01 — one live subscription. The parent passes w-02. Render 2 sees w-02;
+        after the commit React first calls the previous run's cleanup, which unsubscribes from w-01 —
+        zero live — and then the new setup subscribes to w-02, one live again. When the parent stops
+        showing WishFeed, React calls the last cleanup: it unsubscribes from w-02, zero live
+        subscriptions. At no moment are there two live subscriptions.
+    spec:
+      component: WishFeed
+      code: |
+        function WishFeed({ wishId }) {
+          const [message, setMessage] = useState("…");
+          useEffect(() => {
+            const unsubscribe = feed.subscribe(wishId, setMessage);
+            return () => unsubscribe();
+          }, [wishId]);
+          return <p>{message}</p>;
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 1
+          reason: { uk: "перший показ", en: "first display" }
+          snapshot: { props: { wishId: "w-01" } }
+          caption:
+            uk: "Рендер 1 бачить `wishId = \"w-01\"`. Підписок поки нуль."
+            en: "Render 1 sees `wishId = \"w-01\"`. No subscriptions yet."
+        - phase: commit
+          render: 1
+          line: 7
+          dom: "<p>…</p>"
+          caption:
+            uk: "Commit: абзац показує «…» — повідомлень ще немає."
+            en: "Commit: the paragraph shows “…” — no messages yet."
+        - phase: effect
+          render: 1
+          line: 4
+          run: ["feed.subscribe(\"w-01\")"]
+          caption:
+            uk: "Перший запуск ефекту підписується на `w-01`. Живих підписок: **1**."
+            en: "The effect's first run subscribes to `w-01`. Live subscriptions: **1**."
+        - phase: event
+          name: click
+          sees: { wishId: "w-01" }
+          actions: ["setSelectedId(\"w-02\")"]
+          caption:
+            uk: "Батьківський компонент вибирає `w-02` і передасть його як проп."
+            en: "The parent selects `w-02` and will pass it as a prop."
+        - phase: render
+          render: 2
+          line: 1
+          reason: { uk: "змінився проп wishId", en: "the prop wishId changed" }
+          snapshot: { props: { wishId: "w-02" } }
+          caption:
+            uk: "Рендер 2 бачить `w-02`. Залежність `[wishId]` змінилася — ефект доведеться перезапустити."
+            en: "Render 2 sees `w-02`. The dependency `[wishId]` changed — the effect must run again."
+        - phase: commit
+          render: 2
+          line: 7
+          dom: "<p>w-01 …</p>"
+          caption:
+            uk: "Commit 2. Повідомлення ще від `w-01`: нового поки ніхто не надсилав."
+            en: "Commit 2. The message is still from `w-01`: nobody has sent a new one yet."
+        - phase: effect
+          render: 2
+          line: 5
+          cleanup: ["unsubscribe() // w-01"]
+          run: ["feed.subscribe(\"w-02\")"]
+          caption:
+            uk: "Спершу cleanup **попереднього** запуску відписує `w-01` (живих **0**), потім setup підписується на `w-02` (живих **1**)."
+            en: "First the **previous** run's cleanup unsubscribes from `w-01` (live **0**), then the setup subscribes to `w-02` (live **1**)."
+        - phase: event
+          name: click
+          sees: { wishId: "w-02" }
+          actions: ["setVisible(false)"]
+          caption:
+            uk: "Батьківський компонент ховає `WishFeed`: компонент демонтується."
+            en: "The parent hides `WishFeed`: the component unmounts."
+        - phase: effect
+          render: 2
+          line: 5
+          cleanup: ["unsubscribe() // w-02"]
+          caption:
+            uk: "Останній cleanup відписує `w-02`. Живих підписок **0** — нічого не тече."
+            en: "The last cleanup unsubscribes from `w-02`. Live subscriptions: **0** — nothing leaks."
+
+  - id: record-feed
+    kind: example
+    runtime: browser-react
+    dir: record-feed
+    entry: main.jsx
+    strings:
+      update: { uk: "оновлення", en: "update" }
+      waiting: { uk: "Чекаю на оновлення…", en: "Waiting for updates…" }
+      hide: { uk: "Сховати оновлення", en: "Hide updates" }
+      show: { uk: "Показати оновлення", en: "Show updates" }
+    title:
+      uk: "Підписка, що тече, і підписка з cleanup"
+      en: "A leaking subscription and one with cleanup"
+    body:
+      uk: |
+        `feed.js` — несправжня стрічка оновлень: кожна підписка раз на 0,7 с надсилає повідомлення, а кожна підписка й відписка друкує в консоль, скільки підписок живе зараз. `RecordUpdates` підписується на вибраний запис і повертає `unsubscribe` як cleanup.
+
+        Натисни **Запустити**, на **Сторінці** перемикай `w-01`, `w-02`, `w-03`, потім **Сховати оновлення**. У **Консолі** число `live` щоразу повертається до 1, а після приховування — до 0.
+      en: |
+        `feed.js` is a fake update feed: every subscription sends a message every 0.7 s, and every subscribe and unsubscribe prints how many subscriptions are alive now. `RecordUpdates` subscribes to the selected record and returns `unsubscribe` as its cleanup.
+
+        Press **Run**, on the **Page** switch between `w-01`, `w-02`, `w-03`, then press **Hide updates**. In the **Console** the `live` number goes back to 1 every time, and to 0 after hiding.
+    tryIt:
+      uk: |
+        У `App.jsx` закоментуй рядок `return unsubscribe;` (два знаки `//` на початку) і запусти знову. Перемкни записи кілька разів: `live` росте — 2, 3, 4, — а абзац показує повідомлення й від записів, які вже не вибрано (наприклад, `w-01 · оновлення 7`, коли вибрано `w-03`). **Сховати оновлення** не друкує жодного `unsubscribe`: підписки живуть далі, хоч компонента вже немає.
+
+        Поверни рядок і запусти ще раз — `live` знову не більше 1.
+      en: |
+        In `App.jsx` comment out the line `return unsubscribe;` (two `//` marks at the start) and run again. Switch records a few times: `live` grows — 2, 3, 4 — and the paragraph shows messages from records that are no longer selected too (for example `w-01 · update 7` while `w-03` is selected). **Hide updates** prints no `unsubscribe` at all: the subscriptions live on although the component is gone.
+
+        Put the line back and run once more — `live` is never above 1 again.
+
+  - id: empty-is-not-once
+    kind: explanation
+    title:
+      uk: "Порожній масив — не «один раз, що б не читав»"
+      en: "An empty array is not “once, whatever it reads”"
+    body:
+      uk: |
+        Порожній масив звучить як «запусти один раз», і з ним легко сховати проблему. Але масив — не налаштування «як часто», а **список того, що ефект читає**. Ефект із `[]`, який читає `selectedId`, назавжди лишиться з `selectedId` першого рендеру: підписаний на перший запис, хоч на екрані давно інший.
+
+        Тому порядок такий: спершу пишеш ефект, потім кладеш у масив усе реактивне, що він читає. Не хочеш, щоб ефект перезапускався від якогось значення, — зміни код ефекту так, щоб він його не читав (як — у наступному уроці), а не викреслюй значення з масиву.
+
+        `[]` чесний лише тоді, коли ефект справді не читає жодного props чи стану — наприклад, підписується на зміну розміру вікна.
+      en: |
+        An empty array sounds like “run once”, and it makes a problem easy to hide. But the array is not a “how often” setting — it is **the list of what the effect reads**. An effect with `[]` that reads `selectedId` stays with the first render's `selectedId` forever: subscribed to the first record, although the screen has long shown another one.
+
+        So the order is: first write the effect, then put everything reactive it reads into the array. If you do not want the effect to re-run because of some value, change the effect's code so that it does not read it (how — in the next lesson), instead of crossing the value out of the array.
+
+        `[]` is honest only when the effect really reads no props or state — for example, it subscribes to window resizing.
+
+  - id: saved-label
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: saved-label
+    entry: main.jsx
+    editable: [App.jsx]
+    strings:
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      justNow: { uk: "щойно", en: "just now" }
+      oneMinute: { uk: "хвилину тому", en: "a minute ago" }
+      fiveMinutes: { uk: "5 хвилин тому", en: "5 minutes ago" }
+      never: { uk: "ще не збережено", en: "not saved yet" }
+      unknown: { uk: "невідомо", en: "unknown" }
+      checking: { uk: "перевіряю…", en: "checking…" }
+      lastSaved: { uk: "Останнє збереження:", en: "Last saved:" }
+    title:
+      uk: "Мітка «останнє збереження», що оновлюється сама"
+      en: "A “last saved” label that refreshes itself"
+    instructions:
+      uk: |
+        `saveStatus.js` — несправжній сервіс автозбереження: `readSaveStatus(taskId)` повертає текст на зразок «5 хвилин тому», і цей текст може змінитися будь-коли.
+
+        Допиши в `App.jsx` ефект, який **кожні 200 мс** читає `readSaveStatus(selectedId)` і кладе результат у стан `label`:
+
+        - після вибору іншої справи мітка показує статус **тієї** справи;
+        - масив залежностей повний — у ньому все реактивне, що читає ефект;
+        - cleanup зупиняє інтервал.
+
+        Перевірки самі просувають час (справжніх секунд не чекають) і рахують інтервали, які запускає й зупиняє твоя копія компонента: після перемикань має працювати рівно один, після демонтування — жодного, а новий інтервал має з’являтися лише тоді, коли змінюється вибрана справа (не після кожного оновлення мітки).
+      en: |
+        `saveStatus.js` is a fake autosave service: `readSaveStatus(taskId)` returns a text like “5 minutes ago”, and that text may change at any time.
+
+        Add an effect to `App.jsx` that **every 200 ms** reads `readSaveStatus(selectedId)` and puts the result into the `label` state:
+
+        - after another task is selected, the label shows the status of **that** task;
+        - the dependency array is complete — it holds everything reactive the effect reads;
+        - the cleanup stops the interval.
+
+        The checks move time forward themselves (they do not wait real seconds) and count the intervals your copy of the component starts and stops: after switching, exactly one must be running, after unmounting none, and a new interval must appear only when the selected task changes (not after every label update).
+    testTitles:
+      "the label shows the status of the selected task":
+        uk: "Мітка показує статус вибраної справи"
+        en: "The label shows the status of the selected task"
+      "the label refreshes when the saved status changes":
+        uk: "Мітка оновлюється, коли статус збереження змінився"
+        en: "The label refreshes when the saved status changes"
+      "selecting another task shows that task's status":
+        uk: "Після вибору іншої справи видно її статус"
+        en: "Selecting another task shows that task's status"
+      "only one interval is running after switching tasks":
+        uk: "Після перемикань працює лише один інтервал"
+        en: "Only one interval is running after switching tasks"
+      "unmounting stops the interval":
+        uk: "Демонтування зупиняє інтервал"
+        en: "Unmounting stops the interval"
+      "the interval restarts only when the selected task changes":
+        uk: "Інтервал перезапускається лише тоді, коли змінюється вибрана справа"
+        en: "The interval restarts only when the selected task changes"
+    hints:
+      nudge:
+        uk: "Три питання до ефекту: що він налаштовує (`setInterval`), як це скасувати (`clearInterval` з номером таймера) і яке реактивне значення він читає?"
+        en: "Three questions for the effect: what does it set up (`setInterval`), how do you undo that (`clearInterval` with the timer's id), and which reactive value does it read?"
+      explanation:
+        uk: |
+          Збережи номер таймера в змінній усередині ефекту й поверни функцію, яка передає його в `clearInterval`. У масив залежностей поклади значення, яке читає функція інтервалу, — тоді при його зміні React зупинить старий інтервал і запустить новий, а оновлення мітки інтервал не чіпатиме.
+
+          Схожий приклад з іншою задачею: годинник, що щосекунди показує час у місті `city`, — `useEffect(() => { const id = setInterval(() => setTime(timeIn(city)), 1000); return () => clearInterval(id); }, [city]);`.
+        en: |
+          Keep the timer's id in a variable inside the effect and return a function that passes it to `clearInterval`. Put the value the interval's function reads into the dependency array — then when it changes, React stops the old interval and starts a new one, and label updates leave the interval alone.
+
+          A similar example with a different task: a clock that shows the time in the city `city` every second — `useEffect(() => { const id = setInterval(() => setTime(timeIn(city)), 1000); return () => clearInterval(id); }, [city]);`.
+    solutionNote:
+      uk: "Ефект читає `selectedId`, тож це його єдина залежність: змінилася справа — React викликає cleanup (`clearInterval`) і запускає новий інтервал для нової справи. Оновлення `label` дає новий рендер, але не змінює `selectedId`, тому інтервал не перезапускається. Без масиву інтервал перезапускався б після кожного оновлення мітки, з `[]` — вічно читав би першу справу, без cleanup — інтервали накопичувалися б."
+      en: "The effect reads `selectedId`, so it is its only dependency: when the task changes, React calls the cleanup (`clearInterval`) and starts a new interval for the new task. A `label` update causes a new render but does not change `selectedId`, so the interval does not restart. Without the array the interval would restart after every label update, with `[]` it would read the first task forever, and without a cleanup intervals would pile up."
+    feedback:
+      - when: { test: "the label shows the status of the selected task" }
+        message:
+          uk: "Ця перевірка пропускає один крок інтервалу (200 мс) після першого показу й очікує «Останнє збереження: щойно» — статус справи `t-01`. Інтервал має запуститися в ефекті й класти `readSaveStatus(selectedId)` у `label`."
+          en: "This check lets one interval step (200 ms) pass after the first display and expects “Last saved: just now” — the status of task `t-01`. The interval must start in the effect and put `readSaveStatus(selectedId)` into `label`."
+      - when: { test: "the label refreshes when the saved status changes" }
+        message:
+          uk: "Ця перевірка змінює статус `t-01` у сервісі й через один крок інтервалу очікує новий текст. Ефект має читати статус щоразу, коли спрацьовує інтервал, а не один раз."
+          en: "This check changes the status of `t-01` in the service and expects the new text one interval step later. The effect must read the status every time the interval fires, not once."
+      - when: { test: "selecting another task shows that task's status" }
+        message:
+          uk: "Ця перевірка вибирає другу, а потім третю справу й щоразу через один крок інтервалу очікує статус вибраної. Якщо мітка лишається на першій справі, ефект не знає про новий `selectedId` — перевір масив залежностей."
+          en: "This check selects the second and then the third task and each time expects the selected task's status one interval step later. If the label stays on the first task, the effect does not know about the new `selectedId` — check the dependency array."
+      - when: { test: "only one interval is running after switching tasks" }
+        message:
+          uk: "Ця перевірка двічі перемикає справу й очікує рівно один інтервал, що ще працює. Якщо їх більше, старі інтервали ніхто не зупиняє: це робота cleanup — функції, яку повертає ефект."
+          en: "This check switches the task twice and expects exactly one interval still running. If there are more, nobody stops the old intervals: that is the job of the cleanup — the function the effect returns."
+      - when: { test: "unmounting stops the interval" }
+        message:
+          uk: "Ця перевірка демонтує компонент і очікує 0 інтервалів, що працюють. Cleanup ефекту має викликати `clearInterval` з номером, який повернув `setInterval`."
+          en: "This check unmounts the component and expects 0 running intervals. The effect's cleanup must call `clearInterval` with the id that `setInterval` returned."
+      - when: { test: "the interval restarts only when the selected task changes" }
+        message:
+          uk: "Ця перевірка пропускає по кілька кроків інтервалу до, між і після двох перемикань і рахує запущені інтервали: один на початку й по одному на кожне перемикання — разом 3. Більше означає, що ефект перезапускається й після оновлення мітки: потрібен масив залежностей із тим, що ефект читає. Менше означає, що ефект не перезапускається для нової справи — у масиві бракує `selectedId`."
+          en: "This check lets several interval steps pass before, between and after two switches and counts the intervals started: one at the start and one for each switch — 3 in total. More means the effect also restarts after a label update: it needs a dependency array with what the effect reads. Fewer means the effect does not re-run for the new task — `selectedId` is missing from the array."
+      - when: { error: ReferenceError }
+        message:
+          uk: "Якщо картка каже `useEffect is not defined`, додай `useEffect` в імпорт із `\"react\"`."
+          en: "If the card says `useEffect is not defined`, add `useEffect` to the import from `\"react\"`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: stopped-interval
+        from: js-13-06-cleanup-listeners-timers
+        prompt:
+          uk: "Що надрукує цей код?"
+          en: "What does this code print?"
+        code: |
+          let ticks = 0;
+          const id = setInterval(() => {
+            ticks += 1;
+          }, 100);
+          setTimeout(() => clearInterval(id), 350);
+          setTimeout(() => console.log(ticks), 800);
+        verify:
+          logs: ["3"]
+        answer:
+          type: choice
+          options:
+            - id: three
+              text: { uk: "`3`", en: "`3`" }
+            - id: seven
+              text: { uk: "`7` або `8`", en: "`7` or `8`" }
+              why:
+                uk: "`clearInterval(id)` на 350 мс зупиняє інтервал: після спрацювань на 100, 200 і 300 мс нових уже немає."
+                en: "`clearInterval(id)` at 350 ms stops the interval: after the runs at 100, 200 and 300 ms there are no more."
+            - id: zero
+              text: { uk: "`0`", en: "`0`" }
+              why:
+                uk: "`clearInterval` зупиняє лише **майбутні** спрацювання. Три вже відбулися до 350 мс."
+                en: "`clearInterval` stops only **future** runs. Three have already happened before 350 ms."
+          correct: [three]
+        explanation:
+          uk: "Інтервал спрацьовує на 100, 200 і 300 мс, а на 350 мс `clearInterval(id)` його зупиняє. Без цього рядка він би цокав, доки сторінка відкрита, — саме це й робить ефект без cleanup."
+          en: "The interval runs at 100, 200 and 300 ms, and at 350 ms `clearInterval(id)` stops it. Without that line it would keep ticking for as long as the page is open — which is exactly what an effect without a cleanup does."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-03
+    body:
+      uk: "Ефект збереження у твоєму проєкті читатиме список записів, тож список — його залежність: ефект запускатиметься після кожної зміни списку й не частіше. Запис у `localStorage` нічого не вмикає, тому cleanup йому не потрібен — але кожен таймер чи підписку в проєкті перевір на пару «увімкнув — вимкнув»."
+      en: "The persistence effect in your project will read the list of records, so the list is its dependency: the effect will run after every change of the list and no more often. A write to `localStorage` switches nothing on, so it needs no cleanup — but check every timer or subscription in the project for its “switch on — switch off” pair."

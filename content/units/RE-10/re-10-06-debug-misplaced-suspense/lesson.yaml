@@ -1,0 +1,481 @@
+id: re-10-06-debug-misplaced-suspense
+unit: RE-10
+title:
+  uk: "Налагодження: невдало розміщений Suspense і хибні припущення про transitions"
+  en: "Debug: misplaced Suspense and transition assumptions"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знайти межу Suspense, поставлену так високо, що під час переходу зникає весь layout, і transition, у який загорнуто власне значення поля."
+    en: "Diagnose a Suspense boundary placed so high that the whole layout blanks on navigation, and a transition wrapped around an input's own value."
+  - uk: "Виправити обидві помилки й переконатися, що поле лишається чуйним, а layout навколо — видимим."
+    en: "Repair both and confirm that the input stays responsive and the surrounding layout stays visible."
+prerequisites: [re-10-05-compiler-legacy]
+subskills:
+  - { family: R-08, skill: "Suspense supported data/code patterns", depth: assess }
+  - { family: R-08, skill: "transitions/urgent vs nonurgent state", depth: assess }
+glossary: []
+selfCheck: [predict-symptoms, planner-app]
+
+blocks:
+  - id: symptoms-to-causes
+    kind: explanation
+    title:
+      uk: "Від симптому до причини"
+      en: "From symptom to cause"
+    body:
+      uk: |
+        Три симптоми трапляються в застосунках із `lazy`, `Suspense` і transitions найчастіше. Кожен має свою типову причину:
+
+        | Симптом | Типова причина | Де дивитися |
+        |---|---|---|
+        | під час переходу зникає **все** — заголовок, меню, — лишається тільки «Завантажую…» | межа `Suspense` стоїть надто високо, наприклад навколо всього `App` | шукай найближчий `Suspense` над lazy-компонентом: `fallback` займе місце всього, що він обгортає |
+        | літери в полі зникають або з’являються із запізненням | текст **самого поля** оновлюється в `startTransition` | сетер значення поля має бути поза `startTransition` |
+        | поки дані йдуть, на місці компонента порожньо, хоча навколо стоїть `Suspense` | дані завантажує ефект, а ефект ніколи не призупиняє рендер | компонент мусить сам показати стан завантаження |
+
+        Зверни увагу на пастку: якщо `fallback` **з’являється**, це ще не означає, що межа на своєму місці. Перевір, що саме зникає разом із нею.
+      en: |
+        Three symptoms show up most often in apps with `lazy`, `Suspense` and transitions. Each has its typical cause:
+
+        | Symptom | Typical cause | Where to look |
+        |---|---|---|
+        | on navigation **everything** disappears — the heading, the menu — and only “Loading…” remains | the `Suspense` boundary sits too high, for example around the whole `App` | find the nearest `Suspense` above the lazy component: its `fallback` takes the place of everything it wraps |
+        | letters in the field disappear or show up late | the text of **the field itself** is updated inside `startTransition` | the field's value setter must be outside `startTransition` |
+        | while data is on its way, the component's place is empty, although a `Suspense` surrounds it | an effect loads the data, and an effect never suspends a render | the component has to show its loading state itself |
+
+        Mind the trap: a `fallback` that **does appear** does not prove the boundary is in the right place. Check what disappears together with it.
+
+  - id: predict-symptoms
+    kind: prediction
+    lang: jsx
+    runnable: false
+    strings:
+      loadingPage: { uk: "Завантажую сторінку…", en: "Loading the page…" }
+    prompt:
+      uk: "Ось два фрагменти застосунку-планувальника. Людина відкриває «Сьогодні» (lazy-маршрут), повертається до списку й набирає в пошуку `wat`. Що вона побачить?"
+      en: "Here are two fragments of a planner app. The person opens “Due today” (a lazy route), returns to the list and types `wat` into the search. What will they see?"
+    code: |
+      // App.jsx
+      <Suspense fallback={<p role="status">%%loadingPage%%</p>}>
+        <Router history={history}>
+          <Routes routes={routes} />
+        </Router>
+      </Suspense>
+
+      // TaskSearch
+      const [text, setText] = useState("");
+      function handleChange(event) {
+        const value = event.target.value;
+        startTransition(() => setText(value));
+      }
+      <input value={text} onChange={handleChange} />
+      <TaskList query={text} />
+    answer:
+      type: choice
+      options:
+        - id: both
+          text: { uk: "Під час переходу зникають і заголовок, і меню; а в полі літери пропадають, і після набору там може бути не `wat`", en: "During navigation both the heading and the menu disappear; and letters vanish from the field, so after typing it may not hold `wat`" }
+        - id: only-main
+          text: { uk: "Зникає лише вміст `<main>`, бо `fallback` стоїть у межах сторінки; поле працює нормально", en: "Only the content of `<main>` disappears, because the `fallback` stays within the page; the field works fine" }
+          why:
+            uk: "Межа обгортає весь `Router`, тобто весь layout. А поле показує стан `text`, який оновлюється лише в transition: до кінця transition React повертає в поле старий текст."
+            en: "The boundary wraps the whole `Router`, that is, the whole layout. And the field shows the state `text`, which is updated only inside the transition: until the transition ends, React puts the old text back into the field."
+        - id: only-lag
+          text: { uk: "Layout лишається, бо `fallback` з’являється, — отже, межа правильна; гальмує лише список", en: "The layout stays, because the `fallback` appears — so the boundary is right; only the list lags" }
+          why:
+            uk: "Поява `fallback` нічого не каже про місце межі. Важливо, що вона обгортає: тут — увесь застосунок."
+            en: "A `fallback` appearing says nothing about where the boundary is. What matters is what it wraps: here, the whole app."
+        - id: faster
+          text: { uk: "Поле працює швидше, ніж без transition, бо `startTransition` прискорює оновлення", en: "The field works faster than without a transition, because `startTransition` speeds updates up" }
+          why:
+            uk: "`startTransition` нічого не прискорює — він робить оновлення нетерміновим. Для власного тексту поля це саме те, чого не треба."
+            en: "`startTransition` speeds nothing up — it makes an update non-urgent. For the field's own text that is exactly what you do not want."
+      correct: [both]
+    explanation:
+      uk: "Обидва симптоми ми бачили в пісочниці на прикладі цього уроку. Межа навколо `Router` під час переходу ховає весь layout. А коли поле показує стан, що змінюється лише в transition, React після кожної клавіші повертає в поле старе значення: у пісочниці ми набрали в таке поле над повільним списком `a`, `b`, `c` з паузами — і в полі лишилося тільки `c`."
+      en: "We saw both symptoms in the sandbox with this lesson's example. A boundary around `Router` hides the whole layout during navigation. And when the field shows state that changes only inside a transition, React puts the old value back after every key: in the sandbox we typed `a`, `b`, `c` with pauses into such a field above a slow list — and only `c` was left in the field."
+
+  - id: seeded-app
+    kind: example
+    runtime: browser-react
+    dir: seeded-app
+    entry: main.jsx
+    strings:
+      planner: { uk: "Планувальник", en: "Planner" }
+      mainNav: { uk: "Головне меню", en: "Main menu" }
+      allTasks: { uk: "Усі справи", en: "All tasks" }
+      dueToday: { uk: "На сьогодні", en: "Due today" }
+      dueCount: { uk: "Невиконаних справ із терміном до сьогодні", en: "Open tasks due by today" }
+      loadingPage: { uk: "Завантажую сторінку…", en: "Loading the page…" }
+      counting: { uk: "Рахую справи…", en: "Counting tasks…" }
+      openTasks: { uk: "Невиконаних справ", en: "Open tasks" }
+      search: { uk: "Пошук", en: "Search" }
+      results: { uk: "Результати пошуку", en: "Search results" }
+      found: { uk: "Знайдено", en: "Found" }
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+    title:
+      uk: "Застосунок із трьома помилками: спершу спостерігай"
+      en: "An app with three bugs: observe first"
+    body:
+      uk: |
+        Планувальник має два маршрути: «Усі справи» з пошуком у 3000 справ і lazy-маршрут «На сьогодні». Над списком — лічильник невиконаних справ, що приходить за 300 мс.
+
+        Тут два регулятори курсу: `LOAD_DELAY_MS` у `slowImport.js` (затримка завантаження коду, зараз 600 мс) і `ROW_COST_MS` у `TaskList.jsx` (скільки мілісекунд займає кожен рядок списку, зараз 1).
+
+        Нічого не виправляй — лише запусти й запиши, що бачиш. Натисни **Запустити**.
+      en: |
+        The planner has two routes: “All tasks” with a search over 3,000 tasks, and the lazy route “Due today”. Above the list there is a counter of open tasks that arrives in 300 ms.
+
+        There are two course controls: `LOAD_DELAY_MS` in `slowImport.js` (the code loading delay, now 600 ms) and `ROW_COST_MS` in `TaskList.jsx` (how many milliseconds each list row takes, now 1).
+
+        Do not fix anything — just run it and note what you see. Press **Run**.
+    tryIt:
+      uk: |
+        1. Одразу після запуску над списком порожньо, а через 300 мс з’являється «Невиконаних справ: …». `Suspense` навколо `TaskCount` так і не показав «Рахую справи…».
+        2. Клікни «На сьогодні». На ~600 мс зникає все — і заголовок «Планувальник», і меню. Запиши, де стоїть межа, що це зробила.
+        3. Повернись до «Усі справи» й набери в пошуку слово — спершу повільно, потім швидко. Кожна літера на мить зникає й повертається ривком, а при швидкому наборі частина літер губиться зовсім.
+        4. Зміни `ROW_COST_MS` на `3` і повтори крок 3: що повільніший список, то більше літер губиться — у пісочниці навіть літери з паузами по 200 мс зникли всі, крім останньої. Тепер відкрий вправу нижче й виправ усі три місця.
+      en: |
+        1. Right after the run the place above the list is empty, and after 300 ms “Open tasks: …” appears. The `Suspense` around `TaskCount` never showed “Counting tasks…”.
+        2. Click “Due today”. For about 600 ms everything disappears — the “Planner” heading and the menu too. Note where the boundary that did this stands.
+        3. Go back to “All tasks” and type a word into the search — slowly first, then fast. Every letter vanishes for a moment and comes back with a jerk, and when you type fast some letters are lost entirely.
+        4. Change `ROW_COST_MS` to `3` and repeat step 3: the slower the list, the more letters get lost — in the sandbox even letters typed 200 ms apart were all lost except the last one. Now open the exercise below and fix all three places.
+
+  - id: seeded-steps
+    kind: visual
+    visual: render-timeline
+    strings:
+      planner: { uk: "Планувальник", en: "Planner" }
+      loadingPage: { uk: "Завантажую сторінку…", en: "Loading the page…" }
+      dueToday: { uk: "На сьогодні", en: "Due today" }
+    title:
+      uk: "Застосунок-приклад: перехід і набір до виправлення"
+      en: "The example app: navigation and typing before the fix"
+    textEquivalent:
+      uk: >-
+        Рендер 1 показує layout: заголовок «%%planner%%», меню і список. Клік «%%dueToday%%» додає шлях /today. Рендер 2
+        доходить до lazy-компонента, код якого ще не прийшов, і призупиняється. Найближча межа — навколо всього Router, тож
+        commit 2 ховає весь layout і показує лише «%%loadingPage%%». Модуль приходить, рендер 3 показує огляд, і layout
+        повертається. Далі людина набирає «w». Обробник не робить жодного термінового оновлення: setText викликано в
+        startTransition. Тож одразу після обробника React повертає керованому полю значення зі стану text — порожній рядок, —
+        і літера зникає. Рендер 4 у transition показує «w» лише тоді, коли весь список готовий. Після виправлення межа стоїть навколо Outlet,
+        тож зникає тільки вміст main, а text оновлюється терміново, і кожна літера стає в поле одразу.
+      en: >-
+        Render 1 shows the layout: the heading "%%planner%%", the menu and the list. A click on "%%dueToday%%" adds the path
+        /today. Render 2 reaches the lazy component whose code has not arrived yet and suspends. The nearest boundary is
+        around the whole Router, so commit 2 hides the whole layout and shows only "%%loadingPage%%". The module arrives,
+        render 3 shows the overview, and the layout comes back. Next the person types "w". The handler makes no urgent
+        update: setText is called inside startTransition. So right after the handler React gives the controlled field the
+        value from the state text — an empty string — and the letter is gone. Render 4 in the transition shows "w" only
+        once the whole list is ready.
+        After the fix the boundary stands around Outlet, so only the content of main disappears, and text is updated
+        urgently, so every letter lands in the field at once.
+    spec:
+      component: App
+      code: |
+        <Suspense fallback={<p role="status">%%loadingPage%%</p>}>
+          <Router history={history}>
+            <Routes routes={routes} />
+          </Router>
+        </Suspense>
+
+        function TaskSearch() {
+          const [text, setText] = useState("");
+          function handleChange(event) {
+            const value = event.target.value;
+            startTransition(() => setText(value));
+          }
+          return <input value={text} onChange={handleChange} />;
+        }
+      steps:
+        - phase: render
+          render: 1
+          line: 3
+          reason: { uk: "перший показ на /tasks", en: "first display at /tasks" }
+          snapshot: { state: { path: "/tasks", text: "" } }
+          caption:
+            uk: "Рендер 1: layout зі списком справ."
+            en: "Render 1: the layout with the task list."
+        - phase: commit
+          render: 1
+          line: 1
+          dom: "<h1>%%planner%%</h1><nav>…</nav><main><input value=\"\"> …</main>"
+          caption:
+            uk: "Commit 1: заголовок, меню, поле й список на екрані."
+            en: "Commit 1: the heading, the menu, the field and the list are on the screen."
+        - phase: event
+          name: click
+          sees: { path: "/tasks" }
+          actions: ["history.push(\"/today\")"]
+          queued: { path: "/today" }
+          caption:
+            uk: "Клік «%%dueToday%%»."
+            en: "A click on “%%dueToday%%”."
+        - phase: render
+          render: 2
+          line: 3
+          reason: { uk: "шлях /today, lazy-код ще в дорозі", en: "the path is /today, the lazy code is still on its way" }
+          snapshot: { state: { path: "/today", text: "" } }
+          caption:
+            uk: "Рендер 2 призупиняється на lazy-компоненті. Найближча межа — у рядку 1, навколо **всього** `Router`."
+            en: "Render 2 suspends on the lazy component. The nearest boundary is on line 1, around the **whole** `Router`."
+        - phase: commit
+          render: 2
+          line: 1
+          dom: "<p role=\"status\">%%loadingPage%%</p>"
+          caption:
+            uk: "Commit 2: зник увесь layout — заголовок і меню теж. `fallback` з’явився, але межа не на своєму місці."
+            en: "Commit 2: the whole layout is gone — the heading and the menu too. The `fallback` appeared, but the boundary is in the wrong place."
+        - phase: render
+          render: 3
+          line: 3
+          reason: { uk: "модуль прийшов", en: "the module arrived" }
+          snapshot: { state: { path: "/today", text: "" } }
+          caption:
+            uk: "Рендер 3: код прийшов, огляд рендериться."
+            en: "Render 3: the code has arrived, the overview renders."
+        - phase: commit
+          render: 3
+          line: 2
+          dom: "<h1>%%planner%%</h1><nav>…</nav><main><h2>%%dueToday%%</h2>…</main>"
+          caption:
+            uk: "Commit 3: layout повернувся разом з оглядом. Людина повертається до списку."
+            en: "Commit 3: the layout came back together with the overview. The person returns to the list."
+        - phase: event
+          name: input
+          line: 11
+          sees: { text: "" }
+          actions: ["startTransition(() => setText(\"w\"))"]
+          caption:
+            uk: "Людина набирає «w». Жодного термінового оновлення: навіть `text` поля оновлюється в transition."
+            en: "The person types “w”. There is no urgent update: even the field's `text` is updated inside the transition."
+        - phase: idle
+          caption:
+            uk: "Термінового рендеру немає. Одразу після обробника React повертає керованому полю значення зі стану `text` — `\"\"`. Літера «w» **зникла**."
+            en: "There is no urgent render. Right after the handler React gives the controlled field the value from the state `text` — `\"\"`. The letter “w” is **gone**."
+        - phase: render
+          render: 4
+          line: 13
+          reason: { uk: "transition: text і список", en: "transition: text and the list" }
+          snapshot: { state: { text: "w" } }
+          caption:
+            uk: "Рендер 4 у transition: «w» з’явиться лише тоді, коли весь список готовий, — і якщо жодна клавіша його не перерве."
+            en: "Render 4 in the transition: “w” appears only once the whole list is ready — and only if no key interrupts it."
+        - phase: commit
+          render: 4
+          line: 13
+          dom: "<input value=\"w\">"
+          caption:
+            uk: "Commit 4: «w» нарешті в полі. Виправлення: межа навколо `Outlet`, а `setText` — поза `startTransition`."
+            en: "Commit 4: “w” is finally in the field. The fix: the boundary around `Outlet`, and `setText` outside `startTransition`."
+
+  - id: planner-app
+    kind: exercise
+    mode: debug
+    runtime: browser-react
+    dir: planner-app
+    entry: main.jsx
+    editable: [App.jsx, TaskCount.jsx]
+    strings:
+      planner: { uk: "Планувальник", en: "Planner" }
+      mainNav: { uk: "Головне меню", en: "Main menu" }
+      allTasks: { uk: "Усі справи", en: "All tasks" }
+      dueToday: { uk: "На сьогодні", en: "Due today" }
+      dueCount: { uk: "Невиконаних справ із терміном до сьогодні", en: "Open tasks due by today" }
+      loadingPage: { uk: "Завантажую сторінку…", en: "Loading the page…" }
+      counting: { uk: "Рахую справи…", en: "Counting tasks…" }
+      openTasks: { uk: "Невиконаних справ", en: "Open tasks" }
+      search: { uk: "Пошук", en: "Search" }
+      results: { uk: "Результати пошуку", en: "Search results" }
+      found: { uk: "Знайдено", en: "Found" }
+      query: { uk: "пол", en: "wat" }
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+      wardrobe: { uk: "Розібрати шафу", en: "Tidy the wardrobe" }
+    title:
+      uk: "Полагодь планувальник"
+      en: "Fix the planner"
+    instructions:
+      uk: |
+        Це той самий планувальник із прикладу. Виправ у `App.jsx` і `TaskCount.jsx` три помилки так, щоб:
+
+        - під час переходу на «На сьогодні» заголовок і меню лишалися видимими, а на місці сторінки стояло повідомлення стану «Завантажую сторінку…»;
+        - кожна літера одразу з’являлася в полі пошуку, а список оновлювався в transition — зі старими, приглушеними результатами, поки новий не готовий;
+        - лічильник невиконаних справ, поки число в дорозі, показував повідомлення стану «Рахую справи…», а не порожнє місце.
+
+        Перевірки переходять між маршрутами, друкують у пошук по літері з паузами по 30 мс і вимірюють прозорість, яку бачить людина.
+      en: |
+        This is the same planner as in the example. Fix three bugs in `App.jsx` and `TaskCount.jsx` so that:
+
+        - when going to “Due today”, the heading and the menu stay visible, and the page area shows the status message “Loading the page…”;
+        - every letter appears in the search field at once, while the list updates in a transition — with the old, dimmed results until the new ones are ready;
+        - while its number is on its way, the open-task counter shows the status message “Counting tasks…” instead of an empty spot.
+
+        The checks move between routes, type into the search one letter at a time with 30 ms pauses and measure the opacity a person sees.
+    testTitles:
+      'opening "Due today" keeps the heading and the menu, with a status in the page area':
+        uk: "Перехід на «На сьогодні» лишає заголовок і меню, а на місці сторінки — повідомлення стану"
+        en: "Opening “Due today” keeps the heading and the menu, with a status in the page area"
+      "the due-today overview appears once its code arrives":
+        uk: "Огляд «На сьогодні» з’являється, щойно прийшов його код"
+        en: "The due-today overview appears once its code arrives"
+      "the open-task count says it is counting until the number arrives":
+        uk: "Лічильник справ повідомляє «Рахую справи…», доки не прийде число"
+        en: "The open-task count says it is counting until the number arrives"
+      "every typed letter shows in the search field at once":
+        uk: "Кожна набрана літера одразу видна в полі пошуку"
+        en: "Every typed letter shows in the search field at once"
+      "right after a keystroke the old results stay on screen, dimmed":
+        uk: "Одразу після клавіші на екрані лишаються старі результати, приглушені"
+        en: "Right after a keystroke the old results stay on screen, dimmed"
+    hints:
+      nudge:
+        uk: "Пройди таблицю симптомів із початку уроку рядок за рядком: для кожного симптому знайди в коді місце, на яке вона вказує."
+        en: "Go through the symptom table from the start of the lesson row by row: for each symptom, find the place in the code it points to."
+      explanation:
+        uk: |
+          - Межу, що зараз обгортає весь `Router`, перенеси всередину `Layout`, навколо `<Outlet />`: тоді `fallback` займе лише місце сторінки.
+          - Полю й списку потрібні два стани: текст поля оновлюється звичайним сетером, а запит списку — у `startTransition`.
+          - `Suspense` навколо `TaskCount` нічого не дає: ефект не призупиняє рендер. Прибери обгортку, а в `TaskCount` замість `return null` поверни повідомлення стану.
+        en: |
+          - Move the boundary that now wraps the whole `Router` inside `Layout`, around `<Outlet />`: then the `fallback` takes only the page area.
+          - The field and the list need two pieces of state: the field's text is updated with a plain setter, and the list's query inside `startTransition`.
+          - The `Suspense` around `TaskCount` does nothing: an effect does not suspend a render. Remove the wrapper, and in `TaskCount` return a status message instead of `return null`.
+    solutionNote:
+      uk: "Межа навколо `Outlet` ховає лише сторінку, тож layout лишається. Два стани розділяють термінове й нетермінове: поле не губить літер, а список не блокує набору. Лічильник сам малює стан завантаження — `Suspense` реагує лише на `lazy`, джерела даних із підтримкою Suspense і `use()`. Межу можна поставити й навколо всього `<main>`: заголовок і меню все одно лишаються поза нею."
+      en: "A boundary around `Outlet` hides only the page, so the layout stays. Two pieces of state separate urgent from non-urgent: the field loses no letters, and the list does not block typing. The counter draws its own loading state — `Suspense` reacts only to `lazy`, Suspense-enabled data sources and `use()`. The boundary can also stand around the whole `<main>`: the heading and the menu still stay outside it."
+    feedback:
+      - when: { test: 'opening "Due today" keeps the heading and the menu, with a status in the page area' }
+        message:
+          uk: "Ця перевірка клікає «На сьогодні» й одразу чекає видимі заголовок «Планувальник», меню та повідомлення стану «Завантажую сторінку…». Якщо зникли заголовок і меню, межа `Suspense` обгортає забагато. Якщо всі перевірки не пройшли разом, спершу виправ першу помилку в консолі."
+          en: "This check clicks “Due today” and right away expects a visible “Planner” heading, the menu and the status message “Loading the page…”. If the heading and the menu disappeared, the `Suspense` boundary wraps too much. If every check fails at once, fix the first error in the console first."
+      - when: { test: "the due-today overview appears once its code arrives" }
+        message:
+          uk: "Ця перевірка чекає до двох секунд на заголовок «На сьогодні» на сторінці огляду. Над lazy-компонентом має бути межа `Suspense`."
+          en: "This check waits up to two seconds for the “Due today” heading on the overview page. There has to be a `Suspense` boundary above the lazy component."
+      - when: { test: "the open-task count says it is counting until the number arrives" }
+        message:
+          uk: "Ця перевірка повертається до «Усі справи» й одразу чекає видиме повідомлення стану з текстом «Рахую справи…», а потім — «Невиконаних справ: …». Поки `count` дорівнює `null`, `TaskCount` має повертати `<p role=\"status\">` з цим текстом: обгортка `Suspense` тут нічого не покаже."
+          en: "This check returns to “All tasks” and right away expects a visible status message with the text “Counting tasks…”, and then “Open tasks: …”. While `count` is `null`, `TaskCount` has to return a `<p role=\"status\">` with that text: a `Suspense` wrapper shows nothing here."
+      - when: { test: "every typed letter shows in the search field at once" }
+        message:
+          uk: "Ця перевірка друкує літери по одній і одразу після кожної чекає її в полі. Якщо літери зникають, текст поля оновлюється в `startTransition` — його сетер має бути поза ним."
+          en: "This check types letters one at a time and right after each one expects it in the field. If letters disappear, the field's text is updated inside `startTransition` — its setter has to be outside it."
+      - when: { test: "right after a keystroke the old results stay on screen, dimmed" }
+        message:
+          uk: "Ця перевірка очищає поле, чекає повного списку, друкує одну літеру й одразу чекає ще старий рядок «Знайдено: …» і прозорість результатів менше за 1. Якщо список уже оновився, запит списку не в transition; приглушення має залежати від `isPending`."
+          en: "This check clears the field, waits for the full list, types one letter and right away expects the old “Found: …” line and a results opacity below 1. If the list has already updated, the list's query is not in a transition; the dimming has to depend on `isPending`."
+
+  - id: failed-load
+    kind: explanation
+    title:
+      uk: "Коли код не прийшов зовсім"
+      en: "When the code never arrives"
+    body:
+      uk: |
+        `Suspense` чекає, але не рятує від помилки: якщо `import()` у `lazy` відхилено (мережа впала, файл зник після оновлення сайту), lazy-компонент **кидає** цю помилку під час рендеру. Її ловить error boundary з RE-05 — тож поруч із межею `Suspense` ставлять і межу помилок.
+
+        Одна підступна деталь, яку ми перевірили в пісочниці: lazy-компонент **запам’ятовує й невдачу**. Кнопка «Спробувати ще раз», яка лише скидає помилку в boundary, знову отримує ту саму помилку — `import()` вдруге навіть не викликається. Щоб спробувати насправді, потрібен **новий** lazy-компонент:
+
+        ```jsx
+        const loadChart = slowly(() => import("./HabitChart"));
+
+        function ChartArea() {
+          const [Chart, setChart] = useState(() => lazy(loadChart));
+          const [attempt, setAttempt] = useState(0);
+          const retry = () => {
+            setChart(lazy(loadChart));
+            setAttempt((n) => n + 1);
+          };
+          return (
+            <ErrorBoundary key={attempt} onRetry={retry}>
+              <Suspense fallback={<p role="status">…</p>}>
+                <Chart />
+              </Suspense>
+            </ErrorBoundary>
+          );
+        }
+        ```
+
+        `ErrorBoundary` тут — клас із RE-05 з одним доповненням: кнопка «Спробувати ще раз» у його запасному вмісті викликає проп `onRetry`. Новий lazy-компонент іде в стан, тож кожна спроба знову викликає функцію завантаження, а `key={attempt}` дає boundary чистий стан, як у RE-05.
+
+        Від чого це рятує, а від чого ні. Новий lazy-компонент допомагає, коли до наступної спроби причина зникла: помилка рендеру або збій, який код кидає сам ще до виклику `import()`, — так імітують обрив мережі в пісочниці курсу. Справжній шматок коду, який не завантажився, — інша історія: Chrome запам’ятовує, що модуль за цією адресою не завантажився, і не просить його знову, доки сторінку не перезавантажать. Ми перевірили це в Chrome 154, готуючи крок проєкту цього розділу: після «Спробувати ще раз» запит того самого файла так і лишився один. Тому в справжньому застосунку після повторного збою пропонуй ще й «Перезавантажити сторінку» (`location.reload()`) — так і зробить крок проєкту.
+
+        Ціна такого рішення: lazy-компонент у стані створюється наново щоразу, коли `ChartArea` з’являється на екрані, тож при кожному новому відкритті знову видно `fallback` — саме те, від чого застерігав перший урок розділу. Якщо це заважає, тримай lazy-компонент у змінній модуля і заміняй її новим лише під час повторної спроби.
+      en: |
+        `Suspense` waits, but it does not save you from an error: if the `import()` in `lazy` is rejected (the network dropped, the file vanished after a site update), the lazy component **throws** that error during render. The error boundary from RE-05 catches it — so an error boundary is placed next to the `Suspense` boundary.
+
+        One tricky detail we checked in the sandbox: a lazy component **remembers a failure too**. A “Try again” button that only clears the error in the boundary gets the same error again — `import()` is not even called a second time. To really try again you need a **new** lazy component:
+
+        ```jsx
+        const loadChart = slowly(() => import("./HabitChart"));
+
+        function ChartArea() {
+          const [Chart, setChart] = useState(() => lazy(loadChart));
+          const [attempt, setAttempt] = useState(0);
+          const retry = () => {
+            setChart(lazy(loadChart));
+            setAttempt((n) => n + 1);
+          };
+          return (
+            <ErrorBoundary key={attempt} onRetry={retry}>
+              <Suspense fallback={<p role="status">…</p>}>
+                <Chart />
+              </Suspense>
+            </ErrorBoundary>
+          );
+        }
+        ```
+
+        `ErrorBoundary` here is the class from RE-05 with one addition: the “Try again” button in its fallback calls the `onRetry` prop. The new lazy component goes into state, so every attempt calls the loading function again, and `key={attempt}` gives the boundary a clean state, as in RE-05.
+
+        What this recovers from, and what it does not. A new lazy component helps when the cause is gone by the next attempt: a render error, or a failure that the code throws itself before `import()` is even called — that is how the course sandbox simulates a dropped connection. A chunk of code that really failed to load is a different story: Chrome remembers that the module at that address failed and does not request it again until the page is reloaded. We checked this in Chrome 154 while preparing this unit's project step: after “Try again” there was still one request of that file in total. So in a real app, after a repeated failure also offer “Reload the page” (`location.reload()`) — the project step will do exactly that.
+
+        The price of this solution: a lazy component in state is created anew every time `ChartArea` appears on the screen, so each new visit shows the `fallback` again — exactly what the first lesson of this unit warned about. If that gets in the way, keep the lazy component in a module variable and replace it with a new one only on a retry.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: старі дані чи порожнеча"
+      en: "Recall: old data or a blank"
+    items:
+      - id: keep-old-list
+        from: re-06-03-loading-retry
+        prompt:
+          uk: "Список справ уже на екрані, і застосунок оновлює його у фоні. Що краще бачити людині, поки нові дані в дорозі?"
+          en: "The task list is already on the screen, and the app refreshes it in the background. What is better for the person to see while the new data is on its way?"
+        answer:
+          type: choice
+          options:
+            - id: old-with-note
+              text: { uk: "Старий список і помітку, що він оновлюється", en: "The old list plus a note that it is being refreshed" }
+            - id: spinner
+              text: { uk: "Лише індикатор завантаження замість списку", en: "Only a loading indicator in place of the list" }
+              why:
+                uk: "Індикатор замість списку забирає в людини дані, які в неї вже є, і зсуває сторінку. Перше завантаження — інша річ: там показати ще нічого."
+                en: "An indicator in place of the list takes away data the person already has and shifts the page. A first load is different: there is nothing to show yet."
+            - id: nothing
+              text: { uk: "Порожнє місце, щоб людина не бачила застарілих даних", en: "An empty spot, so the person does not see stale data" }
+              why:
+                uk: "Порожнеча нічого не пояснює й виглядає як збій. Старі дані з чесною поміткою «оновлюється» корисніші."
+                en: "A blank explains nothing and looks like a failure. Old data with an honest “refreshing” note is more useful."
+          correct: [old-with-note]
+        explanation:
+          uk: "Те саме правило діє для transitions і `Suspense`: transition лишає на екрані старий список, приглушений, поки новий готується, а межа `Suspense` близько до lazy-ділянки не забирає решту сторінки. Порожнеча чи «Завантажую…» замість усього — крайній випадок, а не норма."
+          en: "The same rule holds for transitions and `Suspense`: a transition keeps the old list on the screen, dimmed, while the new one is prepared, and a `Suspense` boundary close to the lazy region does not take away the rest of the page. A blank or “Loading…” in place of everything is a last resort, not the norm."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-10
+    body:
+      uk: "Коли в проєкті з’явиться lazy-маршрут і transition, пройди таблицю симптомів цього уроку: перехід не має ховати меню, поле пошуку не має губити літер, а дані, що приходять з ефекту, мають власний стан завантаження. Для невдалого завантаження коду поклади поруч із `Suspense` error boundary з кнопкою, що створює новий lazy-компонент."
+      en: "Once your project has a lazy route and a transition, go through this lesson's symptom table: navigation must not hide the menu, the search field must not lose letters, and data arriving from an effect needs its own loading state. For a failed code load, put an error boundary next to `Suspense` with a button that creates a new lazy component."

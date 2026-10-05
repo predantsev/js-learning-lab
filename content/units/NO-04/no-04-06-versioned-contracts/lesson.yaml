@@ -1,0 +1,364 @@
+id: no-04-06-versioned-contracts
+unit: NO-04
+title:
+  uk: "Версійовані контракти"
+  en: "Versioned contracts"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Розрізнити зміни контракту (необов’язкове поле у відповіді, перейменоване поле, суворіша валідація, змінений статус) на сумісні й несумісні для наявних клієнтів."
+    en: "Classify contract changes (an optional response field, a renamed field, stricter validation, a changed status) as compatible or breaking for existing clients."
+  - uk: "Винести несумісну зміну в /v2, поки /v1 зберігає свою форму, і описати обидві версії в типізованому модулі контракту, який імпортують тести."
+    en: "Serve a breaking change under /v2 while /v1 keeps its shape, and describe both in a typed contract module that the tests import."
+prerequisites: [no-04-05-idempotency]
+subskills:
+  - { family: B-03, skill: "versioned contracts", depth: intro }
+glossary: [api-versioning, compatible-change]
+selfCheck: [predict-breaking, note-contract]
+
+blocks:
+  - id: a-promise
+    kind: explanation
+    title:
+      uk: "Контракт — це обіцянка клієнтам, яких ти не бачиш"
+      en: "A contract is a promise to clients you cannot see"
+    body:
+      uk: |
+        Усе, що клієнт бачить в API, — адреси, поля відповідей, правила валідації, статуси, коди помилок, — це **контракт**. Мобільний застосунок, встановлений рік тому, досі читає `note.title`, і оновити його за ніч не вийде.
+
+        Тож для кожної зміни питання одне: чи працюватиме **старий** клієнт без змін?
+
+        | Зміна | Для старого клієнта |
+        |---|---|
+        | у відповіді з’явилося нове необов’язкове поле | [[compatible-change\|сумісна]]: незнайоме поле клієнт просто ігнорує |
+        | поле `title` перейменовано на `heading` | **несумісна**: клієнт читає `undefined` |
+        | максимум `limit` знизився з 50 до 20 | **несумісна**: запит, що працював, тепер отримує 400 |
+        | нове **обов’язкове** поле у вхідних даних | **несумісна**: старі тіла запитів тепер не проходять схему |
+        | 404 замінили на 410 | **несумісна**: код, що перевіряє 404, більше не спрацьовує |
+
+        «На сервері компілюється й тести зелені» нічого не каже про клієнтів: їхнього коду сервер не бачить.
+
+        Зверни увагу на асиметрію. Сервер відхиляє зайве поле у **вводі** (урок про валідацію): там воно — ознака помилки клієнта. А клієнт зайве поле у **відповіді** спокійно пропускає: для нього це звичайний спосіб, яким API росте. Клієнт, що відхиляв би будь-яке незнайоме поле відповіді, зламався б і від сумісної зміни.
+      en: |
+        Everything a client sees in an API — addresses, response fields, validation rules, statuses, error codes — is the **contract**. A mobile app installed a year ago still reads `note.title`, and it cannot be updated overnight.
+
+        So for every change there is one question: will an **old** client keep working unchanged?
+
+        | Change | For an old client |
+        |---|---|
+        | a new optional field appears in the response | [[compatible-change\|compatible]]: the client simply ignores an unknown field |
+        | the field `title` is renamed to `heading` | **breaking**: the client reads `undefined` |
+        | the `limit` maximum drops from 50 to 20 | **breaking**: a request that used to work now gets 400 |
+        | a new **required** field in the input | **breaking**: old request bodies no longer pass the schema |
+        | 404 replaced by 410 | **breaking**: code that checks for 404 no longer fires |
+
+        “It compiles on the server and the tests are green” says nothing about the clients: the server never sees their code.
+
+        Notice the asymmetry. A server refuses an extra field in the **input** (the lesson on validation): there it is a sign of a client mistake. A client calmly skips an extra field in a **response**: for it this is the normal way an API grows. A client that refused any unfamiliar response field would break even on a compatible change.
+
+  - id: predict-breaking
+    kind: prediction
+    prompt:
+      uk: "Клієнт v1 списку бажань уже встановлено в людей. Які із цих змін зламають його? Обери всі."
+      en: "The v1 client of the wishlist is already installed on people's phones. Which of these changes break it? Pick all."
+    answer:
+      type: multi
+      options:
+        - id: optional-field
+          text:
+            uk: "У відповідь `GET /records` додано поле `addedAt`"
+            en: "The field `addedAt` is added to the `GET /records` response"
+          why:
+            uk: "Нове поле у відповіді старий клієнт не читає й не помічає. Це сумісна зміна."
+            en: "An old client neither reads nor notices a new response field. That is a compatible change."
+        - id: rename
+          text:
+            uk: "Поле `price` перейменовано на `priceUah`"
+            en: "The field `price` is renamed to `priceUah`"
+        - id: lower-limit
+          text:
+            uk: "Максимум `limit` знижено з 50 до 20"
+            en: "The `limit` maximum is lowered from 50 to 20"
+        - id: required-input
+          text:
+            uk: "У `POST /records` поле `category` стало обов’язковим"
+            en: "`category` became required in `POST /records`"
+        - id: gone-status
+          text:
+            uk: "Запис, якого немає, тепер отримує 410 замість 404"
+            en: "A record that does not exist now gets 410 instead of 404"
+      correct: [rename, lower-limit, required-input, gone-status]
+    explanation:
+      uk: "Сумісність ламають чотири зміни з п’яти. Вони компілюються на сервері й проходять його власні тести — але старий клієнт отримає `undefined`, 400 чи незнайомий статус. Сумісні зміни зазвичай **додають** щось необов’язкове; несумісні **прибирають, перейменовують або посилюють**."
+      en: "Four of the five break it. They compile on the server and pass its own tests — but the old client gets `undefined`, a 400 or an unfamiliar status. Compatible changes usually **add** something optional; breaking ones **remove, rename or tighten**."
+
+  - id: two-versions
+    kind: explanation
+    title:
+      uk: "Несумісна зміна — нова версія поруч зі старою"
+      en: "A breaking change is a new version next to the old one"
+    body:
+      uk: |
+        Якщо несумісна зміна справді потрібна, її не роблять «на місці». Сервер запускає **нову версію** контракту за новою адресою, а стара працює як працювала — це [[api-versioning|версіонування API]]:
+
+        - `GET /v1/notes/n-1` → `{ id, title, text, pinned }` — як і рік тому;
+        - `GET /v2/notes/n-1` → `{ id, heading, text, pinned }` — для нових клієнтів.
+
+        Дані в сховищі одні; різниться лише функція, що перетворює запис на відповідь кожної версії. Стару версію прибирають, коли нею вже ніхто не користується.
+
+        Новий номер потрібен **лише для несумісної зміни**. Сумісні зміни — нове поле, новий маршрут — йдуть у ту саму `/v1`: номер версії не лічильник релізів.
+
+        Щоб обіцянка не трималася на пам’яті, її записують у **модуль контракту**: типи для `tsc` і ті самі форми як дані, які **контрактний тест** перевіряє на справжньому сервері для кожної версії.
+      en: |
+        When a breaking change is really needed, it is not made “in place”. The server serves a **new version** of the contract at a new address, and the old one keeps working as it did — that is [[api-versioning]]:
+
+        - `GET /v1/notes/n-1` → `{ id, title, text, pinned }` — as a year ago;
+        - `GET /v2/notes/n-1` → `{ id, heading, text, pinned }` — for new clients.
+
+        The stored data is the same; only the function that turns a record into each version's response differs. The old version is removed once nobody uses it any more.
+
+        A new number is needed **only for a breaking change**. Compatible changes — a new field, a new route — go into the same `/v1`: the version number is not a release counter.
+
+        So that the promise does not depend on memory, it is written down in a **contract module**: types for `tsc` and the same shapes as data, which a **contract test** checks against the real server for every version.
+
+  - id: contract-lanes
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Дві версії, два клієнти"
+      en: "Two versions, two clients"
+    textEquivalent:
+      uk: "Ліворуч старий клієнт v1 і маршрут /v1/notes, праворуч новий клієнт v2 і маршрут /v2/notes; під ними дві смуги: сумісні зміни й несумісні зміни. Перша зміна — нове поле updatedAt — сумісна, тож іде в обидві версії, і старий клієнт її не помічає. Друга — перейменування title на heading — несумісна, тому з’являється лише в /v2. Третя — суворіший максимум limit — теж несумісна й теж лише в /v2. На кожному кроці запит старого клієнта й далі потрапляє в /v1 і отримує ту саму форму."
+      en: "On the left, the old v1 client and the /v1/notes route; on the right, the new v2 client and the /v2/notes route; below them two lanes: compatible changes and breaking changes. The first change — a new updatedAt field — is compatible, so it goes into both versions, and the old client does not notice it. The second — renaming title to heading — is breaking, so it appears only in /v2. The third — a stricter limit maximum — is breaking too and also only in /v2. At every step the old client's request still reaches /v1 and gets the same shape."
+    spec:
+      layout: grid
+      nodes:
+        - { id: client1, label: { uk: "клієнт v1", en: "v1 client" }, shape: round, w: 160, col: 0, row: 0 }
+        - { id: client2, label: { uk: "клієнт v2", en: "v2 client" }, shape: round, w: 160, col: 1, row: 0 }
+        - { id: route1, label: "/v1/notes", shape: pill, w: 160, col: 0, row: 1 }
+        - { id: route2, label: "/v2/notes", shape: pill, w: 160, col: 1, row: 1 }
+        - { id: compatible, label: { uk: "сумісні зміни", en: "compatible" }, shape: note, w: 160, col: 0, row: 2 }
+        - { id: breaking, label: { uk: "несумісні зміни", en: "breaking" }, shape: note, w: 160, col: 1, row: 2 }
+      edges:
+        - { id: c1-r1, from: client1, to: route1 }
+        - { id: c2-r2, from: client2, to: route2 }
+        - { id: comp-r1, from: compatible, to: route1, kind: dashed }
+        - { id: comp-r2, from: compatible, to: route2, kind: dashed }
+        - { id: break-r2, from: breaking, to: route2, kind: dashed }
+      steps:
+        - caption:
+            uk: "Старий клієнт ходить у `/v1`, новий — у `/v2`. Дані в сховищі ті самі."
+            en: "The old client calls `/v1`, the new one `/v2`. The stored data is the same."
+          highlight: [client1, route1, c1-r1, client2, route2, c2-r2]
+        - caption:
+            uk: "Нове необов’язкове поле `updatedAt` — сумісна зміна: вона йде в обидві версії, а старий клієнт її просто не читає."
+            en: "A new optional field `updatedAt` is a compatible change: it goes into both versions, and the old client simply does not read it."
+          highlight: [compatible, comp-r1, comp-r2, route1, route2]
+          annotate:
+            - { id: compatible, text: "+ updatedAt" }
+        - caption:
+            uk: "`title` → `heading` — несумісна зміна: вона з’являється **лише** в `/v2`. `/v1` і далі віддає `title`."
+            en: "`title` → `heading` is a breaking change: it appears **only** in `/v2`. `/v1` still sends `title`."
+          highlight: [breaking, break-r2, route2]
+          dim: [comp-r1, comp-r2]
+          annotate:
+            - { id: breaking, text: "title → heading" }
+        - caption:
+            uk: "Суворіший максимум `limit` — теж несумісна зміна, теж лише в `/v2`."
+            en: "A stricter `limit` maximum is breaking too — also only in `/v2`."
+          highlight: [breaking, break-r2, route2]
+          dim: [comp-r1, comp-r2]
+          annotate:
+            - { id: breaking, text: "limit ≤ 20" }
+        - caption:
+            uk: "На кожному кроці запит старого клієнта потрапляє в `/v1` і отримує ту саму форму, що й рік тому."
+            en: "At every step the old client's request reaches `/v1` and gets the same shape as a year ago."
+          highlight: [client1, route1, c1-r1]
+          dim: [breaking, break-r2]
+
+  - id: predict-version-bump
+    kind: prediction
+    prompt:
+      uk: "API нотаток на `/v1`. Команда додає до відповіді необов’язкове поле `color` і новий маршрут `GET /v1/notes/pinned`. Що робити з версією?"
+      en: "The notes API is on `/v1`. The team adds an optional `color` field to the response and a new route `GET /v1/notes/pinned`. What happens to the version?"
+    answer:
+      type: choice
+      options:
+        - id: keep
+          text: { uk: "Лишити `/v1`: обидві зміни сумісні", en: "Keep `/v1`: both changes are compatible" }
+        - id: bump
+          text: { uk: "Випустити `/v2`: кожен реліз — нова версія", en: "Serve `/v2`: every release is a new version" }
+          why:
+            uk: "Версія API — не лічильник релізів. Нова версія змушує клієнтів переходити й подвоює код, який треба підтримувати; вона виправдана лише для несумісної зміни."
+            en: "An API version is not a release counter. A new version makes clients migrate and doubles the code to maintain; it is justified only for a breaking change."
+        - id: bump-route
+          text: { uk: "Новий маршрут — у `/v2`, поле — у `/v1`", en: "The new route goes into `/v2`, the field into `/v1`" }
+          why:
+            uk: "Новий маршрут нічого не забирає в старих клієнтів: вони його просто не викликають. Це теж сумісна зміна."
+            en: "A new route takes nothing away from old clients: they simply never call it. It is a compatible change too."
+      correct: [keep]
+    explanation:
+      uk: "Обидві зміни лише **додають**. Старий клієнт працює як раніше, тож номер версії не змінюється."
+      en: "Both changes only **add**. The old client works as before, so the version number stays."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: caret-range
+        from: js-15-04-install-lockfile-semver
+        prompt:
+          uk: "У `package.json` залежність записано як `\"^1.4.0\"`. Яку версію npm **не** встановить сам?"
+          en: "A dependency is written as `\"^1.4.0\"` in `package.json`. Which version does npm **not** install on its own?"
+        answer:
+          type: choice
+          options:
+            - id: major
+              code: "2.0.0"
+            - id: minor
+              code: "1.5.0"
+              why:
+                uk: "Minor-версія додає можливості без поломок, і `^` її дозволяє."
+                en: "A minor version adds features without breaking anything, and `^` allows it."
+            - id: patch
+              code: "1.4.3"
+              why:
+                uk: "Patch-версія лише виправляє помилки, і `^` її дозволяє."
+                en: "A patch version only fixes bugs, and `^` allows it."
+          correct: [major]
+        explanation:
+          uk: "За semver нова major-версія означає несумісні зміни, тож `^` до неї сам не переходить. `/v2` в адресі API — та сама ідея для HTTP: несумісна зміна отримує новий номер, а сумісні — ні."
+          en: "Under semver a new major version means breaking changes, so `^` does not move to it on its own. `/v2` in an API address is the same idea for HTTP: a breaking change gets a new number, compatible ones do not."
+
+  - id: notes-versions
+    kind: example
+    runtime: isolated-node
+    dir: notes-versions
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      gifts: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      giftsText: { uk: "Книжка, шарф", en: "A book, a scarf" }
+      broke: { uk: "зламався", en: "broke" }
+    title:
+      uk: "Перейменування, яке ламає старого клієнта"
+      en: "A rename that breaks the old client"
+    body:
+      uk: |
+        `app.js` віддає нотатки у версії 1 (функція `toV1`). `index.js` — старий клієнт v1, що читає `note.title`, і новий клієнт v2, поки вимкнений коментарем.
+
+        Натисни **Запустити**: клієнт v1 друкує назву великими літерами.
+      en: |
+        `app.js` serves notes in version 1 (the function `toV1`). `index.js` holds the old v1 client, which reads `note.title`, and the new v2 client, switched off by a comment for now.
+
+        Press **Run**: the v1 client prints the title in capitals.
+    tryIt:
+      uk: |
+        1. «Просто перейменуй»: у `toV1` заміни `title: note.heading` на `heading: note.heading` і запусти. Сервер працює, а клієнт v1 ламається з `TypeError` — `note.title` тепер `undefined`.
+        2. Поверни `title` у `toV1`. Розкоментуй рядок `const toV2 = …` і рядок `v2: toV2,` в `app.js`, а в `index.js` заміни `[v1Client /* , v2Client */]` на `[v1Client, v2Client]` і запусти: обидва клієнти працюють, кожен зі своєю версією.
+      en: |
+        1. “Just rename it”: in `toV1` replace `title: note.heading` with `heading: note.heading` and run. The server works, but the v1 client breaks with a `TypeError` — `note.title` is now `undefined`.
+        2. Put `title` back in `toV1`. Uncomment the line `const toV2 = …` and the line `v2: toV2,` in `app.js`, and in `index.js` replace `[v1Client /* , v2Client */]` with `[v1Client, v2Client]` and run: both clients work, each with its own version.
+
+  - id: note-contract
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: note-contract
+    entry: index.js
+    editable: [contract.ts, contract-check.ts]
+    capabilities: { network: loopback }
+    strings:
+      gifts: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      giftsText: { uk: "Книжка, шарф", en: "A book, a scarf" }
+      shopping: { uk: "Покупки", en: "Shopping" }
+      kept: { uk: "Контракт дотримано: v1 і v2 мають свої форми.", en: "Contract kept: v1 and v2 have their own shapes." }
+      broken: { uk: "Контракт порушено:", en: "Contract broken:" }
+    limits:
+      uk: "Файли `.ts` тут виконуються через вилучення типів у Node.js: типи просто відкидаються, і ніхто їх не перевіряє. Перевіряє їх `tsc` у твоєму проєкті. З Node.js 22.18 вилучення типів увімкнене типово; на 22.13–22.17 платформа сама вмикає його прапорцем `--experimental-strip-types`, тож вправа працює так само."
+      en: "`.ts` files run here through Node.js type stripping: types are simply removed, and nothing checks them. `tsc` in your project is what checks them. From Node.js 22.18 type stripping is on by default; on 22.13–22.17 the platform turns it on itself with the `--experimental-strip-types` flag, so the exercise works the same."
+    title:
+      uk: "Модуль контракту й контрактний тест"
+      en: "A contract module and a contract test"
+    instructions:
+      uk: |
+        `app.js` (лише для читання) віддає нотатку `n-1` за `/v1/notes/n-1` з полем `title` і за `/v2/notes/n-1` з полем `heading`.
+
+        1. У `contract.ts` допиши `noteV2Shape` (така сама, як `noteV1Shape`, але з `heading` замість `title`) і `shapeErrors(value, shape)`: масив повідомлень, по одному на кожне поле форми, якого немає або тип (`typeof`) якого не той. Зайві поля — **не** помилка.
+        2. У `contract-check.ts` допиши `checkContract(base)`: запроси `GET /v1/notes/n-1` і `GET /v2/notes/n-1`, перевір кожну відповідь її власною формою й поверни масив проблем. Кожне повідомлення починається з назви версії (`"v1…"` чи `"v2…"`); якщо проблем немає, — `[]`.
+
+        **Перевірити** запускає твій контрактний тест на справжньому сервері і на серверах, що змінили відповіді — сумісно й несумісно.
+      en: |
+        `app.js` (read-only) serves note `n-1` at `/v1/notes/n-1` with a `title` field and at `/v2/notes/n-1` with a `heading` field.
+
+        1. In `contract.ts` finish `noteV2Shape` (like `noteV1Shape`, but with `heading` instead of `title`) and `shapeErrors(value, shape)`: an array of messages, one for each field of the shape that is missing or whose type (`typeof`) is wrong. Extra fields are **not** an error.
+        2. In `contract-check.ts` finish `checkContract(base)`: request `GET /v1/notes/n-1` and `GET /v2/notes/n-1`, check each response against its own shape and return an array of problems. Each message starts with the version's name (`"v1…"` or `"v2…"`); with no problems, `[]`.
+
+        **Check** runs your contract test against the real server and against servers that changed their responses — compatibly and in a breaking way.
+    testTitles:
+      "noteV1Shape and noteV2Shape describe the two versions":
+        uk: "`noteV1Shape` і `noteV2Shape` описують дві версії"
+        en: "`noteV1Shape` and `noteV2Shape` describe the two versions"
+      "shapeErrors reports a missing field and a wrong type":
+        uk: "`shapeErrors` повідомляє про відсутнє поле й неправильний тип"
+        en: "`shapeErrors` reports a missing field and a wrong type"
+      "shapeErrors accepts extra fields":
+        uk: "`shapeErrors` пропускає зайві поля"
+        en: "`shapeErrors` accepts extra fields"
+      "checkContract finds no problem on the real server":
+        uk: "`checkContract` не знаходить проблем на справжньому сервері"
+        en: "`checkContract` finds no problem on the real server"
+      "checkContract catches a breaking change in v1":
+        uk: "`checkContract` ловить несумісну зміну у v1"
+        en: "`checkContract` catches a breaking change in v1"
+      "checkContract catches a v2 that broke its own shape":
+        uk: "`checkContract` ловить v2, що порушила свою форму"
+        en: "`checkContract` catches a v2 that broke its own shape"
+      "checkContract accepts a new optional field in v1":
+        uk: "`checkContract` приймає нове необов’язкове поле у v1"
+        en: "`checkContract` accepts a new optional field in v1"
+    hints:
+      nudge:
+        uk: "`Object.entries(shape)` дає пари `[поле, тип]`. Для кожної порівняй `typeof value[поле]` з типом."
+        en: "`Object.entries(shape)` gives `[field, type]` pairs. For each, compare `typeof value[field]` with the type."
+      explanation:
+        uk: "`shapeErrors` іде лише по полях **форми**, тож зайві поля відповіді його не цікавлять — саме тому додавання сумісне. У `checkContract` перебери пари `[версія, форма]`: для кожної зроби `fetch` з `AbortSignal.timeout`, розбери JSON і додай повідомлення з префіксом версії, наприклад `` `${version}: ${error}` ``. Для API бажань пара виглядала б як `['v1', wishV1Shape]`."
+        en: "`shapeErrors` walks only the fields of the **shape**, so extra response fields do not concern it — that is exactly why adding is compatible. In `checkContract` loop over `[version, shape]` pairs: for each, `fetch` with `AbortSignal.timeout`, parse the JSON and add messages prefixed with the version, for example `` `${version}: ${error}` ``. For a wishlist API a pair would look like `['v1', wishV1Shape]`."
+    solutionNote:
+      uk: "Модуль контракту тримає обіцянку двічі: типами для `tsc` і формами як даними для перевірки під час виконання. Контрактний тест бере кожну версію окремо, тож ламає його перейменування у v1 чи зміна типу у v2, а нове поле — ні."
+      en: "The contract module keeps the promise twice: as types for `tsc` and as shapes, data for a runtime check. The contract test takes each version separately, so a rename in v1 or a type change in v2 breaks it, and a new field does not."
+    feedback:
+      - when: { test: "noteV1Shape and noteV2Shape describe the two versions" }
+        message:
+          uk: "Ця перевірка чекає `noteV2Shape` рівно `{ id: \"string\", heading: \"string\", text: \"string\", pinned: \"boolean\" }`."
+          en: "This check expects `noteV2Shape` to be exactly `{ id: \"string\", heading: \"string\", text: \"string\", pinned: \"boolean\" }`."
+      - when: { test: "shapeErrors reports a missing field and a wrong type" }
+        message:
+          uk: "Ця перевірка чекає `[]` для правильної нотатки і рівно одне повідомлення, коли `title` немає або `pinned` — текст `\"no\"`. Порівнюй `typeof`, а не лише наявність поля."
+          en: "This check expects `[]` for a correct note and exactly one message when `title` is missing or `pinned` is the text `\"no\"`. Compare `typeof`, not only whether the field is there."
+      - when: { test: "shapeErrors accepts extra fields" }
+        message:
+          uk: "Ця перевірка чекає `[]` для нотатки з додатковим полем `updatedAt`. Нове поле не ламає старого клієнта — не рахуй його помилкою."
+          en: "This check expects `[]` for a note with an extra `updatedAt` field. A new field does not break an old client — do not count it as an error."
+      - when: { test: "checkContract catches a breaking change in v1" }
+        message:
+          uk: "Ця перевірка запускає сервер, у якого `/v1` віддає `heading` замість `title`, і чекає проблеми лише з префіксом `v1`."
+          en: "This check runs a server whose `/v1` sends `heading` instead of `title` and expects problems only with the `v1` prefix."
+      - when: { test: "checkContract catches a v2 that broke its own shape" }
+        message:
+          uk: "Ця перевірка запускає сервер, у якого `/v2` віддає `pinned` текстом, і чекає проблеми з префіксом `v2`. Перевір обидві версії, кожну — своєю формою."
+          en: "This check runs a server whose `/v2` sends `pinned` as text and expects problems with the `v2` prefix. Check both versions, each against its own shape."
+      - when: { test: "checkContract accepts a new optional field in v1" }
+        message:
+          uk: "Ця перевірка запускає сервер, у якого `/v1` додав `updatedAt`, і чекає `[]`."
+          en: "This check runs a server whose `/v1` added `updatedAt` and expects `[]`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-04
+    body:
+      uk: "У кроці проєкту цього розділу маршрути твого сервера живуть під `/v1/records`, а неверсійований `GET /records` кроку NO-03 лишається таким, як його опубліковано: контракт, яким можуть користуватися інші, не ламають. Твій клієнт уже має типізований контракт записів; на сервері він стає спільною обіцянкою, а будь-яка несумісна зміна чекатиме на `/v2`."
+      en: "In this unit’s project step your server’s routes live under `/v1/records`, while the unversioned `GET /records` of step NO-03 stays as it was published: a contract others may use is not broken. Your client already has a typed records contract; on the server it becomes a shared promise, and any breaking change waits for `/v2`."

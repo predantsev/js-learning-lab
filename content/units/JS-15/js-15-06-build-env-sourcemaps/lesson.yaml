@@ -1,0 +1,581 @@
+id: js-15-06-build-env-sourcemaps
+unit: JS-15
+title:
+  uk: "Збірка, env/config і source maps"
+  en: "Build, env/config and source maps"
+kind: local-task
+minutes: 15
+contentVersion: 1
+purpose:
+  uk: "Браузер у справжніх проєктах отримує не твої модулі, а зібраний і стиснутий файл. Треба вміти зібрати його, передати налаштування, не вписуючи їх у код, і налагоджувати стиснутий код у його первісному вигляді."
+  en: "In real projects the browser does not receive your modules but a built, minified file. You need to build it, pass in settings without writing them into the code, and debug the minified code in its original form."
+objectives:
+  - uk: "Запустити script збірки, що складає модулі проєкту в одну вихідну теку, і відкрити результат з локального сервера."
+    en: "Run a build script that bundles the scratch project’s modules into an output folder and open the result from a local server."
+  - uk: "Передати значення конфігурації через змінну середовища, не зберігаючи його в коді, і налагодити зібраний файл на рядку вихідного коду через source map."
+    en: "Supply a configuration value through an environment variable without keeping it in the code, and debug the built file at the original source line through a source map."
+prerequisites: [js-15-05-lint-format, js-09-06-debugger-breakpoints]
+subskills:
+  - { family: P-01, skill: "build/env/config", depth: intro }
+  - { family: P-01, skill: "source maps", depth: intro }
+glossary: [build-step, bundle, environment-variable, config-file, source-map]
+
+blocks:
+  - id: build-explained
+    kind: explanation
+    title:
+      uk: "Від модулів до одного файла"
+      en: "From modules to one file"
+    body:
+      uk: |
+        [[build-step|Збирання]] перетворює вихідні файли на те, що отримає браузер. Збирач (у нас — esbuild) починає з модуля-входу, проходить усі його `import` і складає все в один [[bundle]] `dist/app.js`. Заразом стискає: прибирає пробіли й коментарі, скорочує назви змінних.
+
+        ```text
+        src/main.mjs ─┐
+        money.mjs ────┴─► esbuild ─► dist/app.js + dist/app.js.map
+        ```
+
+        Тека `dist/` — **результат**, а не код: її не редагують руками, бо наступна збірка все перезапише.
+
+        Налаштування, що відрізняються між комп’ютерами (назва застосунку, адреса сервера), не вписують у код. Їх передають [[environment-variable|змінними середовища]]: програма читає `process.env.APP_TITLE`. Значення зручно тримати у файлі `.env`, а Node.js читає його прапорцем `--env-file-if-exists=.env`.
+
+        **Важливо:** під час збирання значення **вписується** в `dist/app.js`. Усе, що потрапило в bundle для браузера, може прочитати будь-хто, хто відкрив сторінку. Секретам там не місце.
+      en: |
+        A [[build-step|build step]] turns source files into what the browser receives. A bundler (here esbuild) starts from the entry module, follows all its `import`s and puts everything into one [[bundle]], `dist/app.js`. It also minifies: removes spaces and comments, shortens variable names.
+
+        ```text
+        src/main.mjs ─┐
+        money.mjs ────┴─► esbuild ─► dist/app.js + dist/app.js.map
+        ```
+
+        The `dist/` folder is a **result**, not code: nobody edits it by hand, because the next build overwrites everything.
+
+        Settings that differ between computers (the app’s title, a server address) are not written into the code. They are passed in as [[environment-variable|environment variables]]: the program reads `process.env.APP_TITLE`. The values are convenient to keep in a `.env` file, and Node.js reads it with the flag `--env-file-if-exists=.env`.
+
+        **Important:** during the build the value is **written into** `dist/app.js`. Anything that got into a bundle for the browser can be read by anyone who opened the page. Secrets do not belong there.
+
+  - id: predict-env-visible
+    kind: prediction
+    prompt:
+      uk: "У `.env` записано `APP_TITLE=Family budget`. Ти зібрав проєкт і виклав теку `dist/` на сайт. Чи може відвідувач сайту дізнатися значення `APP_TITLE`?"
+      en: "`.env` contains `APP_TITLE=Family budget`. You built the project and put the `dist/` folder on a website. Can a visitor find out the value of `APP_TITLE`?"
+    answer:
+      type: choice
+      options:
+        - id: yes-in-bundle
+          text:
+            uk: "Так: збирач вписав значення в текст `dist/app.js`, а браузер завантажує цей файл повністю"
+            en: "Yes: the bundler wrote the value into the text of `dist/app.js`, and the browser downloads that file in full"
+        - id: no-env-private
+          text:
+            uk: "Ні: `.env` лежить лише на моєму комп’ютері"
+            en: "No: `.env` stays on my computer only"
+          why:
+            uk: "Сам файл `.env` — так, але його **значення** під час збирання стало частиною `dist/app.js`. Файл лишився вдома, значення — поїхало на сайт."
+            en: "The `.env` file itself does, but its **value** became part of `dist/app.js` during the build. The file stayed home, the value went to the website."
+        - id: no-minified
+          text:
+            uk: "Ні: bundle стиснутий, і прочитати його неможливо"
+            en: "No: the bundle is minified and impossible to read"
+          why:
+            uk: "Стиснення скорочує назви змінних, але не текст у лапках: `\"Family budget\"` у bundle видно як є, і пошук по файлу його знайде."
+            en: "Minifying shortens variable names, but not text in quotes: `\"Family budget\"` is visible in the bundle as it is, and a search through the file finds it."
+      correct: [yes-in-bundle]
+    explanation:
+      uk: "Змінні середовища в збірці для браузера — це налаштування, а не схованка. Назва застосунку — нормально; токен чи пароль — ніколи. Секрети живуть лише на сервері (у розділі Node.js ти побачиш, як)."
+      en: "Environment variables in a browser build are settings, not a hiding place. An app title is fine; a token or a password never. Secrets live only on a server (you will see how in the Node.js stage)."
+
+  - id: maps-explained
+    kind: explanation
+    title:
+      uk: "Source map: налагоджувати те, що ти написав"
+      en: "Source map: debug what you wrote"
+    body:
+      uk: |
+        У стиснутому `dist/app.js` весь код — один довгий рядок, а `totalMinor` перетворилася на щось на кшталт `function e(t){let o=0;…}`. Ставити там breakpoint марно.
+
+        Тому збирач пише ще й [[source-map|source map]] — файл `app.js.map`. Для кожного місця в bundle він каже, з якого файла, рядка коду й стовпчика воно взялося. В останньому рядку bundle є посилання на нього:
+
+        ```js
+        //# sourceMappingURL=app.js.map
+        ```
+
+        DevTools браузера читають цю карту й показують у панелі Sources твої справжні модулі — `money.mjs` і `src/main.mjs`. Ставиш breakpoint у рядку `money.mjs`, а браузер зупиняється в тому місці bundle, яке з нього вийшло.
+
+        Налаштування інструментів — що збирати, куди класти, які правила lint вмикати — записують у [[config-file|конфігураційних файлах]] (`build.mjs`, `eslint.config.mjs`). Їх зберігають разом із кодом: у них немає секретів, і вся команда збирає однаково.
+      en: |
+        In the minified `dist/app.js` all the code is one long line, and `totalMinor` has turned into something like `function e(t){let o=0;…}`. Setting a breakpoint there is pointless.
+
+        So the bundler also writes a [[source-map|source map]] — the file `app.js.map`. For every place in the bundle it says which file, line and column it came from. The last line of the bundle links to it:
+
+        ```js
+        //# sourceMappingURL=app.js.map
+        ```
+
+        The browser’s DevTools read this map and show your real modules — `money.mjs` and `src/main.mjs` — in the Sources panel. You set a breakpoint on a line of `money.mjs`, and the browser pauses at the place in the bundle that came from it.
+
+        The tools’ settings — what to build, where to put it, which lint rules to turn on — are written in [[config-file|config files]] (`build.mjs`, `eslint.config.mjs`). They are kept together with the code: they hold no secrets, and the whole team builds the same way.
+
+  - id: build-flow
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Модулі, .env, bundle і source map"
+      en: "Modules, .env, bundle and source map"
+    textEquivalent:
+      uk: >-
+        Два вихідні модулі, src/main.mjs і money.mjs, і файл .env потрапляють у збирання build.mjs, яке
+        запускає esbuild. Збирання пише стиснутий bundle dist/app.js і карту dist/app.js.map. Значення
+        APP_TITLE з .env вписується просто в текст bundle. У браузері виконується bundle, але DevTools
+        читають карту й показують money.mjs: breakpoint у рядку money.mjs перекладається через карту на
+        місце в bundle, яке справді виконується.
+      en: >-
+        Two source modules, src/main.mjs and money.mjs, and the .env file go into the build, build.mjs,
+        which runs esbuild. The build writes the minified bundle dist/app.js and the map
+        dist/app.js.map. The APP_TITLE value from .env is written straight into the bundle’s text. The
+        browser runs the bundle, but DevTools read the map and show money.mjs: a breakpoint on a line of
+        money.mjs is translated through the map to the place in the bundle that actually runs.
+    spec:
+      layout: grid
+      nodes:
+        - { id: main, label: "src/main.mjs", w: 130, col: 0, row: 0 }
+        - { id: money, label: "money.mjs", w: 130, col: 1, row: 0 }
+        - { id: build, label: "build.mjs", shape: round, w: 130, col: 0, row: 1 }
+        - { id: env, label: ".env", shape: note, w: 130, col: 1, row: 1 }
+        - { id: bundle, label: "dist/app.js", w: 130, col: 0, row: 2 }
+        - { id: map, label: "dist/app.js.map", w: 140, col: 1, row: 2 }
+        - { id: devtools, label: "DevTools", shape: pill, w: 130, col: 0, row: 3 }
+      edges:
+        - { id: main-build, from: main, to: build }
+        - { id: money-build, from: money, to: build }
+        - { id: env-build, from: env, to: build, kind: dashed, label: "APP_TITLE" }
+        - { id: write-bundle, from: build, to: bundle }
+        - { id: write-map, from: build, to: map }
+        - { id: runs, from: bundle, to: devtools, label: { uk: "виконується", en: "runs" } }
+        - { id: shows, from: map, to: devtools, label: "money.mjs:5" }
+      steps:
+        - caption:
+            uk: "Вихідні модулі й `.env` — на вході, `dist/` — на виході, DevTools — там, де ти налагоджуєш."
+            en: "Source modules and `.env` go in, `dist/` comes out, DevTools are where you debug."
+        - highlight: [main, money, build, bundle, main-build, money-build, write-bundle]
+          caption:
+            uk: "`npm run build`: esbuild іде від `src/main.mjs` по всіх `import` і складає їх в один стиснутий `dist/app.js`."
+            en: "`npm run build`: esbuild follows every `import` from `src/main.mjs` and puts them into one minified `dist/app.js`."
+        - highlight: [env, env-build, build, bundle, write-bundle]
+          annotate:
+            - { id: bundle, text: { uk: "\"Family budget\" у тексті", en: "\"Family budget\" in the text" } }
+          caption:
+            uk: "Значення `APP_TITLE` з `.env` **вписується** в bundle під час збирання. Змінив `.env` — збери знову, інакше нічого не зміниться."
+            en: "The value of `APP_TITLE` from `.env` is **written into** the bundle during the build. Change `.env` — build again, otherwise nothing changes."
+        - highlight: [build, map, write-map]
+          caption:
+            uk: "Поруч esbuild пише `app.js.map`: таблицю «це місце bundle — з цього файла, рядка коду й стовпчика»."
+            en: "Next to it esbuild writes `app.js.map`: a table of “this place in the bundle came from this file, line and column”."
+        - highlight: [map, shows, devtools, bundle, runs]
+          caption:
+            uk: "Breakpoint на рядку 5 у `money.mjs`: DevTools через карту знаходять місце в bundle і зупиняють **його** — а показують тобі твій модуль."
+            en: "A breakpoint on line 5 of `money.mjs`: through the map DevTools find the place in the bundle and pause **it** — while showing you your module."
+
+  - id: recall-step-over
+    kind: review
+    title:
+      uk: "Згадай: покрокове виконання"
+      en: "Recall: stepping"
+    items:
+      - id: step-over-runs
+        from: js-09-06-debugger-breakpoints
+        prompt:
+          uk: "Програма зупинилася на breakpoint у рядку коду `const text = formatMinor(total);`. Ти натискаєш Step over. Що відбувається з викликом `formatMinor`?"
+          en: "The program paused at a breakpoint on the line `const text = formatMinor(total);`. You press Step over. What happens to the call to `formatMinor`?"
+        answer:
+          type: choice
+          options:
+            - id: runs-whole
+              text:
+                uk: "Виклик виконується повністю, і пауза переходить на наступний рядок коду — `text` уже має значення"
+                en: "The call runs completely, and the pause moves to the next line — `text` already has a value"
+            - id: skipped
+              text:
+                uk: "Виклик пропускається, і `text` лишається без значення"
+                en: "The call is skipped, and `text` stays without a value"
+              why:
+                uk: "Step over нічого не пропускає: він лише не заходить **усередину** функції, а виконує її цілком."
+                en: "Step over skips nothing: it only does not go **inside** the function; it runs it completely."
+            - id: goes-inside
+              text:
+                uk: "Пауза переходить на перший рядок коду всередині `formatMinor`"
+                en: "The pause moves to the first line inside `formatMinor`"
+              why:
+                uk: "Це робить Step into. Step over лишається в поточній функції."
+                en: "That is what Step into does. Step over stays in the current function."
+          correct: [runs-whole]
+        explanation:
+          uk: "Step over виконує весь рядок коду, разом із викликами в ньому, і зупиняється на наступному. Сьогодні ти робитимеш те саме в коді, що працює зі стиснутого bundle, — завдяки source map."
+          en: "Step over runs the whole line, calls included, and pauses on the next one. Today you will do the same in code that runs from a minified bundle — thanks to the source map."
+
+  - id: build-lab
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Зібрати, відкрити, налагодити, налаштувати"
+      en: "Build, open, debug, configure"
+    intro:
+      uk: |
+        Працюєш у `~/js-course/money-lab`. Тобі знадобиться інтернет для встановлення збирача esbuild (безкоштовний, без облікового запису), Google Chrome і **два вікна терміналу**: в одному працюватиме сервер, у другому — решта команд. Команди однакові на macOS, Linux і Windows PowerShell.
+
+        Вміст файлів для кроків — копіюй його точно:
+
+        **Крок 2 — `src/main.mjs`:**
+
+        ```js
+        // src/main.mjs: the page's entry module.
+        import { totalMinor, formatMinor } from "../money.mjs";
+
+        const expenses = [
+          { label: "Weekly groceries", amountMinor: 84550 },
+          { label: "Transit pass", amountMinor: 52000 },
+        ];
+
+        const total = totalMinor(expenses);
+        document.querySelector("h1").textContent = APP_TITLE;
+        document.querySelector("#total").textContent = formatMinor(total);
+        ```
+
+        **Крок 2 — `src/index.html`:**
+
+        ```html
+        <!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <title>Money lab</title>
+          </head>
+          <body>
+            <h1></h1>
+            <p>Total: <output id="total"></output></p>
+            <script src="app.js"></script>
+          </body>
+        </html>
+        ```
+
+        **Крок 2 — `build.mjs`:**
+
+        ```js
+        // build.mjs: bundles src/main.mjs and its imports into dist/app.js with a source map.
+        import { copyFileSync } from "node:fs";
+        import * as esbuild from "esbuild";
+
+        const title = process.env.APP_TITLE ?? "Money lab";
+
+        await esbuild.build({
+          entryPoints: ["src/main.mjs"],
+          bundle: true,
+          minify: true,
+          sourcemap: true,
+          outfile: "dist/app.js",
+          define: { APP_TITLE: JSON.stringify(title) },
+        });
+        copyFileSync("src/index.html", "dist/index.html");
+        console.log(`Built dist/app.js with APP_TITLE = ${title}`);
+        ```
+
+        **Крок 5 — `.env`:**
+
+        ```text
+        APP_TITLE=Family budget
+        ```
+
+        **Крок 5 — `.gitignore`:**
+
+        ```text
+        node_modules/
+        dist/
+        .env
+        ```
+
+        **Крок 6 — `eslint.config.mjs`:**
+
+        ```js
+        // eslint.config.mjs: which lint rules apply to this project.
+        import js from "@eslint/js";
+
+        export default [
+          { ignores: ["dist/"] },
+          js.configs.recommended,
+          {
+            languageOptions: { globals: { console: "readonly", process: "readonly" } },
+            rules: { "no-shadow": "error" },
+          },
+          {
+            files: ["src/**"],
+            languageOptions: {
+              globals: { document: "readonly", APP_TITLE: "readonly" },
+            },
+          },
+        ];
+        ```
+      en: |
+        You work in `~/js-course/money-lab`. You need internet access to install the esbuild bundler (free, no account), Google Chrome and **two terminal windows**: a server runs in one, everything else in the other. The commands are the same on macOS, Linux and Windows PowerShell.
+
+        File contents for the steps — copy them exactly:
+
+        **Step 2 — `src/main.mjs`:**
+
+        ```js
+        // src/main.mjs: the page's entry module.
+        import { totalMinor, formatMinor } from "../money.mjs";
+
+        const expenses = [
+          { label: "Weekly groceries", amountMinor: 84550 },
+          { label: "Transit pass", amountMinor: 52000 },
+        ];
+
+        const total = totalMinor(expenses);
+        document.querySelector("h1").textContent = APP_TITLE;
+        document.querySelector("#total").textContent = formatMinor(total);
+        ```
+
+        **Step 2 — `src/index.html`:**
+
+        ```html
+        <!doctype html>
+        <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <title>Money lab</title>
+          </head>
+          <body>
+            <h1></h1>
+            <p>Total: <output id="total"></output></p>
+            <script src="app.js"></script>
+          </body>
+        </html>
+        ```
+
+        **Step 2 — `build.mjs`:**
+
+        ```js
+        // build.mjs: bundles src/main.mjs and its imports into dist/app.js with a source map.
+        import { copyFileSync } from "node:fs";
+        import * as esbuild from "esbuild";
+
+        const title = process.env.APP_TITLE ?? "Money lab";
+
+        await esbuild.build({
+          entryPoints: ["src/main.mjs"],
+          bundle: true,
+          minify: true,
+          sourcemap: true,
+          outfile: "dist/app.js",
+          define: { APP_TITLE: JSON.stringify(title) },
+        });
+        copyFileSync("src/index.html", "dist/index.html");
+        console.log(`Built dist/app.js with APP_TITLE = ${title}`);
+        ```
+
+        **Step 5 — `.env`:**
+
+        ```text
+        APP_TITLE=Family budget
+        ```
+
+        **Step 5 — `.gitignore`:**
+
+        ```text
+        node_modules/
+        dist/
+        .env
+        ```
+
+        **Step 6 — `eslint.config.mjs`:**
+
+        ```js
+        // eslint.config.mjs: which lint rules apply to this project.
+        import js from "@eslint/js";
+
+        export default [
+          { ignores: ["dist/"] },
+          js.configs.recommended,
+          {
+            languageOptions: { globals: { console: "readonly", process: "readonly" } },
+            rules: { "no-shadow": "error" },
+          },
+          {
+            files: ["src/**"],
+            languageOptions: {
+              globals: { document: "readonly", APP_TITLE: "readonly" },
+            },
+          },
+        ];
+        ```
+    tools:
+      - name: "Node.js"
+        version: { uk: "22.13 або новіша (потрібна для --env-file-if-exists)", en: "22.13 or newer (needed for --env-file-if-exists)" }
+      - name: "esbuild"
+        version: { uk: "встановлюється в цьому завданні (перевірено з 0.28.2)", en: "installed by this task (checked with 0.28.2)" }
+      - name: "Google Chrome"
+        version: { uk: "поточна версія для комп’ютера", en: "current desktop version" }
+      - name: { uk: "Редактор коду", en: "A code editor" }
+        version: { uk: "VS Code або будь-який редактор простого тексту", en: "VS Code or any plain-text editor" }
+    steps:
+      - text:
+          uk: |
+            Встанови збирач і подивись, у яких пакетів проєкту є install scripts — код, який npm щойно запустив:
+          en: |
+            Install the bundler and see which packages of the project have install scripts — code npm has just run:
+        command: "cd ~/js-course/money-lab\nnpm install --save-dev esbuild\nnpm query \":attr(scripts, [postinstall])\""
+        expect:
+          uk: |
+            `added 2 packages, …` — сам esbuild і готова програма для твоєї системи. `npm query` друкує JSON-список з одним пакетом:
+
+            ```text
+            "name": "esbuild",
+            "version": "0.28.2",
+            …
+            "scripts": {
+              "postinstall": "node install.js"
+            },
+            ```
+
+            Цей `postinstall` перевіряє, що програма для твоєї системи на місці. Так виглядає код пакета, що виконується під час `npm install`.
+          en: |
+            `added 2 packages, …` — esbuild itself and a ready-made program for your system. `npm query` prints a JSON list with one package:
+
+            ```text
+            "name": "esbuild",
+            "version": "0.28.2",
+            …
+            "scripts": {
+              "postinstall": "node install.js"
+            },
+            ```
+
+            This `postinstall` checks that the program for your system is in place. This is what package code that runs during `npm install` looks like.
+      - text:
+          uk: |
+            Створи теку `src` з файлами `src/main.mjs` і `src/index.html`, а в корені проєкту — `build.mjs`, конфігурацію збирання. Їхній вміст — у вступі до завдання (позначки «Крок 2»). `define` у `build.mjs` замінює в коді назву `APP_TITLE` на текст у лапках. Додай scripts і збери:
+          en: |
+            Create the folder `src` with the files `src/main.mjs` and `src/index.html`, and `build.mjs` — the build configuration — in the project root. Their contents are in the task introduction (marked “Step 2”). `define` in `build.mjs` replaces the name `APP_TITLE` in the code with text in quotes. Add the scripts and build:
+        command: "npm pkg set \"scripts.build=node --env-file-if-exists=.env build.mjs\" \"scripts.serve=esbuild --servedir=dist --serve=127.0.0.1:8123\"\nnpm run build\nls dist"
+        expect:
+          uk: |
+            ```text
+            > money-lab@1.0.0 build
+            > node --env-file-if-exists=.env build.mjs
+
+            .env not found. Continuing without it.
+            Built dist/app.js with APP_TITLE = Money lab
+            ```
+
+            Рядок про `.env` лише повідомляє, що файла ще немає, — це нормально, ти створиш його пізніше. `ls dist` показує `app.js`, `app.js.map` і `index.html`. Відкрий `dist/app.js` у редакторі: увесь код — один рядок, а під ним — `//# sourceMappingURL=app.js.map`.
+          en: |
+            ```text
+            > money-lab@1.0.0 build
+            > node --env-file-if-exists=.env build.mjs
+
+            .env not found. Continuing without it.
+            Built dist/app.js with APP_TITLE = Money lab
+            ```
+
+            The `.env` line only tells you that the file does not exist yet — that is fine, you will create it later. `ls dist` shows `app.js`, `app.js.map` and `index.html`. Open `dist/app.js` in the editor: all the code is one line, and under it is `//# sourceMappingURL=app.js.map`.
+      - text:
+          uk: "Запусти локальний сервер для теки `dist` і **не закривай це вікно терміналу**. Відкрий у Chrome адресу, яку він надрукує."
+          en: "Start a local server for the `dist` folder and **leave this terminal window open**. Open the address it prints in Chrome."
+        command: "npm run serve"
+        expect:
+          uk: |
+            ```text
+             > Local: http://127.0.0.1:8123/
+            ```
+
+            На сторінці заголовок «Money lab» і `Total: 1365.50 UAH`. Сервер працює, доки ти не натиснеш Ctrl + C у цьому вікні.
+          en: |
+            ```text
+             > Local: http://127.0.0.1:8123/
+            ```
+
+            The page shows the heading “Money lab” and `Total: 1365.50 UAH`. The server runs until you press Ctrl + C in this window.
+      - text:
+          uk: |
+            Налагодь стиснутий код через source map. У Chrome відкрий DevTools (F12, на macOS — Cmd + Option + I) → вкладка **Sources**. Натисни Cmd + P (Windows/Linux: Ctrl + P), набери `money.mjs` і відкрий файл. Клацни номер рядка 5 (`total += expense.amountMinor;`) — з’явиться позначка breakpoint. Онови сторінку.
+          en: |
+            Debug the minified code through the source map. In Chrome open DevTools (F12, on macOS Cmd + Option + I) → the **Sources** tab. Press Cmd + P (Windows/Linux: Ctrl + P), type `money.mjs` and open the file. Click line number 5 (`total += expense.amountMinor;`) — a breakpoint marker appears. Reload the page.
+        expect:
+          uk: "Виконання зупиняється в **твоєму** `money.mjs` на рядку 5, хоча браузер завантажив лише `app.js`. Натисни Step over двічі й подивись у Scope: поточна сума зростає (стиснуті назви змінних можуть показуватися коротко, як-от `o`). Потім прибери breakpoint і натисни Resume (F8)."
+          en: "Execution pauses in **your** `money.mjs` on line 5, even though the browser loaded only `app.js`. Press Step over twice and look at Scope: the running total grows (minified variable names may show up short, such as `o`). Then remove the breakpoint and press Resume (F8)."
+      - text:
+          uk: |
+            Тепер конфігурація. У **другому** вікні терміналу перейди в проєкт. У редакторі створи в `money-lab` файл `.env` з одним рядком і файл `.gitignore` (вміст обох — у вступі до завдання, позначки «Крок 5»). `.gitignore` — список того, чого система історії Git (наступний урок) не братиме в історію, навіть коли ти додаєш усі файли разом: залежності, результат збірки й `.env`. Збери знову й онови сторінку в Chrome:
+          en: |
+            Now configuration. In the **second** terminal window go to the project. In the editor create the file `.env` with one line and the file `.gitignore` in `money-lab` (both contents are in the task introduction, marked “Step 5”). `.gitignore` is the list of what the Git history system (next lesson) will leave out of the history, even when you add all files at once: dependencies, the build result and `.env`. Build again and reload the page in Chrome:
+        command: "cd ~/js-course/money-lab\nnpm run build"
+        expect:
+          uk: "`Built dist/app.js with APP_TITLE = Family budget`, без рядка про відсутній `.env`. Після оновлення заголовок сторінки — «Family budget». Пошук `Family budget` у `dist/app.js` у редакторі знаходить це значення просто в тексті bundle."
+          en: "`Built dist/app.js with APP_TITLE = Family budget`, without the line about a missing `.env`. After reloading, the page heading is “Family budget”. Searching for `Family budget` in `dist/app.js` in the editor finds the value right in the bundle’s text."
+      - text:
+          uk: |
+            Нарешті приведи до ладу інструменти з минулого уроку: тепер у проєкті є код для браузера (`document`, `APP_TITLE`), для Node.js (`process`) і результат збірки, який не треба перевіряти. Заміни вміст `eslint.config.mjs` новим із вступу до завдання (позначка «Крок 6»). Prettier сам пропускає все, що перелічено в `.gitignore`.
+          en: |
+            Finally, tidy up the tools from the last lesson: the project now has browser code (`document`, `APP_TITLE`), Node.js code (`process`) and a build result that needs no checking. Replace the contents of `eslint.config.mjs` with the new one from the task introduction (marked “Step 6”). Prettier skips everything listed in `.gitignore` by itself.
+        command: "npm run lint\nnpm run format:check"
+        expect:
+          uk: "`lint` — без знахідок; `format:check` — `All matched files use Prettier code style!`. Сервер у першому вікні зупини Ctrl + C, коли закінчиш."
+          en: "`lint` — no findings; `format:check` — `All matched files use Prettier code style!`. Stop the server in the first window with Ctrl + C when you are done."
+    verify:
+      - id: built
+        text:
+          uk: "`npm run build` створив `dist/app.js` (один стиснутий рядок) і `dist/app.js.map`."
+          en: "`npm run build` created `dist/app.js` (one minified line) and `dist/app.js.map`."
+      - id: paused-in-source
+        text:
+          uk: "Breakpoint у `money.mjs` зупинив виконання в моєму модулі, хоча браузер виконував `app.js`."
+          en: "The breakpoint in `money.mjs` paused execution in my module, even though the browser ran `app.js`."
+      - id: env-changed
+        text:
+          uk: "Після `.env` і нової збірки заголовок став «Family budget», і я знайшов це значення в тексті `dist/app.js`."
+          en: "After `.env` and a new build the heading became “Family budget”, and I found that value in the text of `dist/app.js`."
+      - id: tools-clean
+        text:
+          uk: "З новою конфігурацією `npm run lint` і `npm run format:check` пройшли без знахідок."
+          en: "With the new configuration `npm run lint` and `npm run format:check` passed with no findings."
+    troubleshooting:
+      - problem:
+          uk: "`node: bad option: --env-file-if-exists=.env`"
+          en: "`node: bad option: --env-file-if-exists=.env`"
+        fix:
+          uk: "Твоя версія Node.js старша за 22.9 — а курс вимагає 22.13 або новішу. Перевір `node --version` і онови Node.js."
+          en: "Your Node.js is older than 22.9 — and the course requires 22.13 or newer. Check `node --version` and update Node.js."
+      - problem:
+          uk: "Сторінка показує порожній заголовок або `Total:` без суми"
+          en: "The page shows an empty heading or `Total:` without an amount"
+        fix:
+          uk: "Bundle не завантажився або впав. У DevTools відкрий Console: `app.js` 404 означає, що збірка не відбулася (`npm run build`); `ReferenceError` вкаже на рядок твого модуля — завдяки source map."
+          en: "The bundle did not load or crashed. Open Console in DevTools: `app.js` 404 means the build did not happen (`npm run build`); a `ReferenceError` points at a line of your module — thanks to the source map."
+      - problem:
+          uk: "Після зміни `.env` заголовок не змінився"
+          en: "After changing `.env` the heading did not change"
+        fix:
+          uk: "Значення вписується під час збирання: запусти `npm run build` знову, потім онови сторінку. Перевір, що файл називається саме `.env` (а не `.env.txt`) і лежить у `money-lab`."
+          en: "The value is written in during the build: run `npm run build` again, then reload the page. Check that the file is called exactly `.env` (not `.env.txt`) and lies in `money-lab`."
+      - problem:
+          uk: "Cmd/Ctrl + P у Sources не знаходить `money.mjs`"
+          en: "Cmd/Ctrl + P in Sources does not find `money.mjs`"
+        fix:
+          uk: "DevTools не отримали карту. Переконайся, що в `build.mjs` є `sourcemap: true`, що в `dist` є `app.js.map`, і онови сторінку з відкритими DevTools."
+          en: "DevTools did not get the map. Make sure `build.mjs` has `sourcemap: true`, that `dist` contains `app.js.map`, and reload the page with DevTools open."
+      - problem:
+          uk: "Браузер на `127.0.0.1:8123` показує інший сайт або не відкривається"
+          en: "The browser shows another site at `127.0.0.1:8123` or does not open it"
+        fix:
+          uk: "Ймовірно, порт зайнятий іншою програмою. Зупини сервер (Ctrl + C), заміни `8123` в script `serve` на інше число від 1024 до 65535 (`npm pkg set \"scripts.serve=esbuild --servedir=dist --serve=127.0.0.1:8124\"`) і запусти знову."
+          en: "Another program probably uses that port. Stop the server (Ctrl + C), change `8123` in the `serve` script to another number between 1024 and 65535 (`npm pkg set \"scripts.serve=esbuild --servedir=dist --serve=127.0.0.1:8124\"`) and start it again."
+    recovery:
+      uk: "Тека `dist` — лише результат: її можна видалити будь-коли, `npm run build` створить її знову. `.env` — твій локальний файл: якщо щось заплуталося, видали його, і збірка повернеться до назви за замовчуванням «Money lab»."
+      en: "The `dist` folder is only a result: you can delete it at any time, `npm run build` creates it again. `.env` is your local file: if something got tangled, delete it, and the build falls back to the default title “Money lab”."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-15
+    body:
+      uk: "Під час експорту в JS-10 твій проєкт отримає таку саму пару «вихідні модулі → збірка», і ти налагоджуватимеш його доменні функції в DevTools через source map, а не в стиснутому bundle."
+      en: "With the export in JS-10 your project gets the same pair of “source modules → build”, and you will debug its domain functions in DevTools through a source map, not in the minified bundle."

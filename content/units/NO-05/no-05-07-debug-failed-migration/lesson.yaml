@@ -1,0 +1,284 @@
+id: no-05-07-debug-failed-migration
+unit: NO-05
+title:
+  uk: "Налагодження: невдала міграція"
+  en: "Debug: a failed migration"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Діагностувати міграцію, яка впала на півдорозі, лишила записи в змішаній формі й усе одно підняла версію."
+    en: "Diagnose a migration that crashed half-way, left records in mixed shapes and bumped the version anyway."
+  - uk: "Виправити її так, щоб вона працювала «все або нічого» (на копії з атомарною заміною) і записувала версію останньою, а потім відновити напівперенесене сховище з перевіреного backup."
+    en: "Repair it to run all-or-nothing (on a copy with an atomic swap) and set the version last, then recover the half-migrated store from its verified backup."
+prerequisites: [no-05-06-concurrency-repository]
+subskills:
+  - { family: B-05, skill: "migration/versioning", depth: assess }
+  - { family: B-05, skill: "corruption/recovery", depth: assess }
+glossary: []
+selfCheck: [predict-half, fix-migration]
+
+blocks:
+  - id: the-report
+    kind: explanation
+    title:
+      uk: "Звернення: «після оновлення список зламався»"
+      en: "A report: “the list broke after the update”"
+    body:
+      uk: |
+        Сервер списку для читання оновили до версії, що переводить сховище зі `schemaVersion` 1 на 2: `pages` стає числом, `finished` — `true`/`false`. Під час запуску міграція впала з `TypeError`. Після перезапуску сервер не падає — але частина книжок показує `finished: "yes"` замість галочки, а повторний запуск міграції відповідає `already`.
+
+        Номер версії каже «перенесено», а дані кажуть інше. Причин тут три, і кожна з уже знайомих тобі уроків:
+
+        - перетворення не враховує запис, який колись зберіг старіший клієнт;
+        - версію записано **першою**, а записи зберігаються по одному — збій посередині лишає змішану форму;
+        - відновлення довіряє номеру версії, а не перевірці форми.
+
+        Спершу передбач, що лишиться у файлі, потім запусти й порівняй, а тоді виправ.
+      en: |
+        The reading list server was updated to a version that moves the store from `schemaVersion` 1 to 2: `pages` becomes a number, `finished` becomes `true`/`false`. On start the migration crashed with a `TypeError`. After a restart the server does not crash — but some books show `finished: "yes"` instead of a tick, and running the migration again answers `already`.
+
+        The version number says “migrated”, and the data says otherwise. There are three causes here, each from a lesson you already know:
+
+        - the transformation does not allow for a record an older client once stored;
+        - the version is written **first**, and the records are saved one by one — a crash in the middle leaves mixed shapes;
+        - recovery trusts the version number instead of a check of the shape.
+
+        First predict what is left in the file, then run it and compare, and then fix it.
+
+  - id: predict-half
+    kind: prediction
+    prompt:
+      uk: "Ця модель повторює міграцію зі звернення: версія записується першою, а кожна книжка зберігається відразу після перетворення. Четверта книжка має `pages` числом. Що надрукує програма?"
+      en: "This model repeats the migration from the report: the version is written first, and each book is saved right after its transformation. The fourth book has `pages` as a number. What does the program print?"
+    code: |
+      let disk = JSON.stringify({
+        schemaVersion: 1,
+        records: [
+          { id: "b-01", pages: "312", finished: "yes" },
+          { id: "b-02", pages: "96", finished: "no" },
+          { id: "b-03", pages: "450", finished: "no" },
+          { id: "b-04", pages: 280, finished: "yes" },
+          { id: "b-05", pages: "64", finished: "no" },
+        ],
+      });
+      const save = (store) => { disk = JSON.stringify(store); };
+
+      function upgrade() {
+        const store = JSON.parse(disk);
+        store.schemaVersion = 2;
+        save(store);
+        for (const book of store.records) {
+          book.pages = Number(book.pages.trim());
+          book.finished = book.finished === "yes";
+          save(store);
+        }
+      }
+
+      try {
+        upgrade();
+      } catch (error) {
+        console.log(error.name);
+      }
+      const after = JSON.parse(disk);
+      console.log(after.schemaVersion, after.records.map((book) => typeof book.finished).join(","));
+    verify:
+      logs: ["TypeError", "2 boolean,boolean,boolean,string,string"]
+    answer:
+      type: choice
+      options:
+        - id: mixed
+          code: "TypeError\n2 boolean,boolean,boolean,string,string"
+        - id: untouched
+          code: "TypeError\n1 string,string,string,string,string"
+          why:
+            uk: "Так було б, якби міграція нічого не записувала до кінця. Але `save` викликається одразу після зміни версії й після кожної книжки, тож файл уже змінено."
+            en: "That would be so if the migration wrote nothing until the end. But `save` is called right after the version change and after each book, so the file has already changed."
+        - id: all-done
+          code: "TypeError\n2 boolean,boolean,boolean,boolean,boolean"
+          why:
+            uk: "Цикл зупинився на `b-04`: `280.trim` не існує, і `TypeError` перериває його до четвертої й п’ятої книжок."
+            en: "The loop stopped at `b-04`: `280.trim` does not exist, and the `TypeError` cuts it off before the fourth and fifth books."
+        - id: version-one-mixed
+          code: "TypeError\n1 boolean,boolean,boolean,string,string"
+          why:
+            uk: "Версію записано першою, ще до циклу, тож у файлі вже `2` — хоча дві книжки досі в старій формі."
+            en: "The version is written first, before the loop, so the file already says `2` — although two books are still in the old shape."
+      correct: [mixed]
+    explanation:
+      uk: "Файл каже `schemaVersion: 2`, але дві останні книжки досі мають `finished` текстом. Повторна міграція перевіряє лише номер версії й відповідає «вже перенесено», тож ці книжки лишаться зламаними назавжди, якщо їх не відновити."
+      en: "The file says `schemaVersion: 2`, but the last two books still hold `finished` as text. A repeated migration checks only the version number and answers “already migrated”, so these books stay broken for good unless they are recovered."
+
+  - id: seeded-migration
+    kind: example
+    runtime: isolated-node
+    dir: seeded-migration
+    entry: index.js
+    strings:
+      b1: { uk: "Книжка про космос", en: "A book about space" }
+      b2: { uk: "Збірка казок", en: "A collection of fairy tales" }
+      b3: { uk: "Посібник із фотографії", en: "A photography guide" }
+      b4: { uk: "Роман про море", en: "A novel about the sea" }
+      b5: { uk: "Вірші для дітей", en: "Poems for children" }
+    title:
+      uk: "Справжній файл після невдалої міграції"
+      en: "The real file after the failed migration"
+    body:
+      uk: "Натисни **Запустити**. `index.js` записує список для читання версії 1, запускає `upgrade` з `migrate.js` — ту саму міграцію, що й у зверненні, — і друкує, що лишилося у файлі. Порівняй із прогнозом: версію, форму кожної книжки й відповідь повторного `upgrade`."
+      en: "Press **Run**. `index.js` writes a version 1 reading list, runs `upgrade` from `migrate.js` — the same migration as in the report — and prints what is left in the file. Compare with your prediction: the version, the shape of each book and the answer of the repeated `upgrade`."
+    tryIt:
+      uk: "У `migrate.js` перенеси рядок `await writeFile(file, JSON.stringify(store)); // record the new version` з-перед циклу на місце після циклу й видали збереження всередині циклу. Запусти: `TypeError` той самий, але тепер файл лишається версії 1 і цілим, а повторний `upgrade` знову падає на `b-04`, замість того щоб відповісти `already`. Половину помилки виправлено; друга половина — у `migrateBook`, і це вже вправа."
+      en: "In `migrate.js`, move the line `await writeFile(file, JSON.stringify(store)); // record the new version` from before the loop to after it, and delete the save inside the loop. Run: the `TypeError` is the same, but now the file stays version 1 and whole, and the repeated `upgrade` fails on `b-04` again instead of answering `already`. Half of the bug is fixed; the other half is in `migrateBook`, and that is the exercise."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: міграція знімка в застосунку"
+      en: "Recall: migrating a snapshot in the app"
+    items:
+      - id: newer-snapshot
+        from: rn-05-03-schema-migration
+        prompt:
+          uk: "Застосунок під час завантаження переносить збережений знімок на свою поточну `schemaVersion`. Він знаходить знімок, **новіший** за ту версію, яку розуміє. Що він має зробити зі збереженими даними?"
+          en: "On load, an app migrates a saved snapshot to its current `schemaVersion`. It finds a snapshot **newer** than the version it understands. What must it do with the saved data?"
+        answer:
+          type: choice
+          options:
+            - id: keep
+              text:
+                uk: "Лишити їх і не перезаписувати: нова версія застосунку зможе їх прочитати"
+                en: "Keep them and not overwrite them: a newer version of the app will be able to read them"
+            - id: downgrade
+              text:
+                uk: "Перетворити їх на свою версію, викинувши незнайомі поля"
+                en: "Turn them into its own version, dropping the unknown fields"
+              why:
+                uk: "Так застосунок назавжди знищить те, що записала новіша версія. Невідоме не перетворюють — його лишають як є."
+                en: "That way the app destroys for good what the newer version wrote. What is unknown is not converted — it is left as it is."
+            - id: reset
+              text:
+                uk: "Почати з порожніх даних, бо прочитати їх не можна"
+                en: "Start with empty data, because they cannot be read"
+              why:
+                uk: "Порожні дані, збережені поверх, — та сама тиха втрата. Знімок лишають, а людині кажуть, що дані з новішої версії."
+                en: "Empty data saved on top is the same silent loss. The snapshot is kept, and the person is told the data comes from a newer version."
+          correct: [keep]
+        explanation:
+          uk: "Номер версії — обіцянка про форму даних, але лише обіцянка. І в застосунку, і на сервері міграція має або повністю перевести дані, або не чіпати їх зовсім — і ніколи не записувати поверх того, чого не розуміє."
+          en: "A version number is a promise about the shape of the data, but only a promise. In an app and on a server alike, a migration must either move the data completely or not touch it at all — and never write over what it does not understand."
+
+  - id: fix-migration
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: fix-migration
+    entry: index.js
+    editable: [migrate.js]
+    strings:
+      b1: { uk: "Книжка про космос", en: "A book about space" }
+      b2: { uk: "Збірка казок", en: "A collection of fairy tales" }
+      b3: { uk: "Посібник із фотографії", en: "A photography guide" }
+      b4: { uk: "Роман про море", en: "A novel about the sea" }
+      b5: { uk: "Вірші для дітей", en: "Poems for children" }
+      about: { uk: "близько 300", en: "about 300" }
+    title:
+      uk: "Виправ міграцію й відновлення"
+      en: "Fix the migration and the recovery"
+    instructions:
+      uk: |
+        У `migrate.js` — міграція зі звернення. Запусти програму: `upgrade` падає й лишає змішане сховище версії 2, а `recoverAndUpgrade` відповідає `already`. Виправ три функції.
+
+        `migrateBook(book)` повертає **новий** об’єкт (отриманий не змінює): `pages` — ціле число ≥ 0 і з тексту на кшталт `"312"` чи `" 450 "`, і із числа `280`; `finished` — `true` для `"yes"`, інакше `false`. Якщо `pages` не стає цілим числом ≥ 0 — кидає помилку.
+
+        `upgrade(file)` — «все або нічого»: для версії 2 відповідає `'already'` й не чіпає файл; для версії 1 переводить усі книжки в пам’яті й лише потім **одним атомарним записом** ставить `{ schemaVersion: 2, records }` на місце файла, відповідаючи `'migrated'`. Якщо хоч одна книжка не переводиться — відхиляється, а файл лишається версії 1 байт у байт.
+
+        `recoverAndUpgrade(file, backupPath)`:
+
+        - сховище проходить `isValidV2` з `check.js` → `'ok'`, нічого не змінює;
+        - сховище версії 1 → те саме, що `upgrade`;
+        - інакше воно напівперенесене: якщо `isVerified(backupPath)` — перейменувати `file` на `` `${file}.half-migrated` ``, відновити backup на місце `file`, перенести його й відповісти `'recovered'`; якщо backup не перевірено — відхилитися й нічого не змінювати.
+      en: |
+        `migrate.js` holds the migration from the report. Run the program: `upgrade` crashes and leaves a mixed version 2 store, and `recoverAndUpgrade` answers `already`. Fix three functions.
+
+        `migrateBook(book)` returns a **new** object (it does not change the one it gets): `pages` is a whole number ≥ 0 both from text such as `"312"` or `" 450 "` and from the number `280`; `finished` is `true` for `"yes"`, otherwise `false`. If `pages` does not become a whole number ≥ 0, it throws an error.
+
+        `upgrade(file)` is all-or-nothing: for version 2 it answers `'already'` and does not touch the file; for version 1 it moves every book in memory and only then puts `{ schemaVersion: 2, records }` in place of the file **in one atomic write**, answering `'migrated'`. If even one book cannot be moved, it rejects, and the file stays version 1 byte for byte.
+
+        `recoverAndUpgrade(file, backupPath)`:
+
+        - the store passes `isValidV2` from `check.js` → `'ok'`, changes nothing;
+        - a version 1 store → the same as `upgrade`;
+        - otherwise it is half-migrated: if `isVerified(backupPath)` — rename `file` to `` `${file}.half-migrated` ``, restore the backup into the place of `file`, migrate it and answer `'recovered'`; if the backup is not verified — reject and change nothing.
+    testTitles:
+      "migrateBook converts pages to a number and finished to a boolean":
+        uk: "`migrateBook` перетворює `pages` на число, а `finished` — на `true`/`false`"
+        en: "`migrateBook` converts `pages` to a number and `finished` to a boolean"
+      "migrateBook does not change the book it gets":
+        uk: "`migrateBook` не змінює отриману книжку"
+        en: "`migrateBook` does not change the book it gets"
+      "migrateBook throws for pages that are not a whole number":
+        uk: "`migrateBook` кидає помилку, якщо `pages` — не ціле число"
+        en: "`migrateBook` throws for `pages` that are not a whole number"
+      "upgrade migrates a v1 file to v2":
+        uk: "`upgrade` переводить файл версії 1 на версію 2"
+        en: "`upgrade` migrates a v1 file to v2"
+      "upgrade of a v2 file changes nothing":
+        uk: "`upgrade` файла версії 2 нічого не змінює"
+        en: "`upgrade` of a v2 file changes nothing"
+      "when a book cannot be migrated, upgrade rejects and the file stays v1 byte for byte":
+        uk: "Якщо книжку не можна перенести, `upgrade` відхиляється, а файл лишається версії 1 байт у байт"
+        en: "When a book cannot be migrated, `upgrade` rejects and the file stays v1 byte for byte"
+      "recoverAndUpgrade leaves a valid v2 store alone":
+        uk: "`recoverAndUpgrade` не чіпає правильне сховище версії 2"
+        en: "`recoverAndUpgrade` leaves a valid v2 store alone"
+      "recoverAndUpgrade restores a half-migrated store from the verified backup and migrates it":
+        uk: "`recoverAndUpgrade` відновлює напівперенесене сховище з перевіреного backup і переносить його"
+        en: "`recoverAndUpgrade` restores a half-migrated store from the verified backup and migrates it"
+      "the half-migrated store is kept as reading.json.half-migrated":
+        uk: "Напівперенесене сховище збережено як `reading.json.half-migrated`"
+        en: "The half-migrated store is kept as `reading.json.half-migrated`"
+      "without a verified backup recoverAndUpgrade rejects and keeps the store":
+        uk: "Без перевіреного backup `recoverAndUpgrade` відхиляється й не чіпає сховища"
+        en: "Without a verified backup `recoverAndUpgrade` rejects and keeps the store"
+    hints:
+      nudge:
+        uk: "Подивись, у який момент файл уперше отримує `schemaVersion: 2` і скільки разів його записано за одну міграцію. А потім — на що саме дивиться `recoverAndUpgrade`, щоб вирішити, що все гаразд."
+        en: "Look at the moment the file first gets `schemaVersion: 2` and how many times it is written during one migration. Then look at what exactly `recoverAndUpgrade` checks to decide that all is well."
+      explanation:
+        uk: "Число й текст можна звести до одного виду через `String(value)` перед `.trim()`. «Все або нічого» з файлом — це побудувати весь новий вміст у пам’яті (наприклад, `map` по записах), а потім один раз записати тимчасовий файл і `rename` його на місце, як у NO-02: поки `map` може кинути помилку, жоден файл не змінено. Відновлення має перевіряти форму через `isValidV2`, а не порівнювати номер версії; перед відновленням backup пошкоджене сховище перейменовують, а не перезаписують."
+        en: "A number and a text can be brought to one form with `String(value)` before `.trim()`. All-or-nothing with a file means building the whole new content in memory (for example a `map` over the records) and then writing a temp file once and `rename`-ing it into place, as in NO-02: while the `map` can still throw, no file has changed. Recovery must check the shape with `isValidV2` instead of comparing the version number; before the backup is restored, the damaged store is renamed, not overwritten."
+    solutionNote:
+      uk: "`migrateBook` стала чистою й приймає обидві форми `pages`, які трапляються в живих даних, а невідому відхиляє. `upgrade` спершу будує всі нові записи в пам’яті й записує їх разом із версією одним `rename` — версія не може випередити дані. `recoverAndUpgrade` довіряє перевірці форми, а не номеру версії, лишає напівперенесений файл як доказ і відновлює лише з перевіреного backup. Варіант із тимчасовою копією `reading.json.migrating` і `copyFile` для доказу теж правильний."
+      en: "`migrateBook` became pure, accepts both shapes of `pages` that occur in live data and rejects an unknown one. `upgrade` first builds every new record in memory and writes them together with the version in one `rename` — the version cannot run ahead of the data. `recoverAndUpgrade` trusts a check of the shape, not the version number, keeps the half-migrated file as evidence and restores only from a verified backup. A version with a temp copy `reading.json.migrating` and `copyFile` for the evidence is correct too."
+    feedback:
+      - when: { test: "migrateBook converts pages to a number and finished to a boolean" }
+        message:
+          uk: "Ця перевірка передає книжки з `pages` `\"312\"`, `\"96\"`, `\" 450 \"` і числом `280`. Якщо бачиш `trim is not a function`, у числа немає методу `trim`: зведи значення до тексту перед ним."
+          en: "This check passes books with `pages` `\"312\"`, `\"96\"`, `\" 450 \"` and the number `280`. If you see `trim is not a function`, a number has no `trim` method: turn the value into text before it."
+      - when: { test: "migrateBook does not change the book it gets" }
+        message:
+          uk: "Ця перевірка порівнює книжку до і після `migrateBook` й очікує, що вона та сама. Повертай новий об’єкт (`{ ...book, … }`), а не присвоюй поля отриманому."
+          en: "This check compares a book before and after `migrateBook` and expects it to be the same. Return a new object (`{ ...book, … }`) instead of assigning fields of the one you got."
+      - when: { test: "when a book cannot be migrated, upgrade rejects and the file stays v1 byte for byte" }
+        message:
+          uk: "Ця перевірка кладе книжку з `pages` текстом, що не є числом, і очікує, що `upgrade` відхилиться, а файл лишиться тим самим текстом. Не записуй файл, доки не перенесено всі книжки, і пиши версію разом із ними."
+          en: "This check adds a book whose `pages` is text that is not a number and expects `upgrade` to reject while the file stays the same text. Do not write the file until every book is moved, and write the version together with them."
+      - when: { test: "recoverAndUpgrade restores a half-migrated store from the verified backup and migrates it" }
+        message:
+          uk: "Ця перевірка дає файл версії 2 з однією книжкою в старій формі й очікує відповідь `'recovered'` і файл версії 2, де всі чотири книжки перенесено. Номер версії тут бреше — перевіряй форму через `isValidV2`."
+          en: "This check gives a version 2 file with one book in the old shape and expects the answer `'recovered'` and a version 2 file with all four books moved. The version number lies here — check the shape with `isValidV2`."
+      - when: { test: "the half-migrated store is kept as reading.json.half-migrated" }
+        message:
+          uk: "Ця перевірка очікує файл `reading.json.half-migrated` із точним вмістом напівперенесеного сховища. Перейменуй його перед відновленням backup."
+          en: "This check expects a file `reading.json.half-migrated` with the exact content of the half-migrated store. Rename it before restoring the backup."
+      - when: { test: "without a verified backup recoverAndUpgrade rejects and keeps the store" }
+        message:
+          uk: "Ця перевірка дає backup, чий маніфест не збігається, і очікує відмову, незмінний `reading.json` і жодного нового файла в теці."
+          en: "This check gives a backup whose manifest does not match and expects a rejection, an unchanged `reading.json` and no new file in the folder."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-05
+    body:
+      uk: "У кроці проєкту цього розділу ти пишеш `migrate1to2` і проганяєш її на власному сховищі. Перевір її на цих трьох помилках: чи переносить вона записи, які колись зберіг старіший код (перед `npm run migrate` крок перетворює один запис на стару форму версії 1 командою `node -e`); чи записує версію лише разом із даними — одним `writeAtomic` після пробного прогону; чи відновлення в `recoverStore` довіряє перевірці копії контрактом, а не номеру версії. У `tests/storage.test.ts` на кожну з них є тест."
+      en: "In this unit’s project step you write `migrate1to2` and run it on your own store. Check it against these three mistakes: does it move records that older code once stored (before `npm run migrate` the step turns one record into the old version 1 shape with a `node -e` command); does it write the version only together with the data — in one `writeAtomic` after the dry run; does recovery in `recoverStore` trust the contract check of the backup rather than the version number. `tests/storage.test.ts` has a test for each of them."

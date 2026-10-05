@@ -1,0 +1,254 @@
+id: no-12-03-typed-contracts-tests
+unit: NO-12
+title:
+  uk: "Типізовані контракти в тестах"
+  en: "Typed contracts in tests"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Перевіряти в тестах сервісу кожну відповідь спільною схемою контракту, що діє під час виконання, а не лише її статус."
+    en: "Validate every response in the service tests against the shared runtime schema, not only its status code."
+  - uk: "Пояснювати, чому тест, що перевіряє лише статус 200, пропускає порушення контракту."
+    en: "Explain why a test that asserts only status 200 misses a contract break."
+prerequisites: [no-12-02-profiling-service, no-06-04-shared-typed-contracts]
+subskills:
+  - { family: B-09, skill: "typed contracts", depth: intro }
+glossary: [schema-assertion]
+selfCheck: [predict-two-tests, expect-contract]
+
+blocks:
+  - id: types-vanish
+    kind: explanation
+    title:
+      uk: "Тип зникає, коли код запускається"
+      en: "A type disappears when the code runs"
+    body:
+      uk: |
+        Клієнт трекера звичок читає відповідь так:
+
+        ```ts
+        const habits = (await response.json()) as HabitSummary[];
+        ```
+
+        `tsc` погоджується: `response.json()` повертає `any` (або `unknown` — залежно від того, чиї типи `fetch` підключено), а `as` — це обіцянка програміста, не перевірка. Під час виконання типів немає зовсім (NO-01): якщо сервер пришле `completionCount: "3"`, змінна `habits` усе одно «буде» `HabitSummary[]`, а `habit.completionCount + 1` дасть текст `"31"`.
+
+        Тест, що перевіряє лише `status === 200`, теж цього не помітить: статус правильний, зламано форму. Тому в тестах сервісу кожну відповідь перевіряють **[[schema-assertion|твердженням про схему]]**: тіло проходить ту саму схему контракту, що існує під час виконання й спільна для сервера й клієнтів (ти виніс її в [[shared-contract-module|спільний модуль контракту]] у NO-06). Якщо щось не так, тест падає з повідомленням, де видно шлях і значення: `[1].completionCount: expected number, got "3"`.
+      en: |
+        The habit tracker’s client reads a response like this:
+
+        ```ts
+        const habits = (await response.json()) as HabitSummary[];
+        ```
+
+        `tsc` agrees: `response.json()` returns `any` (or `unknown`, depending on whose `fetch` types are loaded), and `as` is the programmer’s promise, not a check. At run time there are no types at all (NO-01): if the server sends `completionCount: "3"`, the variable `habits` still “is” `HabitSummary[]`, and `habit.completionCount + 1` gives the text `"31"`.
+
+        A test that checks only `status === 200` does not notice it either: the status is right, the shape is broken. So the service tests check every response with a **[[schema-assertion]]**: the body goes through the same contract schema that exists at run time and is shared by the server and the clients (you moved it into a [[shared-contract-module]] in NO-06). If something is wrong, the test fails with a message that shows the path and the value: `[1].completionCount: expected number, got "3"`.
+
+  - id: predict-two-tests
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Набір тестів сервісу звичок має два тести `GET /habits`: перший перевіряє лише статус 200; другий — статус і кожен запис схемою контракту. Клієнт на TypeScript читає відповідь через `as HabitSummary[]`. Хтось змінив сервер, і тепер він надсилає `completionCount` текстом (`\"3\"` замість `3`). Що станеться?"
+      en: "The habit service’s suite has two tests of `GET /habits`: the first checks only status 200; the second checks the status and every record with the contract schema. The TypeScript client reads the response with `as HabitSummary[]`. Someone changed the server, and it now sends `completionCount` as text (`\"3\"` instead of `3`). What happens?"
+    answer:
+      type: choice
+      options:
+        - id: schema-fails
+          text:
+            uk: "`tsc` клієнта мовчить, перший тест проходить, падає лише другий"
+            en: "The client’s `tsc` is silent, the first test passes, only the second fails"
+        - id: tsc-catches
+          text:
+            uk: "`tsc` клієнта видає помилку типу, тож до тестів не дійде"
+            en: "The client’s `tsc` reports a type error, so it never gets to the tests"
+          why:
+            uk: "`tsc` перевіряє код клієнта, а не відповідь, яка прийде колись через мережу. `response.json()` повертає `any` чи `unknown`, а `as` нічого не перевіряє — компіляція проходить, хоч би що надіслав сервер."
+            en: "`tsc` checks the client’s code, not the response that will arrive over the network some day. `response.json()` returns `any` or `unknown`, and `as` checks nothing — compilation passes whatever the server sends."
+        - id: both-fail
+          text:
+            uk: "Обидва тести падають: відповідь зламана"
+            en: "Both tests fail: the response is broken"
+          why:
+            uk: "Перший тест дивиться лише на статус, а статус і далі 200. Зламана форма тіла для нього невидима."
+            en: "The first test looks only at the status, and the status is still 200. The broken shape of the body is invisible to it."
+        - id: both-pass
+          text:
+            uk: "Обидва тести проходять: JSON розібрався без помилки"
+            en: "Both tests pass: the JSON parsed without an error"
+          why:
+            uk: "`\"3\"` — правильний JSON, тож розбір справді проходить. Але схема вимагає для `completionCount` тип `number`, і другий тест це помічає."
+            en: "`\"3\"` is valid JSON, so parsing does pass. But the schema requires the type `number` for `completionCount`, and the second test notices that."
+      correct: [schema-fails]
+    explanation:
+      uk: "Типи TypeScript живуть лише до компіляції, а статус нічого не каже про форму тіла. Порушення ловить тільки перевірка значень під час виконання — схема контракту в тесті. На справжньому `node:test` це видно одразу: тест статусу зелений, тест схеми червоний."
+      en: "TypeScript types live only until compilation, and the status says nothing about the shape of the body. Only a check of the values at run time catches the break — the contract schema in the test. With real `node:test` this shows at once: the status test is green, the schema test is red."
+
+  - id: habit-suite
+    kind: example
+    runtime: isolated-node
+    dir: habit-suite
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      water: { uk: "Пити воду", en: "Drink water" }
+    title:
+      uk: "Тест статусу й тест контракту на node:test"
+      en: "A status test and a contract test with node:test"
+    body:
+      uk: |
+        Натисни **Запустити**. `habits.test.js` запускає сервіс звичок на вільному порту loopback і виконує два тести вбудованого в Node `node:test`: перший перевіряє лише статус, другий — ще й кожен запис функцією `schemaErrors` з `contract.js`. Обидва проходять.
+
+        `contract.js` — це контракт як дані: поле → тип значення під час виконання. Це той самий підхід, що й форми (shape) з NO-04, лише повідомлення називають і шлях, і значення.
+      en: |
+        Press **Run**. `habits.test.js` starts the habit service on a free loopback port and runs two tests of `node:test`, built into Node: the first checks only the status, the second also checks every record with the function `schemaErrors` from `contract.js`. Both pass.
+
+        `contract.js` is the contract as data: field → the type of the value at run time. It is the same approach as the shapes from NO-04, only the messages name both the path and the value.
+    tryIt:
+      uk: |
+        1. У `app.js` заміни `completionCount: habit.completions.length,` на `completionCount: String(habit.completions.length),` і запусти. Тест статусу проходить (`✔ GET /habits answers 200`), а тест контракту падає (`✖ GET /habits keeps the contract`) і перелічує три помилки виду `[0].completionCount: expected number, got "3"`. Процес завершується з кодом 1 — так CI дізнається про падіння. Так звіт виглядає на Node 25 (v25.2.1). Node 22 (v22.13.1), коли вивід іде не в термінал, а в консоль платформи, друкує той самий звіт у форматі TAP: `ok 1 - GET /habits answers 200` і `not ok 2 - GET /habits keeps the contract` із тими самими трьома помилками.
+        2. Поверни `completionCount: habit.completions.length,` і заміни в `app.js` назву поля `active` на `isActive`. Тест контракту знову падає: `[0].active: expected boolean, got undefined` — перейменування теж порушує контракт (NO-04). Поверни `active`.
+      en: |
+        1. In `app.js`, replace `completionCount: habit.completions.length,` with `completionCount: String(habit.completions.length),` and run. The status test passes (`✔ GET /habits answers 200`), while the contract test fails (`✖ GET /habits keeps the contract`) and lists three errors like `[0].completionCount: expected number, got "3"`. The process ends with exit code 1 — that is how CI learns about the failure. That is the report on Node 25 (v25.2.1). Node 22 (v22.13.1), when its output goes to the platform’s console rather than a terminal, prints the same report in the TAP format: `ok 1 - GET /habits answers 200` and `not ok 2 - GET /habits keeps the contract` with the same three errors.
+        2. Put back `completionCount: habit.completions.length,` and rename the field `active` to `isActive` in `app.js`. The contract test fails again: `[0].active: expected boolean, got undefined` — a rename breaks the contract too (NO-04). Put `active` back.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: сумісна чи несумісна зміна"
+      en: "Recall: a compatible or a breaking change"
+    items:
+      - id: type-change
+        from: no-04-06-versioned-contracts
+        prompt:
+          uk: "API звичок на `/v1`. Команда хоче (а) додати до відповіді нове необов’язкове поле `streak` і (б) надсилати `completionCount` текстом. Яку зміну старий клієнт переживе без нової версії?"
+          en: "The habit API is on `/v1`. The team wants to (a) add a new optional field `streak` to the response and (b) send `completionCount` as text. Which change can an old client survive without a new version?"
+        answer:
+          type: choice
+          options:
+            - id: only-a
+              text:
+                uk: "Лише (а): клієнт пропускає незнайоме поле відповіді"
+                en: "Only (a): a client skips an unfamiliar response field"
+            - id: both
+              text:
+                uk: "Обидві: значення ж не зникло"
+                en: "Both: the value has not disappeared"
+              why:
+                uk: "Значення є, але іншого типу: старий клієнт рахує `completionCount + 1` і отримує `\"31\"` замість 4. Зміна типу поля — така сама несумісна зміна, як перейменування."
+                en: "The value is there, but of another type: an old client computes `completionCount + 1` and gets `\"31\"` instead of 4. Changing a field’s type is as breaking as renaming it."
+            - id: neither
+              text:
+                uk: "Жодну: будь-яка зміна відповіді потребує `/v2`"
+                en: "Neither: any change of the response needs `/v2`"
+              why:
+                uk: "Нове необов’язкове поле у відповіді — сумісна зміна: клієнт його просто не читає. Нова версія потрібна лише для несумісної зміни."
+                en: "A new optional field in a response is a compatible change: the client simply does not read it. A new version is needed only for a breaking change."
+          correct: [only-a]
+        explanation:
+          uk: "Контракт — обіцянка клієнтам, яких ти не бачиш. Схема в тестах сервісу — спосіб не порушити її випадково: вона ловить і зміну типу, і перейменування, але спокійно пропускає нове поле."
+          en: "A contract is a promise to clients you cannot see. The schema in the service tests is a way not to break it by accident: it catches both a type change and a rename, but calmly lets a new field through."
+
+  - id: expect-contract
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: expect-contract
+    entry: index.js
+    editable: [expect-contract.js]
+    capabilities: { network: loopback }
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      tidy: { uk: "Прибирання", en: "Tidy up" }
+      reading: { uk: "Читати 20 хвилин", en: "Read for 20 minutes" }
+      kept: { uk: "контракт дотримано", en: "contract kept" }
+    title:
+      uk: "Помічник expectContract для node:test"
+      en: "An expectContract helper for node:test"
+    instructions:
+      uk: |
+        У `expect-contract.js` напиши `expectContract(response, schema, expectedStatus = 200)` — помічник, яким тести сервісу звичок перевірятимуть кожну відповідь. `response` — відповідь `fetch`, `schema` — схема з `contract.js`.
+
+        - Статус не дорівнює `expectedStatus` → кидає `AssertionError`, у повідомленні якого є **обидва** статуси (той, що прийшов, і очікуваний).
+        - Тіло не розбирається як JSON → теж `AssertionError`, а не `SyntaxError`.
+        - Тіло порушує контракт → **один** `AssertionError`, у повідомленні якого є **всі** помилки з `schemaErrors(body, schema)` — зі шляхами й значеннями.
+        - Зайві поля, яких немає в схемі, контракт не порушують (сумісна зміна з NO-04).
+        - Усе гаразд → повертає розібране тіло, щоб тест міг перевіряти далі.
+
+        `AssertionError` — помилка, яку кидає `node:assert`; найпростіше отримати її через `assert.fail(message)`. Саме її `node:test` показує як провалене твердження.
+      en: |
+        In `expect-contract.js`, write `expectContract(response, schema, expectedStatus = 200)` — a helper the habit service tests will use to check every response. `response` is a `fetch` response, `schema` a schema from `contract.js`.
+
+        - The status is not `expectedStatus` → throws an `AssertionError` whose message contains **both** statuses (the one that came and the expected one).
+        - The body does not parse as JSON → an `AssertionError` too, not a `SyntaxError`.
+        - The body breaks the contract → **one** `AssertionError` whose message contains **every** error from `schemaErrors(body, schema)` — with paths and values.
+        - Extra fields that are not in the schema do not break the contract (a compatible change from NO-04).
+        - Everything is fine → returns the parsed body, so that the test can check further.
+
+        `AssertionError` is the error `node:assert` throws; the simplest way to get it is `assert.fail(message)`. `node:test` shows exactly this one as a failed assertion.
+    testTitles:
+      "returns the parsed body when status and contract match":
+        uk: "Повертає розібране тіло, коли статус і контракт збігаються"
+        en: "Returns the parsed body when status and contract match"
+      "a number sent as text fails with its path and value":
+        uk: "Число, надіслане текстом, провалює перевірку зі шляхом і значенням"
+        en: "A number sent as text fails with its path and value"
+      "every contract error is reported, not only the first":
+        uk: "Повідомлення містить усі помилки контракту, а не лише першу"
+        en: "Every contract error is reported, not only the first"
+      "a wrong status fails and names both statuses":
+        uk: "Неправильний статус провалює перевірку й називає обидва статуси"
+        en: "A wrong status fails and names both statuses"
+      "the expected status can be passed":
+        uk: "Очікуваний статус можна передати"
+        en: "The expected status can be passed"
+      "a body that is not JSON fails as an AssertionError":
+        uk: "Тіло, що не є JSON, дає `AssertionError`"
+        en: "A body that is not JSON fails as an `AssertionError`"
+      "extra fields do not break the contract":
+        uk: "Зайві поля контракт не порушують"
+        en: "Extra fields do not break the contract"
+    hints:
+      nudge:
+        uk: "Прочитай тіло один раз як текст (`await response.text()`): з ним можна і показати початок відповіді в повідомленні, і розібрати JSON у `try`. Далі — три перевірки по черзі, кожна з `assert.fail` і своїм повідомленням."
+        en: "Read the body once as text (`await response.text()`): with it you can both show the start of the response in a message and parse the JSON inside a `try`. Then three checks in turn, each with `assert.fail` and its own message."
+      explanation:
+        uk: "`assert.fail('…')` кидає `AssertionError` з твоїм текстом. Інший приклад того самого: помічник для заголовків — `const missing = required.filter((name) => !response.headers.has(name)); if (missing.length > 0) assert.fail('missing headers: ' + missing.join(', '));` — він називає **всі** відсутні заголовки, бо збирає їх у масив перед тим, як кинути. Розбір JSON загорни в `try`/`catch` і в `catch` теж виклич `assert.fail`, щоб `SyntaxError` не вийшов назовні."
+        en: "`assert.fail('…')` throws an `AssertionError` with your text. Another example of the same: a helper for headers — `const missing = required.filter((name) => !response.headers.has(name)); if (missing.length > 0) assert.fail('missing headers: ' + missing.join(', '));` — it names **every** missing header because it collects them into an array before throwing. Wrap the JSON parsing in `try`/`catch` and call `assert.fail` in the `catch` too, so that a `SyntaxError` does not get out."
+    solutionNote:
+      uk: "Помічник перетворює контракт на одне речення в тесті: `const habits = await expectContract(await fetch(url), habitSummarySchema);`. Тепер кожен тест сервісу автоматично перевіряє форму, і тест «лише статус» більше не з’явиться випадково. Повідомлення з усіма помилками одразу економить цикли «виправив — запустив — наступна помилка». Варіант, що будує `new AssertionError({ message })` сам, читає тіло через `response.json()` або, як набір тестів у прикладі, порівнює статус через `assert.equal`, а список помилок — через `assert.deepEqual(…, [])` (його diff показує всі помилки), теж правильний."
+      en: "The helper turns the contract into one sentence in a test: `const habits = await expectContract(await fetch(url), habitSummarySchema);`. Now every service test checks the shape automatically, and a “status only” test no longer appears by accident. A message with every error at once saves “fix — run — next error” cycles. A version that builds `new AssertionError({ message })` itself, reads the body with `response.json()` or, like the example suite, compares the status with `assert.equal` and the error list with `assert.deepEqual(…, [])` (its diff shows every error) is correct too."
+    feedback:
+      - when: { test: "returns the parsed body when status and contract match" }
+        message:
+          uk: "Ця перевірка очікує, що для правильної відповіді `expectContract` поверне розібране тіло — масив або один об’єкт. Не забудь `return body` наприкінці."
+          en: "This check expects `expectContract` to return the parsed body for a correct response — an array or one object. Do not forget `return body` at the end."
+      - when: { test: "a number sent as text fails with its path and value" }
+        message:
+          uk: "Ця перевірка надсилає `completionCount: \"7\"` у другому записі й очікує `AssertionError`, у повідомленні якого є `[1].completionCount` і `\"7\"`. Додай до повідомлення тексти з `schemaErrors`."
+          en: "This check sends `completionCount: \"7\"` in the second record and expects an `AssertionError` whose message contains `[1].completionCount` and `\"7\"`. Put the texts from `schemaErrors` into the message."
+      - when: { test: "every contract error is reported, not only the first" }
+        message:
+          uk: "Ця перевірка надсилає запис із двома помилками (`id` числом і `active` текстом) і очікує в повідомленні обидві. Збери всі тексти з `schemaErrors`, а не лише перший."
+          en: "This check sends a record with two errors (`id` as a number and `active` as text) and expects both in the message. Collect every text from `schemaErrors`, not only the first."
+      - when: { test: "a wrong status fails and names both statuses" }
+        message:
+          uk: "Ця перевірка отримує 404, чекаючи 200, і очікує `AssertionError` з обома числами в повідомленні. Перевір статус до того, як дивитися на тіло."
+          en: "This check gets 404 while expecting 200 and expects an `AssertionError` with both numbers in the message. Check the status before looking at the body."
+      - when: { test: "a body that is not JSON fails as an AssertionError" }
+        message:
+          uk: "Ця перевірка отримує тіло `<h1>oops</h1>` і очікує `AssertionError`. Розбери JSON у `try` і в `catch` виклич `assert.fail`."
+          en: "This check gets the body `<h1>oops</h1>` and expects an `AssertionError`. Parse the JSON inside a `try` and call `assert.fail` in the `catch`."
+      - when: { test: "extra fields do not break the contract" }
+        message:
+          uk: "Ця перевірка надсилає запис із зайвим полем `streak` і очікує, що `expectContract` нічого не кине. Перевіряй лише поля зі схеми."
+          en: "This check sends a record with an extra field `streak` and expects `expectContract` not to throw. Check only the fields of the schema."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-12
+    body:
+      uk: "У кроці проєкту цього розділу ти запускаєш сервер зі зібраного артефакту, а `tests/ops.test.ts` перевіряє більше, ніж статуси: тіла `/livez` і `/readyz`, рядки `/metrics`, код виходу справжнього процесу й запис на диску після `SIGTERM`. Контракт v1 перевіряють `tests/client.test.ts` із кроку NO-06 і `npm run check:deploy`, що проводить кожну сторінку `/v1/records` запущеного сервера через схему. Провести через спільну схему й кожну відповідь самих ops-тестів крок не вимагає — у справжньому проєкті ти міг би це додати, щоб і вони падали, щойно поле змінить тип чи назву."
+      en: "In this unit’s project step you run the server from its built artifact, and `tests/ops.test.ts` checks more than statuses: the bodies of `/livez` and `/readyz`, the lines of `/metrics`, the real process’s exit code and the record on disk after `SIGTERM`. The v1 contract is checked by `tests/client.test.ts` from step NO-06 and by `npm run check:deploy`, which puts every page of `/v1/records` of the running server through the schema. The step does not put every response of the ops tests through the shared schema as well — in a real project you could add that, so that they too fail as soon as a field changes its type or name."

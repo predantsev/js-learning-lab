@@ -1,0 +1,294 @@
+id: rn-07-03-mocks-vs-device-checks
+unit: RN-07
+title:
+  uk: "Mocks проти перевірок на пристрої"
+  en: "Mocks vs device checks"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Перелічити для native-адаптера сховища, що доводить підроблений native-модуль (контракт виклику, обробку помилок), а що доводить лише перевірка на пристрої (збереження після перезапуску, дозволи, поведінка ОС)."
+    en: "List, for a native storage adapter, what a mocked native module proves (call contract, error handling) and what only a device check proves (persistence across restart, permissions, OS behavior)."
+  - uk: "Записати кожну прогалину mock як явну перевірку на пристрої із ціллю й очікуваним спостереженням."
+    en: "Record each mock-only gap as an explicit device check with its target and expected observation."
+prerequisites: [rn-07-02-tests-unit-domain-component, js-09-05-mocks-vs-real]
+subskills:
+  - { family: N-10, skill: "mocks vs target/device checks", depth: intro }
+glossary: [mock-gap, device-check]
+selfCheck: [predict-restart, gap-list]
+
+blocks:
+  - id: mocks-of-native
+    kind: explanation
+    title:
+      uk: "У Jest native-модулів немає — є підробки"
+      en: "Jest has no native modules — only fakes"
+    body:
+      uk: |
+        Тести з попереднього уроку працюють у Node.js, а native-коду сховища, камери чи дозволів там немає. Тому `jest-expo` підставляє замість native-модулів Expo **підробки**. Ми перевірили, що вони роблять (jest-expo 57.0.5, expo-secure-store 57.0.4): після `await SecureStore.setItemAsync("sync.token", "demo-token")` виклик `await SecureStore.getItemAsync("sync.token")` повернув `undefined`. Нічого не збережено, а справжній модуль для відсутнього значення повертає `null`. І `Platform.OS` у цих тестах — `"ios"`: стандартний пресет `jest-expo` імітує одну платформу, а для інших у пакеті є окремі пресети.
+
+        Тож підробку пишуть самі — і вона повертає те, що очікував її автор. Тест із нею доводить **твій код навколо модуля**: який ключ він передає, що робить із `null`, із відмовою. А ось чи значення переживе перезапуск телефона, очищення даних застосунку чи нову збірку — це вже [[mock-gap|прогалина mock]]. Її закриває лише [[device-check|перевірка на пристрої]].
+      en: |
+        The previous lesson's tests run in Node.js, and there is no native code for storage, the camera or permissions there. So `jest-expo` puts **fakes** in place of Expo's native modules. We checked what they do (jest-expo 57.0.5, expo-secure-store 57.0.4): after `await SecureStore.setItemAsync("sync.token", "demo-token")` the call `await SecureStore.getItemAsync("sync.token")` returned `undefined`. Nothing was stored, while the real module returns `null` for a missing value. And `Platform.OS` in these tests is `"ios"`: the default `jest-expo` preset imitates one platform, and the package has separate presets for the others.
+
+        So you write the fake yourself — and it returns what its author expected. A test with it proves **your code around the module**: which key it passes, what it does with `null`, with a refusal. Whether the value survives a phone restart, a cleared app storage or a new build is a [[mock-gap]]. Only a [[device-check]] closes it.
+
+  - id: predict-restart
+    kind: prediction
+    prompt:
+      uk: |
+        Тест функції `loadSyncSession(store)` передає їй підробку `secureStoreMock`, чий `getItemAsync` завжди повертає `'{"token":"demo-sync-token"}'`. Тест зелений.
+
+        На заявленому телефоні в цьому сценарії після перезапуску справжнє читання із захищеного сховища повертає відмову. Що буде з тестом, якщо запустити його ще раз — без жодних змін у коді?
+      en: |
+        A test of the function `loadSyncSession(store)` passes it the fake `secureStoreMock`, whose `getItemAsync` always returns `'{"token":"demo-sync-token"}'`. The test is green.
+
+        On the declared phone in this scenario, after a restart the real read from secure storage returns a refusal. What happens to the test if you run it again — with no change in the code?
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: still-green
+          text:
+            uk: "Лишається зеленим: підробка не перезапускається й ніколи не відмовляє"
+            en: "It stays green: the fake does not restart and never refuses"
+        - id: turns-red
+          text:
+            uk: "Стає червоним: mock поводиться як справжній модуль"
+            en: "It turns red: the mock behaves like the real module"
+          why:
+            uk: "Підробка — це кілька рядків, які повертають заготовлену відповідь. Про перезапуск телефона вона нічого не знає, поки ти сам не навчиш її відмовляти."
+            en: "A fake is a few lines returning a prepared answer. It knows nothing about a phone restart until you teach it to refuse."
+        - id: flaky
+          text:
+            uk: "То зелений, то червоний — залежно від того, чи телефон перезапускався"
+            en: "Sometimes green, sometimes red — depending on whether the phone restarted"
+          why:
+            uk: "Тест у Jest узагалі не торкається телефона: він працює на комп’ютері з тією самою підробкою щоразу."
+            en: "A test in Jest does not touch the phone at all: it runs on the computer with the same fake every time."
+      correct: [still-green]
+    explanation:
+      uk: "Тест із підробкою доводить лише те, що в неї закладено. Щоб він перевірив відмову, відмову треба покласти в підробку — і взяти її з того, що справді показав пристрій. Тому підробку будують з відповідей, записаних на пристрої."
+      en: "A test with a fake proves only what was put into it. For it to check a refusal, the refusal has to go into the fake — taken from what the device really showed. So a fake is built from answers recorded on the device."
+
+  - id: sync-token
+    kind: example
+    runtime: concept-preview
+    dir: sync-token
+    entry: main.jsx
+    strings:
+      tLoads: { uk: "сесію синхронізації завантажено з токеном", en: "the sync session is loaded with its token" }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rNotFound: { uk: "на екрані немає", en: "not on the screen:" }
+      rStillMissing: { uk: "так і не з’явилося", en: "never appeared" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…) у файл тестів.", en: "No tests yet: add test(…) to the test file." }
+    title:
+      uk: "Підробка, у якій сховано припущення"
+      en: "A fake with a hidden assumption"
+    body:
+      uk: |
+        Синтетична функція «синхронізація списку бажань» тримає токен у захищеному сховищі. `syncSession.js` читає його, `secureStoreMock.js` — підробка для тесту, `deviceLog.txt` — **синтетичний** запис того, що в цьому сценарії повертало справжнє сховище на пристрої. Тест запускає `testing.js` з попереднього уроку. Натисни **Запустити**: тест зелений.
+      en: |
+        A synthetic “wishlist sync” feature keeps a token in secure storage. `syncSession.js` reads it, `secureStoreMock.js` is the fake for the test, `deviceLog.txt` is a **synthetic** record of what the real storage on the device returned in this scenario. `testing.js` from the previous lesson runs the test. Press **Run**: the test is green.
+    tryIt:
+      uk: |
+        1. Відкрий `deviceLog.txt`: запис #2 повернув `null`. У `secureStoreMock.js` заміни заготовлений текст у `return` на `null` і запусти: тест падає з `TypeError: Cannot read properties of null (reading 'token')`. Сховане припущення «токен завжди є» вийшло назовні.
+        2. Запис #3 — відмова. Заміни весь `return …;` на `throw new Error("secure store unavailable");` і запусти: тест падає із цією помилкою — `loadSyncSession` її не обробляє.
+        3. Поверни заготовлений текст. Як обробити ці випадки, вирішує код застосунку; урок тут про інше: підробка має повторювати те, що ти **бачив** на пристрої, а не те, на що сподівався.
+      en: |
+        1. Open `deviceLog.txt`: record #2 returned `null`. In `secureStoreMock.js` replace the prepared text in `return` with `null` and run: the test fails with `TypeError: Cannot read properties of null (reading 'token')`. The hidden assumption “there is always a token” is out in the open.
+        2. Record #3 is a refusal. Replace the whole `return …;` with `throw new Error("secure store unavailable");` and run: the test fails with this error — `loadSyncSession` does not handle it.
+        3. Put the prepared text back. How to handle these cases is up to the app's code; this lesson is about something else: a fake must repeat what you **saw** on the device, not what you hoped for.
+    limits:
+      uk: "Концептуальний перегляд через react-native-web; захищеного сховища тут немає, а `testing.js` лише імітує Jest. Запис пристрою синтетичний: справжні відповіді залежать від платформи, версії ОС і бібліотеки — їх записують на заявленій цілі."
+      en: "A concept preview through react-native-web; there is no secure storage here, and `testing.js` only simulates Jest. The device record is synthetic: real answers depend on the platform, the OS version and the library — they are recorded on the declared target."
+
+  - id: gap-to-check
+    kind: explanation
+    title:
+      uk: "Прогалина стає перевіркою на пристрої"
+      en: "A gap becomes a device check"
+    body:
+      uk: |
+        Те, чого не можна підробити, не викидають із плану тестування — його переносять на пристрій. Кожна прогалина mock записується чотирма частинами:
+
+        | Частина | Приклад для трекера витрат |
+        |---|---|
+        | твердження | витрати лишаються після того, як застосунок закрили зі списку нещодавніх |
+        | дія на цілі | додати витрату, закрити застосунок свайпом, відкрити знову |
+        | ціль | `Android emulator, API 36, Expo Go` |
+        | очікуване спостереження | нова витрата в списку, сума за категорією та сама |
+
+        Без цілі й очікуваного спостереження перевірку ніхто не зможе виконати однаково двічі. А якщо цілі в тебе немає, запис лишається — з позначкою «не виконано».
+      en: |
+        What cannot be faked is not dropped from the test plan — it moves to the device. Each mock gap is recorded in four parts:
+
+        | Part | Example for the expense tracker |
+        |---|---|
+        | claim | expenses survive closing the app from the recent apps list |
+        | action on the target | add an expense, swipe the app away, open it again |
+        | target | `Android emulator, API 36, Expo Go` |
+        | expected observation | the new expense is in the list, the category total is the same |
+
+        Without a target and an expected observation, nobody can perform the check the same way twice. And if you have no target, the record stays — marked “not performed”.
+
+  - id: gap-list
+    kind: exercise
+    mode: guided
+    runtime: concept-preview
+    dir: gap-list
+    entry: main.jsx
+    editable: [gaps.js]
+    strings:
+      c1: { uk: "saveHabits записує список як JSON під ключем jsll.habits.v1", en: "saveHabits writes the list as JSON under the key jsll.habits.v1" }
+      c2: { uk: "loadHabits повертає порожній список, коли ще нічого не збережено", en: "loadHabits returns an empty list when nothing is stored yet" }
+      c3: { uk: "loadHabits показує стан відновлення, коли збережений JSON зіпсовано", en: "loadHabits shows the recovery state when the stored JSON is broken" }
+      c4: { uk: "сьогоднішні виконання лишаються після того, як застосунок закрили свайпом і відкрили знову", en: "today's completions survive swiping the app away and opening it again" }
+      c5: { uk: "звички лишаються після перезапуску телефона", en: "the habits survive a phone restart" }
+      c6: { uk: "збережені звички читаються після встановлення нової збірки поверх старої", en: "the stored habits can still be read after a new build is installed over the old one" }
+      c7: { uk: "збереження списку з 500 звичок не підвішує екран на цільовому телефоні", en: "saving a list of 500 habits does not freeze the screen on the target phone" }
+      s4check: { uk: "позначити звичку виконаною, закрити застосунок свайпом, відкрити знову", en: "mark a habit done, swipe the app away, open it again" }
+      s4expected: { uk: "звичка досі позначена виконаною сьогодні", en: "the habit is still marked done today" }
+      s5check: { uk: "додати звичку, перезапустити емулятор, відкрити застосунок", en: "add a habit, restart the emulator, open the app" }
+      s5expected: { uk: "нова звичка є в списку з тими самими виконаннями", en: "the new habit is in the list with the same completions" }
+      s6check: { uk: "зберегти звички, встановити нову debug-збірку поверх, відкрити", en: "save habits, install a new debug build over it, open the app" }
+      s6expected: { uk: "усі звички на місці, екрана відновлення немає", en: "all habits are there, no recovery screen" }
+      s7check: { uk: "завантажити фікстуру з 500 звичок і натиснути «Зберегти»", en: "load a fixture of 500 habits and press Save" }
+      s7expected: { uk: "кнопки відповідають на дотик, поки йде збереження", en: "the buttons respond to touch while saving runs" }
+      device: { uk: "на пристрої", en: "on the device" }
+      mockOnly: { uk: "доводять тести з mock", en: "proven by the mocked tests" }
+    title:
+      uk: "Список прогалин mock для адаптера звичок"
+      en: "A mock-gap list for the habits adapter"
+    instructions:
+      uk: |
+        `claims.js` — сім тверджень про адаптер сховища трекера звичок. Його тести підміняють native-сховище підробкою, що тримає значення в пам’яті й відповідає одразу.
+
+        У `gaps.js` додай по запису для **кожного** твердження, яке ці тести довести не можуть. Кожен запис — об’єкт із чотирма полями: `claim` (id твердження), `check` (що зробити на цілі), `target` (саме `declaredTarget` з `claims.js`) і `expected` (що маєш побачити). У `check` і `expected` — щонайменше 10 символів.
+
+        Твердження, які тести з підробкою вже доводять, у список не додавай. Сторінка показує, як ти розподілив твердження.
+      en: |
+        `claims.js` holds seven claims about the habit tracker's storage adapter. Its tests replace the native storage with a fake that keeps values in memory and answers at once.
+
+        In `gaps.js` add one entry for **every** claim these tests cannot prove. Each entry is an object with four fields: `claim` (the claim's id), `check` (what to do on the target), `target` (exactly `declaredTarget` from `claims.js`) and `expected` (what you should see). `check` and `expected` need at least 10 characters.
+
+        Do not add claims the tests with the fake already prove. The page shows how you split the claims.
+    testTitles:
+      "every claim the mocks cannot prove is listed":
+        uk: "Кожне твердження, якого mock не доводить, є в списку"
+        en: "Every claim the mocks cannot prove is listed"
+      "no claim the mocked tests already prove is listed":
+        uk: "Тверджень, які тести з mock уже доводять, у списку немає"
+        en: "No claim the mocked tests already prove is listed"
+      "every gap says what to do and what to observe":
+        uk: "Кожна прогалина каже, що зробити і що побачити"
+        en: "Every gap says what to do and what to observe"
+      "every gap names the declared target":
+        uk: "Кожна прогалина називає заявлену ціль"
+        en: "Every gap names the declared target"
+    hints:
+      nudge:
+        uk: "Для кожного твердження спитай: чи може підробка, що живе в пам’яті й відповідає миттєво, взагалі «пережити» те, про що в ньому йдеться?"
+        en: "For each claim ask: can a fake that lives in memory and answers instantly even “go through” what the claim talks about?"
+      explanation:
+        uk: "Тест із підробкою перевіряє твій код: ключ, формат JSON, гілки для `null` і зіпсованих даних. Усе, що стосується життя процесу (закриття, перезапуск, встановлення нової збірки) і швидкості справжнього пристрою, підробка не відтворює — це прогалини. Наприклад, для трекера витрат запис може бути таким: `{ claim: \"e9\", check: \"додати витрату й перезапустити телефон\", target: declaredTarget, expected: \"витрата на місці\" }`."
+        en: "A test with a fake checks your code: the key, the JSON format, the branches for `null` and broken data. Anything about the life of the process (closing, restarting, installing a new build) and the speed of a real device is not reproduced by the fake — those are the gaps. For the expense tracker, for example, an entry could be `{ claim: \"e9\", check: \"add an expense and restart the phone\", target: declaredTarget, expected: \"the expense is still there\" }`."
+    solutionNote:
+      uk: "c1–c3 — контракт виклику й обробка `null` та зіпсованих даних: їх доводить тест із підробкою. c4–c6 стосуються процесу й сховища поза ним (закриття, перезапуск, нова збірка), а c7 — швидкості справжнього пристрою: підробка в пам’яті не відтворює жодного з них. Тому вони стають перевірками на `declaredTarget` з дією й очікуваним спостереженням."
+      en: "c1–c3 are the call contract and the handling of `null` and broken data: the test with the fake proves them. c4–c6 are about the process and the storage outside it (closing, restarting, a new build), and c7 about the speed of a real device: an in-memory fake reproduces none of them. So they become checks on `declaredTarget` with an action and an expected observation."
+    feedback:
+      - when: { test: "every claim the mocks cannot prove is listed" }
+        message:
+          uk: "Ця перевірка очікує в `gaps` записи з `claim` для c4, c5, c6 і c7. Те, що підробка не вміє, не викидають із плану — його переносять на пристрій. Подумай, що з перелічених тверджень стосується закриття, перезапуску, нової збірки чи швидкості телефона."
+          en: "This check expects entries in `gaps` with `claim` c4, c5, c6 and c7. What a fake cannot do is not dropped from the plan — it moves to the device. Think about which claims concern closing, restarting, a new build or the phone's speed."
+      - when: { test: "no claim the mocked tests already prove is listed" }
+        message:
+          uk: "Ця перевірка очікує, що c1, c2 і c3 у `gaps` немає: ключ, порожнє сховище й зіпсований JSON тест із підробкою вже доводить — для них підробка повертає `null` чи зіпсований текст."
+          en: "This check expects c1, c2 and c3 not to be in `gaps`: the key, empty storage and broken JSON are already proven by the test with the fake — for them the fake returns `null` or a broken text."
+      - when: { test: "every gap says what to do and what to observe" }
+        message:
+          uk: "Ця перевірка очікує хоча б один запис, і в кожному — `check` і `expected` щонайменше по 10 символів: що зробити на цілі й що там маєш побачити."
+          en: "This check expects at least one entry, and in each one `check` and `expected` of at least 10 characters: what to do on the target and what you should see there."
+      - when: { test: "every gap names the declared target" }
+        message:
+          uk: "Ця перевірка очікує хоча б один запис, і в кожному `target: declaredTarget` — значення, імпортоване з `claims.js`. Перевірка без цілі не відтворюється."
+          en: "This check expects at least one entry, and in each one `target: declaredTarget` — the value imported from `claims.js`. A check without a target cannot be repeated."
+    limits:
+      uk: "Концептуальний перегляд: ти записуєш план перевірок, а не виконуєш їх. Сам запис на пристрої робиться в локальних завданнях цього розділу на твоїй заявленій цілі."
+      en: "A concept preview: you write the plan of checks, you do not perform them. The device record itself is made in this unit's local tasks on your declared target."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: what-mock-proves
+        from: js-09-05-mocks-vs-real
+        prompt:
+          uk: "Тест `loadTasks(fakeFetch)` зелений: підробка повертає дві справи. Що цей тест **доводить**?"
+          en: "The test `loadTasks(fakeFetch)` is green: the fake returns two tasks. What does this test **prove**?"
+        answer:
+          type: choice
+          options:
+            - id: parsing
+              text:
+                uk: "Що `loadTasks` правильно розбирає відповідь такої форми"
+                en: "That `loadTasks` parses an answer of that shape correctly"
+            - id: server
+              text:
+                uk: "Що сервер справді надсилає саме таку форму даних"
+                en: "That the server really sends exactly that shape"
+              why:
+                uk: "Форму відповіді придумав автор підробки. Що надсилає сервер, показує лише справжній запит."
+                en: "The shape of the answer was made up by the fake's author. What the server sends is shown only by a real request."
+            - id: offline
+              text:
+                uk: "Що застосунок оговтується, коли мережі немає"
+                en: "That the app recovers when there is no network"
+              why:
+                uk: "Підробка завжди відповідає успішно — жодного збою мережі тест не бачив."
+                en: "The fake always answers successfully — the test never saw a network failure."
+          correct: [parsing]
+        explanation:
+          uk: "Підробка доводить код навколо залежності, а не саму залежність. З native-модулями так само: тест доводить, як твій код поводиться з відповіддю, а не яку відповідь дасть пристрій."
+          en: "A fake proves the code around a dependency, not the dependency itself. Native modules are the same: the test proves how your code treats an answer, not which answer the device gives."
+      - id: secure-behind-adapter
+        from: rn-09-01-secure-vs-ordinary-storage
+        prompt:
+          uk: "Синтетичний токен і масив звичок треба зберегти на телефоні. Куди що класти?"
+          en: "A synthetic token and an array of habits have to be stored on the phone. What goes where?"
+        answer:
+          type: choice
+          options:
+            - id: split
+              text:
+                uk: "Токен — у захищене сховище за окремим адаптером, звички — у звичайне сховище записів"
+                en: "The token into secure storage behind its own adapter, the habits into ordinary record storage"
+            - id: all-secure
+              text:
+                uk: "Усе в захищене сховище: так надійніше"
+                en: "Everything into secure storage: it is safer"
+              why:
+                uk: "Захищене сховище призначене для невеликих секретів, а не для списків записів. Записи живуть у звичайному сховищі за своїм адаптером."
+                en: "Secure storage is meant for small secrets, not for lists of records. Records live in ordinary storage behind their own adapter."
+            - id: all-plain
+              text:
+                uk: "Усе у звичайне сховище: це той самий телефон"
+                en: "Everything into ordinary storage: it is the same phone"
+              why:
+                uk: "Для секретів платформа дає окреме захищене сховище (Keychain на iOS, Android Keystore); звичайне сховище для них не призначене."
+                en: "For secrets the platform offers separate secure storage (the Keychain on iOS, the Android Keystore); ordinary storage is not meant for them."
+          correct: [split]
+        explanation:
+          uk: "Окремі контракти — окремі підробки й окремі прогалини: для токена на пристрої перевіряють одне, для записів — інше."
+          en: "Separate contracts mean separate fakes and separate gaps: on the device you check one thing for the token and another for the records."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-07
+    body:
+      uk: "У кроці проєкту цього розділу ти запишеш, які поведінки твого native-підпроєкту залишаються перевірками на пристрої (наприклад, збереження після перезапуску), і виконаєш одну з них на заявленій цілі. Пиши кожну як тут: твердження, дія, ціль, очікуване спостереження."
+      en: "In this unit's project step you record which behaviors of your native subproject remain device checks (for example, persistence across a restart) and perform one of them on your declared target. Write each like here: claim, action, target, expected observation."

@@ -1,0 +1,646 @@
+id: rn-10-06-profiling-release-vs-debug
+unit: RN-10
+title:
+  uk: "Профілювання: release проти debug"
+  en: "Profiling release vs debug"
+kind: local-task
+minutes: 20
+contentVersion: 1
+purpose:
+  uk: "Перш ніж щось пришвидшувати, треба знати, скільки воно коштує зараз — і виміряти це там, де працюватиме користувач: у release-збірці на заявленій цілі. Тут ти збереш лабораторний список із 1 000 рядків, виміряєш його в debug і в release, запишеш базову лінію й знайдеш у коді сповільнення, яке не зникає в release."
+  en: "Before speeding anything up, you need to know what it costs now — and to measure it where the user will run it: in a release build on the declared target. Here you build a lab list of 1,000 rows, measure it in debug and in release, record a baseline and find in the code a slowdown that does not go away in release."
+objectives:
+  - uk: "Профілювати той самий довгий синтетичний список у debug- і release-збірці на заявленій цілі й пояснити, чому зараховуються лише числа з release."
+    en: "Profile the same long synthetic list in a debug build and a release build on the declared target and explain why only the release numbers count."
+  - uk: "Записати базову лінію (пропущені кадри, частоту кадрів JS і UI, пам’ять) із зазначеними ціллю, режимом збірки й розміром даних."
+    en: "Record a baseline (dropped frames, JS and UI frame rates, memory) with the target, build mode and dataset size stated."
+prerequisites: [rn-10-05-assets-images-fonts, rn-01-03-env-versions-debug-release]
+subskills:
+  - { family: N-04, skill: "profiling release vs debug", depth: intro }
+  - { family: N-04, skill: "measured render/memory improvements", depth: intro }
+glossary: [release-profiling, perf-monitor]
+selfCheck: [predict-baseline, format-on-render]
+
+blocks:
+  - id: only-release-counts
+    kind: explanation
+    title:
+      uk: "Чому debug-числа не рахуються"
+      en: "Why debug numbers do not count"
+    body:
+      uk: |
+        У [[debug-build|debug-збірці]] твій JavaScript приходить з dev-сервера Metro, не оптимізований, і поряд з ним працюють перевірки розробника — попередження, перевірки пропсів, підготовка до швидкого оновлення. Документація React Native 0.86 каже прямо: продуктивність потоку JS у dev-режимі сильно страждає, і продуктивність треба перевіряти в [[release-build|release-збірках]].
+
+        Тому [[release-profiling|профілювання]] має правило: **базова лінія — лише з release**, на заявленій цілі, з тим самим набором даних і тим самим сценарієм. Інакше ти лагодиш те, чого користувач ніколи не побачить, і не помічаєш того, що він побачить.
+
+        Чим міряти:
+
+        - [[perf-monitor|Perf Monitor]] (Dev Menu → Perf Monitor) показує частоту кадрів JS і UI, але Dev Menu є лише в debug — для release він не годиться;
+        - **у release**: лічильник кадрів JS у самому застосунку (лабораторія нижче має його), на Android — `adb shell dumpsys gfxinfo` (зібрані кадри й «Janky frames» потоку UI) і `dumpsys meminfo` (пам’ять), на iOS — Instruments з Xcode.
+      en: |
+        In a [[debug-build]] your JavaScript comes from the Metro dev server, unoptimized, and developer checks run next to it — warnings, prop checks, preparation for fast refresh. The React Native 0.86 docs say it plainly: JavaScript thread performance suffers greatly in dev mode, and performance must be tested in [[release-build|release builds]].
+
+        So [[release-profiling]] has a rule: **the baseline comes from release only**, on the declared target, with the same dataset and the same scenario. Otherwise you fix what the user will never see and miss what they will see.
+
+        What to measure with:
+
+        - the [[perf-monitor]] (Dev Menu → Perf Monitor) shows the JS and UI frame rates, but the Dev Menu exists only in debug — it does not work for release;
+        - **in release**: a JS frame counter inside the app itself (the lab below has one), on Android `adb shell dumpsys gfxinfo` (rendered frames and the UI thread's “Janky frames”) and `dumpsys meminfo` (memory), on iOS Instruments from Xcode.
+
+  - id: two-paths
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Той самий список, два шляхи"
+      en: "The same list, two paths"
+    textEquivalent:
+      uk: "Ліворуч debug-шлях, праворуч release-шлях того самого списку. У debug JavaScript приходить з dev-сервера Metro, не оптимізований, і поряд виконуються перевірки розробника (__DEV__); усе це додає роботи в кожен кадр потоку JS. У release JavaScript заздалегідь зібрано й скомпільовано в байт-код Hermes, dev-сервера й перевірок розробника немає. Код твого списку однаковий на обох шляхах, і його власна вартість, наприклад форматування в кожному рендері, лишається і в release. Тому базову лінію записують з release-шляху: там видно лише те, що справді заплатить користувач."
+      en: "On the left the debug path, on the right the release path of the same list. In debug the JavaScript comes from the Metro dev server, unoptimized, and developer checks (__DEV__) run alongside; all of this adds work to every frame of the JS thread. In release the JavaScript is bundled ahead of time and compiled to Hermes bytecode, and there is no dev server and no developer checks. Your list's code is the same on both paths, and its own cost, such as formatting in every render, stays in release too. That is why the baseline is recorded from the release path: it shows only what the user really pays for."
+    spec:
+      layout: grid
+      nodes:
+        - { id: metro, label: { uk: "Metro: JS з dev-сервера", en: "Metro: JS from dev server" }, col: 0, row: 0, w: 150 }
+        - { id: checks, label: { uk: "перевірки __DEV__", en: "__DEV__ checks" }, col: 0, row: 1, w: 150 }
+        - { id: slowjs, label: { uk: "неоптимізований JS", en: "unoptimized JS" }, col: 0, row: 2, w: 150 }
+        - { id: bytecode, label: { uk: "байт-код Hermes", en: "Hermes bytecode" }, col: 1, row: 0, w: 150 }
+        - { id: listd, label: { uk: "код списку (debug)", en: "list code (debug)" }, col: 0, row: 3, w: 150 }
+        - { id: listr, label: { uk: "код списку (release)", en: "list code (release)" }, col: 1, row: 3, w: 150 }
+      edges:
+        - { from: metro, to: checks }
+        - { from: checks, to: slowjs }
+        - { from: slowjs, to: listd }
+        - { from: bytecode, to: listr }
+      steps:
+        - caption:
+            uk: "Той самий список двома шляхами: ліворуч debug, праворуч release."
+            en: "The same list along two paths: debug on the left, release on the right."
+        - caption:
+            uk: "Debug: JavaScript приходить з dev-сервера Metro, а не з застосунку."
+            en: "Debug: the JavaScript comes from the Metro dev server, not from the app."
+          highlight: [metro]
+          dim: [bytecode, listr]
+        - caption:
+            uk: "Поряд виконуються перевірки розробника й неоптимізований код — зайва робота в кожному кадрі потоку JS."
+            en: "Developer checks and unoptimized code run alongside — extra work in every frame of the JS thread."
+          highlight: [checks, slowjs, metro->checks, checks->slowjs]
+          dim: [bytecode, listr]
+        - caption:
+            uk: "Release: зібраний байт-код Hermes, без dev-сервера й без перевірок розробника."
+            en: "Release: bundled Hermes bytecode, with no dev server and no developer checks."
+          highlight: [bytecode, listr, bytecode->listr]
+          dim: [metro, checks, slowjs]
+        - caption:
+            uk: "Код списку однаковий на обох шляхах: його власна вартість лишається й у release. Її й видно в базовій лінії з release."
+            en: "The list code is the same on both paths: its own cost stays in release too. That is what the release baseline shows."
+          highlight: [listd, listr]
+
+  - id: predict-baseline
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Лабораторний список на Android-емуляторі: у debug сценарій прокрутки дав 41 довгий кадр, у release — 9. Ти прибрав одну перевірку, яка працює лише в `__DEV__`, і debug-число впало до 30. Що записати в базову лінію й чи покращив ти застосунок для користувача?"
+      en: "The lab list on an Android emulator: in debug the scroll script gave 41 long frames, in release 9. You removed one check that runs only under `__DEV__`, and the debug number fell to 30. What goes into the baseline, and did you improve the app for the user?"
+    answer:
+      type: choice
+      options:
+        - id: release-nine
+          text:
+            uk: "Базова лінія — 9 з release; для користувача нічого не змінилося, бо `__DEV__`-коду в release немає"
+            en: "The baseline is 9 from release; nothing changed for the user, because `__DEV__` code is not in release"
+        - id: debug-improved
+          text:
+            uk: "Базова лінія — 41, і покращення на 11 кадрів — справжнє"
+            en: "The baseline is 41, and the improvement by 11 frames is real"
+          why:
+            uk: "Код під `if (__DEV__)` у release вирізано ще під час збирання. Користувач цих 11 кадрів ніколи й не втрачав."
+            en: "Code under `if (__DEV__)` is cut out of release at build time. The user never lost those 11 frames."
+        - id: average
+          text:
+            uk: "Середнє з обох, 25, — так чесніше"
+            en: "The average of both, 25 — that is fairer"
+          why:
+            uk: "Середнє з двох різних збірок нічого не описує. Числа порівнюють лише в однакових умовах: та сама ціль, release, той самий сценарій."
+            en: "An average of two different builds describes nothing. Numbers are compared only under the same conditions: the same target, release, the same script."
+      correct: [release-nine]
+    explanation:
+      uk: "Рахується лише те, що бачить користувач: release на заявленій цілі. Debug-числа корисні, щоб швидко помітити проблему, але не щоб довести покращення. І кожне число записують з умовами: ціль, режим збірки, розмір даних, сценарій."
+      en: "Only what the user sees counts: release on the declared target. Debug numbers are useful for spotting a problem quickly, not for proving an improvement. And every number is written down with its conditions: the target, the build mode, the dataset size, the script."
+
+  - id: recall-measure-first
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: why-it-rendered
+        from: re-07-02-profiling-render-causes
+        prompt:
+          uk: "Рядок вебсписку здається повільним. Що зробити першим?"
+          en: "A row of a web list seems slow. What do you do first?"
+        answer:
+          type: choice
+          options:
+            - id: record
+              text:
+                uk: "Записати взаємодію профайлером React і подивитися, що рендерилося й чому"
+                en: "Record the interaction with the React profiler and look at what rendered and why"
+            - id: memo-all
+              text:
+                uk: "Обгорнути всі компоненти в `memo` — гірше не буде"
+                en: "Wrap every component in `memo` — it cannot hurt"
+              why:
+                uk: "Без запису невідомо, що саме повільне. `memo` має свою ціну й не допомагає, якщо проблема в ефекті чи в commit."
+                en: "Without a recording it is unknown what exactly is slow. `memo` has its own cost and does not help if the problem is in an effect or in the commit."
+          correct: [record]
+        explanation:
+          uk: "Спершу виміряти, потім змінювати. На телефоні те саме правило має ще одну умову: вимірювати release-збірку на заявленій цілі."
+          en: "Measure first, change second. On a phone the same rule has one more condition: measure a release build on the declared target."
+
+  - id: baseline-lab
+    kind: local-task
+    runtime: local-native
+    title:
+      uk: "Базова лінія в debug і в release"
+      en: "A baseline in debug and in release"
+    intro:
+      uk: |
+        Ти створиш проєкт `rn10-perf-lab` у теці курсу, виміряєш його список на своїй заявленій цілі з RN-01 у debug і в release і запишеш результат у `PERF.md`. Потрібен інтернет (для пакетів); нових облікових записів лабораторія не потребує (для цілі P на iPhone вони вже знадобилися під час налаштування Expo Go в RN-01).
+
+        > [!warning]
+        > Команди описано за документацією **Expo SDK 57** і **React Native 0.86** (reactnative.dev, версія 0.86; docs.expo.dev, жовтень 2026). На машині, де писали урок, нативних інструментів не було: там створили проєкт, перевірили всі три файли командою `npx tsc --noEmit` (без помилок) і зібрали JavaScript командою `npx expo export --platform android`. Запуск на емуляторі, симуляторі чи телефоні, `adb` і Instruments **не виконувалися** — тому тут немає прикладів їхнього виводу. Записуй те, що бачиш у себе.
+
+        Якщо в тебе немає працездатної нативної цілі, познач завдання як **невиконане** й переходь далі: вправу в перегляді нижче можна зробити й без неї, а наступні уроки від цього завдання не залежать.
+
+        **Цілі й команди збирання:**
+
+        | Ціль | debug | release |
+        |---|---|---|
+        | **A** — Android-емулятор | `npx expo run:android` | `npx expo run:android --variant release` |
+        | **I** — iOS-симулятор (macOS) | `npx expo run:ios` | `npx expo run:ios --configuration Release` |
+        | **P** — телефон з Expo Go | `npx expo start` | release-збірки немає: `npx expo start --no-dev --minify` |
+
+        `run:android` і `run:ios` компілюють нативний застосунок і потребують Android Studio чи Xcode. Expo Go release-збірки не має: `--no-dev --minify` дає **production-JavaScript в Expo Go** — ближче до release, але не release. Так і запиши в `PERF.md`.
+
+        **Крок 3 — `expenses.ts`:**
+
+        ```ts
+        // expenses.ts: 1,000 synthetic expenses, generated the same way on every run.
+        export type Expense = { id: string; label: string; amountMinor: number; date: string; category: string };
+
+        const LABELS = ['Продукти', 'Проїзний', 'Кава', 'Лампочки', 'Кіно', 'Обід'];
+        const CATEGORIES = ['food', 'transport', 'fun', 'home', 'fun', 'food'];
+
+        export const expenses: Expense[] = Array.from({ length: 1000 }, (_, i) => ({
+          id: `e-${String(i + 1).padStart(4, '0')}`,
+          label: `${LABELS[i % LABELS.length]} #${i + 1}`,
+          amountMinor: 500 + ((i * 7919) % 90000),
+          date: `2026-0${1 + (i % 3)}-${String(1 + (i % 28)).padStart(2, '0')}`,
+          category: CATEGORIES[i % CATEGORIES.length],
+        }));
+        ```
+
+        **Крок 3 — `perfTools.ts`:**
+
+        ```ts
+        // perfTools.ts: a JS frame meter and a fixed scroll script, so that every run measures the same thing.
+        import type { FlatList } from 'react-native';
+
+        export type FrameReport = { seconds: number; jsFps: number; longFrames: number; worstMs: number };
+
+        // Counts requestAnimationFrame callbacks on the JS thread for `durationMs`. A gap longer than 1.5 frames
+        // of a 60 Hz screen (25 ms) means the JS thread missed at least one frame: that is a "long frame".
+        export function measureJsFrames(durationMs: number): Promise<FrameReport> {
+          return new Promise((resolve) => {
+            const start = performance.now();
+            let last = start;
+            let frames = 0;
+            let longFrames = 0;
+            let worstMs = 0;
+            function tick(now: number) {
+              const gap = now - last;
+              last = now;
+              frames += 1;
+              if (gap > 25) longFrames += 1;
+              worstMs = Math.max(worstMs, gap);
+              if (now - start < durationMs) {
+                requestAnimationFrame(tick);
+              } else {
+                const seconds = (now - start) / 1000;
+                resolve({ seconds: Math.round(seconds * 10) / 10, jsFps: Math.round(frames / seconds), longFrames, worstMs: Math.round(worstMs) });
+              }
+            }
+            requestAnimationFrame(tick);
+          });
+        }
+
+        // Scrolls the list down by 600 points every 500 ms, 20 times: 10 seconds, the same on every run.
+        export async function runScrollScript<T>(list: FlatList<T> | null): Promise<void> {
+          for (let step = 1; step <= 20; step += 1) {
+            list?.scrollToOffset({ offset: step * 600, animated: true });
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+        }
+        ```
+
+        **Крок 3 — `App.tsx` (заміни весь файл; копіюй точно, зі сповільненням):**
+
+        ```tsx
+        // App.tsx: RN-10 profiling lab — a list of 1,000 synthetic expenses with a fixed scroll script.
+        // Seeded slowdown: every row builds new formatters and formats on every render.
+        import { useRef, useState } from 'react';
+        import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+        import { expenses, type Expense } from './expenses';
+        import { measureJsFrames, runScrollScript, type FrameReport } from './perfTools';
+
+        function ExpenseRow({ expense }: { expense: Expense }) {
+          const money = new Intl.NumberFormat('uk-UA', { style: 'currency', currency: 'UAH' });
+          const day = new Intl.DateTimeFormat('uk-UA', { day: 'numeric', month: 'long', year: 'numeric' });
+          return (
+            <View style={styles.row} accessible accessibilityLabel={`${expense.label}, ${money.format(expense.amountMinor / 100)}`}>
+              <Text style={styles.label}>{expense.label}</Text>
+              <Text>{money.format(expense.amountMinor / 100)}</Text>
+              <Text style={styles.date}>{day.format(new Date(`${expense.date}T00:00:00`))}</Text>
+            </View>
+          );
+        }
+
+        export default function App() {
+          const listRef = useRef<FlatList<Expense>>(null);
+          const [report, setReport] = useState<FrameReport | null>(null);
+          const [running, setRunning] = useState(false);
+
+          async function measure() {
+            setRunning(true);
+            listRef.current?.scrollToOffset({ offset: 0, animated: false });
+            const [result] = await Promise.all([measureJsFrames(10000), runScrollScript(listRef.current)]);
+            setReport(result);
+            setRunning(false);
+          }
+
+          return (
+            <View style={styles.screen}>
+              <Pressable accessibilityRole="button" disabled={running} onPress={measure} style={styles.button}>
+                <Text style={styles.buttonText}>{running ? 'Вимірюю… (10 с)' : 'Запустити 10-секундну прокрутку'}</Text>
+              </Pressable>
+              <Text accessibilityLiveRegion="polite" style={styles.report}>
+                {report
+                  ? `${__DEV__ ? 'DEV JS' : 'PROD JS'} · ${expenses.length} rows · JS ${report.jsFps} fps · long frames ${report.longFrames} · worst ${report.worstMs} ms`
+                  : `${__DEV__ ? 'DEV JS' : 'PROD JS'} · ${expenses.length} rows · вимірювань ще немає`}
+              </Text>
+              <FlatList ref={listRef} data={expenses} keyExtractor={(item) => item.id} renderItem={({ item }) => <ExpenseRow expense={item} />} />
+            </View>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, paddingTop: 56, backgroundColor: '#ffffff' },
+          button: { minHeight: 48, marginHorizontal: 16, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1d4ed8', borderRadius: 6 },
+          buttonText: { color: '#ffffff', fontWeight: '600' },
+          report: { margin: 16, fontSize: 14 },
+          row: { paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#e5e7eb' },
+          label: { fontSize: 16, fontWeight: '600' },
+          date: { color: '#4b5563' },
+        });
+        ```
+
+        **Крок 8 — `PERF.md` (зразок; числа — твої):**
+
+        ```text
+        # RN-10 baseline
+        Target: Android emulator, Pixel 9, Android 16
+        Dataset: 1,000 rows, the 10-second scroll script, started at the top
+        | Build   | JS fps | Long frames | Worst ms | Janky frames (gfxinfo) | Memory (meminfo TOTAL, PSS) |
+        | debug   | …      | …           | …        | …                      | …                  |
+        | release | …      | …           | …        | …                      | …                  |
+        Not measured: UI frames on iOS (no Instruments run)
+        ```
+      en: |
+        You will create the project `rn10-perf-lab` in your course folder, measure its list on your declared target from RN-01 in debug and in release, and write the result into `PERF.md`. Internet access is needed (for the packages); the lab needs no new accounts (for target P on an iPhone they were already needed to set up Expo Go in RN-01).
+
+        > [!warning]
+        > The commands are described from the documentation of **Expo SDK 57** and **React Native 0.86** (reactnative.dev, version 0.86; docs.expo.dev, October 2026). The machine this lesson was written on had no native tooling: there the project was created, all three files were checked with `npx tsc --noEmit` (no errors) and the JavaScript was bundled with `npx expo export --platform android`. Running on an emulator, a simulator or a phone, `adb` and Instruments were **not run** — that is why there is no sample of their output here. Write down what you see on your machine.
+
+        If you have no working native target, mark this task **not performed** and move on: the preview exercise below can be done without one, and the next lessons do not depend on this task.
+
+        **Targets and build commands:**
+
+        | Target | debug | release |
+        |---|---|---|
+        | **A** — Android emulator | `npx expo run:android` | `npx expo run:android --variant release` |
+        | **I** — iOS simulator (macOS) | `npx expo run:ios` | `npx expo run:ios --configuration Release` |
+        | **P** — phone with Expo Go | `npx expo start` | no release build: `npx expo start --no-dev --minify` |
+
+        `run:android` and `run:ios` compile the native app and need Android Studio or Xcode. Expo Go has no release build: `--no-dev --minify` gives **production JavaScript in Expo Go** — closer to release, but not release. Write it down exactly so in `PERF.md`.
+
+        **Step 3 — `expenses.ts`:**
+
+        ```ts
+        // expenses.ts: 1,000 synthetic expenses, generated the same way on every run.
+        export type Expense = { id: string; label: string; amountMinor: number; date: string; category: string };
+
+        const LABELS = ['Groceries', 'Transit pass', 'Coffee', 'Light bulbs', 'Cinema', 'Lunch'];
+        const CATEGORIES = ['food', 'transport', 'fun', 'home', 'fun', 'food'];
+
+        export const expenses: Expense[] = Array.from({ length: 1000 }, (_, i) => ({
+          id: `e-${String(i + 1).padStart(4, '0')}`,
+          label: `${LABELS[i % LABELS.length]} #${i + 1}`,
+          amountMinor: 500 + ((i * 7919) % 90000),
+          date: `2026-0${1 + (i % 3)}-${String(1 + (i % 28)).padStart(2, '0')}`,
+          category: CATEGORIES[i % CATEGORIES.length],
+        }));
+        ```
+
+        **Step 3 — `perfTools.ts`:**
+
+        ```ts
+        // perfTools.ts: a JS frame meter and a fixed scroll script, so that every run measures the same thing.
+        import type { FlatList } from 'react-native';
+
+        export type FrameReport = { seconds: number; jsFps: number; longFrames: number; worstMs: number };
+
+        // Counts requestAnimationFrame callbacks on the JS thread for `durationMs`. A gap longer than 1.5 frames
+        // of a 60 Hz screen (25 ms) means the JS thread missed at least one frame: that is a "long frame".
+        export function measureJsFrames(durationMs: number): Promise<FrameReport> {
+          return new Promise((resolve) => {
+            const start = performance.now();
+            let last = start;
+            let frames = 0;
+            let longFrames = 0;
+            let worstMs = 0;
+            function tick(now: number) {
+              const gap = now - last;
+              last = now;
+              frames += 1;
+              if (gap > 25) longFrames += 1;
+              worstMs = Math.max(worstMs, gap);
+              if (now - start < durationMs) {
+                requestAnimationFrame(tick);
+              } else {
+                const seconds = (now - start) / 1000;
+                resolve({ seconds: Math.round(seconds * 10) / 10, jsFps: Math.round(frames / seconds), longFrames, worstMs: Math.round(worstMs) });
+              }
+            }
+            requestAnimationFrame(tick);
+          });
+        }
+
+        // Scrolls the list down by 600 points every 500 ms, 20 times: 10 seconds, the same on every run.
+        export async function runScrollScript<T>(list: FlatList<T> | null): Promise<void> {
+          for (let step = 1; step <= 20; step += 1) {
+            list?.scrollToOffset({ offset: step * 600, animated: true });
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+        }
+        ```
+
+        **Step 3 — `App.tsx` (replace the whole file; copy it exactly, with the slowdown):**
+
+        ```tsx
+        // App.tsx: RN-10 profiling lab — a list of 1,000 synthetic expenses with a fixed scroll script.
+        // Seeded slowdown: every row builds new formatters and formats on every render.
+        import { useRef, useState } from 'react';
+        import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+        import { expenses, type Expense } from './expenses';
+        import { measureJsFrames, runScrollScript, type FrameReport } from './perfTools';
+
+        function ExpenseRow({ expense }: { expense: Expense }) {
+          const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'UAH' });
+          const day = new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'long', year: 'numeric' });
+          return (
+            <View style={styles.row} accessible accessibilityLabel={`${expense.label}, ${money.format(expense.amountMinor / 100)}`}>
+              <Text style={styles.label}>{expense.label}</Text>
+              <Text>{money.format(expense.amountMinor / 100)}</Text>
+              <Text style={styles.date}>{day.format(new Date(`${expense.date}T00:00:00`))}</Text>
+            </View>
+          );
+        }
+
+        export default function App() {
+          const listRef = useRef<FlatList<Expense>>(null);
+          const [report, setReport] = useState<FrameReport | null>(null);
+          const [running, setRunning] = useState(false);
+
+          async function measure() {
+            setRunning(true);
+            listRef.current?.scrollToOffset({ offset: 0, animated: false });
+            const [result] = await Promise.all([measureJsFrames(10000), runScrollScript(listRef.current)]);
+            setReport(result);
+            setRunning(false);
+          }
+
+          return (
+            <View style={styles.screen}>
+              <Pressable accessibilityRole="button" disabled={running} onPress={measure} style={styles.button}>
+                <Text style={styles.buttonText}>{running ? 'Measuring… (10 s)' : 'Run the 10-second scroll script'}</Text>
+              </Pressable>
+              <Text accessibilityLiveRegion="polite" style={styles.report}>
+                {report
+                  ? `${__DEV__ ? 'DEV JS' : 'PROD JS'} · ${expenses.length} rows · JS ${report.jsFps} fps · long frames ${report.longFrames} · worst ${report.worstMs} ms`
+                  : `${__DEV__ ? 'DEV JS' : 'PROD JS'} · ${expenses.length} rows · no measurement yet`}
+              </Text>
+              <FlatList ref={listRef} data={expenses} keyExtractor={(item) => item.id} renderItem={({ item }) => <ExpenseRow expense={item} />} />
+            </View>
+          );
+        }
+
+        const styles = StyleSheet.create({
+          screen: { flex: 1, paddingTop: 56, backgroundColor: '#ffffff' },
+          button: { minHeight: 48, marginHorizontal: 16, justifyContent: 'center', alignItems: 'center', backgroundColor: '#1d4ed8', borderRadius: 6 },
+          buttonText: { color: '#ffffff', fontWeight: '600' },
+          report: { margin: 16, fontSize: 14 },
+          row: { paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#e5e7eb' },
+          label: { fontSize: 16, fontWeight: '600' },
+          date: { color: '#4b5563' },
+        });
+        ```
+
+        **Step 8 — `PERF.md` (a sample; the numbers are yours):**
+
+        ```text
+        # RN-10 baseline
+        Target: Android emulator, Pixel 9, Android 16
+        Dataset: 1,000 rows, the 10-second scroll script, started at the top
+        | Build   | JS fps | Long frames | Worst ms | Janky frames (gfxinfo) | Memory (meminfo TOTAL, PSS) |
+        | debug   | …      | …           | …        | …                      | …                  |
+        | release | …      | …           | …        | …                      | …                  |
+        Not measured: UI frames on iOS (no Instruments run)
+        ```
+    tools:
+      - name: "Node.js"
+        version: { uk: "22.13 або новіший", en: "22.13 or newer" }
+        note: { uk: "мінімум для Expo SDK 57", en: "the minimum for Expo SDK 57" }
+      - name: "Expo SDK"
+        version: "57 (React Native 0.86)"
+        note: { uk: "шаблон `create-expo-app` ставить поточну версію; якщо в `package.json` новіша, звір поведінку з документацією своєї версії", en: "the `create-expo-app` template installs the current version; if `package.json` shows a newer one, compare behavior with the documentation of your version" }
+      - name: "Android Studio / Xcode"
+        note: { uk: "лише для цілей A та I: `run:android` і `run:ios` компілюють нативний застосунок", en: "targets A and I only: `run:android` and `run:ios` compile the native app" }
+      - name: "Declared target"
+        note: { uk: "емулятор, симулятор чи телефон з RN-01", en: "the emulator, simulator or phone from RN-01" }
+    steps:
+      - text:
+          uk: "Перейди в теку курсу й створи проєкт. Шаблон `blank-typescript` — без навігації, з TypeScript; він також робить перший commit."
+          en: "Go to your course folder and create the project. The `blank-typescript` template has no navigation and has TypeScript; it also makes the first commit."
+        command: "cd ~/js-course\nnpx create-expo-app@latest rn10-perf-lab --template blank-typescript\ncd rn10-perf-lab"
+        expect:
+          uk: "З’явилася тека `rn10-perf-lab` з `App.tsx` і `package.json`; у `package.json` — `expo` версії 57 і `react-native` 0.86 (у нашій перевірці `~57.0.26` і `0.86.3`)."
+          en: "A `rn10-perf-lab` folder appeared with `App.tsx` and `package.json`; `package.json` lists `expo` version 57 and `react-native` 0.86 (in our check `~57.0.26` and `0.86.3`)."
+      - text:
+          uk: "**A, I.** Дай застосунку постійний ідентифікатор: в `app.json` додай у блок `android` рядок `\"package\": \"com.example.rn10perflab\"`, а в блок `ios` — `\"bundleIdentifier\": \"com.example.rn10perflab\"`. За цією назвою `adb` знайде застосунок. Перевір, що Expo її бачить."
+          en: "**A, I.** Give the app a fixed identifier: in `app.json` add `\"package\": \"com.example.rn10perflab\"` to the `android` block and `\"bundleIdentifier\": \"com.example.rn10perflab\"` to the `ios` block. `adb` finds the app by this name. Check that Expo sees it."
+        command: "npx expo config --type public"
+        expect:
+          uk: "У виводі є рядки `package: 'com.example.rn10perflab'` і `bundleIdentifier: 'com.example.rn10perflab'` (так у нашій перевірці)."
+          en: "The output has the lines `package: 'com.example.rn10perflab'` and `bundleIdentifier: 'com.example.rn10perflab'` (as in our check)."
+      - text:
+          uk: "Створи поряд з `App.tsx` файли `expenses.ts` і `perfTools.ts` і заміни `App.tsx` — вміст усіх трьох у кроці 3 вступу. Перевір типи й зафіксуй початковий стан."
+          en: "Create the files `expenses.ts` and `perfTools.ts` next to `App.tsx` and replace `App.tsx` — the content of all three is in step 3 of the intro. Check the types and commit the starting state."
+        command: "npx tsc --noEmit\ngit add -A\ngit commit -m \"RN-10 profiling lab: seeded list\""
+        expect:
+          uk: "`npx tsc --noEmit` нічого не друкує — помилок типів немає. Commit створено."
+          en: "`npx tsc --noEmit` prints nothing — no type errors. The commit is created."
+      - text:
+          uk: "Запусти **debug**-збірку своєї цілі командою з таблиці у вступі. На **A** перед вимірюванням скинь лічильники кадрів командою нижче (опцію `reset` описує архівний посібник Android «Testing Display Performance»; тут не перевірено)."
+          en: "Start the **debug** build of your target with the command from the table in the intro. On **A**, reset the frame counters before measuring with the command below (the `reset` option is described in Android's archived “Testing Display Performance” guide; not checked here)."
+        command: "adb shell dumpsys gfxinfo com.example.rn10perflab reset"
+        expect:
+          uk: "На екрані — кнопка й рядок `DEV JS · 1000 rows · вимірювань ще немає`, під ними список витрат."
+          en: "The screen shows a button and the line `DEV JS · 1000 rows · no measurement yet`, with the list of expenses below."
+      - text:
+          uk: "Натисни «Запустити 10-секундну прокрутку» й не торкайся екрана 10 секунд. Запиши рядок результату. На **A** одразу після цього збери статистику кадрів потоку UI й пам’ять."
+          en: "Press “Run the 10-second scroll script” and do not touch the screen for 10 seconds. Write down the result line. On **A**, right after that, collect the UI thread's frame statistics and the memory."
+        command: "adb shell dumpsys gfxinfo com.example.rn10perflab\nadb shell dumpsys meminfo com.example.rn10perflab"
+        expect:
+          uk: "Рядок `DEV JS · 1000 rows · JS … fps · long frames … · worst … ms`. За архівним посібником Android «Testing Display Performance» вивід `gfxinfo` має `Total frames rendered` і `Janky frames` (чинна сторінка `dumpsys` описує лише саму команду й `framestats`); у `meminfo` чинна документація показує рядок `TOTAL` зі стовпчиком `Pss Total` — загальний PSS процесу. Тут нічого з цього не перевірено: запиши поля так, як їх друкує твій пристрій."
+          en: "The line `DEV JS · 1000 rows · JS … fps · long frames … · worst … ms`. According to Android's archived “Testing Display Performance” guide, the `gfxinfo` output has `Total frames rendered` and `Janky frames` (the current `dumpsys` page describes only the command itself and `framestats`); for `meminfo` the current docs show a `TOTAL` row with a `Pss Total` column — the process's total PSS. None of this was checked here: write the fields down as your device prints them."
+      - text:
+          uk: "Зупини застосунок і запусти **release** командою з таблиці (на **P** — `--no-dev --minify`). Тричі виміряй так само, як у кроці 5 (на **A** — щоразу з `reset` перед вимірюванням), і запиши медіану з трьох. На **I** числа потоку UI може дати Instruments з Xcode (меню Xcode → Open Developer Tool → Instruments, шаблон Animation Hitches), якщо він пропонує твій симулятор як ціль — у курсі це не перевірено; інакше запиши, що їх не виміряно."
+          en: "Stop the app and start **release** with the command from the table (on **P**: `--no-dev --minify`). Measure three times as in step 5 (on **A**, each time with `reset` before measuring) and record the median of the three. On **I**, UI-thread numbers may come from Xcode's Instruments (the Xcode menu → Open Developer Tool → Instruments, the Animation Hitches template) if it offers your simulator as a target — not checked in this course; otherwise write down that they were not measured."
+        expect:
+          uk: "Рядок починається з `PROD JS`. Розумно очікувати менше довгих кадрів, ніж у debug, але не нуль: сповільнення в `ExpenseRow` у release лишилося."
+          en: "The line starts with `PROD JS`. It is reasonable to expect fewer long frames than in debug, but not zero: the slowdown in `ExpenseRow` stayed in release."
+      - text:
+          uk: "Подивись у `App.tsx` на `ExpenseRow`: що він робить на кожному рендері кожного рядка, хоча результат щоразу однаковий? Не виправляй поки — це завдання вправи нижче й наступного уроку. Запиши гіпотезу в `PERF.md` одним рядком."
+          en: "Look at `ExpenseRow` in `App.tsx`: what does it do on every render of every row, even though the result is the same each time? Do not fix it yet — that is the job of the exercise below and of the next lesson. Write your hypothesis into `PERF.md` in one line."
+      - text:
+          uk: "Створи `PERF.md` за зразком з кроку 8 вступу: ціль, розмір даних, сценарій, таблиця debug/release і що не виміряно. Зафіксуй."
+          en: "Create `PERF.md` following the sample in step 8 of the intro: the target, the dataset size, the script, the debug/release table and what was not measured. Commit it."
+        command: "git add PERF.md\ngit commit -m \"Record the RN-10 baseline\""
+        expect:
+          uk: "Commit створено; `git log --oneline` показує три commit-и."
+          en: "The commit is created; `git log --oneline` shows three commits."
+    verify:
+      - id: both-modes
+        text:
+          uk: "Я виміряв той самий сценарій у debug і в release (чи в `--no-dev --minify` для Expo Go) на заявленій цілі."
+          en: "I measured the same script in debug and in release (or `--no-dev --minify` for Expo Go) on my declared target."
+      - id: baseline-written
+        text:
+          uk: "`PERF.md` містить ціль, режим збірки, 1 000 рядків, сценарій, числа з release і перелік того, що не виміряно."
+          en: "`PERF.md` lists the target, the build mode, 1,000 rows, the script, the release numbers and what was not measured."
+    troubleshooting:
+      - problem:
+          uk: "У release-збірці рядок результату починається з `DEV JS`"
+          en: "In the release build the result line starts with `DEV JS`"
+        fix:
+          uk: "Запущено debug-варіант. Перевір команду: `--variant release` для Android, `--configuration Release` для iOS, `--no-dev` для Expo Go. Числа з `DEV JS` у базову лінію release не йдуть."
+          en: "The debug variant is running. Check the command: `--variant release` for Android, `--configuration Release` for iOS, `--no-dev` for Expo Go. Numbers marked `DEV JS` do not go into the release baseline."
+      - problem:
+          uk: "Числа сильно відрізняються від запуску до запуску"
+          en: "The numbers differ a lot from run to run"
+        fix:
+          uk: "Починай кожен запуск з верху списку, закрий інші застосунки на цілі, зроби три запуски й запиши медіану. Емулятор ділить процесор з комп’ютером: не збирай нічого паралельно."
+          en: "Start every run from the top of the list, close other apps on the target, make three runs and record the median. An emulator shares the processor with the computer: do not build anything in parallel."
+      - problem:
+          uk: "`adb: no devices/emulators found` або `adb` не знайдено"
+          en: "`adb: no devices/emulators found`, or `adb` is not found"
+        fix:
+          uk: "Емулятор не запущено або змінні середовища з RN-01 не діють у цьому терміналі. Запусти емулятор, перевір `adb devices`. Числа `gfxinfo` можна й не записувати — тоді додай їх до «Not measured»."
+          en: "The emulator is not running, or the environment variables from RN-01 are not active in this terminal. Start the emulator and check `adb devices`. You may skip the `gfxinfo` numbers — then add them to “Not measured”."
+      - problem:
+          uk: "Ціль P: release-збірки немає"
+          en: "Target P: there is no release build"
+        fix:
+          uk: "Так і є: Expo Go не має release. Запиши режим як «production JS in Expo Go (--no-dev --minify)» і не називай його release. Справжній release потребує цілі A чи I."
+          en: "That is right: Expo Go has no release. Record the mode as “production JS in Expo Go (--no-dev --minify)” and do not call it release. A real release needs target A or I."
+    recovery:
+      uk: "Проєкт окремий і нічого не змінює в інших твоїх проєктах. Щоб почати з чистого стану, виконай у ньому `git restore .` (повертає файли до останнього commit) або видали теку `rn10-perf-lab` і повтори крок 1."
+      en: "The project is separate and changes nothing in your other projects. To start from a clean state, run `git restore .` in it (returns the files to the last commit) or remove the `rn10-perf-lab` folder and repeat step 1."
+
+  - id: format-on-render
+    kind: exercise
+    mode: debug
+    runtime: concept-preview
+    dir: format-on-render
+    entry: main.jsx
+    editable: [ExpenseList.jsx]
+    strings:
+      groceries: { uk: "Продукти", en: "Groceries" }
+      pass: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава", en: "Coffee" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Кіно", en: "Cinema" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      reverse: { uk: "Змінити порядок", en: "Reverse the order" }
+      created: { uk: "Створено форматерів", en: "Formatters built" }
+      locale: { uk: "uk-UA", en: "en-US" }
+    title:
+      uk: "Сповільнення, що лишається в release"
+      en: "A slowdown that stays in release"
+    instructions:
+      uk: |
+        Це той самий список, що в лабораторії, лише на 200 рядків: кожен рядок на **кожному** рендері будує два нові форматери (`Intl.NumberFormat` для суми й `Intl.DateTimeFormat` для дати). Це не перевірка розробника — це код самого списку, тож release-збірка платить за нього так само.
+
+        1. **Відтвори**: натисни кілька разів «Змінити порядок» і подивись на «Створено форматерів».
+        2. **Полагодь** `ExpenseList.jsx` так, щоб увесь список будував **не більше двох** форматерів, а суми й дати виглядали так само.
+
+        Перевірки рахують створені форматери через `format.js` (його й `main.jsx` редагувати не можна) після трьох змін порядку й дивляться на текст рядків.
+      en: |
+        This is the same list as in the lab, only 200 rows long: every row builds two new formatters (`Intl.NumberFormat` for the amount and `Intl.DateTimeFormat` for the date) on **every** render. This is not a developer check — it is the list's own code, so a release build pays for it just the same.
+
+        1. **Reproduce** it: press “Reverse the order” a few times and look at “Formatters built”.
+        2. **Repair** `ExpenseList.jsx` so that the whole list builds **at most two** formatters, while the amounts and dates look the same.
+
+        The checks count the built formatters through `format.js` (it and `main.jsx` cannot be edited) after three reorders and look at the rows' text.
+    limits:
+      uk: "Перевірки в перегляді react-native-web рахують створені форматери — це кількість роботи, а не час. Скільки кадрів це коштує на телефоні, видно лише в release-профілі на пристрої, як у лабораторії вище."
+      en: "The checks in the react-native-web preview count the built formatters — that is an amount of work, not time. How many frames it costs on a phone is visible only in a release profile on a device, as in the lab above."
+    testTitles:
+      "rows show formatted amounts and dates":
+        uk: "Рядки показують відформатовані суми й дати"
+        en: "Rows show formatted amounts and dates"
+      "the whole list builds at most two formatters, even after reordering":
+        uk: "Увесь список будує не більше двох форматерів, навіть після зміни порядку"
+        en: "The whole list builds at most two formatters, even after reordering"
+      "after reordering every row still shows its own amount":
+        uk: "Після зміни порядку кожен рядок показує свою суму"
+        en: "After reordering every row still shows its own amount"
+    hints:
+      nudge:
+        uk: "Чи залежить форматер від конкретної витрати? Від чого він залежить насправді — і скільки разів його треба створити на весь список?"
+        en: "Does a formatter depend on a particular expense? What does it really depend on — and how many times must it be built for the whole list?"
+      explanation:
+        uk: "Форматер залежить лише від мови, а не від рядка. Створи його раз — на рівні модуля або в компоненті списку через `useMemo` з мовою в залежностях — і передай рядкам готовий. `useMemo` у кожному рядку не допоможе: у кожного змонтованого рядка своя пам’ять. Схоже: регулярний вираз для перевірки пошти створюють раз поза функцією, а не при кожному виклику."
+        en: "A formatter depends only on the language, not on the row. Build it once — at module level or in the list component through `useMemo` with the language in the dependencies — and pass the ready one to the rows. `useMemo` in every row does not help: every mounted row has its own memory. Similar: an email-checking regular expression is built once outside the function, not on every call."
+    solutionNote:
+      uk: "Два форматери на весь список, створені в `useMemo` з `[locale]`: рядки лише викликають `format`. Кеш на рівні модуля працює так само. Прибрати форматування — не виправлення: користувач побачить копійки й ISO-дати. У лабораторії це саме сповільнення ти прибереш і виміряєш у release в наступному уроці."
+      en: "Two formatters for the whole list, built in `useMemo` with `[locale]`: the rows only call `format`. A module-level cache works the same way. Removing the formatting is not a fix: the user would see minor units and ISO dates. In the lab you will remove this same slowdown and measure it in release in the next lesson."
+    feedback:
+      - when: { test: "rows show formatted amounts and dates" }
+        message:
+          uk: "Ця перевірка очікує в перших трьох рядках суму, відформатовану як валюта UAH, і дату з назвою місяця — так, як їх форматує `format.js` для мови уроку."
+          en: "This check expects, in the first three rows, the amount formatted as UAH currency and the date with the month's name — the way `format.js` formats them for the lesson's language."
+      - when: { test: "the whole list builds at most two formatters, even after reordering" }
+        message:
+          uk: "Ця перевірка тричі змінює порядок і очікує, що з початку програми `createMoneyFormat` і `createDayFormat` разом викликано не більше двох разів. Форматер у рядку чи `useMemo` в рядку створюються для кожного змонтованого рядка."
+          en: "This check reorders three times and expects `createMoneyFormat` and `createDayFormat` together to have been called at most twice since the program started. A formatter in a row, or `useMemo` in a row, is built for every mounted row."
+      - when: { test: "after reordering every row still shows its own amount" }
+        message:
+          uk: "Ця перевірка після непарної кількості змін порядку очікує, що рядок останньої витрати показує її власну відформатовану суму."
+          en: "After an odd number of reorders this check expects the row of the last expense to show its own formatted amount."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-10
+    body:
+      uk: "У кроці проєкту ти так само запишеш базову лінію довгого синтетичного списку свого домену — у release, на заявленій цілі, з розміром даних і сценарієм — перш ніж щось виправляти."
+      en: "In the project step you will record a baseline of a long synthetic list of your domain the same way — in release, on the declared target, with the dataset size and the script — before fixing anything."

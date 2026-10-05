@@ -1,0 +1,364 @@
+id: no-10-08-threat-model-cors-not-auth
+unit: NO-10
+title:
+  uk: "Модель загроз; CORS — це не автентифікація"
+  en: "Threat model; CORS is not auth"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Скласти модель загроз лабораторного сервісу: цінності, учасники, точки входу, межі довіри й контроль, що відповідає на кожну загрозу."
+    en: "Draw a threat model for the lab service: assets, actors, entry points, trust boundaries and the control that answers each threat."
+  - uk: "Показати справжніми запитами, що заголовки CORS вирішують лише, які сторінки браузера можуть прочитати відповідь, а curl чи інший сервер дістається до API попри них."
+    en: "Show with real requests that CORS headers only decide which browser pages may read a response, while curl or another server reaches the API regardless."
+prerequisites: [no-10-07-login-abuse-csrf-limits, no-10-05-ownership-least-privilege]
+subskills:
+  - { family: B-07, skill: "threat model", depth: intro }
+  - { family: B-07, skill: "CORS not auth", depth: intro }
+glossary: [threat-model, attack-surface]
+selfCheck: [predict-three-callers, threat-table]
+
+blocks:
+  - id: cors-is-not-a-lock
+    kind: explanation
+    title:
+      uk: "CORS охороняє браузер, а не сервер"
+      en: "CORS guards the browser, not the server"
+    body:
+      uk: |
+        Сервіс нотаток відповідає `Access-Control-Allow-Origin: http://127.0.0.1:4310` лише своєму вебклієнтові. Здається, що тепер «ніхто інший» не прочитає нотатки. Але пригадай, як працює [[cors|CORS]]:
+
+        - сервер **отримав** запит, **виконав** його й **надіслав** відповідь — завжди;
+        - лише **браузер** потім вирішує за заголовком, чи віддати тіло скриптові сторінки.
+
+        `curl`, скрипт на Node.js, інший сервер — не браузери. Вони не дивляться на `Access-Control-Allow-Origin` і читають відповідь цілком. Навіть заголовок `Origin` такий клієнт може надіслати будь-який — або жодного.
+
+        Тож CORS — це правило для **чужих сторінок у браузері користувача**, а не замок на API. Хто може читати нотатки, вирішують перевірка сесії й перевірка власності на сервері. Без них сервіс «із суворим CORS» відкритий для кожного, хто знає адресу.
+      en: |
+        The notes service answers `Access-Control-Allow-Origin: http://127.0.0.1:4310` only to its own web client. It seems that now “nobody else” can read the notes. But remember how [[cors|CORS]] works:
+
+        - the server **received** the request, **carried it out** and **sent** the answer — always;
+        - only the **browser** then decides by the header whether to hand the body to the page's script.
+
+        `curl`, a Node.js script, another server are not browsers. They do not look at `Access-Control-Allow-Origin` and read the whole answer. Such a client can even send any `Origin` header it likes — or none.
+
+        So CORS is a rule for **foreign pages in the user's browser**, not a lock on the API. Who may read notes is decided by the session check and the ownership check on the server. Without them a service “with strict CORS” is open to everyone who knows the address.
+
+  - id: predict-three-callers
+    kind: prediction
+    prompt:
+      uk: "Сервіс нотаток надсилає `Access-Control-Allow-Origin` лише для `http://127.0.0.1:4310`, а сесію не перевіряє зовсім. Хто з трьох отримає нотатки у свій код? Обери всі."
+      en: "The notes service sends `Access-Control-Allow-Origin` only for `http://127.0.0.1:4310` and does not check a session at all. Which of three callers get the notes into their code? Pick all."
+    runnable: false
+    answer:
+      type: multi
+      options:
+        - id: allowed-page
+          text: { uk: "Скрипт сторінки на `http://127.0.0.1:4310`", en: "A script of a page on `http://127.0.0.1:4310`" }
+        - id: foreign-page
+          text: { uk: "Скрипт сторінки на `https://evil.example` у браузері", en: "A script of a page on `https://evil.example` in a browser" }
+          why:
+            uk: "Відповідь до браузера дійде, але без `Access-Control-Allow-Origin` для цього походження браузер не віддасть тіло скриптові: `fetch` закінчиться `TypeError` (у Chrome 154 — `TypeError: Failed to fetch`, ми це перевірили)."
+            en: "The answer reaches the browser, but without `Access-Control-Allow-Origin` for this origin the browser does not hand the body to the script: `fetch` ends with a `TypeError` (in Chrome 154 it is `TypeError: Failed to fetch`; we checked)."
+        - id: curl
+          text: { uk: "`curl` у терміналі", en: "`curl` in a terminal" }
+      correct: [allowed-page, curl]
+    explanation:
+      uk: "CORS зупинив лише чужу сторінку в браузері. `curl` отримав усе: правило CORS для нього не існує. Захистити дані від `curl` може тільки перевірка на сервері — сесія, власність."
+      en: "CORS stopped only the foreign page in a browser. `curl` got everything: the CORS rule does not exist for it. Only a check on the server — a session, ownership — can protect data from `curl`."
+
+  - id: threat-model-steps
+    kind: explanation
+    title:
+      uk: "Модель загроз за п’ять питань"
+      en: "A threat model in five questions"
+    body:
+      uk: |
+        Що CORS не захищає від `curl` — легко сказати після. [[threat-model|Модель загроз]] — спосіб помітити такі речі **до** того, як їх помітить хтось інший. Для невеликого сервісу це одна таблиця, а не документ на сто сторінок:
+
+        1. **Цінності** — що варто захищати: облікові записи, нотатки, ключ підпису, пам’ять і час сервера.
+        2. **Учасники** — хто діє: власник, інший користувач, сторінка чужого сайту, скрипт у терміналі.
+        3. **Точки входу** — де щось потрапляє досередини: форма входу, адреса нотатки, сторінка браузера, небраузерний клієнт, конфігурація. Їх сукупність — [[attack-surface|поверхня атаки]].
+        4. **Межі довіри** — де дані перетинають лінію «чуже → наше». Усе, що прийшло з-за межі, недовірене.
+        5. **Контроль і доказ** — що відповідає на кожну загрозу і **який тест показує**, що контроль справді працює.
+
+        Останній стовпчик — головний. Рядок «нотатки захищено» без тесту — це надія. Рядок «чужий id → 404, доведено перевіркою `foreign-note-gets-404`» — факт.
+      en: |
+        That CORS does not protect against `curl` is easy to say afterwards. A [[threat-model]] is a way to notice such things **before** someone else does. For a small service it is one table, not a hundred-page document:
+
+        1. **Assets** — what is worth protecting: accounts, notes, the signing key, the server's memory and time.
+        2. **Actors** — who acts: the owner, another user, a page of a foreign site, a script in a terminal.
+        3. **Entry points** — where something gets in: the login form, a note's address, a browser page, a non-browser client, the configuration. Together they are the [[attack-surface]].
+        4. **Trust boundaries** — where data crosses the line “theirs → ours”. Everything that came from beyond the boundary is untrusted.
+        5. **Control and proof** — what answers each threat and **which test shows** that the control really works.
+
+        The last column is the main one. A row “notes are protected” with no test is a hope. A row “a foreign id → 404, proven by the check `foreign-note-gets-404`” is a fact.
+
+  - id: data-flow
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Точки входу лабораторного сервісу і контролі"
+      en: "The lab service's entry points and controls"
+    textEquivalent:
+      uk: "Угорі, за межею довіри, — два учасники: сторінка в браузері й скрипт на кшталт curl. Під межею — сервер: форма входу і брама, що перевіряє сесію та Origin; ще нижче — нотатки, обмежені власником, і ключ підпису з конфігурації. Кроки по черзі показують загрози. Перебір паролів скриптом приходить до форми входу, і відповідає ліміт частоти (429). Скрипт без сесії приходить до брами, і відповідає перевірка сесії (401); CORS тут не діє, бо скрипт не браузер. Чужий id нотатки проходить браму, але нотатки обмежено власником (404). Підроблена форма із чужої сторінки приходить до брами із чужим Origin (403). Витік ключа загрожує конфігурації: ключ береться зі змінної середовища, а слабкий зупиняє запуск."
+      en: "At the top, beyond the trust boundary, are two actors: a page in a browser and a script such as curl. Below the boundary is the server: the login form and the gate that checks the session and the Origin; further down, the notes scoped by owner and the signing key from the configuration. The steps show the threats one by one. Password guessing by a script arrives at the login form, and the rate limit answers (429). A script with no session arrives at the gate, and the session check answers (401); CORS does not apply here because the script is not a browser. A foreign note id passes the gate, but the notes are scoped by owner (404). A forged form from a foreign page arrives at the gate with a foreign Origin (403). A leaked key threatens the configuration: the key comes from an environment variable, and a weak one stops the start."
+    spec:
+      layout: grid
+      nodes:
+        - { id: page, label: { uk: "Сторінка в браузері", en: "Page in a browser" }, shape: pill, w: 160, col: 0, row: 0 }
+        - { id: script, label: { uk: "Скрипт / curl", en: "Script / curl" }, shape: pill, w: 160, col: 1, row: 0 }
+        - { id: login, label: "POST /login", w: 160, col: 0, row: 1 }
+        - { id: gate, label: { uk: "Сесія + Origin", en: "Session + Origin" }, w: 160, col: 1, row: 1 }
+        - { id: notes, label: { uk: "Нотатки (ownerId)", en: "Notes (ownerId)" }, shape: cylinder, w: 160, col: 1, row: 2 }
+        - { id: secret, label: { uk: "Ключ із env", en: "Key from env" }, shape: note, w: 160, col: 0, row: 2 }
+      edges:
+        - { from: page, to: gate }
+        - { from: script, to: gate }
+        - { from: script, to: login }
+        - { from: gate, to: notes }
+      steps:
+        - caption:
+            uk: "Угорі — учасники **за межею довіри**: сторінка в браузері й скрипт. Усе, що вони надсилають, недовірене."
+            en: "At the top are the actors **beyond the trust boundary**: a page in a browser and a script. Everything they send is untrusted."
+          highlight: [page, script]
+        - caption:
+            uk: "**Перебір паролів**: скрипт смикає форму входу. Контроль — ліміт частоти: шоста спроба отримує 429."
+            en: "**Password guessing**: the script hammers the login form. The control is the rate limit: the sixth attempt gets 429."
+          highlight: [script, login, script->login]
+          annotate:
+            - { id: login, text: "429" }
+        - caption:
+            uk: "**Скрипт без сесії** просить нотатки. CORS тут не діє — скрипт не браузер. Відповідає перевірка сесії: 401."
+            en: "**A script with no session** asks for the notes. CORS does not apply — the script is not a browser. The session check answers: 401."
+          highlight: [script, gate, script->gate]
+          annotate:
+            - { id: gate, text: "401" }
+        - caption:
+            uk: "**Чужий id нотатки** від автентифікованого користувача проходить браму, але запит до нотаток обмежено власником: 404."
+            en: "**A foreign note id** from an authenticated user passes the gate, but the notes query is scoped by owner: 404."
+          highlight: [gate, notes, gate->notes]
+          annotate:
+            - { id: notes, text: "404" }
+        - caption:
+            uk: "**Підроблена форма** із чужої сторінки приходить із cookie жертви, але із чужим `Origin`: 403."
+            en: "**A forged form** from a foreign page arrives with the victim's cookie but a foreign `Origin`: 403."
+          highlight: [page, gate, page->gate]
+          annotate:
+            - { id: gate, text: "403" }
+        - caption:
+            uk: "**Витік ключа**: ключ лежить не в коді, а в змінній середовища; слабкий чи відсутній ключ зупиняє запуск."
+            en: "**A leaked key**: the key is not in the code but in an environment variable; a weak or missing key stops the start."
+          highlight: [secret]
+          dim: [page, script]
+
+  - id: predict-small-teams
+    kind: prediction
+    prompt:
+      uk: "Ти сам пишеш невеликий сервіс із входом для кількох друзів. Чи потрібна йому модель загроз?"
+      en: "You are writing a small service with a login for a few friends on your own. Does it need a threat model?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: yes-small
+          text:
+            uk: "Так — одна таблиця на пів години: цінності, точки входу, контроль і тест для кожної загрози"
+            en: "Yes — one table for half an hour: assets, entry points, a control and a test for each threat"
+        - id: big-companies
+          text:
+            uk: "Ні: моделі загроз потрібні лише великим компаніям із відділом безпеки"
+            en: "No: threat models are only for large companies with a security team"
+          why:
+            uk: "Скрипти, що перебирають паролі й шукають відкриті API, не розрізняють великих і малих. Мала модель — та сама таблиця, лише коротша."
+            en: "Scripts that guess passwords and look for open APIs do not tell big from small. A small model is the same table, only shorter."
+        - id: later
+          text:
+            uk: "Ні, спершу запуск, а безпекою займемося, коли з’являться користувачі"
+            en: "No, launch first, and deal with security when users appear"
+          why:
+            uk: "Коли з’являться користувачі, з’являться й їхні дані — і будь-яка діра вже коштує чужих паролів. Дешевше подумати до запуску."
+            en: "When users appear, so does their data — and any hole already costs other people's passwords. It is cheaper to think before launch."
+      correct: [yes-small]
+    explanation:
+      uk: "Модель загроз масштабується вниз: для лабораторного сервісу — шість рядків. Головне — стовпчик із тестом: він перетворює «здається, захищено» на перевірене."
+      en: "A threat model scales down: six rows for the lab service. The key is the test column: it turns “seems protected” into checked."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: cors-response-not-request
+        from: js-16-04-same-origin-cors
+        prompt:
+          uk: "Скрипт сторінки `https://evil.example` надсилає простий `POST` на сервер, що не дозволяє це походження в CORS. Що відбувається?"
+          en: "A script of the page `https://evil.example` sends a simple `POST` to a server that does not allow this origin in CORS. What happens?"
+        answer:
+          type: choice
+          options:
+            - id: sent-hidden
+              text:
+                uk: "Запит доходить і виконується, сервер відповідає, але скрипт отримує лише `TypeError: Failed to fetch` без тіла"
+                en: "The request arrives and is carried out, the server answers, but the script gets only `TypeError: Failed to fetch` with no body"
+            - id: not-sent
+              text:
+                uk: "Браузер не надсилає запит зовсім"
+                en: "The browser does not send the request at all"
+              why:
+                uk: "Так буває лише із запитами, що потребують preflight. Простий `POST` браузер надсилає одразу — і сервер його виконує."
+                en: "That happens only with requests that need a preflight. A simple `POST` is sent at once — and the server carries it out."
+            - id: server-refuses
+              text:
+                uk: "Сервер сам відхиляє запит через CORS"
+                en: "The server itself refuses the request because of CORS"
+              why:
+                uk: "Сервер лише додає (або не додає) заголовок. Відмову влаштовує браузер — і лише щодо читання відповіді."
+                en: "The server only adds (or does not add) a header. The refusal is the browser's doing — and only for reading the response."
+          correct: [sent-hidden]
+        explanation:
+          uk: "Саме тому CORS не захищає від CSRF і від `curl`: у першому випадку запит уже виконано, у другому заголовок узагалі ніхто не читає. Ми перевірили це в Chrome 154: сервер отримав і `GET`, і простий `POST` від сторінки з чужим походженням, а скрипт отримав `TypeError: Failed to fetch`. Інші браузери пишуть інший текст помилки."
+          en: "That is exactly why CORS protects neither against CSRF nor against `curl`: in the first case the request has already been carried out, in the second nobody reads the header at all. We checked this in Chrome 154: the server received both the `GET` and the simple `POST` from a page of a foreign origin, while the script got `TypeError: Failed to fetch`. Other browsers word the error differently."
+
+  - id: cors-not-auth
+    kind: example
+    runtime: isolated-node
+    dir: cors-not-auth
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      gifts: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      allowedPage: { uk: "сторінка вебклієнта", en: "web client page" }
+      foreignPage: { uk: "чужа сторінка", en: "foreign page" }
+      script: { uk: "скрипт без Origin", en: "script with no Origin" }
+      sessionCheck: { uk: "перевірка сесії", en: "session check" }
+      body: { uk: "тіло", en: "body" }
+    title:
+      uk: "Суворий CORS і жодної перевірки сесії"
+      en: "Strict CORS and no session check"
+    body:
+      uk: |
+        `app.js` додає `Access-Control-Allow-Origin` лише для вебклієнта на `http://127.0.0.1:4310`, а з `requireSession: false` сесію не перевіряє. `index.js` надсилає `GET /notes` від імені трьох учасників і друкує статус, заголовок CORS і тіло.
+
+        Ця програма — не браузер, тому, як і `curl`, читає кожну відповідь. Натисни **Запустити**: тіло з нотатками отримують усі троє. Заголовок CORS відрізняється — і саме лише ним браузер сховав би відповідь від чужої сторінки.
+      en: |
+        `app.js` adds `Access-Control-Allow-Origin` only for the web client on `http://127.0.0.1:4310`, and with `requireSession: false` it does not check a session. `index.js` sends `GET /notes` on behalf of three actors and prints the status, the CORS header and the body.
+
+        This program is not a browser, so, like `curl`, it reads every answer. Press **Run**: all three get the body with the notes. The CORS header differs — and that header alone is what a browser would use to hide the answer from the foreign page.
+    tryIt:
+      uk: |
+        1. У `index.js` заміни `[false]` на `[false, true]` і запусти: у другому блоці кожен учасник без cookie отримує 401 — і з дозволеним `Origin` теж.
+        2. До заголовків третього учасника (`{}`) додай `cookie: 'sid=lab-session-u01'` і запусти: скрипт із сесією отримує нотатки `u-01` без жодного `Origin`. Доступ вирішує сесія, а не CORS.
+      en: |
+        1. In `index.js` replace `[false]` with `[false, true]` and run: in the second block every actor without a cookie gets 401 — even with the allowed `Origin`.
+        2. Add `cookie: 'sid=lab-session-u01'` to the third actor's headers (`{}`) and run: the script with a session gets `u-01`'s notes without any `Origin`. Access is decided by the session, not by CORS.
+
+  - id: threat-table
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: threat-table
+    entry: index.js
+    editable: [threats.js]
+    capabilities: { network: loopback }
+    strings:
+      gifts: { uk: "Ідеї подарунків", en: "Gift ideas" }
+      shopping: { uk: "Покупки", en: "Shopping" }
+      noSuchProof: { uk: "немає такої перевірки", en: "no such proof" }
+      assetAccounts: { uk: "Облікові записи", en: "Accounts" }
+      assetNotes: { uk: "Нотатки користувачів", en: "Users' notes" }
+      assetKey: { uk: "Ключ підпису", en: "The signing key" }
+      assetServer: { uk: "Пам’ять і час сервера", en: "The server's memory and time" }
+      threatGuessing: { uk: "Скрипт перебирає паролі для одного облікового запису", en: "A script guesses passwords for one account" }
+      threatStuffing: { uk: "Скрипт пробує пари з витоків інших сайтів", en: "A script tries pairs leaked from other sites" }
+      threatCurl: { uk: "Скрипт читає нотатки напряму, без браузера й без сесії", en: "A script reads the notes directly, with no browser and no session" }
+      threatForeignId: { uk: "Користувач змінює id в адресі й відкриває чужу нотатку", en: "A user changes the id in the address and opens someone else's note" }
+      threatForgedPost: { uk: "Сторінка на іншому порту надсилає форму з cookie жертви", en: "A page on another port submits a form with the victim's cookie" }
+      threatWeakKey: { uk: "Сервер стартує зі слабким ключем, і токени можна підробити", en: "The server starts with a weak key, and tokens can be forged" }
+      threatHugeBody: { uk: "Величезне тіло входу забирає пам’ять", en: "A huge login body eats memory" }
+      threatForeignPageReads: { uk: "Скрипт чужої сторінки в браузері жертви читає її нотатки", en: "A foreign page's script in the victim's browser reads her notes" }
+      threatStolenCookie: { uk: "Хтось надсилає запит із вкраденою cookie", en: "Someone sends a request with a stolen cookie" }
+    title:
+      uk: "Модель загроз із доказами"
+      en: "A threat model with proofs"
+    instructions:
+      uk: |
+        `lab-server.js` — захищений сервіс нотаток, `model.js` — словник моделі: точки входу `ENTRY_POINTS`, контролі `CONTROLS` і перевірки-докази `PROOFS`. Кожен доказ — справжні запити до сервера; у кожного є `control`, який він перевіряє, і `entryPoints`, де він застосовний.
+
+        У `threats.js` допиши таблицю загроз — щонайменше **п’ять рядків** із заповненими `asset`, `threat`, `entryPoint`, `control` і `proof`:
+
+        - п’ять різних загроз і щонайменше п’ять різних контролів;
+        - `entryPoint` і `control` — лише зі словника, `proof` — назва з `PROOFS`;
+        - доказ рядка перевіряє саме контроль цього рядка й застосовний у його точці входу;
+        - серед рядків є загроза від небраузерного клієнта (`non-browser-client`) — і її контроль не `cors-allowlist`.
+
+        Тексти `asset` і `threat` — будь-які; в уроці вже є готові фрази у `strings` (`"%%assetNotes%%"` тощо). **Запустити** друкує таблицю й запускає кожен доказ проти свіжого сервера.
+      en: |
+        `lab-server.js` is the hardened notes service, `model.js` is the model's vocabulary: the entry points `ENTRY_POINTS`, the controls `CONTROLS` and the proof checks `PROOFS`. Every proof is real requests to the server; each has the `control` it checks and the `entryPoints` where it applies.
+
+        In `threats.js` finish the threat table — at least **five rows** with `asset`, `threat`, `entryPoint`, `control` and `proof` filled in:
+
+        - five different threats and at least five different controls;
+        - `entryPoint` and `control` only from the vocabulary, `proof` a name from `PROOFS`;
+        - a row's proof checks exactly that row's control and applies at its entry point;
+        - among the rows there is a threat from a non-browser client (`non-browser-client`) — and its control is not `cors-allowlist`.
+
+        The `asset` and `threat` texts can be anything; the lab already has ready phrases in `strings` (`"%%assetNotes%%"` and so on). **Run** prints the table and runs every proof against a fresh server.
+    testTitles:
+      "at least five rows, each with asset, threat, entryPoint, control and proof filled in":
+        uk: "Щонайменше п’ять рядків, у кожному заповнено `asset`, `threat`, `entryPoint`, `control` і `proof`"
+        en: "At least five rows, each with `asset`, `threat`, `entryPoint`, `control` and `proof` filled in"
+      "five different threats answered by at least five different controls":
+        uk: "П’ять різних загроз і щонайменше п’ять різних контролів"
+        en: "Five different threats answered by at least five different controls"
+      "every entryPoint and control comes from model.js, and every proof exists":
+        uk: "Кожні `entryPoint` і `control` — з `model.js`, і кожен `proof` існує"
+        en: "Every `entryPoint` and `control` comes from `model.js`, and every `proof` exists"
+      "each row's proof checks that row's control at that row's entry point":
+        uk: "Доказ кожного рядка перевіряє контроль цього рядка в його точці входу"
+        en: "Each row's proof checks that row's control at that row's entry point"
+      "the model covers a non-browser caller, and CORS is never its control":
+        uk: "Модель має небраузерного клієнта, і CORS ніколи не є контролем проти нього"
+        en: "The model covers a non-browser caller, and CORS is never its control"
+      "every cited proof passes against the lab server":
+        uk: "Кожен названий доказ проходить проти лабораторного сервера"
+        en: "Every cited proof passes against the lab server"
+    hints:
+      nudge:
+        uk: "Пройди по точках входу з `ENTRY_POINTS` по черзі: що недобре може прийти через кожну? Потім знайди в `PROOFS` перевірку, у якої той самий `control` і ця точка входу в `entryPoints`."
+        en: "Go through the entry points in `ENTRY_POINTS` one by one: what bad thing could come through each? Then find the check in `PROOFS` whose `control` matches and whose `entryPoints` include that entry point."
+      explanation:
+        uk: "Для бібліотеки рядок міг би бути `{ asset: 'Книжки', threat: 'Хтось бере книжку без картки', entryPoint: 'desk', control: 'card-check', proof: 'no-card-no-book' }`. Для скрипта, що читає нотатки без браузера, CORS не годиться: заголовок читає лише браузер — подумай, що сервер перевіряє в кожному запиті до нотаток."
+        en: "For a library a row could be `{ asset: 'Books', threat: 'Someone takes a book without a card', entryPoint: 'desk', control: 'card-check', proof: 'no-card-no-book' }`. For a script reading notes without a browser, CORS will not do: only a browser reads that header — think about what the server checks in every notes request."
+    solutionNote:
+      uk: "Кожен рядок пов’язує загрозу з місцем, де вона входить, з контролем і з тестом, що його доводить. Для небраузерного клієнта контроль — перевірка сесії: CORS захищає лише відповідь від чужої сторінки в браузері, і в іншому рядку він доречний саме для такої загрози."
+      en: "Every row ties a threat to the place it enters, to a control and to a test that proves it. For a non-browser client the control is the session check: CORS protects only the response from a foreign page in a browser, and in another row it fits exactly such a threat."
+    feedback:
+      - when: { test: "at least five rows, each with asset, threat, entryPoint, control and proof filled in" }
+        message:
+          uk: "Ця перевірка чекає масив `threats` щонайменше з п’яти об’єктів, у кожного — непорожній текст у `asset`, `threat`, `entryPoint`, `control` і `proof`."
+          en: "This check expects a `threats` array of at least five objects, each with non-empty text in `asset`, `threat`, `entryPoint`, `control` and `proof`."
+      - when: { test: "five different threats answered by at least five different controls" }
+        message:
+          uk: "Ця перевірка рахує різні тексти `threat` і різні значення `control`: обох має бути щонайменше п’ять. Два рядки з одним контролем — це одна лінія захисту."
+          en: "This check counts different `threat` texts and different `control` values: there must be at least five of each. Two rows with one control are one line of defence."
+      - when: { test: "every entryPoint and control comes from model.js, and every proof exists" }
+        message:
+          uk: "Ця перевірка чекає, що `entryPoint` є в `ENTRY_POINTS`, `control` — у `CONTROLS`, а `proof` — ключ об’єкта `PROOFS`. «Перевірили вручну» — не доказ."
+          en: "This check expects `entryPoint` to be in `ENTRY_POINTS`, `control` in `CONTROLS`, and `proof` to be a key of the `PROOFS` object. “Checked by hand” is not a proof."
+      - when: { test: "each row's proof checks that row's control at that row's entry point" }
+        message:
+          uk: "Ця перевірка чекає, що `PROOFS[row.proof].control` дорівнює `row.control`, а `PROOFS[row.proof].entryPoints` містить `row.entryPoint`."
+          en: "This check expects `PROOFS[row.proof].control` to equal `row.control`, and `PROOFS[row.proof].entryPoints` to include `row.entryPoint`."
+      - when: { test: "the model covers a non-browser caller, and CORS is never its control" }
+        message:
+          uk: "Ця перевірка чекає щонайменше один рядок з `entryPoint: 'non-browser-client'` і контролем, відмінним від `cors-allowlist`: `curl` не читає заголовків CORS."
+          en: "This check expects at least one row with `entryPoint: 'non-browser-client'` and a control other than `cors-allowlist`: `curl` does not read CORS headers."
+
+  - id: to-checkpoint
+    kind: transfer
+    checkpoint: CP-NO
+    body:
+      uk: "У цьому розділі проєкт не змінюється: кроку проєкту в NO-10 немає. Але модель загроз потрібна й однокористувацькому проєкту — лише коротша: цінність — записи, точки входу — HTTP-маршрути `server/` і файли даних, учасник ззовні — будь-яка програма на твоєму комп’ютері. Коли за планом курсу в NO-06 (цей розділ ще попереду) налаштовуватимеш CORS для вебклієнта, пам’ятай висновок цього уроку: CORS вирішує, яка сторінка прочитає відповідь, а не хто може надіслати запит."
+      en: "Your project does not change in this unit: NO-10 has no project step. But a threat model is useful for a single-user project too — just shorter: the asset is the records, the entry points are the HTTP routes of `server/` and the data files, and the outside actor is any program on your computer. When you set up CORS for the web client in NO-06 (as the course plans; that unit is still ahead), remember this lesson's conclusion: CORS decides which page may read a response, not who may send a request."

@@ -1,0 +1,78 @@
+# Terms introduced in NO-05 (durable server storage). One file per unit keeps parallel authoring conflict-free.
+- id: schema-contract
+  term: schema contract
+  name: { uk: "контракт схеми (schema contract)", en: "schema contract" }
+  definition:
+    uk: "Модуль, що існує під час виконання й описує збережені дані: версію схеми, тип, обмеження та значення за замовчуванням кожного поля. Його імпортують усі, хто читає чи пише дані, — репозиторій, валідатор API, тести, — тож правило змінюється в одному місці. На відміну від типу TypeScript, контракт перевіряє справжні значення, зокрема те, що вже лежить на диску."
+    en: "A module that exists at run time and describes stored data: the schema version and the type, constraints and default of every field. Everyone who reads or writes the data imports it — the repository, the API validator, the tests — so a rule changes in one place. Unlike a TypeScript type, a contract checks real values, including what already lies on the disk."
+  example:
+    code: "export const contract = { version: 1, fields: { done: { type: 'boolean', default: false } } };"
+  see: [schema-version, invariant]
+- id: startup-initialization
+  term: startup initialization
+  name: { uk: "ініціалізація під час запуску (startup initialization)", en: "startup initialization" }
+  aliases: [init on start]
+  definition:
+    uk: "Кроки, які сервер виконує до `listen()`: створити відсутнє сховище, перевірити (або перенести) його версію схеми й додати фікстури лише в порожнє сховище. Правильна ініціалізація ідемпотентна: другий запуск поспіль нічого не змінює, а видалений людиною запис не повертається."
+    en: "The steps a server takes before `listen()`: create missing storage, check (or migrate) its schema version and add fixtures only to an empty store. Correct initialization is idempotent: a second run in a row changes nothing, and a record a person deleted does not come back."
+  example:
+    code: "await initStore(file, fixtures); // only then:\nserver.listen(port, '127.0.0.1');"
+  see: [schema-contract]
+- id: migration-dry-run
+  term: migration dry run
+  name: { uk: "пробний запуск міграції (migration dry run)", en: "migration dry run" }
+  aliases: [dry run]
+  definition:
+    uk: "Запуск міграції на копії сховища, а не на живих даних, із перевірками: стільки ж записів, ті самі інваріанти, а повторний запуск нічого не змінює. Лише коли всі перевірки пройдено, результат одним атомарним кроком замінює живе сховище; інакше копію викидають, і живе сховище лишається на старій версії."
+    en: "Running a migration on a copy of the store instead of the live data, with checks: the same number of records, the same invariants, and a rerun that changes nothing. Only when every check passes does the result replace the live store in one atomic step; otherwise the copy is thrown away, and the live store stays on the old version."
+  example:
+    code: "const after = migrate(structuredClone(store));\nif (after.records.length !== store.records.length) refuse();"
+  see: [schema-migration, invariant]
+- id: backup-verification
+  term: backup verification
+  name: { uk: "перевірка backup (backup verification)", en: "backup verification" }
+  aliases: [restore drill, restore test]
+  definition:
+    uk: "Доказ, що backup справді відновлюється: копію відновлюють у тимчасове місце (ніколи поверх живого сховища) і порівнюють із тим, що вона мала зберегти, — кількість записів, контрольну суму, інваріанти домену, а для SQLite ще й `PRAGMA integrity_check`. Backup без такої перевірки — лише файл, про який нічого не відомо."
+    en: "Proof that a backup really restores: the copy is restored into a scratch location (never over the live store) and compared with what it was meant to keep — the record count, a checksum, the domain’s invariants, and for SQLite also `PRAGMA integrity_check`. A backup without such a check is just a file nothing is known about."
+  example:
+    code: "const report = await verifyBackup('backups/notes.1.json', 'scratch');\n// { ok: false, problems: ['sha256: …'] }"
+  see: [consistent-snapshot, invariant]
+- id: consistent-snapshot
+  term: consistent snapshot
+  name: { uk: "узгоджений знімок (consistent snapshot)", en: "consistent snapshot" }
+  definition:
+    uk: "Копія сховища в одну мить: усі закомічені зміни до неї — і жодної зміни, що ще триває. Для JSON-файла, який завжди замінюють атомарним `rename`, це просто повне читання файла. Для SQLite — backup API (`sqlite.backup()` у Node від 22.16) або `VACUUM INTO`; звичайна копія файла бази посеред транзакції може містити суміш старих і нових сторінок."
+    en: "A copy of a store at one moment: every committed change before it — and no change that is still in progress. For a JSON file always replaced by an atomic `rename`, that is simply a full read of the file. For SQLite it is the backup API (`sqlite.backup()` in Node from 22.16) or `VACUUM INTO`; a plain copy of the database file in the middle of a transaction can hold a mix of old and new pages."
+  example:
+    code: "await sqlite.backup(connection, 'backups/expenses.db'); // Node 22.16+"
+  see: [backup-verification, atomic-rename]
+- id: data-quarantine
+  term: data quarantine
+  name: { uk: "карантин даних (data quarantine)", en: "data quarantine" }
+  aliases: [quarantine]
+  definition:
+    uk: "Відкласти пошкоджене сховище вбік — перейменувати (`notes.json.corrupt-<час>`), а не видалити й не перезаписати, — щоб сервер міг відновитися з backup, а пошкоджені байти лишилися для розслідування й ручного порятунку того, чого немає в backup."
+    en: "Setting a damaged store aside — renaming it (`notes.json.corrupt-<time>`) instead of deleting or overwriting it — so that the server can recover from a backup while the damaged bytes remain for investigation and for rescuing by hand what the backup does not have."
+  example:
+    code: "await rename('notes.json', `notes.json.corrupt-${stamp}`);"
+  see: [integrity-check, backup-verification]
+- id: integrity-check
+  term: integrity check
+  name: { uk: "перевірка цілісності (integrity check)", en: "integrity check" }
+  aliases: [PRAGMA integrity_check]
+  definition:
+    uk: "Перевірка, що сховище не пошкоджене на рівні формату. Для JSON-файла — що він розбирається й проходить контракт схеми. Для SQLite — команда `PRAGMA integrity_check`, яка повертає один рядок `ok` або перелік знайдених проблем; файл, що зовсім не є базою, дає помилку `file is not a database` вже на першій команді."
+    en: "A check that a store is not damaged at the level of its format. For a JSON file, that it parses and passes the schema contract. For SQLite, the command `PRAGMA integrity_check`, which returns a single row `ok` or a list of the problems found; a file that is no database at all fails with `file is not a database` already on the first statement."
+  example:
+    code: "db.prepare('PRAGMA integrity_check').all() // [ { integrity_check: 'ok' } ]"
+  see: [data-quarantine, schema-contract]
+- id: read-modify-write
+  term: read-modify-write
+  name: { uk: "read-modify-write (прочитати, змінити, записати)", en: "read-modify-write" }
+  definition:
+    uk: "Зміна, яка читає поточний стан, змінює його в пам’яті й записує назад. Якщо між читанням і записом (на `await`) інший запит устигає зробити те саме, обидва записують копії старого стану, і одна зміна зникає — це втрачене оновлення. Захист — черга з одного записувача навколо всього read-modify-write або зміна однією командою бази даних."
+    en: "A change that reads the current state, modifies it in memory and writes it back. If another request does the same between the read and the write (at an `await`), both write copies of the old state, and one change vanishes — a lost update. The protection is a single-writer queue around the whole read-modify-write, or a change made as one database statement."
+  example:
+    code: "const store = await read();   // another request may read the same version here\nstore.records[0].done = true;\nawait write(store);"
+  see: [lost-update, single-writer-queue, atomic-write, non-blocking-io]

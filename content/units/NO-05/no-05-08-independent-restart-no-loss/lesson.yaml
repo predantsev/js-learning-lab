@@ -1,0 +1,366 @@
+id: no-05-08-independent-restart-no-loss
+unit: NO-05
+title:
+  uk: "Самостійно: перезапуск без втрат, перевірений restore"
+  en: "Independent: restart without loss, restore verified"
+kind: assessment
+minutes: 35
+contentVersion: 1
+purpose:
+  uk: "Перевірити, що ти без підказок даєш серверу сховище, на яке можна покластися: воно перевіряє дані контрактом, ініціалізується однаково скільки завгодно разів, не губить і не дублює одночасних записів, тримає інваріанти й має backup, перевірений відновленням. А потім доводиш це справжнім вбиванням і перезапуском сервера у своєму терміналі."
+  en: "To check that you give a server, without hints, storage it can rely on: it checks data with a contract, initializes the same way any number of times, neither loses nor duplicates concurrent writes, keeps its invariants and has a backup verified by restoring it. Then you prove it by really killing and restarting the server in your own terminal."
+objectives:
+  - uk: "Без підказок написати надійне сховище для синтетичних бронювань: контракт схеми, ідемпотентну ініціалізацію, серіалізовані одночасні записи й перевірений backup."
+    en: "Implement, without hints, durable storage for a synthetic dataset with a schema contract, idempotent initialization, serialized concurrent writes and a verified backup."
+  - uk: "Довести справжнім перезапуском, одночасними запитами й тренуванням відновлення, що кожен підтверджений запис переживає вбивство процесу, а відновлені дані задовольняють інваріанти."
+    en: "Prove with a real restart, concurrent requests and a restore drill that every confirmed write survives and the restored data satisfies the invariants."
+prerequisites: [no-05-07-debug-failed-migration]
+subskills:
+  - { family: B-05, skill: "initialization", depth: assess }
+  - { family: B-05, skill: "concurrency/transactions", depth: assess }
+  - { family: B-05, skill: "backup/restore verification", depth: assess }
+  - { family: B-05, skill: "schema contract", depth: assess }
+glossary: []
+selfCheck: [bookings-store]
+
+blocks:
+  - id: what-is-checked
+    kind: explanation
+    title:
+      uk: "Що перевіряється"
+      en: "What is checked"
+    body:
+      uk: |
+        Тема — бронювання кімнат, синтетичні дані, яких ти ще не бачив. Підказок немає: користуйся тим, що вивчив у цьому розділі.
+
+        Сховище обираєш сам — JSON-файл або SQLite (`node:sqlite`). Перевірки звертаються лише до експортів `store.js`, тож обидва варіанти можуть пройти. Першим рядком коментаря в `store.js` напиши, що обрав і чому — одним реченням.
+
+        Дві частини:
+
+        1. **У курсі** — `store.js`. Автоматичні перевірки ініціалізують сховище кілька разів, пошкоджують його, надсилають десятки одночасних записів, «перезапускають» репозиторій, роблять backup, псують у ньому один байт і відновлюють.
+        2. **У твоєму терміналі** — той самий файл під справжнім сервером: наданий скрипт 5 разів вбиває його посеред потоку бронювань, перезапускає, перевіряє, що кожне підтверджене бронювання на місці, а потім робить backup і відновлює його в тимчасову теку.
+      en: |
+        The topic is room bookings, synthetic data you have not seen yet. There are no hints: use what you learned in this unit.
+
+        You choose the storage — a JSON file or SQLite (`node:sqlite`). The checks use only the exports of `store.js`, so both can pass. In the first comment line of `store.js`, write what you chose and why — in one sentence.
+
+        Two parts:
+
+        1. **In the course** — `store.js`. The automatic checks initialize the store several times, damage it, send dozens of concurrent writes, “restart” the repository, take a backup, change one byte in it and restore it.
+        2. **In your terminal** — the same file under a real server: a supplied script kills it 5 times in the middle of a stream of bookings, restarts it, checks that every confirmed booking is there, and then takes a backup and restores it into a scratch folder.
+
+  - id: bookings-store
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: isolated-node
+    dir: bookings-store
+    entry: index.js
+    editable: [store.js]
+    capabilities: { timeoutMs: 20000 }
+    strings:
+      quiet: { uk: "тиха кімната, будь ласка", en: "a quiet room, please" }
+      late: { uk: "приїдемо пізно ввечері", en: "arriving late in the evening" }
+    title:
+      uk: "Сховище бронювань"
+      en: "A bookings store"
+    instructions:
+      uk: |
+        Бронювання: `{ id, room, date, guests, note }` — `id` непорожній текст, унікальний у сховищі; `room` — `'A'`, `'B'` або `'C'`; `date` — `'YYYY-MM-DD'`; `guests` — ціле число від 1 до 8; `note` — текст до 200 символів, `''`, якщо поля немає. Інших полів немає. **Інваріант сховища:** жодні два бронювання не мають тієї самої кімнати й дати.
+
+        Напиши в `store.js` чотири експорти. `file` — шлях без розширення; тека може ще не існувати.
+
+        - `initStore(file, fixtures)` — створює відсутнє сховище з фікстурами; порожнє — заповнює ними; сховище з бронюваннями — не чіпає; повторні виклики нічого не змінюють. Пошкоджене сховище (не розбирається, порушує контракт чи інваріант) — відхиляє й лишає байт у байт.
+        - `openRepository(file)` → `{ list(), add(booking), update(id, changes) }` (і, за потреби, `close()`): `list` — усі бронювання; `add` повертає збережене бронювання із заповненим `note` або відхиляється для бронювання, що порушує контракт чи інваріант, нічого не змінюючи; `update` зливає зміни з тими самими правилами. Одночасні `add` і `update` не губляться, а з двох одночасних бронювань тієї самої кімнати на той самий день підтверджується рівно одне. Кожне підтверджене бронювання видно в новому `openRepository` того самого `file`.
+        - `backupStore(file, backupPath)` — узгоджена копія в `backupPath` і маніфест `backupPath + '.manifest.json'` = `{ count, sha256 }` (sha256 — 64 шістнадцяткові символи, що описують саме цю копію); повертає маніфест.
+        - `verifyBackup(backupPath, scratchDir)` — відновлює backup **лише в `scratchDir`** і повертає `{ ok, count, problems }`, ніколи не кидаючи: проблема — немає маніфесту, байти не відповідають sha256, відновлене не проходить контракт чи інваріант, кількість не та.
+      en: |
+        A booking: `{ id, room, date, guests, note }` — `id` a non-empty text, unique in the store; `room` — `'A'`, `'B'` or `'C'`; `date` — `'YYYY-MM-DD'`; `guests` — a whole number from 1 to 8; `note` — a text of at most 200 characters, `''` when the field is missing. There are no other fields. **The store’s invariant:** no two bookings have the same room and date.
+
+        Write four exports in `store.js`. `file` is a path without an extension; its folder may not exist yet.
+
+        - `initStore(file, fixtures)` — creates a missing store with the fixtures; fills an empty one with them; leaves a store with bookings alone; repeated calls change nothing. A damaged store (does not parse, breaks the contract or the invariant) — rejects and leaves it byte for byte.
+        - `openRepository(file)` → `{ list(), add(booking), update(id, changes) }` (and `close()` if you need it): `list` — every booking; `add` returns the stored booking with `note` filled in, or rejects a booking that breaks the contract or the invariant, changing nothing; `update` merges changes under the same rules. Concurrent `add` and `update` calls are not lost, and of two simultaneous bookings of the same room on the same day exactly one is confirmed. Every confirmed booking is visible in a new `openRepository` of the same `file`.
+        - `backupStore(file, backupPath)` — a consistent copy at `backupPath` and the manifest `backupPath + '.manifest.json'` = `{ count, sha256 }` (sha256 is 64 hexadecimal characters describing exactly that copy); returns the manifest.
+        - `verifyBackup(backupPath, scratchDir)` — restores the backup **only into `scratchDir`** and returns `{ ok, count, problems }` without ever throwing: a problem is a missing manifest, bytes that do not match the sha256, a restored store that breaks the contract or the invariant, a wrong count.
+    testTitles:
+      "initStore creates a missing store with the fixtures":
+        uk: "`initStore` створює відсутнє сховище з фікстурами"
+        en: "`initStore` creates a missing store with the fixtures"
+      "initStore twice gives the same store as once, and a store with bookings is not reseeded":
+        uk: "Два виклики `initStore` дають те саме, що й один, а сховище з бронюваннями не заповнюється знову"
+        en: "`initStore` twice gives the same store as once, and a store with bookings is not reseeded"
+      "initStore fills an existing empty store with the fixtures":
+        uk: "`initStore` заповнює наявне порожнє сховище фікстурами"
+        en: "`initStore` fills an existing empty store with the fixtures"
+      "initStore refuses a damaged store and leaves it byte for byte":
+        uk: "`initStore` відхиляє пошкоджене сховище й лишає його байт у байт"
+        en: "`initStore` refuses a damaged store and leaves it byte for byte"
+      "add fills the default note and rejects a booking that breaks the contract":
+        uk: "`add` заповнює `note` за замовчуванням і відхиляє бронювання, що порушує контракт"
+        en: "`add` fills the default `note` and rejects a booking that breaks the contract"
+      "30 concurrent adds all land and survive a restart":
+        uk: "30 одночасних `add` усі зберігаються й переживають перезапуск"
+        en: "30 concurrent `add` calls all land and survive a restart"
+      "two concurrent adds for one room and day: exactly one is confirmed":
+        uk: "Два одночасні `add` на ту саму кімнату й день: підтверджено рівно один"
+        en: "Two concurrent `add` calls for one room and day: exactly one is confirmed"
+      "two concurrent updates of different fields of one booking both land":
+        uk: "Два одночасні оновлення різних полів одного бронювання обидва зберігаються"
+        en: "Two concurrent updates of different fields of one booking both land"
+      "an update that would double-book a room is rejected and changes nothing":
+        uk: "Оновлення, що зайняло б кімнату двічі, відхилено, і нічого не змінено"
+        en: "An update that would double-book a room is rejected and changes nothing"
+      "backupStore returns { count, sha256 } and writes the manifest next to the backup":
+        uk: "`backupStore` повертає `{ count, sha256 }` і записує маніфест поруч із backup"
+        en: "`backupStore` returns `{ count, sha256 }` and writes the manifest next to the backup"
+      "verifyBackup passes a good backup and restores it only into the scratch folder":
+        uk: "`verifyBackup` пропускає правильний backup і відновлює його лише в тимчасову теку"
+        en: "`verifyBackup` passes a good backup and restores it only into the scratch folder"
+      "verifyBackup reports a backup with one changed byte, and a missing manifest, without throwing":
+        uk: "`verifyBackup` позначає backup з одним зміненим байтом і backup без маніфесту, нічого не кидаючи"
+        en: "`verifyBackup` reports a backup with one changed byte, and a missing manifest, without throwing"
+    solutionNote:
+      uk: "Розв’язок на JSON-файлі: контракт і інваріант — дві функції, якими проходить і завантаження, і кожна зміна; `initStore` пише лише в порожнє сховище й відхиляє пошкоджене; увесь read-check-write кожної зміни стоїть в одній черзі, а файл замінюється атомарним `rename`; backup — одне читання файла з маніфестом, а перевірка відновлює в `scratchDir` і порівнює sha256, контракт і кількість. Розв’язок на SQLite теж правильний: `UNIQUE (room, date)` тримає інваріант у самій базі, кожна зміна — одна синхронна команда або транзакція без `await`, а backup робить `sqlite.backup()` (Node 22.16+). На Node 22.13–22.15 цієї функції немає, і такий розв’язок копіює файл бази, закривши своє з’єднання: в одному процесі це узгоджена мить, бо жодна транзакція не триває через `await`, але інший процес, що саме пише в той самий файл, міг би зіпсувати копію. Цей шлях ми перевірили лише на Node 25.2.1, сховавши `sqlite.backup`, а не на справжньому 22.13–22.15."
+      en: "A JSON-file solution: the contract and the invariant are two functions that both loading and every change pass through; `initStore` writes only into an empty store and rejects a damaged one; the whole read-check-write of every change sits in one queue, and the file is replaced by an atomic `rename`; the backup is one read of the file with a manifest, and verification restores into `scratchDir` and compares the sha256, the contract and the count. An SQLite solution is correct too: `UNIQUE (room, date)` keeps the invariant in the database itself, every change is one synchronous statement or a transaction without an `await`, and `sqlite.backup()` (Node 22.16+) takes the backup. Node 22.13–22.15 does not have that function, and such a solution copies the database file after closing its own connection: within one process that is a consistent moment, because no transaction lasts across an `await`, but another process writing the same file at that moment could break the copy. We tried this path only on Node 25.2.1 with `sqlite.backup` hidden, not on a real 22.13–22.15."
+    feedback:
+      - when: { test: "initStore refuses a damaged store and leaves it byte for byte" }
+        message:
+          uk: "Ця перевірка кладе в сховище обірваний JSON, потім правильний JSON із бронюванням, що порушує контракт (`room: 'Z'`), і нарешті правильний JSON, де два бронювання займають кімнату A на `2026-03-02`, — і для кожного очікує відмову та незмінні байти. Пошкоджене сховище — не відсутнє й не порожнє, а інваріант перевіряється й під час завантаження."
+          en: "This check puts cut-off JSON into the store, then valid JSON with a booking that breaks the contract (`room: 'Z'`), and finally valid JSON where two bookings take room A on `2026-03-02` — and for each expects a rejection and unchanged bytes. A damaged store is neither missing nor empty, and the invariant is checked on load too."
+      - when: { test: "initStore fills an existing empty store with the fixtures" }
+        message:
+          uk: "Ця перевірка спершу викликає `initStore(file, [])` — так виникає сховище у твоєму форматі без жодного бронювання, — а потім `initStore(file, fixtures)` й очікує всі три фікстури. Заповнювати треба не лише відсутнє сховище, а й порожнє."
+          en: "This check first calls `initStore(file, [])` — which makes a store in your format with no bookings — and then `initStore(file, fixtures)` and expects all three fixtures. Not only a missing store must be filled, an empty one too."
+      - when: { test: "30 concurrent adds all land and survive a restart" }
+        message:
+          uk: "Ця перевірка надсилає 30 `add` різних кімнат і днів одночасно, очікує 30 підтверджень, а потім відкриває новий репозиторій того самого `file` й очікує 33 бронювання (з фікстурами). Менше — означає, що одночасні read-modify-write губляться."
+          en: "This check sends 30 `add` calls for different rooms and days at once, expects 30 confirmations, then opens a new repository of the same `file` and expects 33 bookings (with the fixtures). Fewer means concurrent read-modify-writes are being lost."
+      - when: { test: "two concurrent adds for one room and day: exactly one is confirmed" }
+        message:
+          uk: "Ця перевірка одночасно бронює кімнату C на 2026-03-05 двічі й очікує рівно одне підтвердження. Перевірка інваріанта мусить бути там само, де й запис, — інакше обидва запити бачать вільну кімнату."
+          en: "This check books room C on 2026-03-05 twice at once and expects exactly one confirmation. The invariant check must sit together with the write — otherwise both requests see a free room."
+      - when: { test: "verifyBackup reports a backup with one changed byte, and a missing manifest, without throwing" }
+        message:
+          uk: "Ця перевірка змінює один байт посередині backup і очікує `ok: false`, потім повертає байт, видаляє маніфест і знову очікує `ok: false` — обидва рази без винятку."
+          en: "This check changes one byte in the middle of the backup and expects `ok: false`, then restores the byte, deletes the manifest and expects `ok: false` again — both times without an exception."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: інваріант після кожної операції"
+      en: "Recall: an invariant after every operation"
+    items:
+      - id: invariant-vs-postcondition
+        from: js-17-05-invariants-boundaries
+        prompt:
+          uk: "Яке із цих правил сховища бронювань — інваріант, а не постумова однієї функції?"
+          en: "Which of these rules of the bookings store is an invariant rather than the postcondition of one function?"
+        answer:
+          type: choice
+          options:
+            - id: no-double-booking
+              text:
+                uk: "Жодні два бронювання не мають тієї самої кімнати й дати"
+                en: "No two bookings have the same room and date"
+            - id: add-returns
+              text:
+                uk: "Після `add` повернуте бронювання має `note`"
+                en: "After `add`, the returned booking has a `note`"
+              why:
+                uk: "Це обіцянка однієї функції в мить, коли вона повертає результат, — постумова. Інваріант має бути правдою після **кожної** операції над сховищем."
+                en: "That is the promise of one function at the moment it returns — a postcondition. An invariant must be true after **every** operation on the store."
+            - id: init-count
+              text:
+                uk: "Після першого `initStore` у сховищі стільки бронювань, скільки фікстур"
+                en: "After the first `initStore` the store holds as many bookings as there are fixtures"
+              why:
+                uk: "Це правда лише одразу після ініціалізації, далі бронювань стає більше. Це постумова `initStore`, а не інваріант."
+                en: "That is true only right after initialization; later there are more bookings. It is a postcondition of `initStore`, not an invariant."
+          correct: [no-double-booking]
+        explanation:
+          uk: "Інваріант перевіряють після кожної зміни — і після відновлення з backup: відновлені дані мусять його задовольняти так само, як живі. Саме це робить наданий скрипт у твоєму терміналі після кожного перезапуску."
+          en: "An invariant is checked after every change — and after a restore from backup: restored data must satisfy it just like live data. That is exactly what the supplied script does in your terminal after every restart."
+
+  - id: restart-check
+    kind: example
+    runtime: isolated-node
+    dir: restart-check
+    entry: index.js
+    strings:
+      healthy: { uk: "здоровий перезапуск", en: "healthy restart" }
+      lost: { uk: "втрачені бронювання", en: "lost bookings" }
+      doubleBooked: { uk: "кімнату зайнято двічі", en: "a room booked twice" }
+    title:
+      uk: "Наданий скрипт перезапуску"
+      en: "The supplied restart script"
+    body:
+      uk: |
+        Тут чотири файли для твого терміналу:
+
+        - `check.mjs` — 5 раундів: запускає `server.mjs` окремим процесом, надсилає хвилі по 10 одночасних бронювань (кожне сьоме просить уже зайняту кімнату й день), через 150–350 мс вбиває сервер (`SIGKILL`), запускає знову й перевіряє дані; наприкінці робить `backupStore` і `verifyBackup`;
+        - `server.mjs` — маленький сервер над твоїм `store.js`: `POST /bookings` відповідає `201`, лише коли `add` справді виконався, — такий запис **підтверджено**;
+        - `invariants.js` — що має бути правдою після кожного перезапуску: `id` не повторюються, жодна кімната не зайнята двічі на один день, жодне підтверджене бронювання не зникло;
+        - `index.js` — пробує `checkInvariants` на трьох вигаданих результатах.
+
+        Платформа не дозволяє запускати дочірні процеси, тож **Запустити** виконує лише `index.js`.
+      en: |
+        Here are four files for your terminal:
+
+        - `check.mjs` — 5 rounds: starts `server.mjs` as a separate process, sends waves of 10 concurrent bookings (every seventh asks for a room and day that is already taken), kills the server after 150–350 ms (`SIGKILL`), starts it again and checks the data; at the end it runs `backupStore` and `verifyBackup`;
+        - `server.mjs` — a small server over your `store.js`: `POST /bookings` answers `201` only when `add` really finished — such a booking is **confirmed**;
+        - `invariants.js` — what must be true after every restart: no repeated `id`, no room booked twice for one day, no confirmed booking missing;
+        - `index.js` — tries `checkInvariants` on three made-up results.
+
+        The platform does not allow child processes, so **Run** executes only `index.js`.
+    tryIt:
+      uk: "У випадку «здоровий перезапуск» у `index.js` додай `'c-3'` до масиву `confirmed` і запусти: тепер `checkInvariants` повідомляє `1 confirmed booking(s) lost: c-3`."
+      en: "In the “healthy restart” case of `index.js`, add `'c-3'` to the `confirmed` array and run: now `checkInvariants` reports `1 confirmed booking(s) lost: c-3`."
+
+  - id: restart-locally
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Справжній перезапуск: вбий сервер 5 разів"
+      en: "A real restart: kill the server 5 times"
+    intro:
+      uk: |
+        Тут потрібні лише Node.js і термінал, жодних npm-пакетів. Почни, коли всі перевірки вправи «Сховище бронювань» зелені.
+
+        Під час підготовки уроку ці кроки виконано на macOS з Node.js v25.2.1 (сховище на JSON-файлі й на SQLite) і з v20.18.0 (лише JSON-файл: у Node 20 немає `node:sqlite`); вивід нижче справжній. Node 22 і Windows ми не перевіряли: у Windows `child.kill('SIGKILL')` теж зупиняє процес примусово, але цей шлях — неперевірений. Для SQLite потрібен Node 22.13 або новіший, а для `sqlite.backup()` — 22.16 або новіший.
+
+        `SIGKILL` — не вимкнення живлення: дані, які операційна система вже прийняла, переживають убитий процес.
+
+        Якщо твоє сховище на SQLite, перед `round 1` Node друкує рядок `(node:…) ExperimentalWarning: SQLite is an experimental feature…` і підказку про `--trace-warnings` (сервер, що його запускає скрипт, цього попередження не друкує) — це попередження про модуль `node:sqlite`, а не помилка.
+
+        **Крок 4 — правильне сховище на JSON-файлі (Node v25.2.1):**
+
+        ```text
+        round 1: killed after 222 ms, 345 bookings, 343 confirmed — ok
+        round 2: killed after 348 ms, 778 bookings, 776 confirmed — ok
+        round 3: killed after 217 ms, 972 bookings, 970 confirmed — ok
+        round 4: killed after 348 ms, 1232 bookings, 1230 confirmed — ok
+        round 5: killed after 155 ms, 1338 bookings, 1336 confirmed — ok
+        backup: {"count":1338,"sha256":"4723c20e3bf2bd9ecb0ea4ea9d633c8745024a99d5f23e1e44ec3c9f1067c208"}
+        restore drill: {"ok":true,"count":1338,"problems":[]}
+        all 5 rounds ok, backup verified
+        ```
+
+        Бронювань на 2 більше, ніж підтверджених: це фікстури `k-01` і `k-02`. Може статися, що їх буде на одне більше (у наших запусках такого не траплялося): `add` завершився, але процес убито раніше, ніж сервер надіслав `201`. Це не втрата.
+
+        **Крок 6 — те саме сховище без черги записів (уривок):**
+
+        ```text
+        round 1: killed after 330 ms, 102 bookings, 988 confirmed — 889 confirmed booking(s) lost: c-1, c-0, c-2, c-3, c-5, …
+        …
+        round 5: killed after 251 ms, 336 bookings, 3255 confirmed — 2925 confirmed booking(s) lost: c-1, c-0, c-2, c-3, c-5, …
+        backup: {"count":336,"sha256":"bc342d68e2263e6c2e627625da858f1c09ba7f0ab5452580d9d150f8e6569519"}
+        restore drill: {"ok":true,"count":336,"problems":[]}
+        5 problem(s) found
+        ```
+
+        Зверни увагу: backup цього зламаного сховища **перевірено** успішно. Перевірка backup доводить, що копія відповідає джерелу, — а не що джерело правильне. Тому потрібні обидві частини скрипта.
+
+        Числа мілісекунд і бронювань у тебе будуть інші: момент убивства випадковий.
+      en: |
+        You need only Node.js and a terminal here, no npm packages. Start when every check of the exercise “A bookings store” is green.
+
+        While preparing this lesson these steps were run on macOS with Node.js v25.2.1 (a JSON-file store and an SQLite one) and with v20.18.0 (the JSON file only: Node 20 has no `node:sqlite`); the output below is real. We did not check Node 22 or Windows: on Windows `child.kill('SIGKILL')` also stops the process by force, but that path is unverified. SQLite needs Node 22.13 or newer, and `sqlite.backup()` needs 22.16 or newer.
+
+        `SIGKILL` is not a power cut: data the operating system has already accepted survives a killed process.
+
+        If your store is on SQLite, Node prints the line `(node:…) ExperimentalWarning: SQLite is an experimental feature…` and a hint about `--trace-warnings` before `round 1` (the server the script starts does not print that warning) — a warning about the `node:sqlite` module, not an error.
+
+        **Step 4 — a correct JSON-file store (Node v25.2.1):**
+
+        ```text
+        round 1: killed after 222 ms, 345 bookings, 343 confirmed — ok
+        round 2: killed after 348 ms, 778 bookings, 776 confirmed — ok
+        round 3: killed after 217 ms, 972 bookings, 970 confirmed — ok
+        round 4: killed after 348 ms, 1232 bookings, 1230 confirmed — ok
+        round 5: killed after 155 ms, 1338 bookings, 1336 confirmed — ok
+        backup: {"count":1338,"sha256":"4723c20e3bf2bd9ecb0ea4ea9d633c8745024a99d5f23e1e44ec3c9f1067c208"}
+        restore drill: {"ok":true,"count":1338,"problems":[]}
+        all 5 rounds ok, backup verified
+        ```
+
+        There are 2 more bookings than confirmed ones: the fixtures `k-01` and `k-02`. There may be one more than that (it did not happen in our runs): the `add` finished, but the process was killed before the server sent its `201`. That is not a loss.
+
+        **Step 6 — the same store without the write queue (excerpt):**
+
+        ```text
+        round 1: killed after 330 ms, 102 bookings, 988 confirmed — 889 confirmed booking(s) lost: c-1, c-0, c-2, c-3, c-5, …
+        …
+        round 5: killed after 251 ms, 336 bookings, 3255 confirmed — 2925 confirmed booking(s) lost: c-1, c-0, c-2, c-3, c-5, …
+        backup: {"count":336,"sha256":"bc342d68e2263e6c2e627625da858f1c09ba7f0ab5452580d9d150f8e6569519"}
+        restore drill: {"ok":true,"count":336,"problems":[]}
+        5 problem(s) found
+        ```
+
+        Note: the backup of this broken store was **verified** successfully. Verifying a backup proves that the copy matches its source — not that the source is correct. That is why the script needs both parts.
+
+        Your numbers of milliseconds and bookings will differ: the moment of the kill is random.
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1 і (JSON-файл) v20.18.0", en: "checked with v25.2.1 and (JSON file) v20.18.0" } }
+    steps:
+      - text:
+          uk: "Створи теку для перевірки й перейди в неї."
+          en: "Create a folder for the check and go into it."
+        command: "mkdir -p ~/js-course/no05-restart\ncd ~/js-course/no05-restart"
+      - text:
+          uk: "Створи в цій теці у VS Code файл `package.json` з одним рядком `{ \"type\": \"module\" }` і збережи його."
+          en: "In VS Code, create the file `package.json` in this folder with the single line `{ \"type\": \"module\" }` and save it."
+      - text:
+          uk: "Створи файли `check.mjs`, `server.mjs` і `invariants.js` і встав у кожен вміст однойменного файла з прикладу «Наданий скрипт перезапуску». Потім створи `store.js` і встав свій розв’язок вправи «Сховище бронювань» — той, з яким усі перевірки зелені."
+          en: "Create the files `check.mjs`, `server.mjs` and `invariants.js` and paste into each the content of the file with the same name from the example “The supplied restart script”. Then create `store.js` and paste your solution of the exercise “A bookings store” — the one with every check green."
+        expect:
+          uk: "У теці п’ять файлів: `package.json`, `check.mjs`, `server.mjs`, `invariants.js`, `store.js`."
+          en: "The folder holds five files: `package.json`, `check.mjs`, `server.mjs`, `invariants.js`, `store.js`."
+      - text:
+          uk: "Запусти перевірку. Вона триває кілька секунд."
+          en: "Run the check. It takes a few seconds."
+        command: "node check.mjs"
+        expect:
+          uk: "П’ять рядків `round … — ok`, рядок `restore drill: {\"ok\":true,…}` і останній рядок `all 5 rounds ok, backup verified`, як у кроці 4 вступу."
+          en: "Five lines `round … — ok`, a line `restore drill: {\"ok\":true,…}` and the last line `all 5 rounds ok, backup verified`, as in step 4 of the introduction."
+      - text:
+          uk: "Переконайся, що скрипт справді ловить поломку. Спершу збережи запасну копію свого сховища."
+          en: "Make sure the script really catches a defect. First keep a backup copy of your store."
+        command: "cp store.js store.ok.js"
+      - text:
+          uk: "Тепер зламай `store.js`: для JSON-файла зроби так, щоб `add` виконувався одразу, а не через твою чергу записів; для SQLite прибери з таблиці `UNIQUE (room, date)` і будь-яку власну перевірку зайнятої кімнати. Збережи файл і запусти перевірку ще раз."
+          en: "Now break `store.js`: for a JSON file, make `add` run at once instead of through your write queue; for SQLite, remove `UNIQUE (room, date)` from the table and any check of your own for a taken room. Save the file and run the check again."
+        command: "node check.mjs"
+        expect:
+          uk: "Раунди з `confirmed booking(s) lost` (JSON-файл без черги) або `is booked by both` (SQLite без `UNIQUE`) і підсумок `… problem(s) found`, як у кроці 6 вступу."
+          en: "Rounds with `confirmed booking(s) lost` (a JSON file without the queue) or `is booked by both` (SQLite without `UNIQUE`) and the summary `… problem(s) found`, as in step 6 of the introduction."
+      - text:
+          uk: "Поверни правильне сховище й запусти ще раз."
+          en: "Restore the correct store and run once more."
+        command: "cp store.ok.js store.js\nnode check.mjs"
+        expect:
+          uk: "Знову `all 5 rounds ok, backup verified`."
+          en: "`all 5 rounds ok, backup verified` again."
+    verify:
+      - id: five-rounds-ok
+        text:
+          uk: "Мій `store.js` пройшов 5 раундів із `SIGKILL` і тренування відновлення: останній рядок — `all 5 rounds ok, backup verified`."
+          en: "My `store.js` survived 5 rounds of `SIGKILL` and the restore drill: the last line is `all 5 rounds ok, backup verified`."
+      - id: defect-caught
+        text:
+          uk: "Зі зламаним сховищем скрипт показав проблемні раунди, а після повернення правильної версії — знову все `ok`."
+          en: "With the broken store the script showed failing rounds, and after restoring the correct version everything was `ok` again."
+      - id: storage-reason
+        text:
+          uk: "Перший рядок коментаря в моєму `store.js` каже, що я обрав (JSON-файл чи SQLite) і чому."
+          en: "The first comment line of my `store.js` says what I chose (a JSON file or SQLite) and why."
+    troubleshooting:
+      - problem:
+          uk: "Node друкує `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '…/store.js' imported from …/check.mjs`"
+          en: "Node prints `Error [ERR_MODULE_NOT_FOUND]: Cannot find module '…/store.js' imported from …/check.mjs`"
+        fix:
+          uk: "У теці немає `store.js` або він має іншу назву. Перевір командою `ls`: поруч із `check.mjs` мають лежати саме `store.js`, `server.mjs` і `invariants.js`. (Відтворено з Node v25.2.1 і v20.18.0.)"
+          en: "The folder has no `store.js`, or it has another name. Check with `ls`: next to `check.mjs` there must be exactly `store.js`, `server.mjs` and `invariants.js`. (Reproduced with Node v25.2.1 and v20.18.0.)"
+    recovery:
+      uk: "Скрипт щоразу видаляє й створює заново лише `check-data/` у цій теці; твої файли він не змінює. Якщо зіпсував `store.js` на кроці 6 і не маєш копії, візьми свій розв’язок ще раз із вправи — платформа зберігає твою чернетку."
+      en: "The script deletes and recreates only `check-data/` in this folder each time; it does not change your files. If you broke `store.js` in step 6 and have no copy, take your solution from the exercise again — the platform keeps your draft."

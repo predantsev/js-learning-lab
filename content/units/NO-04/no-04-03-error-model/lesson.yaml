@@ -1,0 +1,322 @@
+id: no-04-03-error-model
+unit: NO-04
+title:
+  uk: "Стабільна модель помилок"
+  en: "A stable error model"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Повертати кожен збій в одній формі JSON (код, ключ повідомлення, деталі полів, ідентифікатор запиту) з відповідним HTTP-статусом."
+    en: "Return every failure in one JSON shape (code, message key, field details, request id) with the matching HTTP status."
+  - uk: "Зіставити помилки валідації, відсутній запис, конфлікт і непередбачені збої зі стабільними кодами в одному центральному обробнику, не віддаючи клієнтові стек."
+    en: "Map validation, not-found, conflict and unexpected failures to stable codes in one central handler, without leaking stack traces."
+prerequisites: [no-04-02-schema-validation]
+subskills:
+  - { family: B-03, skill: "error model", depth: intro }
+glossary: [problem-details, api-error-code]
+selfCheck: [predict-typeerror, expense-errors]
+
+blocks:
+  - id: one-shape
+    kind: explanation
+    title:
+      uk: "Одна форма для всіх збоїв"
+      en: "One shape for every failure"
+    body:
+      uk: |
+        Клієнт, якому кожна помилка приходить у своїй формі — `{ message }`, `{ error }`, просто текст `duplicate`, — мусить вгадувати, як її читати. Тому API домовляється про **одну форму** для всіх збоїв:
+
+        ```json
+        { "error": {
+            "code": "VALIDATION_FAILED",
+            "messageKey": "errors.validationFailed",
+            "details": { "amountMinor": "notPositive" },
+            "requestId": "5f0c…" } }
+        ```
+
+        - `code` — [[api-error-code|стабільний код]] для програм: клієнт розгалужується саме за ним.
+        - `messageKey` — ключ тексту; клієнт показує за ним речення українською чи англійською.
+        - `details` — подробиці: помилки полів, `id` запису.
+        - `requestId` — номер запиту, за яким у журналі сервера знайдеться повна історія.
+
+        | Що сталося | Статус | `code` |
+        |---|---|---|
+        | тіло не пройшло схему | 400 | `VALIDATION_FAILED` |
+        | запису немає | 404 | `NOT_FOUND` |
+        | такий запис уже є | 409 | `CONFLICT` |
+        | будь-що інше (баг) | 500 | `INTERNAL` |
+
+        Ідея не нова: стандарт [[problem-details|Problem Details]] (RFC 9457, він замінив RFC 7807) описує спільну форму помилок для HTTP API. Наша модель простіша, але має ту саму мету.
+      en: |
+        A client that receives every error in its own shape — `{ message }`, `{ error }`, the plain text `duplicate` — has to guess how to read it. So an API agrees on **one shape** for every failure:
+
+        ```json
+        { "error": {
+            "code": "VALIDATION_FAILED",
+            "messageKey": "errors.validationFailed",
+            "details": { "amountMinor": "notPositive" },
+            "requestId": "5f0c…" } }
+        ```
+
+        - `code` — a [[api-error-code|stable code]] for programs: the client branches on exactly this.
+        - `messageKey` — a text key; the client shows a sentence in Ukrainian or English for it.
+        - `details` — specifics: field errors, a record's `id`.
+        - `requestId` — the request's number, which finds the full story in the server's log.
+
+        | What happened | Status | `code` |
+        |---|---|---|
+        | the body failed the schema | 400 | `VALIDATION_FAILED` |
+        | the record does not exist | 404 | `NOT_FOUND` |
+        | such a record already exists | 409 | `CONFLICT` |
+        | anything else (a bug) | 500 | `INTERNAL` |
+
+        The idea is not new: the [[problem-details|Problem Details]] standard (RFC 9457, which replaced RFC 7807) describes a common error shape for HTTP APIs. Our model is simpler but has the same goal.
+
+  - id: central-handler
+    kind: explanation
+    title:
+      uk: "Один центральний обробник"
+      en: "One central handler"
+    body:
+      uk: |
+        Хто вирішує, який статус отримає помилка? Не той код, що її кинув. Доменна функція кидає `NotFoundError` чи `ValidationError` і нічого не знає про HTTP. Усі помилки ловить **один** `catch` навколо обробника запиту, і там одна функція перетворює їх на статус і тіло.
+
+        Цей `catch` потрібен не лише для краси. Помилка, кинута в обробнику `node:http` без жодного `catch`, нікуди не дівається: у звичайній функції це неперехоплений виняток, в `async`-функції — відхилений проміс, який ніхто не обробив. В обох випадках Node.js за типових налаштувань **зупиняє весь процес**: сервер падає для всіх клієнтів одразу.
+
+        Непередбачена помилка — це баг сервера. Клієнт отримує 500 з кодом `INTERNAL`, але **без** `error.message` і без `error.stack`: стек показує шляхи до файлів і будову коду, а виправити баг клієнт однаково не може. Повну помилку сервер пише у свій журнал поруч із `requestId`. Людина, яка повідомить номер запиту, приведе тебе прямо до потрібного рядка журналу.
+      en: |
+        Who decides which status an error gets? Not the code that threw it. A domain function throws `NotFoundError` or `ValidationError` and knows nothing about HTTP. All errors are caught by **one** `catch` around the request handler, and there one function turns them into a status and a body.
+
+        That `catch` is not just for neatness. An error thrown in a `node:http` handler with no `catch` at all goes nowhere: in an ordinary function it is an uncaught exception, in an `async` function a rejected promise that nobody handles. In both cases Node.js with its default settings **stops the whole process**: the server goes down for every client at once.
+
+        An unexpected error is a bug in the server. The client gets 500 with the code `INTERNAL` but **without** `error.message` and without `error.stack`: the stack reveals file paths and how the code is built, and the client cannot fix the bug anyway. The server writes the full error to its own log next to the `requestId`. Someone who reports the request number leads you straight to the right log line.
+
+  - id: predict-typeerror
+    kind: prediction
+    prompt:
+      uk: "Сервер має один центральний `catch`, який відповідає на кожну помилку за моделлю помилок API (`code`, `messageKey`, `details`, `requestId`). Обробник `GET /expenses/e-03/receipt` читає `expense.receipt.url`, а поля `receipt` у витрати немає. Що отримає клієнт?"
+      en: "The server has one central `catch` that answers every error with the API's error model (`code`, `messageKey`, `details`, `requestId`). The handler of `GET /expenses/e-03/receipt` reads `expense.receipt.url`, and the expense has no `receipt` field. What does the client get?"
+    answer:
+      type: choice
+      options:
+        - id: internal
+          text:
+            uk: "500 і `{ error: { code: \"INTERNAL\", messageKey: \"errors.internal\", details: {}, requestId } }`; стек — лише в журналі сервера"
+            en: "500 and `{ error: { code: \"INTERNAL\", messageKey: \"errors.internal\", details: {}, requestId } }`; the stack only in the server's log"
+        - id: stack
+          text:
+            uk: "500 і тіло з `TypeError: Cannot read properties of undefined (reading 'url')` та стеком, щоб клієнт міг розібратися"
+            en: "500 and a body with `TypeError: Cannot read properties of undefined (reading 'url')` and the stack, so the client can figure it out"
+          why:
+            uk: "Стек віддає назовні шляхи й будову коду, а клієнт баг сервера не виправить. Йому досить коду `INTERNAL` і `requestId`."
+            en: "The stack hands out paths and the shape of the code, and the client cannot fix a server bug. The `INTERNAL` code and the `requestId` are enough for it."
+        - id: bad-request
+          text:
+            uk: "400: запит, після якого сталася помилка, — поганий запит"
+            en: "400: a request after which an error happened is a bad request"
+          why:
+            uk: "400 означає, що клієнт надіслав щось неправильне. Тут запит правильний, а помилка — у коді сервера, тобто 500."
+            en: "400 means the client sent something wrong. Here the request is fine and the error is in the server's code, so it is 500."
+        - id: crash
+          text:
+            uk: "Нічого: сервер падає, а з’єднання обривається"
+            en: "Nothing: the server crashes and the connection drops"
+          why:
+            uk: "Так і було б без центрального `catch`: неперехоплена помилка зупиняє процес Node.js. Але центральний обробник ловить її й відповідає 500."
+            en: "That is exactly what would happen without the central `catch`: an uncaught error stops the Node.js process. But the central handler catches it and answers 500."
+      correct: [internal]
+    explanation:
+      uk: "`TypeError` — не доменна помилка, тож центральний обробник віддає її в гілку «будь-що інше»: 500 і `INTERNAL`. Повний текст і стек сервер пише у свій журнал з тим самим `requestId`, що й у відповіді."
+      en: "A `TypeError` is not a domain error, so the central handler sends it to the “anything else” branch: 500 and `INTERNAL`. The server writes the full text and stack to its own log with the same `requestId` as in the answer."
+
+  - id: predict-message-contract
+    kind: prediction
+    prompt:
+      uk: "Клієнт показує поле «Сума» червоним, якщо `body.error.message === \"amount must be positive\"`. Розробник сервера виправив текст на `\"amount must be greater than zero\"`. Що станеться з клієнтом?"
+      en: "A client shows the “Amount” field in red when `body.error.message === \"amount must be positive\"`. The server's developer changed the text to `\"amount must be greater than zero\"`. What happens to the client?"
+    answer:
+      type: choice
+      options:
+        - id: breaks
+          text:
+            uk: "Клієнт тихо перестане підсвічувати поле: порівняння тексту більше не збігається"
+            en: "The client silently stops highlighting the field: the text comparison no longer matches"
+        - id: fine
+          text:
+            uk: "Нічого: сенс повідомлення не змінився"
+            en: "Nothing: the message means the same"
+          why:
+            uk: "Програма не розуміє сенсу — вона порівнює символи. Інший текст — інший результат `===`."
+            en: "A program does not understand meaning — it compares characters. Different text, a different result of `===`."
+        - id: error
+          text:
+            uk: "Клієнт отримає помилку `TypeError`"
+            en: "The client gets a `TypeError`"
+          why:
+            uk: "Порівняння двох текстів не кидає помилок: воно просто дає `false`. Тому поломку й не видно одразу."
+            en: "Comparing two texts throws nothing: it just gives `false`. That is why the breakage is not visible at once."
+      correct: [breaks]
+    explanation:
+      uk: "Текст повідомлення — для людей, і його мають право змінювати: виправити, перекласти. Контракт для програм — стабільні `code` і ключі в `details` (`amountMinor: \"notPositive\"`): їх не змінюють без нової версії API."
+      en: "A message text is for people, and it may change: be corrected, translated. The contract for programs is the stable `code` and the keys in `details` (`amountMinor: \"notPositive\"`): they do not change without a new API version."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: wrong-method
+        from: no-03-02-methods-status-headers-server
+        prompt:
+          uk: "Сервер має `GET` і `POST` для `/habits`, але не має `DELETE`. Що правильно відповісти на `DELETE /habits`?"
+          en: "A server has `GET` and `POST` for `/habits` but no `DELETE`. What is the right answer to `DELETE /habits`?"
+        answer:
+          type: choice
+          options:
+            - id: method-not-allowed
+              text:
+                uk: "405 і заголовок `Allow: GET, POST`"
+                en: "405 and the header `Allow: GET, POST`"
+            - id: not-found
+              text:
+                uk: "404: такого маршруту немає"
+                en: "404: there is no such route"
+              why:
+                uk: "Адреса `/habits` існує — бракує лише методу. 404 змусить клієнта думати, що помилився в адресі."
+                en: "The address `/habits` exists — only the method is missing. 404 would make the client think the address is wrong."
+            - id: ok-error
+              text:
+                uk: "200 і `{ \"error\": \"method not allowed\" }`"
+                en: "200 and `{ \"error\": \"method not allowed\" }`"
+              why:
+                uk: "200 означає успіх, і клієнт, що дивиться на статус, вирішить, що все видалено."
+                en: "200 means success, and a client that looks at the status decides that everything was deleted."
+          correct: [method-not-allowed]
+        explanation:
+          uk: "405 Method Not Allowed каже «адреса є, метод — ні», а `Allow` перелічує дозволені методи. У моделі помилок цієї теми такий збій отримав би ще й свій `code`."
+          en: "405 Method Not Allowed says “the address exists, the method does not”, and `Allow` lists the allowed methods. In this topic's error model such a failure would also get its own `code`."
+
+  - id: habits-errors
+    kind: example
+    runtime: isolated-node
+    dir: habits-errors
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      exercise: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      walk: { uk: "Прогулянка", en: "Go for a walk" }
+    title:
+      uk: "Чотири збої — чотири форми"
+      en: "Four failures, four shapes"
+    body:
+      uk: |
+        API звичок відповідає на кожен збій по-своєму. `index.js` викликає всі чотири: порожню назву, звичку, якої немає, дубль назви й `last-done` для звички, яку ще жодного разу не виконано — там баг, і обробник кидає `TypeError`.
+
+        Натисни **Запустити** й подивись на тіла: `{ message }`, `{ error }`, текст `duplicate` і довгий стек, обрізаний до 150 символів. Сервер не впав лише тому, що в `app.js` є центральний `catch`; але віддає він стек.
+      en: |
+        The habits API answers every failure its own way. `index.js` triggers all four: an empty name, a habit that does not exist, a duplicate name and `last-done` for a habit that has never been done — there is a bug there, and the handler throws a `TypeError`.
+
+        Press **Run** and look at the bodies: `{ message }`, `{ error }`, the text `duplicate` and a long stack cut to 150 characters. The server did not crash only because `app.js` has a central `catch`; but it hands out the stack.
+    tryIt:
+      uk: |
+        1. У `app.js` у центральному `catch` заміни тіло на `{ error: { code: 'INTERNAL', messageKey: 'errors.internal', details: {}, requestId } }`, а перед `sendJson` додай `console.error(requestId, error);`. Запусти: клієнт бачить короткий безпечний 500, а стек з’являється червоними рядками — це журнал сервера.
+        2. Тепер переведи 404 на ту саму форму: заміни `{ error: \`Habit ${parts[1]} not found\` }` на `{ error: { code: 'NOT_FOUND', messageKey: 'errors.notFound', details: { id: parts[1] } } }` і запусти. У цьому тілі бракує `requestId`: всередині `handle` його не видно, він живе в центральному обробнику. Тому форму помилки краще будувати лише там — так і зроблено у вправі нижче.
+        3. Для досвіду: прибери з `app.js` увесь `.catch(…)` і запусти. Програма завершується з `TypeError` на останньому запиті — так падає сервер без центрального обробника. Поверни `.catch` назад.
+      en: |
+        1. In `app.js`, in the central `catch`, replace the body with `{ error: { code: 'INTERNAL', messageKey: 'errors.internal', details: {}, requestId } }` and add `console.error(requestId, error);` before `sendJson`. Run: the client sees a short, safe 500, and the stack appears as red lines — that is the server's log.
+        2. Now move the 404 to the same shape: replace `{ error: \`Habit ${parts[1]} not found\` }` with `{ error: { code: 'NOT_FOUND', messageKey: 'errors.notFound', details: { id: parts[1] } } }` and run. This body lacks the `requestId`: it is not visible inside `handle`, it lives in the central handler. That is why the error shape is best built only there — which is what the exercise below does.
+        3. As an experiment: remove the whole `.catch(…)` from `app.js` and run. The program ends with a `TypeError` on the last request — this is how a server without a central handler goes down. Put the `.catch` back.
+
+  - id: expense-errors
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: expense-errors
+    entry: index.js
+    editable: [to-error-response.js]
+    capabilities: { network: loopback }
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+    title:
+      uk: "toErrorResponse для API витрат"
+      en: "toErrorResponse for the expenses API"
+    instructions:
+      uk: |
+        Обробники API витрат лише кидають доменні помилки з `errors.js`, а центральний `catch` в `app.js` передає кожну помилку в `toErrorResponse(error, requestId)`. Напиши цю функцію в `to-error-response.js`. Вона повертає `{ status, body }`, де `body` — це `{ error: { code, messageKey, details, requestId } }`:
+
+        | Помилка | `status` | `code` | `messageKey` | `details` |
+        |---|---|---|---|---|
+        | `ValidationError` | 400 | `VALIDATION_FAILED` | `errors.validationFailed` | `error.fields` |
+        | `NotFoundError` | 404 | `NOT_FOUND` | `errors.notFound` | `{ id: error.id }` |
+        | `ConflictError` | 409 | `CONFLICT` | `errors.conflict` | `{ id: error.id }` |
+        | будь-що інше | 500 | `INTERNAL` | `errors.internal` | `{}` |
+
+        Для «будь-чого іншого» в тілі не має бути ні `error.message`, ні стека. Кинути можна й не об’єкт `Error` (наприклад, текст) — і тоді відповідь та сама.
+      en: |
+        The handlers of the expenses API only throw the domain errors from `errors.js`, and the central `catch` in `app.js` passes every error to `toErrorResponse(error, requestId)`. Write that function in `to-error-response.js`. It returns `{ status, body }`, where `body` is `{ error: { code, messageKey, details, requestId } }`:
+
+        | Error | `status` | `code` | `messageKey` | `details` |
+        |---|---|---|---|---|
+        | `ValidationError` | 400 | `VALIDATION_FAILED` | `errors.validationFailed` | `error.fields` |
+        | `NotFoundError` | 404 | `NOT_FOUND` | `errors.notFound` | `{ id: error.id }` |
+        | `ConflictError` | 409 | `CONFLICT` | `errors.conflict` | `{ id: error.id }` |
+        | anything else | 500 | `INTERNAL` | `errors.internal` | `{}` |
+
+        For “anything else” the body must contain neither `error.message` nor the stack. Something other than an `Error` object (for example, a text) can be thrown too — and then the answer is the same.
+    testTitles:
+      "ValidationError → 400 VALIDATION_FAILED with the field errors":
+        uk: "`ValidationError` → 400 `VALIDATION_FAILED` з помилками полів"
+        en: "`ValidationError` → 400 `VALIDATION_FAILED` with the field errors"
+      "NotFoundError → 404 NOT_FOUND with the id":
+        uk: "`NotFoundError` → 404 `NOT_FOUND` з `id`"
+        en: "`NotFoundError` → 404 `NOT_FOUND` with the `id`"
+      "ConflictError → 409 CONFLICT with the id":
+        uk: "`ConflictError` → 409 `CONFLICT` з `id`"
+        en: "`ConflictError` → 409 `CONFLICT` with the `id`"
+      "anything else → 500 INTERNAL, with no message and no stack":
+        uk: "Будь-що інше → 500 `INTERNAL` без повідомлення й стека"
+        en: "Anything else → 500 `INTERNAL`, with no message and no stack"
+      "over HTTP every failure has one shape and the request id of its header":
+        uk: "Через HTTP кожен збій має одну форму й `requestId` зі свого заголовка"
+        en: "Over HTTP every failure has one shape and the `requestId` of its header"
+    hints:
+      nudge:
+        uk: "Розпізнати вид помилки допоможе `instanceof`: `error instanceof NotFoundError`. Перевір три відомі види по черзі, а все, що не підійшло, — у гілку 500."
+        en: "`instanceof` recognizes the kind of error: `error instanceof NotFoundError`. Check the three known kinds in turn, and send everything that did not match to the 500 branch."
+      explanation:
+        uk: "Повторювана частина — форма тіла, тож її зручно зібрати в маленькій допоміжній функції, що приймає статус, код, ключ і деталі. Наприклад, для помилки «немає доступу» було б `{ status: 403, body: { error: { code: 'FORBIDDEN', messageKey: 'errors.forbidden', details: {}, requestId } } }`. Деталі беруться з полів самої помилки: `error.fields` чи `error.id`."
+        en: "The repeated part is the shape of the body, so it is handy to build it in a small helper that takes the status, code, key and details. For a “no access” error, for example, it would be `{ status: 403, body: { error: { code: 'FORBIDDEN', messageKey: 'errors.forbidden', details: {}, requestId } } }`. The details come from the error's own fields: `error.fields` or `error.id`."
+    solutionNote:
+      uk: "Три відомі види помилок зіставлено з таблицею через `instanceof`, а гілка за замовчуванням дає `INTERNAL` без жодних даних з помилки. Тому навіть текст, кинутий замість `Error`, отримує правильну відповідь, а стек лишається в журналі сервера."
+      en: "The three known kinds are matched against the table with `instanceof`, and the default branch gives `INTERNAL` with no data from the error. So even a text thrown instead of an `Error` gets the right answer, and the stack stays in the server's log."
+    feedback:
+      - when: { test: "anything else → 500 INTERNAL, with no message and no stack" }
+        message:
+          uk: "Ця перевірка передає `TypeError` і просто текст і чекає рівно `500`, `INTERNAL`, `errors.internal` і порожні `details`. Не клади в тіло `error.message` чи `error.stack`."
+          en: "This check passes a `TypeError` and a plain text and expects exactly `500`, `INTERNAL`, `errors.internal` and empty `details`. Do not put `error.message` or `error.stack` in the body."
+      - when: { test: "ValidationError → 400 VALIDATION_FAILED with the field errors" }
+        message:
+          uk: "Ця перевірка чекає рівно `400`, `VALIDATION_FAILED`, `errors.validationFailed` і в `details` — об’єкт помилок полів з `error.fields` (`{ amountMinor: \"notPositive\" }`): за ним форма підсвічує поля."
+          en: "This check expects exactly `400`, `VALIDATION_FAILED`, `errors.validationFailed` and, in `details`, the field-error object from `error.fields` (`{ amountMinor: \"notPositive\" }`): a form highlights fields by it."
+      - when: { test: "NotFoundError → 404 NOT_FOUND with the id" }
+        message:
+          uk: "Ця перевірка чекає рівно `404`, `NOT_FOUND`, `errors.notFound` і `details: { id: \"e-99\" }`. Запит тут правильний — бракує самого запису, тож це не 400."
+          en: "This check expects exactly `404`, `NOT_FOUND`, `errors.notFound` and `details: { id: \"e-99\" }`. The request here is fine — the record itself is missing, so it is not 400."
+      - when: { test: "ConflictError → 409 CONFLICT with the id" }
+        message:
+          uk: "Ця перевірка чекає 409 `CONFLICT` з `{ id }`. Дубль — не баг сервера: якщо `ConflictError` потрапляє в гілку 500, додай для неї окрему перевірку."
+          en: "This check expects 409 `CONFLICT` with `{ id }`. A duplicate is not a server bug: if `ConflictError` ends up in the 500 branch, add a separate check for it."
+      - when: { test: "over HTTP every failure has one shape and the request id of its header" }
+        message:
+          uk: "Ця перевірка надсилає чотири запити й чекає в кожній відповіді `error` рівно з ключами `code`, `messageKey`, `details`, `requestId`, де `requestId` дорівнює заголовку `x-request-id`. Передай у тіло той `requestId`, що отримала функція."
+          en: "This check sends four requests and expects every answer's `error` to have exactly the keys `code`, `messageKey`, `details`, `requestId`, with `requestId` equal to the `x-request-id` header. Put the `requestId` the function received into the body."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-04
+    body:
+      uk: "У кроці проєкту цього розділу всі відповіді-помилки твого API мають цю форму: `{ \"error\": { \"code\", \"messageKey\", \"details\", \"requestId\" } }` і заголовок `x-request-id`, а будує їх одне місце — `toErrorResponse` у `src/api-errors.ts`. Помилки `validate*` стають `VALIDATION_FAILED` з тими самими ключами повідомлень, які вже перекладає твій клієнт, а будь-який баг — `INTERNAL` з `requestId` без стека."
+      en: "In this unit’s project step every error answer of your API takes this shape: `{ \"error\": { \"code\", \"messageKey\", \"details\", \"requestId\" } }` plus an `x-request-id` header, built in one place — `toErrorResponse` in `src/api-errors.ts`. `validate*` errors become `VALIDATION_FAILED` with the same message keys your client already translates, and any bug becomes `INTERNAL` with a `requestId` and no stack."

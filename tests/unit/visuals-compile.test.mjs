@@ -309,6 +309,23 @@ test('event-loop: console text formatting matches the documented rules', async (
   assert.deepEqual(r.issues, [], messages(r.issues));
 });
 
+test('git-graph init: args are shown after "git init" and a -b name names the branch', async () => {
+  const cap = text('c');
+  const plain = await compileVisual('git-graph', { steps: [{ op: 'init', caption: cap }] }, ctx());
+  assert.equal(plain.spec.steps[0].command, 'git init');
+  const named = await compileVisual('git-graph', { steps: [{ op: 'init', args: '-b trunk', caption: cap }, { op: 'commit', message: 'one', caption: cap }] }, ctx());
+  assert.deepEqual(named.issues, [], messages(named.issues));
+  assert.equal(named.spec.steps[0].command, 'git init -b trunk');
+  assert.equal(named.spec.steps[1].branches[0].name, 'trunk');
+  const both = await compileVisual('git-graph', { steps: [{ op: 'init', args: '--initial-branch=main', branch: 'main', caption: cap }] }, ctx());
+  assert.deepEqual(both.issues, [], messages(both.issues));
+  assert.equal(both.spec.steps[0].command, 'git init --initial-branch=main');
+  const mismatch = await compileVisual('git-graph', { steps: [{ op: 'init', args: '-b dev', branch: 'main', caption: cap }] }, ctx());
+  assert.match(messages(mismatch.issues), /names the branch "dev" but branch is "main"/);
+  const empty = await compileVisual('git-graph', { steps: [{ op: 'init', args: '', caption: cap }] }, ctx());
+  assert.match(messages(empty.issues), /text after "git init"/);
+});
+
 test('git-graph simulation: fast-forward, merge commit, conflict, rebase and errors', async () => {
   const cap = text('c');
   const r = await compileVisual('git-graph', { steps: [

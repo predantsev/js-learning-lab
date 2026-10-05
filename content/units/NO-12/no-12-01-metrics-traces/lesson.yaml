@@ -1,0 +1,375 @@
+id: no-12-01-metrics-traces
+unit: NO-12
+title:
+  uk: "Метрики й базові трасування"
+  en: "Metrics and basic traces"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Додавати до сервера лічильник запитів, лічильник помилок і гістограму затримки для кожного маршруту та читати з них p50 і p95."
+    en: "Add a request counter, an error counter and a latency histogram per route and read p50 and p95 from them."
+  - uk: "Пояснювати, що показує метрика й чого не показує рядок журналу, і простежити один повільний запит через виміряні кроки (span), пов’язані з його request id."
+    en: "Explain what a metric shows that a log line does not, and follow one slow request through timed spans tied to its request id."
+prerequisites: [no-07-07-structured-logs-request-ids, no-11-03-event-loop-blocking]
+subskills:
+  - { family: B-09, skill: "metrics and basic traces", depth: intro }
+glossary: [metric, latency-histogram, latency-percentile, trace-span]
+selfCheck: [predict-tail, habit-metrics]
+
+blocks:
+  - id: logs-and-metrics
+    kind: explanation
+    title:
+      uk: "Рядок журналу — про один запит, метрика — про всі"
+      en: "A log line is about one request, a metric is about all of them"
+    body:
+      uk: |
+        Ще з NO-07 у тебе є [[structured-log|структурований журнал]]: один JSON-рядок на запит із [[request-id|request id]]. Його рядки відповідають на питання «що сталося з **цим** запитом». Але «чи сервер зараз повільний?» за ними не видно: треба було б перечитати тисячі рядків.
+
+        На це відповідає **[[metric|метрика]]** — число, яке сервер сам підсумовує, поки працює:
+
+        - **лічильник** (counter) лише росте: скільки запитів до `/expenses` отримали `200`, скільки — `500`;
+        - **[[latency-histogram|гістограма затримки]]** запам’ятовує тривалості запитів маршруту, щоб потім назвати **[[latency-percentile|перцентиль]]**: p95 = 20 мс означає, що 95 % запитів тривали не довше 20 мс.
+
+        Перцентиль рахують так: тривалості сортують за зростанням, і p95 — це значення на місці `⌈0,95 × n⌉` (метод найближчого рангу). Середнє тут обманює: сто запитів, з яких кілька дуже повільні, дають середнє, якого не мав жоден запит.
+
+        Метрики живуть у пам’яті процесу й віддаються простим текстом на `GET /metrics`, по одному значенню в рядку.
+      en: |
+        Since NO-07 you have a [[structured-log]]: one JSON line per request with a [[request-id]]. Its lines answer “what happened to **this** request”. But “is the server slow right now?” is not visible in them: you would have to reread thousands of lines.
+
+        A **[[metric]]** answers that — a number the server totals by itself while it runs:
+
+        - a **counter** only grows: how many requests to `/expenses` got `200`, how many got `500`;
+        - a **[[latency-histogram]]** remembers the durations of a route’s requests, so that it can later name a **[[latency-percentile|percentile]]**: p95 = 20 ms means that 95 % of requests took 20 ms or less.
+
+        A percentile is computed like this: the durations are sorted in ascending order, and p95 is the value at place `⌈0.95 × n⌉` (the nearest-rank method). The average misleads here: a hundred requests with a few very slow ones give an average that no request actually had.
+
+        Metrics live in the process’s memory and are served as plain text at `GET /metrics`, one value per line.
+
+  - id: predict-tail
+    kind: prediction
+    prompt:
+      uk: "Сервер витрат обробив 100 запитів: 95 тривали по 20 мс, 5 — по 900 мс. Перцентилі рахуються методом найближчого рангу. Яке середнє, p95 і p99?"
+      en: "An expense server handled 100 requests: 95 took 20 ms each, 5 took 900 ms each. Percentiles use the nearest-rank method. What are the average, p95 and p99?"
+    answer:
+      type: choice
+      options:
+        - id: avg-64-p95-20-p99-900
+          text:
+            uk: "середнє 64 мс, p95 = 20 мс, p99 = 900 мс"
+            en: "average 64 ms, p95 = 20 ms, p99 = 900 ms"
+        - id: avg-64-everywhere
+          text:
+            uk: "середнє 64 мс — отже, кожен користувач чекає близько 64 мс"
+            en: "average 64 ms — so every user waits about 64 ms"
+          why:
+            uk: "Жоден запит не тривав 64 мс: 95 людей чекали 20 мс, а 5 — майже секунду. Середнє змішує ці дві групи в число, якого ніхто не відчув, і ховає повільний «хвіст»."
+            en: "No request took 64 ms: 95 people waited 20 ms and 5 waited almost a second. The average mixes the two groups into a number nobody experienced and hides the slow “tail”."
+        - id: p95-900
+          text:
+            uk: "середнє 64 мс, p95 = 900 мс, p99 = 900 мс"
+            en: "average 64 ms, p95 = 900 ms, p99 = 900 ms"
+          why:
+            uk: "p95 — це 95-те значення зі 100 відсортованих. Перші 95 — це 20 мс, тож p95 = 20 мс. Повільні запити — це останні 5 %, їх видно лише з p96 і вище, зокрема в p99."
+            en: "p95 is the 95th of 100 sorted values. The first 95 are 20 ms, so p95 = 20 ms. The slow requests are the last 5 %, visible only from p96 up, including p99."
+        - id: avg-460
+          text:
+            uk: "середнє 460 мс, p95 = 20 мс, p99 = 900 мс"
+            en: "average 460 ms, p95 = 20 ms, p99 = 900 ms"
+          why:
+            uk: "460 — це середнє двох чисел, 20 і 900, без урахування того, скільки запитів має кожне. Справжнє середнє: (95 × 20 + 5 × 900) / 100 = 6400 / 100 = 64 мс."
+            en: "460 is the average of the two numbers 20 and 900, ignoring how many requests each has. The real average is (95 × 20 + 5 × 900) / 100 = 6400 / 100 = 64 ms."
+      correct: [avg-64-p95-20-p99-900]
+    explanation:
+      uk: "Середнє: (95 × 20 + 5 × 900) / 100 = 64 мс — число, якого не мав жоден запит. p95 — 95-те значення з відсортованих, тобто 20 мс; p99 — 99-те, тобто 900 мс. Тому сервери показують кілька перцентилів: p95 тут каже, що щонайменше 95 % запитів швидкі, а p99 — що найповільніші чекають майже секунду (у цих даних таких 5 зі 100). Вбудована гістограма Node.js (`perf_hooks.createHistogram()`) для цих самих 100 значень на Node v25.2.1 і v22.13.1 повернула ті самі 20 і 900 і середнє 64."
+      en: "The average: (95 × 20 + 5 × 900) / 100 = 64 ms — a number no request had. p95 is the 95th of the sorted values, 20 ms; p99 is the 99th, 900 ms. That is why servers report several percentiles: here p95 says at least 95 % of requests are fast, and p99 says the slowest ones wait almost a second (in this data 5 of 100). Node.js’s built-in histogram (`perf_hooks.createHistogram()`) returned the same 20 and 900 and the average 64 for these 100 values on Node v25.2.1 and v22.13.1."
+
+  - id: spans
+    kind: explanation
+    title:
+      uk: "Чий це повільний запит: span і request id"
+      en: "Whose slow request is it: spans and the request id"
+    body:
+      uk: |
+        p99 = 900 мс каже, **що** частина запитів повільна, але не **чому**. Тут допомагає **[[trace-span|span]]** — виміряний крок усередині одного запиту: `parse` (розібрати адресу), `validate`, `repository` (прочитати дані), `serialize` (зібрати JSON). Кожен span записує рядок журналу з тим самим request id, що й запит:
+
+        ```json
+        {"requestId":"r-0040","span":"serialize","ms":0.01}
+        {"requestId":"r-0040","route":"/expenses","status":200,"ms":7.96}
+        ```
+
+        У NO-07 рядок підсумку мав поля `time`, `level`, `requestId`, `method`, `route`, `status`, `durationMs`, а id створював `randomUUID()`. Тут для стислості лишилися `requestId`, `route`, `status` і `ms`, а id — короткий лічильник `r-0040`: так його легше читати очима.
+
+        Набір span одного запиту — це найпростіше **трасування** (trace). Знайди в метриках, що хвіст є, візьми id найповільнішого запиту, відфільтруй його рядки — і побачиш, який крок забрав час. Якщо сума span помітно менша за тривалість запиту, якийсь крок ще не виміряно.
+
+        Інструменти на кшталт OpenTelemetry роблять те саме для багатьох сервісів одразу; в уроці ти будуєш маленьку версію своїми руками.
+      en: |
+        p99 = 900 ms says **that** some requests are slow, but not **why**. A **[[trace-span|span]]** helps here — a timed step inside one request: `parse` (read the address), `validate`, `repository` (read the data), `serialize` (build the JSON). Each span writes a log line with the same request id as the request:
+
+        ```json
+        {"requestId":"r-0040","span":"serialize","ms":0.01}
+        {"requestId":"r-0040","route":"/expenses","status":200,"ms":7.96}
+        ```
+
+        In NO-07 the summary line had the fields `time`, `level`, `requestId`, `method`, `route`, `status`, `durationMs`, and `randomUUID()` made the id. Here, to keep lines short, only `requestId`, `route`, `status` and `ms` remain, and the id is a short counter `r-0040`, easier to read by eye.
+
+        The set of spans of one request is the simplest **trace**. Find in the metrics that there is a tail, take the id of the slowest request, filter its lines — and you see which step took the time. If the spans add up to noticeably less than the request’s duration, some step is not measured yet.
+
+        Tools such as OpenTelemetry do the same for many services at once; in this lesson you build a small version by hand.
+
+  - id: metrics-flow
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Від запиту до /metrics і до span одного запиту"
+      en: "From a request to /metrics and to one request’s spans"
+    textEquivalent:
+      uk: "Сто запитів GET /expenses проходять через обробник. Кожен отримує request id. Коли обробник відповідає, лічильник http_requests_total для маршруту й статусу збільшується на один, а гістограма затримки запам’ятовує тривалість. Після ста запитів GET /metrics показує лічильник, p50, p95, p99, суму та кількість. Потім один запит, r-0040, розгортається на кроки parse, validate, repository і serialize. Кожен крок пише рядок журналу з тим самим id r-0040. Найповільніший запит витратив майже весь час у кроці repository: кеш застарів, і репозиторій перечитав увесь файл."
+      en: "A hundred GET /expenses requests pass through the handler. Each gets a request id. When the handler answers, the http_requests_total counter for the route and status goes up by one, and the latency histogram remembers the duration. After a hundred requests GET /metrics shows the counter, p50, p95, p99, the sum and the count. Then one request, r-0040, expands into the steps parse, validate, repository and serialize. Each step writes a log line with the same id r-0040. The slowest request spent almost all its time in the repository step: the cache was stale, and the repository reread the whole file."
+    spec:
+      layout: grid
+      nodes:
+        - { id: requests, label: "GET /expenses × 100", shape: pill, w: 160, col: 0, row: 0 }
+        - { id: handler, label: { uk: "обробник", en: "handler" }, w: 160, col: 0, row: 1 }
+        - { id: counter, label: "http_requests_total", w: 170, col: 1, row: 0 }
+        - { id: histogram, label: { uk: "гістограма затримки", en: "latency histogram" }, w: 170, col: 1, row: 1 }
+        - { id: metrics, label: "GET /metrics", shape: note, w: 170, col: 1, row: 2 }
+        - { id: parse, label: "parse", shape: round, w: 160, col: 0, row: 2 }
+        - { id: validate, label: "validate", shape: round, w: 160, col: 0, row: 3 }
+        - { id: repository, label: "repository", shape: round, w: 160, col: 0, row: 4 }
+        - { id: serialize, label: "serialize", shape: round, w: 160, col: 0, row: 5 }
+        - { id: logs, label: { uk: "рядки журналу r-0040", en: "log lines r-0040" }, shape: note, w: 170, col: 1, row: 4 }
+      edges:
+        - { id: in, from: requests, to: handler }
+        - { id: count, from: handler, to: counter, label: "+1" }
+        - { id: observe, from: handler, to: histogram, label: "ms" }
+        - { id: expose, from: histogram, to: metrics }
+        - { id: step1, from: parse, to: validate }
+        - { id: step2, from: validate, to: repository }
+        - { id: step3, from: repository, to: serialize }
+        - { id: log-repo, from: repository, to: logs, kind: dashed }
+        - { id: log-serialize, from: serialize, to: logs, kind: dashed }
+      hidden: [parse, validate, repository, serialize, logs, step1, step2, step3, log-repo, log-serialize]
+      steps:
+        - caption:
+            uk: "Сто запитів `GET /expenses` приходять до обробника. Кожен отримує свій request id, наприклад `r-0040`."
+            en: "A hundred `GET /expenses` requests reach the handler. Each gets its own request id, for example `r-0040`."
+          highlight: [requests, handler, in]
+        - caption:
+            uk: "Обробник відповів: лічильник `http_requests_total{route, status}` збільшився на один, а гістограма запам’ятала тривалість."
+            en: "The handler answered: the counter `http_requests_total{route, status}` went up by one, and the histogram remembered the duration."
+          highlight: [counter, histogram, count, observe]
+        - caption:
+            uk: "Після ста запитів `GET /metrics` віддає текст: лічильник, p50, p95, p99, суму й кількість. p99 помітно більший за p50 — є повільний хвіст."
+            en: "After a hundred requests `GET /metrics` returns text: the counter, p50, p95, p99, the sum and the count. p99 is much larger than p50 — there is a slow tail."
+          highlight: [metrics, expose]
+        - caption:
+            uk: "Беремо найповільніший запит, `r-0040`. Усередині нього чотири кроки, і кожен — окремий span."
+            en: "Take the slowest request, `r-0040`. Inside it there are four steps, and each is a span."
+          show: [parse, validate, repository, serialize, step1, step2, step3]
+          highlight: [parse, validate, repository, serialize]
+          dim: [requests, counter, histogram, metrics]
+        - caption:
+            uk: "Кожен span пише рядок журналу з тим самим `r-0040`. Відфільтрувавши рядки за id, бачиш: майже весь час забрав `repository` — кеш застарів, і репозиторій перечитав увесь файл."
+            en: "Each span writes a log line with the same `r-0040`. Filtering the lines by id shows that `repository` took almost all the time — the cache was stale, and the repository reread the whole file."
+          show: [logs, log-repo, log-serialize]
+          highlight: [repository, logs, log-repo]
+          annotate:
+            - { id: repository, text: { uk: "≈ 6–10 мс", en: "≈ 6–10 ms" } }
+          dim: [requests, counter, histogram, metrics]
+
+  - id: expense-metrics
+    kind: example
+    runtime: isolated-node
+    dir: expense-metrics
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      pass: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      lunch: { uk: "Обід", en: "Lunch" }
+      slowest: { uk: "Рядки найповільнішого запиту", en: "Lines of the slowest request" }
+    title:
+      uk: "Навантаження, /metrics і span найповільнішого запиту"
+      en: "Load, /metrics and the spans of the slowest request"
+    body:
+      uk: |
+        Натисни **Запустити**. `index.js` запускає сервіс витрат на loopback із 20 000 синтетичних записів, надсилає 100 запитів `GET /expenses?category=…` один за одним, читає `GET /metrics` і друкує всі рядки журналу найповільнішого запиту.
+
+        - `metrics.js` — лічильник і гістограма; гістограма тут вбудована в Node.js (`createHistogram()` з `node:perf_hooks`). Місце перцентиля вона не округлює вгору, як метод найближчого рангу, а округлює до найближчого цілого (документація цього не описує; виміряно на Node v25.2.1 і v22.13.1): для 100 запитів результат той самий, а для, скажімо, 11 тривалостей її p95 — 10-те значення, а не 11-те.
+        - `trace.js` — `span(name, requestId, log, fn)`: вимірює крок і пише рядок журналу з id запиту.
+        - `repository.js` — файл JSON із кешем у пам’яті. Коментар угорі пояснює імітацію: кожне 20-те читання знаходить кеш застарілим і перечитує весь файл.
+
+        Твої мілісекунди будуть іншими, ніж у тексті уроку: вони залежать від комп’ютера.
+      en: |
+        Press **Run**. `index.js` starts the expense service on loopback with 20,000 synthetic records, sends 100 `GET /expenses?category=…` requests one after another, reads `GET /metrics` and prints every log line of the slowest request.
+
+        - `metrics.js` — the counter and the histogram; here the histogram is the one built into Node.js (`createHistogram()` from `node:perf_hooks`). It does not round the percentile’s place up, as the nearest-rank method does, but to the nearest whole place (the documentation does not describe this; measured on Node v25.2.1 and v22.13.1): for 100 requests the result is the same, while for, say, 11 durations its p95 is the 10th value, not the 11th.
+        - `trace.js` — `span(name, requestId, log, fn)`: times a step and writes a log line with the request’s id.
+        - `repository.js` — a JSON file with an in-memory cache. The comment at the top explains the imitation: every 20th read finds the cache stale and rereads the whole file.
+
+        Your milliseconds will differ from the ones in the lesson text: they depend on the computer.
+    tryIt:
+      uk: |
+        1. Подивись на вивід. Під час рецензії уроку на Node v25.2.1 і v22.13.1 (по 10 запусків у терміналі) і в пісочниці платформи p50 був 0.2 мс, p99 — 5–9 мс, а найповільніший запит тривав 6–10 мс. Його span `parse`, `validate` і `serialize` разом — менше за 0.1 мс: решту часу не виміряно.
+        2. У `service.js` заміни рядок `const found = await repository.list(category);` на `const found = await span('repository', requestId, log, () => repository.list(category));` і запусти. Тепер серед рядків найповільнішого запиту є `"span":"repository"` майже з усією його тривалістю.
+        3. У `repository.js` заміни `reads % 20` на `reads % 4` — кеш застаріває вчетверо частіше — і запусти. Повільних запитів тепер чверть, і p95 стрибає до часу перечитування файла. Поверни `reads % 20`.
+      en: |
+        1. Look at the output. When this lesson was reviewed on Node v25.2.1 and v22.13.1 (10 runs each in a terminal) and in the platform’s sandbox, p50 was 0.2 ms, p99 5–9 ms, and the slowest request took 6–10 ms. Its spans `parse`, `validate` and `serialize` together are under 0.1 ms: the rest of the time is not measured.
+        2. In `service.js`, replace the line `const found = await repository.list(category);` with `const found = await span('repository', requestId, log, () => repository.list(category));` and run. Now the lines of the slowest request include `"span":"repository"` with almost all of its duration.
+        3. In `repository.js`, replace `reads % 20` with `reads % 4` — the cache goes stale four times as often — and run. A quarter of the requests are slow now, and p95 jumps to the time of rereading the file. Put `reads % 20` back.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: request id"
+      en: "Recall: the request id"
+    items:
+      - id: interleaved-lines
+        from: no-07-07-structured-logs-request-ids
+        prompt:
+          uk: "Сервер обробляє три запити одночасно, і їхні JSON-рядки журналу перемішалися. Один запит закінчився статусом 500. Як найнадійніше зібрати всі рядки саме цього запиту?"
+          en: "A server handles three requests at once, and their JSON log lines are interleaved. One request ended with status 500. What is the most reliable way to collect every line of exactly that request?"
+        answer:
+          type: choice
+          options:
+            - id: by-id
+              text:
+                uk: "Узяти request id з його рядка зі статусом 500 і відфільтрувати всі рядки із цим id"
+                en: "Take the request id from its line with status 500 and filter every line with that id"
+            - id: by-order
+              text:
+                uk: "Узяти рядки, що стоять безпосередньо перед рядком зі статусом 500"
+                en: "Take the lines right before the line with status 500"
+              why:
+                uk: "Поки один запит чекав на диск, інші встигли записати свої рядки. Сусідні рядки можуть належати зовсім іншим запитам."
+                en: "While one request waited for the disk, the others wrote their own lines. Neighbouring lines can belong to completely different requests."
+            - id: by-route
+              text:
+                uk: "Відфільтрувати рядки за маршрутом цього запиту"
+                en: "Filter the lines by the route of that request"
+              why:
+                uk: "Кілька одночасних запитів можуть іти на той самий маршрут. Лише request id однаковий у всіх рядках одного запиту й різний у різних запитів."
+                en: "Several concurrent requests can go to the same route. Only the request id is the same on every line of one request and different between requests."
+          correct: [by-id]
+        explanation:
+          uk: "Request id — та сама позначка на кожному рядку одного запиту. Span у розділі NO-12 використовують її ж: рядки кроків `parse`, `repository`, `serialize` знаходяться за тим самим id, що й підсумковий рядок запиту."
+          en: "The request id is the same mark on every line of one request. The spans of unit NO-12 use it too: the lines of the `parse`, `repository` and `serialize` steps are found by the same id as the request’s summary line."
+
+  - id: habit-metrics
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: habit-metrics
+    entry: index.js
+    editable: [metrics.js]
+    capabilities: { network: loopback }
+    title:
+      uk: "Модуль метрик для сервісу звичок"
+      en: "A metrics module for the habit service"
+    instructions:
+      uk: |
+        У `metrics.js` допиши `createMetrics()`. Вона повертає об’єкт із чотирма методами:
+
+        - `countRequest(route, status)` — рахує запит для пари маршрут + статус; відповідь зі статусом **500 або більше** — ще й помилка цього маршруту (`404` чи `400` — це не помилка сервера);
+        - `observe(route, ms)` — запам’ятовує одну тривалість маршруту;
+        - `percentile(route, p)` — p-й перцентиль тривалостей цього маршруту методом найближчого рангу: відсортувати за зростанням і взяти значення на місці `⌈p / 100 × n⌉` (рахуючи з 1); `null`, якщо маршрут не має жодної тривалості;
+        - `render()` — текст, одна метрика в рядку (порядок рядків будь-який):
+
+        ```text
+        http_requests_total{route="/habits",status="200"} 3
+        http_errors_total{route="/habits"} 0
+        http_request_duration_ms{route="/habits",quantile="0.5"} 12
+        http_request_duration_ms{route="/habits",quantile="0.95"} 300
+        http_request_duration_ms_count{route="/habits"} 3
+        ```
+
+        Рядок `http_requests_total` — для кожної пари маршрут + статус; `http_errors_total` — для кожного маршруту, що мав хоч один `countRequest`, **навіть коли помилок 0** (правилу тривоги потрібен нуль, а не відсутність рядка); три рядки тривалості — для кожного маршруту, що мав хоч один `observe`.
+
+        `app.js` (лише для читання) уже віддає `render()` на `GET /metrics`.
+      en: |
+        In `metrics.js`, finish `createMetrics()`. It returns an object with four methods:
+
+        - `countRequest(route, status)` — counts a request for the pair route + status; a response with status **500 or more** is also an error of that route (`404` or `400` is not a server error);
+        - `observe(route, ms)` — remembers one duration of the route;
+        - `percentile(route, p)` — the p-th percentile of the route’s durations by the nearest-rank method: sort ascending and take the value at place `⌈p / 100 × n⌉` (counting from 1); `null` when the route has no durations;
+        - `render()` — text, one metric per line (the order of lines does not matter):
+
+        ```text
+        http_requests_total{route="/habits",status="200"} 3
+        http_errors_total{route="/habits"} 0
+        http_request_duration_ms{route="/habits",quantile="0.5"} 12
+        http_request_duration_ms{route="/habits",quantile="0.95"} 300
+        http_request_duration_ms_count{route="/habits"} 3
+        ```
+
+        An `http_requests_total` line for every pair route + status; an `http_errors_total` line for every route that had at least one `countRequest`, **even when there are 0 errors** (an alert rule needs a zero, not a missing line); the three duration lines for every route that had at least one `observe`.
+
+        `app.js` (read-only) already serves `render()` at `GET /metrics`.
+    testTitles:
+      "counts requests per route and status":
+        uk: "Рахує запити за маршрутом і статусом"
+        en: "Counts requests per route and status"
+      "counts only statuses of 500 and above as errors":
+        uk: "Помилками вважає лише статуси від 500"
+        en: "Counts only statuses of 500 and above as errors"
+      "shows 0 errors for a route that had none":
+        uk: "Показує 0 помилок для маршруту без помилок"
+        en: "Shows 0 errors for a route that had none"
+      "percentile uses the nearest rank of the sorted durations":
+        uk: "`percentile` бере найближчий ранг відсортованих тривалостей"
+        en: "`percentile` uses the nearest rank of the sorted durations"
+      "percentile of a route without durations is null":
+        uk: "`percentile` маршруту без тривалостей — `null`"
+        en: "`percentile` of a route without durations is `null`"
+      "durations of different routes are kept apart":
+        uk: "Тривалості різних маршрутів не змішуються"
+        en: "Durations of different routes are kept apart"
+      "render shows p50, p95 and the count of every observed route":
+        uk: "`render` показує p50, p95 і кількість для кожного виміряного маршруту"
+        en: "`render` shows p50, p95 and the count of every observed route"
+      "GET /metrics answers 200 with the rendered text":
+        uk: "`GET /metrics` відповідає 200 текстом із `render()`"
+        en: "`GET /metrics` answers 200 with the text of `render()`"
+    hints:
+      nudge:
+        uk: "Тобі потрібні три `Map`: кількість за ключем «маршрут + статус», кількість помилок за маршрутом і масив тривалостей за маршрутом. `render` лише обходить їх і будує рядки."
+        en: "You need three `Map`s: a count per key “route + status”, an error count per route and an array of durations per route. `render` only walks over them and builds lines."
+      explanation:
+        uk: "Найближчий ранг на іншому прикладі — оцінки за тест `[7, 3, 9, 5]`, p75: відсортувати → `[3, 5, 7, 9]`, місце `⌈0,75 × 4⌉ = 3`, третє значення — `7`. Не забудь, що масиви рахують з 0, а місця — з 1. Сортуй копію (`toSorted`) і завжди передавай порівняння `(a, b) => a - b`: без нього числа сортуються як текст. Щоб у `render` був рядок `http_errors_total … 0`, заводь лічильник помилок маршруту вже на першому `countRequest`, а не лише на першій помилці."
+        en: "The nearest rank on another example — test scores `[7, 3, 9, 5]`, p75: sort → `[3, 5, 7, 9]`, place `⌈0.75 × 4⌉ = 3`, the third value is `7`. Remember that arrays count from 0 and places from 1. Sort a copy (`toSorted`) and always pass the comparison `(a, b) => a - b`: without it numbers are sorted as text. For `render` to have an `http_errors_total … 0` line, create the route’s error counter on its first `countRequest`, not only on its first error."
+    solutionNote:
+      uk: "Сирі тривалості в масиві дають точний перцентиль, але пам’ять росте з кожним запитом. Справжні бібліотеки метрик зберігають гістограму з кошиками (`le=\"25\"`, `le=\"100\"`…) і дають наближений перцентиль за сталу пам’ять; вбудована `createHistogram()` з `node:perf_hooks` теж зберігає кошики, але її `percentile()` округлює місце до найближчого цілого, а не вгору, тож на малій кількості тривалостей розходиться з методом найближчого рангу на одне місце (перевірки це ловлять). Нуль у `http_errors_total` — не дрібниця: правило «помилок більше 5 %» на рядку, якого немає, не спрацює ніколи."
+      en: "Raw durations in an array give an exact percentile, but memory grows with every request. Real metrics libraries keep a histogram with buckets (`le=\"25\"`, `le=\"100\"`…) and give an approximate percentile in constant memory; the built-in `createHistogram()` from `node:perf_hooks` keeps buckets too, but its `percentile()` rounds the place to the nearest whole one rather than up, so with few durations it differs from the nearest rank by one place (the checks catch that). The zero in `http_errors_total` is not a detail: a rule “more than 5 % errors” on a line that does not exist never fires."
+    feedback:
+      - when: { test: "counts only statuses of 500 and above as errors" }
+        message:
+          uk: "Ця перевірка надсилає статуси 200, 404, 400, 500 і 503 й очікує `http_errors_total{route=\"/habits\"} 2`. Помилкою сервера є лише статус 500 або більше."
+          en: "This check sends statuses 200, 404, 400, 500 and 503 and expects `http_errors_total{route=\"/habits\"} 2`. Only a status of 500 or more is a server error."
+      - when: { test: "shows 0 errors for a route that had none" }
+        message:
+          uk: "Ця перевірка рахує два запити зі статусом 200 і очікує рядок `http_errors_total{route=\"/habits/summary\"} 0`. Рядок помилок потрібен для кожного маршруту з `countRequest`, навіть із нулем."
+          en: "This check counts two requests with status 200 and expects the line `http_errors_total{route=\"/habits/summary\"} 0`. The errors line is needed for every route with a `countRequest`, even with a zero."
+      - when: { test: "percentile uses the nearest rank of the sorted durations" }
+        message:
+          uk: "Ця перевірка передає тривалості не по порядку й очікує, наприклад, p50 = 25 для `5, 10 … 50`, p95 = 12 для 96 × 12 мс і 4 × 700 мс та p95 = 110 для 11 тривалостей `10, 20 … 110`. Відсортуй копію за зростанням (`(a, b) => a - b`), візьми місце `⌈p / 100 × n⌉` (округлення **вгору**) і відніми 1 для індексу масиву. Середнє тут не підходить, а `percentile()` вбудованої `createHistogram()` округлює місце до найближчого цілого, тож для 11 тривалостей дає 100."
+          en: "This check passes durations out of order and expects, for example, p50 = 25 for `5, 10 … 50`, p95 = 12 for 96 × 12 ms and 4 × 700 ms, and p95 = 110 for the 11 durations `10, 20 … 110`. Sort a copy ascending (`(a, b) => a - b`), take place `⌈p / 100 × n⌉` (rounded **up**) and subtract 1 for the array index. The average does not fit here, and `percentile()` of the built-in `createHistogram()` rounds the place to the nearest whole one, so for 11 durations it gives 100."
+      - when: { test: "durations of different routes are kept apart" }
+        message:
+          uk: "Ця перевірка вимірює `/habits` по 8 мс і `/habits/summary` по 600 мс та очікує, що p95 `/habits` — 8. Кожен маршрут має власний масив тривалостей."
+          en: "This check observes `/habits` at 8 ms and `/habits/summary` at 600 ms and expects p95 of `/habits` to be 8. Each route has its own array of durations."
+      - when: { test: "render shows p50, p95 and the count of every observed route" }
+        message:
+          uk: "Ця перевірка очікує для кожного маршруту з `observe` рядки `quantile=\"0.5\"` і `quantile=\"0.95\"` зі значеннями, які повертає твій `percentile`, і рядок `http_request_duration_ms_count` із кількістю тривалостей. Порівняй свої рядки зі зразком в умові символ у символ."
+          en: "This check expects, for every route with an `observe`, the lines `quantile=\"0.5\"` and `quantile=\"0.95\"` with the values your `percentile` returns, and the line `http_request_duration_ms_count` with the number of durations. Compare your lines with the sample in the task character by character."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-12
+    body:
+      uk: "У кроці проєкту цього розділу `src/metrics.ts` твого сервера рахує на кожен шаблон маршруту (`/v1/records/:id`; невідома адреса — `(other)`) `http_requests_total{route,status}`, `http_errors_total` для всіх `5xx` і тривалості з гістограми `createHistogram` з `node:perf_hooks` — p50, p95 і p99, а `GET /metrics` віддає їх текстом. Під `npm run load` ти читаєш p95 з `/metrics`. Span-ів у проєкті немає: доказ — метрики, рядок логу й профіль; у справжньому проєкті ти взяв би id найповільнішого запиту з журналу й перевірив би його span-и, перш ніж щось оптимізувати."
+      en: "In this unit’s project step your server’s `src/metrics.ts` counts per route pattern (`/v1/records/:id`; an unknown address is `(other)`) `http_requests_total{route,status}`, `http_errors_total` for every `5xx` and durations from a `createHistogram` histogram of `node:perf_hooks` — p50, p95 and p99 — and `GET /metrics` serves them as text. Under `npm run load` you read the p95 from `/metrics`. The project has no spans: the evidence is the metrics, the log line and the profile; in a real project you would also take the id of the slowest request from the logs and check its spans before optimizing anything."

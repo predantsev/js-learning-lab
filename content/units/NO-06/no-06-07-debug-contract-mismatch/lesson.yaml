@@ -1,0 +1,291 @@
+id: no-06-07-debug-contract-mismatch
+unit: NO-06
+title:
+  uk: "Налагодження: невідповідність контракту й заблокований preflight"
+  en: "Debug: a contract mismatch and a blocked preflight"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знайти причину, чому клієнт показує порожнечу після зміни на сервері, порівнявши відповідь зі спільним контрактом."
+    en: "Diagnose a client that renders blanks after a server change by comparing the response with the shared contract."
+  - uk: "Знайти причину заблокованого preflight за заголовками відповіді й виправити CORS сервера, не дозволяючи всіх origin."
+    en: "Diagnose a blocked preflight from its response headers and fix the server's CORS configuration without allowing every origin."
+  - uk: "Знайти забутий імпорт фікстур, що ховає зламаний запит до API."
+    en: "Find a leftover fixture import that hides a failing API call."
+prerequisites: [no-06-06-offline-errors-retry]
+subskills:
+  - { family: B-12, skill: "CORS/credentials", depth: assess }
+  - { family: B-12, skill: "versioned TS contracts", depth: assess }
+  - { family: B-12, skill: "local fixture replacement", depth: assess }
+glossary: []
+selfCheck: [predict-symptoms, fix-integration]
+
+blocks:
+  - id: three-reports
+    kind: explanation
+    title:
+      uk: "Три скарги після «маленького» релізу"
+      en: "Three complaints after a “small” release"
+    body:
+      uk: |
+        Після релізу сервера списку бажань приходять три скарги:
+
+        - **«Позначити отриманим» не працює.** У консолі браузера: `Access to fetch at 'http://127.0.0.1:7330/v1/records/w-01' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: Request header field content-type is not allowed by Access-Control-Allow-Headers in preflight response.`
+        - **У нативному компаньйоні після позначення ціни зникають.** Журнал сервера: `PATCH /v1/records/w-01 → 200`. Сервер каже «все добре». (Нативний застосунок, як і будь-який клієнт поза браузером, правил CORS не виконує, тож його `PATCH` до сервера доходить.)
+        - **У списку досі «Настільна лампа»**, яку вчора видалили на сервері, а нового «Кімнатного вазона» немає. І жодного рядка `GET /v1/records` у журналі сервера.
+
+        Кожна скарга — інша причина, і в кожної свій свідок: заголовки відповіді на preflight, тіло відповіді проти контракту і журнал сервера. Статус 200 у журналі — не свідок: він каже лише, що сервер відповів, а не що відповів те, чого чекає клієнт.
+      en: |
+        After a release of the wishlist server three complaints arrive:
+
+        - **“Mark as acquired” does not work.** In the browser console: `Access to fetch at 'http://127.0.0.1:7330/v1/records/w-01' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: Request header field content-type is not allowed by Access-Control-Allow-Headers in preflight response.`
+        - **In the native companion, the prices disappear after marking.** The server log: `PATCH /v1/records/w-01 → 200`. The server says “all fine”. (A native app, like any client outside a browser, does not follow CORS rules, so its `PATCH` does reach the server.)
+        - **The list still has “Desk lamp”**, deleted on the server yesterday, and the new “House plant” is not there. And not a single `GET /v1/records` line in the server log.
+
+        Each complaint is a different cause, and each has its own witness: the headers of the preflight answer, the response body against the contract, and the server log. A status 200 in the log is not a witness: it says only that the server answered, not that it answered what the client expects.
+
+  - id: predict-symptoms
+    kind: prediction
+    prompt:
+      uk: "Зістав три скарги — (1) `PATCH` заблоковано в консолі, (2) у нативному компаньйоні ціни зникають після `PATCH` зі статусом 200, (3) список не бачить змін сервера, і `GET` у журналі немає — з трьома причинами: перейменоване поле, бракує `content-type` в `Access-Control-Allow-Headers`, забутий імпорт фікстур."
+      en: "Match the three complaints — (1) `PATCH` blocked in the console, (2) in the native companion prices disappear after a `PATCH` with status 200, (3) the list does not see the server's changes and there is no `GET` in the log — with three causes: a renamed field, `content-type` missing from `Access-Control-Allow-Headers`, a leftover fixture import."
+    answer:
+      type: choice
+      options:
+        - id: right
+          text: { uk: "1 — бракує `content-type`; 2 — перейменоване поле; 3 — імпорт фікстур", en: "1 — `content-type` missing; 2 — renamed field; 3 — fixture import" }
+        - id: renamed-cors
+          text: { uk: "1 — перейменоване поле; 2 — бракує `content-type`; 3 — імпорт фікстур", en: "1 — renamed field; 2 — `content-type` missing; 3 — fixture import" }
+          why:
+            uk: "Перейменування не блокує запит: браузер блокує через заголовки preflight. А `PATCH` зі статусом 200 надіслав нативний застосунок, для якого правил CORS немає взагалі."
+            en: "A rename does not block a request: the browser blocks because of the preflight headers. And the `PATCH` with status 200 was sent by the native app, for which CORS rules do not exist at all."
+        - id: server-200
+          text: { uk: "2 — не дефект: сервер відповів 200, отже клієнт отримав те, що чекав", en: "2 is not a defect: the server answered 200, so the client got what it expected" }
+          why:
+            uk: "200 каже лише, що сервер відповів. Чи відповідь відповідає контракту клієнта, показує тіло, перевірене схемою."
+            en: "A 200 says only that the server answered. Whether the answer matches the client's contract is shown by the body, checked by the schema."
+      correct: [right]
+    explanation:
+      uk: "Заблокований `PATCH` — це preflight (у консолі названо заголовок). Ціни зникають, бо тіло з 200 має `priceUah` замість `price`. А список без змін і без `GET` у журналі — бо клієнт його взагалі не запитує."
+      en: "A blocked `PATCH` is the preflight (the console names the header). Prices disappear because the body with 200 has `priceUah` instead of `price`. And a list without changes and without a `GET` in the log — because the client never asks for it."
+
+  - id: seeded-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Три дефекти в часі"
+      en: "Three defects over time"
+    textEquivalent:
+      uk: "Клієнтський код просить список, але джерело даних повертає фікстури з пам’яті — запит до API не надсилається. Потім код просить браузер надіслати PATCH w-01 з JSON. Браузер надсилає preflight OPTIONS; API відповідає 204, але в Access-Control-Allow-Headers лише idempotency-key, без content-type. Браузер зупиняється — PATCH не надіслано, код отримує TypeError. Якщо ж PATCH іде не з браузера (з нативного застосунку, Node.js чи тесту), сервер відповідає 200 з полем priceUah замість price, і схема контракту v1 відхиляє відповідь: price: expected number or null."
+      en: "The client code asks for the list, but the data source returns fixtures from memory — no request goes to the API. Then the code asks the browser to send PATCH w-01 with JSON. The browser sends the OPTIONS preflight; the API answers 204, but Access-Control-Allow-Headers has only idempotency-key, without content-type. The browser stops — the PATCH is not sent, and the code gets a TypeError. When the PATCH does not come from a browser (from the native app, Node.js or a test), the server answers 200 with a priceUah field instead of price, and the v1 contract schema rejects the answer: price: expected number or null."
+    spec:
+      actors:
+        - { id: code, label: { uk: "Код клієнта", en: "Client code" } }
+        - { id: browser, label: { uk: "Браузер", en: "Browser" } }
+        - { id: api, label: "API :7330" }
+      messages:
+        - from: code
+          to: code
+          kind: note
+          label: { uk: "listRecords() → фікстури", en: "listRecords() → fixtures" }
+          caption: { uk: "Джерело даних повертає фікстури з пам’яті. До API не йде жоден запит — у журналі сервера порожньо.", en: "The data source returns fixtures from memory. No request goes to the API — the server log is empty." }
+        - from: code
+          to: browser
+          label: "fetch(PATCH w-01, JSON)"
+          caption: { uk: "Код просить надіслати `PATCH` з `Content-Type: application/json`.", en: "The code asks to send a `PATCH` with `Content-Type: application/json`." }
+        - from: browser
+          to: api
+          label: "OPTIONS /v1/records/w-01"
+          caption: { uk: "Браузер спершу питає: чи можна `PATCH` із заголовком `content-type`?", en: "The browser first asks: is a `PATCH` with the `content-type` header allowed?" }
+        - from: api
+          to: browser
+          kind: return
+          label: "204"
+          caption: { uk: "У відповіді `Access-Control-Allow-Headers: idempotency-key` — `content-type` немає.", en: "The answer has `Access-Control-Allow-Headers: idempotency-key` — no `content-type`." }
+          note: { uk: "Allow-Headers: idempotency-key", en: "Allow-Headers: idempotency-key" }
+        - from: browser
+          to: code
+          kind: return
+          label: "TypeError: Failed to fetch"
+          caption: { uk: "`PATCH` не надіслано. Причину браузер пише в консоль, а код бачить лише `TypeError`.", en: "The `PATCH` is not sent. The browser writes the reason into the console; the code sees only a `TypeError`." }
+        - from: code
+          to: api
+          label: { uk: "PATCH з нативного застосунку чи тесту", en: "PATCH from the native app or a test" }
+          caption: { uk: "Поза браузером preflight немає — `PATCH` доходить до сервера.", en: "Outside a browser there is no preflight — the `PATCH` reaches the server." }
+        - from: api
+          to: code
+          kind: return
+          label: "200 { priceUah: 80 }"
+          caption: { uk: "Сервер відповідає 200, але з `priceUah` замість `price`: перейменування без нової версії.", en: "The server answers 200, but with `priceUah` instead of `price`: a rename without a new version." }
+        - from: code
+          to: code
+          kind: note
+          label: "price: expected number or null"
+          caption: { uk: "Схема контракту v1 відхиляє відповідь. Журнал сервера тим часом показує 200.", en: "The v1 contract schema rejects the answer. The server log meanwhile shows 200." }
+
+  - id: replay-seeded
+    kind: example
+    runtime: isolated-node
+    dir: replay-seeded
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      plant: { uk: "Кімнатний вазон", en: "House plant" }
+      clientSees: { uk: "що бачить клієнт", en: "what the client sees" }
+      serverSends: { uk: "що надсилає сервер (перший запис)", en: "what the server sends (the first record)" }
+      preflightAllows: { uk: "що дозволяє preflight", en: "what the preflight allows" }
+    title:
+      uk: "Збери свідчення"
+      en: "Collect the evidence"
+    body:
+      uk: |
+        Тут сервер і шар даних клієнта з трьома дефектами — ті самі файли, що й у вправі нижче. `index.js` збирає свідчення у три розділи: що бачить клієнт, що надсилає сервер (і що про це каже `parseWishV1`), і що дозволяє preflight. Рядки `[server]` — журнал сервера.
+
+        Натисни **Запустити** й зістав кожен розділ зі своєю скаргою.
+      en: |
+        Here are the server and the client's data layer with three defects — the same files as in the exercise below. `index.js` collects the evidence in three sections: what the client sees, what the server sends (and what `parseWishV1` says about it), and what the preflight allows. The `[server]` lines are the server log.
+
+        Press **Run** and match each section with its complaint.
+    tryIt:
+      uk: |
+        1. Перший розділ: `listRecords` показує `w-02` (лампу, якої на сервері немає), а рядка `[server] GET /v1/records` перед ним немає — список узявся не із сервера. Відкрий `data-source.js` і знайди, звідки він береться.
+        2. Другий розділ: сервер надсилає `priceUah`, а `parseWishV1` каже `price: expected number or null`. В `server.js`, у `toV1`, заміни `priceUah: wish.price` на `price: wish.price` і запусти: `parseWishV1` повертає `[]`, а рядка `updateRecord: …` з помилкою більше немає.
+        3. Третій розділ: `access-control-allow-headers: idempotency-key`. Чого бракує для `PATCH` з JSON?
+      en: |
+        1. The first section: `listRecords` shows `w-02` (the lamp the server does not have), and there is no `[server] GET /v1/records` line before it — the list did not come from the server. Open `data-source.js` and find where it comes from.
+        2. The second section: the server sends `priceUah`, while `parseWishV1` says `price: expected number or null`. In `server.js`, in `toV1`, replace `priceUah: wish.price` with `price: wish.price` and run: `parseWishV1` returns `[]`, and the `updateRecord: …` error line is gone.
+        3. The third section: `access-control-allow-headers: idempotency-key`. What is missing for a `PATCH` with JSON?
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: three-lookalikes
+        from: js-16-09-debug-http-fetch-cors
+        prompt:
+          uk: "`fetch` зі сторінки відхилився з `TypeError: Failed to fetch`. Чи може код сторінки сам відрізнити блокування CORS від відсутності мережі?"
+          en: "A `fetch` from a page rejected with `TypeError: Failed to fetch`. Can the page's code itself tell a CORS block from a missing network?"
+        answer:
+          type: choice
+          options:
+            - id: no
+              text: { uk: "Ні: обидва дають той самий `TypeError`; різницю видно в консолі браузера, Network і журналі сервера", en: "No: both give the same `TypeError`; the difference shows in the browser console, Network and the server log" }
+            - id: status
+              text: { uk: "Так: при CORS у помилці є статус відповіді сервера", en: "Yes: with CORS the error carries the server's status" }
+              why:
+                uk: "Код не отримує ні статусу, ні тіла — лише відхилений проміс. Подробиці браузер пише туди, куди код не дістає."
+                en: "The code gets neither a status nor a body — only a rejected promise. The browser writes the details where the code cannot reach."
+            - id: message
+              text: { uk: "Так: текст `error.message` різний", en: "Yes: the text of `error.message` differs" }
+              why:
+                uk: "В обох випадках це той самий `TypeError: Failed to fetch`. Розрізняють їх свідки поза кодом."
+                en: "In both cases it is the same `TypeError: Failed to fetch`. Witnesses outside the code tell them apart."
+          correct: ["no"]
+        explanation:
+          uk: "Тому в налагодженні збирають свідків: консоль браузера називає заблокований заголовок, а журнал сервера показує, що прийшов лише `OPTIONS`."
+          en: "That is why debugging collects witnesses: the browser console names the blocked header, and the server log shows that only `OPTIONS` arrived."
+
+  - id: fix-integration
+    kind: exercise
+    mode: debug
+    runtime: isolated-node
+    dir: fix-integration
+    entry: index.js
+    editable: [server.js, data-source.js, checks.js]
+    capabilities: { network: loopback }
+    strings:
+      headphones: { uk: "Навушники", en: "Headphones" }
+      lamp: { uk: "Настільна лампа", en: "Desk lamp" }
+      bicycle: { uk: "Велосипед", en: "Bicycle" }
+      plant: { uk: "Кімнатний вазон", en: "House plant" }
+      list: { uk: "Список", en: "List" }
+      acquired: { uk: "отримано", en: "acquired" }
+      wanted: { uk: "бажане", en: "wanted" }
+      price: { uk: "ціна", en: "price" }
+    title:
+      uk: "Полагодь інтеграцію й додай тести, що її стережуть"
+      en: "Repair the integration and add tests that guard it"
+    instructions:
+      uk: |
+        Ті самі три дефекти, що й у прикладі «Збери свідчення». `contract.js` (контракт v1) і `fixtures.js` — лише для читання.
+
+        1. **`server.js`**: preflight для `PATCH` з `content-type` з origin `http://127.0.0.1:5173` має дозволяти цей заголовок; інші origin, як і раніше, не отримують `Access-Control-Allow-Origin` (ні `*`, ні свого). `/v1/records` знову віддає записи у формі v1 — з полем `price`. (Якщо хочеш зберегти `priceUah` — тільки на новій адресі `/v2/records`.)
+        2. **`data-source.js`**: `listRecords()` бере записи з `GET /v1/records`, а не з фікстур.
+        3. **`checks.js`**: допиши два тести, що впіймали б ці дефекти до клієнта. `contractTest(base)` повертає `[]`, коли `GET /v1/records` відповідає 200 зі списком, де кожне бажання проходить `parseWishV1`, інакше — повідомлення про проблеми. `preflightTest(base, origin)` надсилає `OPTIONS /v1/records/w-01` із цим `Origin`, `Access-Control-Request-Method: PATCH` і `Access-Control-Request-Headers: content-type` і повертає `[]`, лише коли відповідь 204 дозволяє рівно цей origin, метод `PATCH` і заголовок `content-type`.
+
+        **Перевірити** запускає твій сервер і шар даних, а твої тести — на правильних серверах і на серверах з кожним дефектом.
+      en: |
+        The same three defects as in the example “Collect the evidence”. `contract.js` (contract v1) and `fixtures.js` are read-only.
+
+        1. **`server.js`**: the preflight for a `PATCH` with `content-type` from the origin `http://127.0.0.1:5173` must allow that header; other origins, as before, get no `Access-Control-Allow-Origin` (neither `*` nor their own). `/v1/records` again sends records in the v1 shape — with the field `price`. (If you want to keep `priceUah`, only at a new address, `/v2/records`.)
+        2. **`data-source.js`**: `listRecords()` takes the records from `GET /v1/records`, not from the fixtures.
+        3. **`checks.js`**: finish two tests that would have caught these defects before the client. `contractTest(base)` returns `[]` when `GET /v1/records` answers 200 with a list in which every wish passes `parseWishV1`, otherwise messages about the problems. `preflightTest(base, origin)` sends `OPTIONS /v1/records/w-01` with this `Origin`, `Access-Control-Request-Method: PATCH` and `Access-Control-Request-Headers: content-type` and returns `[]` only when the 204 answer allows exactly that origin, the `PATCH` method and the `content-type` header.
+
+        **Check** runs your server and data layer, and your tests against correct servers and against servers with each defect.
+    testTitles:
+      "the server allows the PATCH preflight with content-type from the dev origin":
+        uk: "Сервер дозволяє preflight для `PATCH` з `content-type` з origin розробки"
+        en: "The server allows the `PATCH` preflight with `content-type` from the dev origin"
+      "another origin still gets no permission":
+        uk: "Інший origin, як і раніше, не отримує дозволу"
+        en: "Another origin still gets no permission"
+      "/v1/records keeps the v1 shape":
+        uk: "`/v1/records` зберігає форму v1"
+        en: "`/v1/records` keeps the v1 shape"
+      "listRecords asks the server instead of returning fixtures":
+        uk: "`listRecords` питає сервер, а не повертає фікстури"
+        en: "`listRecords` asks the server instead of returning fixtures"
+      "contractTest passes a correct server and catches a renamed field":
+        uk: "`contractTest` пропускає правильний сервер і ловить перейменоване поле та статус помилки"
+        en: "`contractTest` passes a correct server and catches a renamed field and an error status"
+      "preflightTest passes a correct server and catches a missing content-type":
+        uk: "`preflightTest` пропускає правильний сервер і ловить, коли бракує `content-type`, `PATCH` чи точного origin"
+        en: "`preflightTest` passes a correct server and catches a missing `content-type`, `PATCH` or exact origin"
+    hints:
+      nudge:
+        uk: "Іди за свідками з прикладу: заголовок preflight, поле в тілі відповіді, відсутній рядок `GET` у журналі. Кожен веде до одного рядка коду."
+        en: "Follow the witnesses from the example: the preflight header, the field in the response body, the missing `GET` line in the log. Each leads to one line of code."
+      explanation:
+        uk: "У сервері дефекти — у константі дозволених заголовків і у функції, що перетворює запис на відповідь v1; умову з `ALLOWED_ORIGINS` не чіпай — саме вона не пускає інші origin. У шарі даних `listRecords` має робити те саме, що вже робить `updateRecord`: запит, перевірку статусу й контракту. Тести в `checks.js` — це ті самі свідки, записані кодом: для чужого API, наприклад кошика, це було б `parseCartItemV1` для кожного елемента й перевірка, що в `access-control-allow-methods` є `DELETE`."
+        en: "In the server the defects are in the constant of allowed headers and in the function that turns a record into a v1 answer; leave the `ALLOWED_ORIGINS` condition alone — it is what keeps other origins out. In the data layer `listRecords` must do what `updateRecord` already does: a request, a status check and the contract check. The tests in `checks.js` are the same witnesses written as code: for another API, say a shopping cart, it would be `parseCartItemV1` for every item and a check that `access-control-allow-methods` contains `DELETE`."
+    solutionNote:
+      uk: "Три дефекти — три різні межі: CORS (правило браузера), контракт (форма даних) і заміна фікстур (звідки дані взагалі беруться). Жоден не видно зі статусу 200. Контрактний тест і тест preflight перетворюють свідків з налагодження на перевірки, що впадуть до релізу, а не після скарг."
+      en: "Three defects, three different boundaries: CORS (a browser rule), the contract (the shape of data) and fixture replacement (where the data comes from at all). None of them shows in a status 200. The contract test and the preflight test turn the debugging witnesses into checks that fail before a release, not after complaints."
+    feedback:
+      - when: { test: "the server allows the PATCH preflight with content-type from the dev origin" }
+        message:
+          uk: "Ця перевірка надсилає preflight з `http://127.0.0.1:5173` для `PATCH` з `content-type` і чекає 204, `Access-Control-Allow-Origin: http://127.0.0.1:5173` і `content-type` в `Access-Control-Allow-Headers`."
+          en: "This check sends a preflight from `http://127.0.0.1:5173` for a `PATCH` with `content-type` and expects 204, `Access-Control-Allow-Origin: http://127.0.0.1:5173` and `content-type` in `Access-Control-Allow-Headers`."
+      - when: { test: "another origin still gets no permission" }
+        message:
+          uk: "Ця перевірка надсилає preflight і `GET` з `http://127.0.0.1:8080` і чекає відповіді без `Access-Control-Allow-Origin`. `*` дозволив би кожну сторінку — список origin лишається."
+          en: "This check sends a preflight and a `GET` from `http://127.0.0.1:8080` and expects answers without `Access-Control-Allow-Origin`. `*` would allow every page — the origin list stays."
+      - when: { test: "/v1/records keeps the v1 shape" }
+        message:
+          uk: "Ця перевірка пропускає кожне бажання з `GET /v1/records` твого сервера через `parseWishV1` і чекає `[]`: у v1 поле називається `price`."
+          en: "This check passes every wish from your server's `GET /v1/records` through `parseWishV1` and expects `[]`: in v1 the field is called `price`."
+      - when: { test: "listRecords asks the server instead of returning fixtures" }
+        message:
+          uk: "Ця перевірка чекає від `listRecords` записи сервера `w-01`, `w-03`, `w-07` — а у фікстурах `w-02`. Бери список з `GET /v1/records`; якщо `/v1` надсилає `priceUah`, `listRecords` правильно падає на контракті — тоді полагодь сервер."
+          en: "This check expects `listRecords` to return the server's records `w-01`, `w-03`, `w-07` — the fixtures have `w-02`. Take the list from `GET /v1/records`; if `/v1` sends `priceUah`, `listRecords` rightly fails on the contract — then repair the server."
+      - when: { test: "contractTest passes a correct server and catches a renamed field" }
+        message:
+          uk: "Ця перевірка чекає `[]` від `contractTest` на правильному сервері й хоча б одне повідомлення, коли сервер надсилає `priceUah` замість `price` або відповідає 503 з порожнім списком. Перевір статус і пропусти кожне бажання через `parseWishV1`."
+          en: "This check expects `[]` from `contractTest` on a correct server and at least one message when the server sends `priceUah` instead of `price` or answers 503 with an empty list. Check the status and pass every wish through `parseWishV1`."
+      - when: { test: "preflightTest passes a correct server and catches a missing content-type" }
+        message:
+          uk: "Ця перевірка чекає `[]` від `preflightTest` на правильному сервері й хоча б одне повідомлення, коли в `Access-Control-Allow-Headers` немає `content-type`, в `Access-Control-Allow-Methods` немає `PATCH` або `Access-Control-Allow-Origin` — `*` замість переданого origin. Читай усі три заголовки, а не лише статус."
+          en: "This check expects `[]` from `preflightTest` on a correct server and at least one message when `Access-Control-Allow-Headers` lacks `content-type`, `Access-Control-Allow-Methods` lacks `PATCH`, or `Access-Control-Allow-Origin` is `*` instead of the given origin. Read all three headers, not only the status."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-06
+    body:
+      uk: "У кроці проєкту цього розділу `server/tests/client.test.ts` імпортує сам `data/httpApi.ts` і `shared/contract.ts` та запускає справжній сервер на `listen(0)`: кожна сторінка `GET /v1/records` проходить контракт, preflight для `PATCH` і `POST` з `http://127.0.0.1:4310` отримує дозвіл, інший origin — ні, а відповідь не тієї форми відкинуто. Фікстури лишаються лише за `data/fixtureApi.ts` — для тестів і `?synthetic=N`. Що браузер робить із заголовками CORS, Node не перевіряє, тож доказ для браузера — прогін у Chrome і рядки Console в `docs/server.md`."
+      en: "In this unit’s project step `server/tests/client.test.ts` imports `data/httpApi.ts` and `shared/contract.ts` themselves and starts the real server on `listen(0)`: every page of `GET /v1/records` passes the contract, the preflight for `PATCH` and `POST` from `http://127.0.0.1:4310` is allowed, another origin is not, and an answer of the wrong shape is refused. The fixtures stay only behind `data/fixtureApi.ts` — for the tests and `?synthetic=N`. What a browser does with the CORS headers Node does not check, so the browser’s evidence is the Chrome run and the Console lines in `docs/server.md`."

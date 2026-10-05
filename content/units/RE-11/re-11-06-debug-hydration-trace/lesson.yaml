@@ -1,0 +1,349 @@
+id: re-11-06-debug-hydration-trace
+unit: RE-11
+title:
+  uk: "Налагодження за наданою трасою: знайти розбіжність і витік"
+  en: "Debug (supplied trace): find the mismatch and the leak"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знайти за наданим серверним HTML, журналом клієнтського рендеру й переліком файлів бандла розбіжність гідратації та значення лише для сервера, що витекло."
+    en: "Locate, from a supplied server HTML, client render log and bundle listing, the hydration mismatch and the leaked server-only value."
+  - uk: "Запропонувати мінімальне виправлення для кожного й передбачити виправлену трасу, не стверджуючи, що в браузері запускали SSR."
+    en: "Propose the minimal fix for each and predict the corrected trace, without claiming a browser SSR run."
+prerequisites: [re-11-05-rsc-frameworks-stability]
+subskills:
+  - { family: R-09, skill: "hydration and mismatch causes", depth: assess }
+  - { family: R-09, skill: "secrets/server-only code", depth: assess }
+glossary: []
+selfCheck: [predict-from-log, day-total]
+
+blocks:
+  - id: three-sources
+    kind: explanation
+    title:
+      uk: "Три джерела траси й порядок читання"
+      en: "Three sources of a trace and the order to read them"
+    body:
+      uk: |
+        Коли сторінка з SSR поводиться дивно, у тебе є три записи:
+
+        - **серверний HTML** — що прийшло в браузер (у DevTools: вкладка Network, відповідь документа, або «View page source»);
+        - **журнал клієнта** — помилка гідратації React; у development-збірці під назвою елемента рядок з `+` — що дав клієнт, з `-` — що прийшло із сервера;
+        - **перелік бандла** — які файли потрапили в клієнтський код і яким ланцюжком імпортів.
+
+        Читай їх по черзі:
+
+        1. Знайди **перший** вузол, де `+` і `-` різняться. Решта розбіжностей часто — наслідок першої.
+        2. Запитай, **що в рендері** цього вузла різне на сервері й у браузері: годинник, `localStorage`, `navigator`, мова.
+        3. Знайди в переліку бандла файл із секретом і пройди його ланцюжок імпортів назад — до клієнтського модуля, з якого все почалося.
+
+        Виправлення мінімальні: перший рендер — як на сервері (стабільне значення, а браузерне — в ефекті), **або** значення обчислює сервер один раз і передає вниз разом з HTML. А секрет — у модуль лише для сервера, і клієнт не імпортує його ні прямо, ні через посередника.
+      en: |
+        When an SSR page behaves strangely, you have three records:
+
+        - **the server HTML** — what arrived in the browser (in DevTools: the Network tab, the document response, or “View page source”);
+        - **the client log** — React’s hydration error; in the development build, under the element’s name, the line with `+` is what the client produced, with `-` what came from the server;
+        - **the bundle listing** — which files got into the client code and through which chain of imports.
+
+        Read them in turn:
+
+        1. Find the **first** node where `+` and `-` differ. The other differences are often a consequence of the first.
+        2. Ask **what in the render** of that node differs between the server and the browser: the clock, `localStorage`, `navigator`, the language.
+        3. Find the file with the secret in the bundle listing and walk its import chain back — to the client module where it all started.
+
+        The fixes are minimal: the first render as on the server (a stable value, and the browser value in an effect), **or** the server computes the value once and passes it down along with the HTML. And the secret goes into a server-only module that the client imports neither directly nor through a middleman.
+
+  - id: trace-replay
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Траса сторінки списку бажань крок за кроком"
+      en: "The wishlist page trace step by step"
+    textEquivalent:
+      uk: >-
+        Надана траса сторінки списку бажань. Сервер, налаштований на мову uk-UA, рендерить суму бажаного
+        через toLocaleString і надсилає HTML з «1 234». Браузер читача англійською (en-US) показує
+        цей HTML. Потім завантажується бандл, і React гідратує сторінку: той самий компонент викликає
+        toLocaleString у браузері й дає «1,234». Перший вузол, що розійшовся, — текст у strong з
+        сумою: React повідомляє «+ 1,234 / − 1 234» і будує дерево заново. Перелік бандла
+        показує, що TotalBadge.jsx імпортує price-utils.js, а той — currency.js із ключем
+        demo-CURR-not-a-real-key. Виправлення: сума форматується один раз на сервері й передається
+        вниз як текст (або перший рендер показує стабільне значення, а формат читача — ефект), а
+        ключ переїжджає в currency.server.js, який клієнт не імпортує. Виправлена траса: тексти
+        збігаються, вузли лишаються, у бандлі ключа немає.
+      en: >-
+        A supplied trace of the wishlist page. The server, set to the uk-UA language, renders the wanted
+        total with toLocaleString and sends HTML with “1 234”. A reader’s browser in English (en-US)
+        shows this HTML. Then the bundle loads and React hydrates the page: the same component calls
+        toLocaleString in the browser and produces “1,234”. The first node that diverged is the
+        text in the strong with the total: React reports “+ 1,234 / − 1 234” and rebuilds the
+        tree. The bundle listing shows that TotalBadge.jsx imports price-utils.js, and that imports
+        currency.js with the key demo-CURR-not-a-real-key. The fix: the total is formatted once on
+        the server and passed down as text (or the first render shows a stable value and an effect
+        the reader’s format), and the key moves to currency.server.js, which the client does not
+        import. The corrected trace: the texts match, the nodes stay, the bundle has no key.
+    spec:
+      actors:
+        - { id: server, label: { uk: "Сервер (uk-UA)", en: "Server (uk-UA)" } }
+        - { id: browser, label: { uk: "Браузер (en-US)", en: "Browser (en-US)" } }
+        - { id: bundle, label: { uk: "Перелік бандла", en: "Bundle listing" } }
+      messages:
+        - from: server
+          to: browser
+          kind: return
+          label: "<strong>1 234</strong>"
+          note: { uk: "toLocaleString() на сервері", en: "toLocaleString() on the server" }
+          caption:
+            uk: "**Серверний HTML.** Сервер налаштований на українську, тож `toLocaleString()` дав `1 234`."
+            en: "**Server HTML.** The server is set to Ukrainian, so `toLocaleString()` produced `1 234`."
+        - from: browser
+          to: browser
+          kind: note
+          label: { uk: "рендер гідратації", en: "hydration render" }
+          note: { uk: "toLocaleString() у браузері", en: "toLocaleString() in the browser" }
+          caption:
+            uk: "**Журнал клієнта.** Той самий компонент у браузері читача англійською дає `1,234`."
+            en: "**Client log.** The same component in an English reader’s browser produces `1,234`."
+        - from: browser
+          to: browser
+          kind: note
+          label: "+ 1,234 / - 1 234"
+          caption:
+            uk: "Перший вузол, що розійшовся, — текст у `<strong>`. React повідомляє про розбіжність і будує дерево заново. Це не косметика: серверні вузли викинуто, а якби розійшовся атрибут, він лишився б неправильним."
+            en: "The first node that diverged is the text in `<strong>`. React reports the mismatch and rebuilds the tree. That is not cosmetic: the server nodes are thrown away, and had an attribute diverged, it would have stayed wrong."
+        - from: bundle
+          to: bundle
+          kind: note
+          label: "TotalBadge.jsx → price-utils.js → currency.js"
+          note: { uk: "demo-CURR-not-a-real-key", en: "demo-CURR-not-a-real-key" }
+          caption:
+            uk: "**Перелік бандла.** Рядок із ключем — у `currency.js`. Ланцюжок назад: його імпортує `price-utils.js`, а той — клієнтський `TotalBadge.jsx`."
+            en: "**Bundle listing.** The line with the key is in `currency.js`. The chain backwards: `price-utils.js` imports it, and the client `TotalBadge.jsx` imports that."
+        - from: server
+          to: browser
+          kind: return
+          label: { uk: "текст суми в HTML і пропсах", en: "total text in HTML and props" }
+          caption:
+            uk: "**Виправлення 1.** Сума форматується **один раз** на сервері й передається вниз готовим текстом — тоді клієнт рендерить те саме. (Або перший рендер показує стабільне значення, а формат читача — ефект.)"
+            en: "**Fix 1.** The total is formatted **once** on the server and passed down as ready text — then the client renders the same. (Or the first render shows a stable value, and an effect the reader’s format.)"
+        - from: bundle
+          to: bundle
+          kind: note
+          label: "TotalBadge.jsx"
+          note: { uk: "ключа немає", en: "no key" }
+          caption:
+            uk: "**Виправлення 2.** Ключ переїхав у `currency.server.js`, і жоден клієнтський модуль його не імпортує. Виправлена траса: тексти збігаються, вузли лишаються, у бандлі ключа немає."
+            en: "**Fix 2.** The key moved to `currency.server.js`, and no client module imports it. The corrected trace: the texts match, the nodes stay, the bundle has no key."
+
+  - id: predict-from-log
+    kind: prediction
+    lang: text
+    runnable: false
+    prompt:
+      uk: "Надана траса сторінки звичок. Який вузол розійшовся першим і який імпорт приніс токен у клієнтський бандл?"
+      en: "A supplied trace of a habits page. Which node diverged first, and which import brought the token into the client bundle?"
+    code: |
+      server HTML:
+        <article><h2>Morning exercise</h2><p>Streak: <b>3</b></p><button>Done today</button></article>
+
+      client log (development build):
+        Hydration failed because the server rendered text didn't match the client.
+          <HabitCard>
+            <article>
+              <h2>
+              <p>
+                <b>
+      +         0
+      -         3
+
+      bundle listing:
+        HabitCard.jsx
+        HabitCard.jsx → streak.js
+        HabitCard.jsx → reminders.js            ← demo-HAB1-not-a-real-token
+    answer:
+      type: choice
+      options:
+        - id: streak-and-reminders
+          text: { uk: "Текст у `<b>` серії: сервер дав 3, клієнт — 0; токен приніс імпорт `reminders.js` у `HabitCard.jsx`", en: "The text in the streak’s `<b>`: the server gave 3, the client 0; the token came with the `reminders.js` import in `HabitCard.jsx`" }
+        - id: heading
+          text: { uk: "Заголовок `<h2>`: він першим іде в дереві; токен приніс `streak.js`", en: "The `<h2>` heading: it comes first in the tree; the token came with `streak.js`" }
+          why:
+            uk: "`<h2>` у журналі лише позначає шлях до вузла — під ним немає рядків з `+` і `-`. А в переліку бандла токен стоїть у рядку `reminders.js`, не `streak.js`."
+            en: "In the log `<h2>` only marks the path to the node — there are no `+` and `-` lines under it. And in the bundle listing the token sits on the `reminders.js` line, not `streak.js`."
+        - id: cosmetic
+          text: { uk: "Розбіжності немає, лише попередження: React сам підставить 0, і сторінка виправиться", en: "There is no real mismatch, just a warning: React fills in 0 itself, and the page fixes itself" }
+          why:
+            uk: "Це помилка «Hydration failed»: React викидає серверні вузли й будує дерево заново, а серія 0 — ймовірно, порахована за годинником браузера замість переданого дня. Сторінка не «виправилася», вона показує інше число."
+            en: "This is a “Hydration failed” error: React throws away the server nodes and rebuilds the tree, and a streak of 0 was probably computed from the browser’s clock instead of the passed-in day. The page did not “fix itself”; it shows a different number."
+      correct: [streak-and-reminders]
+    explanation:
+      uk: "Під `<b>` стоять `+ 0` і `- 3` — це перший вузол, що розійшовся: серія в браузері порахувалася інакше, ніж на сервері, найімовірніше від іншого «сьогодні». У переліку бандла позначка токена стоїть на рядку `HabitCard.jsx → reminders.js`: прямий імпорт із клієнтського компонента. Виправлення: передати «сьогодні» із сервера й перенести токен у модуль лише для сервера."
+      en: "Under `<b>` there are `+ 0` and `- 3` — that is the first node that diverged: the streak was computed differently in the browser than on the server, most likely from a different “today”. In the bundle listing the token mark is on the line `HabitCard.jsx → reminders.js`: a direct import from the client component. The fix: pass “today” from the server and move the token into a server-only module."
+
+  - id: sync-trace
+    kind: example
+    runtime: browser-react
+    dir: sync-trace
+    entry: index.html
+    expectError: true
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Планувальник", en: "Planner" }
+      sync: { uk: "Синхронізація", en: "Sync" }
+      checking: { uk: "перевіряю…", en: "checking…" }
+      online: { uk: "у мережі", en: "online" }
+      offline: { uk: "без мережі", en: "offline" }
+      syncNow: { uk: "Синхронізувати", en: "Sync now" }
+      queued: { uk: "запит надіслано", en: "request sent" }
+    title:
+      uk: "Справжня траса: гідратація й перелік бандла"
+      en: "A real trace: hydration and the bundle listing"
+    body:
+      uk: |
+        Тут траса — справжня: `index.html` містить наданий серверний HTML (сервер не знає, чи браузер у мережі, тож пише «перевіряю…»), `main.jsx` гідратує `SyncStatus` і друкує перелік бандла від `SyncStatus.jsx` з ланцюжками імпортів. Серверного рендеру React тут немає — лише гідратація наданого HTML.
+
+        Натисни **Запустити** й прочитай обидві частини траси.
+      en: |
+        Here the trace is real: `index.html` holds the supplied server HTML (the server does not know whether the browser is online, so it says “checking…”), `main.jsx` hydrates `SyncStatus` and prints the bundle listing from `SyncStatus.jsx` with the import chains. There is no React server rendering here — only hydration of the supplied HTML.
+
+        Press **Run** and read both parts of the trace.
+    tryIt:
+      uk: |
+        1. Картка помилки: під `<span>` рядок `+ у мережі` (клієнт) і `- перевіряю…` (сервер) — це перший вузол, що розійшовся. Причина — `navigator.onLine` у початковому значенні `useState`, тобто в рендері.
+        2. Консоль: `bundle: SyncStatus.jsx → sync.js  ← demo-SYNC-not-a-real-token`. Токен приніс імпорт `sync.js` у `SyncStatus.jsx`.
+        3. Виправ розбіжність: у `SyncStatus.jsx` заміни початкове значення на `"перевіряю…"`, додай `useEffect` до імпорту з `"react"` і під `useState` встав `useEffect(() => { setStatus(navigator.onLine ? "у мережі" : "без мережі"); }, []);`. Запусти: картки помилки немає, статус оновився після гідратації.
+        4. Виправ витік: заміни `import { syncNow } from "./sync";` на `import { requestSync } from "./sync-client";`, а `syncNow()` — на `requestSync()`. Запусти: у переліку бандла лише `SyncStatus.jsx` і `SyncStatus.jsx → sync-client.js`, без токена. Це й є виправлена траса.
+      en: |
+        1. The error card: under `<span>` the line `+ online` (client) and `- checking…` (server) — that is the first node that diverged. The cause is `navigator.onLine` in the initial value of `useState`, that is, in the render.
+        2. The console: `bundle: SyncStatus.jsx → sync.js  ← demo-SYNC-not-a-real-token`. The token came with the `sync.js` import in `SyncStatus.jsx`.
+        3. Fix the mismatch: in `SyncStatus.jsx` replace the initial value with `"checking…"`, add `useEffect` to the import from `"react"` and below `useState` insert `useEffect(() => { setStatus(navigator.onLine ? "online" : "offline"); }, []);`. Run: no error card, and the status updated after hydration.
+        4. Fix the leak: replace `import { syncNow } from "./sync";` with `import { requestSync } from "./sync-client";`, and `syncNow()` with `requestSync()`. Run: the bundle listing holds only `SyncStatus.jsx` and `SyncStatus.jsx → sync-client.js`, without the token. That is the corrected trace.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: значення й подання"
+      en: "Recall: value and presentation"
+    items:
+      - id: store-minor
+        from: js-12-10-intl-locale
+        prompt:
+          uk: "Трекер витрат має показувати суми мовою читача. Що зберігати в записі витрати й передавати між сервером і клієнтом?"
+          en: "An expense tracker must show amounts in the reader’s language. What should be stored in an expense record and passed between the server and the client?"
+        answer:
+          type: choice
+          options:
+            - id: number
+              text: { uk: "Число в копійках (`84550`), а форматувати лише для показу", en: "A number in minor units (`84550`), formatted only for display" }
+            - id: formatted
+              text: { uk: "Уже відформатований текст (`845,50 грн`), щоб не форматувати двічі", en: "Already formatted text (`845,50 грн`), so it is not formatted twice" }
+              why:
+                uk: "Текст, відформатований для однієї мови, не можна ні правильно додати, ні показати іншою мовою. Зберігають значення, а подання робиться наприкінці."
+                en: "Text formatted for one language can neither be added up correctly nor shown in another language. The value is stored, and the presentation is made at the end."
+            - id: float
+              text: { uk: "Дробове число в гривнях (`845.5`)", en: "A fractional number in hryvnias (`845.5`)" }
+              why:
+                uk: "Дробові числа накопичують похибку під час додавання (`0.1 + 0.2`). Гроші зберігають цілими в найменших одиницях."
+                en: "Fractional numbers accumulate errors when added (`0.1 + 0.2`). Money is stored as integers in the smallest units."
+          correct: [number]
+        explanation:
+          uk: "Значення — ціле число в копійках — однакове на сервері й у браузері. Подання (`Intl.NumberFormat`) залежить від мови, тому з SSR його роблять або один раз на сервері й передають текстом, або в браузері після гідратації."
+          en: "The value — an integer in minor units — is the same on the server and in the browser. The presentation (`Intl.NumberFormat`) depends on the language, so with SSR it is done either once on the server and passed as text, or in the browser after hydration."
+
+  - id: day-total
+    kind: exercise
+    mode: debug
+    runtime: browser-react
+    dir: day-total
+    entry: index.html
+    editable: [DayTotal.jsx, money.js]
+    strings:
+      lang: { uk: "uk", en: "en" }
+      title: { uk: "Витрати", en: "Expenses" }
+      today: { uk: "Сьогодні", en: "Today" }
+      currency: { uk: "грн", en: "UAH" }
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+    title:
+      uk: "Підсумок дня: розбіжність і ключ у бандлі"
+      en: "Today's total: a mismatch and a key in the bundle"
+    instructions:
+      uk: |
+        Сторінка підсумку витрат за день має два дефекти. Запусти й прочитай трасу: помилку гідратації в консолі та рядки `bundle: …` з позначкою ключа.
+
+        Виправ обидва, змінюючи лише `DayTotal.jsx` і `money.js`:
+
+        - перший рендер має збігтися з наданим серверним HTML у `index.html`, а після гідратації сторінка показує суму й суму в євро **за день, для якого рендерив сервер** (`today` і `euroToday` у `snapshot.js`, `App` уже передає їх пропсами);
+        - у клієнтському бандлі від `App.jsx` не має бути тексту ключа `demo-RATE-not-a-real-key`. За сценарієм конвертацію з ключем уже зробив сервер, тож жоден клієнтський модуль не повинен імпортувати `rates.js` — ні напряму, ні через `money.js`.
+
+        Перевірки будують бандл тим самим `bundle.js`, що й в уроці про секрети: він іде за кожним імпортом, навіть за тим, що ніде не використовується, а коментарі пропускає.
+      en: |
+        The page with today’s expense total has two defects. Run it and read the trace: the hydration error in the console and the `bundle: …` lines with the key mark.
+
+        Fix both, changing only `DayTotal.jsx` and `money.js`:
+
+        - the first render must match the supplied server HTML in `index.html`, and after hydration the page shows the total and the euro amount **for the day the server rendered for** (`today` and `euroToday` in `snapshot.js`; `App` already passes them as props);
+        - the client bundle from `App.jsx` must not contain the text of the key `demo-RATE-not-a-real-key`. In this scenario the server has already done the conversion with the key, so no client module may import `rates.js` — neither directly nor through `money.js`.
+
+        The checks build the bundle with the same `bundle.js` as in the lesson on secrets: it follows every import, even one that is never used, and skips comments.
+    testTitles:
+      "hydration reports no mismatch":
+        uk: "Гідратація не повідомляє про розбіжності"
+        en: "Hydration reports no mismatch"
+      "the elements from the server HTML stay on the page":
+        uk: "Елементи серверного HTML лишаються на сторінці"
+        en: "The elements from the server HTML stay on the page"
+      "after hydration the page shows the total and the euro amount for the server's day":
+        uk: "Після гідратації сторінка показує суму й суму в євро за день сервера"
+        en: "After hydration the page shows the total and the euro amount for the server’s day"
+      "the client bundle from App.jsx does not contain the rates key":
+        uk: "Клієнтський бандл від `App.jsx` не містить ключа курсів"
+        en: "The client bundle from `App.jsx` does not contain the rates key"
+    hints:
+      nudge:
+        uk: "Знайди в журналі перший вузол з `+` і `-`: звідки компонент бере «сьогодні»? А в переліку бандла пройди ланцюжок до файлу з ключем: хто його імпортує і навіщо?"
+        en: "Find the first node with `+` and `-` in the log: where does the component take “today” from? And in the bundle listing, walk the chain to the file with the key: who imports it, and why?"
+      explanation:
+        uk: |
+          Сервер рендерив для конкретного дня й передав його разом з даними. Годинник браузера показує інший день — звідси інша сума. Ефект тут не рятує: після гідратації сума однаково стрибне на «сьогодні» браузера. Потрібне значення, яке сервер **уже** надіслав. З ключем так само: те, що сервер обчислив із ключем, приходить готовим значенням, і браузеру ключ не потрібен. Схожа ситуація в іншому застосунку:
+
+          ```jsx
+          // замість new Date() у рендері — день, який прийшов із сервера
+          function DueBadge({ tasks, today }) { /* … tasks.filter((t) => t.dueDate <= today) … */ }
+          ```
+        en: |
+          The server rendered for a particular day and sent it along with the data. The browser’s clock shows another day — hence a different total. An effect does not save you here: after hydration the total would still jump to the browser’s “today”. You need the value the server **already** sent. The same goes for the key: what the server computed with the key arrives as a ready value, and the browser does not need the key. A similar situation in another app:
+
+          ```jsx
+          // instead of new Date() in the render — the day that came from the server
+          function DueBadge({ tasks, today }) { /* … tasks.filter((t) => t.dueDate <= today) … */ }
+          ```
+    solutionNote:
+      uk: "Обидва дефекти мали одну природу: браузер обчислював те, що вже обчислив сервер. «Сьогодні» тепер приходить пропом, тож перший рендер дає `1365.50` — як у HTML, гідратація чиста, і вузли лишаються. Сума в євро теж приходить готовою, тож `money.js` більше не імпортує `rates.js`, і ключ не їде в браузер. У фреймворку з модулями лише для сервера `rates.js` назвали б `rates.server.js` (React Router 7) чи почали б рядком `import \"server-only\"` (Next.js), щоб наступний такий імпорт зупинив збірку."
+      en: "Both defects had the same nature: the browser was computing what the server had already computed. “Today” now comes in as a prop, so the first render produces `1365.50` — as in the HTML; hydration is clean, and the nodes stay. The euro amount also arrives ready, so `money.js` no longer imports `rates.js`, and the key does not travel to the browser. In a framework with server-only modules `rates.js` would be named `rates.server.js` (React Router 7) or would start with `import \"server-only\"` (Next.js), so that the next such import stops the build."
+    feedback:
+      - when: { test: "hydration reports no mismatch" }
+        message:
+          uk: "Ця перевірка чекає, що React не повідомить жодної розбіжності гідратації. Перший рендер `DayTotal` має дати ту саму суму, що й `index.html`, — тобто рахувати за днем, для якого рендерив сервер. Якщо всі перевірки не пройшли разом, спершу виправ першу помилку в консолі."
+          en: "This check expects React to report no hydration mismatch. The first render of `DayTotal` must produce the same total as `index.html` — that is, count for the day the server rendered for. If every check fails at once, fix the first error in the console first."
+      - when: { test: "the elements from the server HTML stay on the page" }
+        message:
+          uk: "Ця перевірка чекає, що всі елементи серверного HTML лишаться на сторінці. Якщо гідратація розійшлася, React їх замінює — спершу прибери розбіжність."
+          en: "This check expects every element of the server HTML to stay on the page. If hydration diverged, React replaces them — remove the mismatch first."
+      - when: { test: "after hydration the page shows the total and the euro amount for the server's day" }
+        message:
+          uk: "Ця перевірка чекає після гідратації `1365.50 грн` у `<strong>` і `≈ € 30.04` у `<small>`. Якщо сума змінилася вже після гідратації, її перераховує ефект за годинником браузера — а день має бути той, що прийшов із сервера."
+          en: "This check expects `1365.50 UAH` in `<strong>` and `≈ € 30.04` in `<small>` after hydration. If the total changed after hydration, an effect recomputes it from the browser’s clock — but the day must be the one that came from the server."
+      - when: { test: "the client bundle from App.jsx does not contain the rates key" }
+        message:
+          uk: "Ця перевірка будує бандл від `App.jsx` і чекає, що в жодному його файлі немає `demo-RATE-not-a-real-key`. Подивись у консолі ланцюжок рядка з позначкою ключа: який імпорт веде до `rates.js`?"
+          en: "This check builds the bundle from `App.jsx` and expects none of its files to contain `demo-RATE-not-a-real-key`. Look at the chain of the console line with the key mark: which import leads to `rates.js`?"
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-11
+    body:
+      uk: "Ризик гідратації, який ти запишеш у кроці проєкту, сформулюй як трасу: що надрукував би сервер, що дав би перший рендер у браузері, у якому вузлі вони розійдуться і яке виправлення ти обереш — стабільний перший рендер чи значення, обчислене на сервері. У NO-13 ти перевіриш цей прогноз на справжньому сервері."
+      en: "Phrase the hydration risk you will record in the project step as a trace: what the server would print, what the first render in the browser would produce, in which node they would diverge, and which fix you would choose — a stable first render or a value computed on the server. In NO-13 you will check this prediction on a real server."

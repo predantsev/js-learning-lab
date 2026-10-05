@@ -1,0 +1,626 @@
+id: js-13-07-memory-leak-diagnosis
+unit: JS-13
+title:
+  uk: "Діагностуємо витік пам’яті"
+  en: "Diagnosing a memory leak"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Відтворити підозру на витік повторюваним циклом «відкрити — закрити» і показати ріст лічильником живих об’єктів, а не здогадкою."
+    en: "Reproduce a suspected leak with a repeatable open/close loop and show growth with a live-object counter rather than a guess."
+  - uk: "Порівняти heap snapshots у панелі Memory локального DevTools і пройти шлях утримання до коду, що тримає від’єднаний елемент."
+    en: "Compare heap snapshots in the local DevTools Memory panel and follow a retainer path to the code that keeps a detached element alive."
+prerequisites: [js-13-06-cleanup-listeners-timers, js-10-03-compare-and-inspect]
+subskills:
+  - { family: J-12, skill: "memory leak diagnosis", depth: intro }
+glossary: [memory-leak, heap-snapshot, retainer-path, detached-dom-node]
+selfCheck: [predict-live-count, live-tracker]
+
+blocks:
+  - id: growth-not-a-number
+    kind: explanation
+    title:
+      uk: "Витік — це ріст на кожен повтор"
+      en: "A leak is growth on every repetition"
+    body:
+      uk: |
+        [[memory-leak|Витік пам’яті]] — це не «пам’яті стало більше». Пам’ять росте й з чесних причин: завантажився код, заповнився кеш, збирач сміття ще не встиг попрацювати. Витік — це коли **та сама дія, повторена N разів, щоразу лишає по собі щось утримане**: відкрив і закрив діалог 20 разів — і 20 закритих діалогів досі в пам’яті.
+
+        Тому діагностика — це експеримент, а не враження:
+
+        1. Знайди дію, яка має повністю прибирати за собою (відкрити й закрити, змонтувати й прибрати).
+        2. Повтори її багато разів — 10, 20 — і заміряй щось, що можна порахувати: кількість живих listeners і таймерів, кількість [[detached-dom-node|від’єднаних елементів]].
+        3. Ріст пропорційний кількості повторів — витік. Один стрибок, після якого число стоїть, — ні.
+
+        І ще: витік рідко «валить» сторінку одразу. Він росте повільно, а сторінка гальмує через годину роботи — тому його і треба ловити лічильником.
+      en: |
+        A [[memory-leak|memory leak]] is not “memory went up”. Memory grows for honest reasons too: code was loaded, a cache filled up, the garbage collector has not run yet. A leak is when **the same action, repeated N times, leaves something retained every time**: you opened and closed a dialog 20 times — and 20 closed dialogs are still in memory.
+
+        So diagnosis is an experiment, not an impression:
+
+        1. Find an action that should clean up after itself completely (open and close, mount and tear down).
+        2. Repeat it many times — 10, 20 — and measure something countable: the number of live listeners and timers, the number of [[detached-dom-node|detached elements]].
+        3. Growth proportional to the number of repetitions is a leak. One jump after which the number stays put is not.
+
+        And one more thing: a leak rarely “crashes” the page at once. It grows slowly, and the page slows down after an hour of work — that is why you catch it with a counter.
+
+  - id: predict-live-count
+    kind: prediction
+    prompt:
+      uk: "Кожен listener реєструється через `listen`, який рахує живі. `close` знімає лише один із двох listeners діалогу. Що надрукує програма?"
+      en: "Every listener is registered through `listen`, which counts the live ones. `close` removes only one of the dialog's two listeners. What does the program print?"
+    code: |
+      let live = 0;
+
+      function listen(target, type, handler) {
+        target.addEventListener(type, handler);
+        live = live + 1;
+        return () => {
+          target.removeEventListener(type, handler);
+          live = live - 1;
+        };
+      }
+
+      function openDialog() {
+        const dialog = document.createElement("div");
+        document.body.append(dialog);
+        const offClick = listen(dialog, "click", () => {});
+        const offKey = listen(document, "keydown", () => dialog.remove());
+        return function close() {
+          offClick();
+          dialog.remove();
+        };
+      }
+
+      console.log("before:", live);
+      for (let i = 0; i < 10; i = i + 1) {
+        const close = openDialog();
+        close();
+      }
+      console.log("after 10:", live);
+    verify:
+      logs: ["before: 0", "after 10: 10"]
+    answer:
+      type: choice
+      options:
+        - id: grows
+          code: "before: 0\nafter 10: 10"
+        - id: gc-cleans
+          code: "before: 0\nafter 10: 0"
+          why:
+            uk: "Збирач сміття не знімає listeners: `document` досі тримає кожну функцію `keydown`, і лічильник це чесно показує. Ніхто не викликав `offKey`."
+            en: "The garbage collector does not remove listeners: `document` still holds every `keydown` function, and the counter shows that honestly. Nobody called `offKey`."
+        - id: replaced
+          code: "before: 0\nafter 10: 1"
+          why:
+            uk: "Кожен виклик `openDialog` створює **нову** стрілкову функцію, тож нові listeners не замінюють старі, а додаються поруч."
+            en: "Every call of `openDialog` creates a **new** arrow function, so the new listeners do not replace the old ones, they are added next to them."
+        - id: both-leak
+          code: "before: 0\nafter 10: 20"
+          why:
+            uk: "`close` знімає listener `click` через `offClick()`, тож на кожен цикл лишається один listener, а не два."
+            en: "`close` removes the `click` listener through `offClick()`, so each cycle leaves one listener, not two."
+      correct: [grows]
+    explanation:
+      uk: "Кожен цикл лишає по одному listener на `document`, і кожен замикає свій уже прибраний `dialog`. 10 циклів — 10 listeners, 20 — було б 20: ріст пропорційний кількості повторів. Це і є доказ витоку, і лічильник дав його без жодного вгадування."
+      en: "Each cycle leaves one listener on `document`, and each one closes over its own already removed `dialog`. 10 cycles mean 10 listeners, 20 would mean 20: growth proportional to the number of repetitions. That is the proof of a leak, and the counter gave it without any guessing."
+
+  - id: predict-growth
+    kind: prediction
+    prompt:
+      uk: "Хтось заміряв пам’ять сторінки трекера звичок (JS heap у DevTools) і записав: відкрита сторінка — 4,1 МБ; після першого «відкрити й закрити» налаштування — 4,6 МБ; після 10 таких циклів — 4,6 МБ; після 20 — 4,6 МБ. Сторінка працює нормально. Який висновок правильний?"
+      en: "Someone measured the memory of the habit tracker page (JS heap in DevTools) and noted: page opened — 4.1 MB; after the first “open and close” of the settings — 4.6 MB; after 10 such cycles — 4.6 MB; after 20 — 4.6 MB. The page works fine. Which conclusion is right?"
+    answer:
+      type: choice
+      options:
+        - id: one-off
+          text:
+            uk: "Витоку не видно: стрибок стався один раз (наприклад, завантажився код налаштувань), а далі цикли нічого не додають."
+            en: "No leak is visible: the jump happened once (for example, the settings code was loaded), and after that the cycles add nothing."
+        - id: went-up
+          text:
+            uk: "Витік є: пам’ять виросла з 4,1 до 4,6 МБ."
+            en: "There is a leak: memory went up from 4.1 to 4.6 MB."
+          why:
+            uk: "Один ріст — не доказ. Витік видно лише тоді, коли кожен повтор додає ще: тут 1, 10 і 20 циклів дають те саме число."
+            en: "One rise is not proof. A leak shows only when every repetition adds more: here 1, 10 and 20 cycles give the same number."
+        - id: no-crash
+          text:
+            uk: "Витоку немає, бо сторінка не впала."
+            en: "There is no leak, because the page did not crash."
+          why:
+            uk: "Висновок правильний, але причина — ні. Витоки рідко валять сторінку швидко; вирішують числа після повторів, а не те, що все «ще працює»."
+            en: "The conclusion is right, but the reason is not. Leaks rarely crash a page quickly; the numbers after repetitions decide, not the fact that everything “still works”."
+      correct: [one-off]
+    explanation:
+      uk: "Ріст, що не залежить від кількості повторів, — разова ціна, а не витік. Якби після 10 циклів було 5,1 МБ, а після 20 — 5,6, тоді кожен цикл лишав би своє, і варто було б шукати, що саме, — у heap snapshot."
+      en: "Growth that does not depend on the number of repetitions is a one-off cost, not a leak. Had 10 cycles given 5.1 MB and 20 given 5.6, every cycle would leave something behind, and it would be worth finding what — in a heap snapshot."
+
+  - id: snapshots
+    kind: visual
+    visual: memory-graph
+    strings:
+      more8: { uk: "… ще 8", en: "… 8 more" }
+      more18: { uk: "… ще 18", en: "… 18 more" }
+    title:
+      uk: "Три знімки й шлях утримання"
+      en: "Three snapshots and a retainer path"
+    textEquivalent:
+      uk: "Модуль має масив handlers, куди кожен відкритий діалог кладе свою функцію для Escape, а закриття прибирає лише сам діалог зі сторінки. Перед циклами handlers порожній. Після 10 циклів «відкрити — закрити» в handlers 10 функцій, і кожна замикає свій діалог: на сторінці діалогів немає, але 10 від’єднаних елементів div живуть у пам’яті. Після 20 циклів — 20 функцій і 20 від’єднаних елементів: ріст пропорційний кількості повторів. Якщо вибрати один від’єднаний div і пройти його шлях утримання, він веде назад: div ← змінна dialog у замиканні функції ← елемент масиву handlers ← змінна модуля handlers. Саме цей рядок коду — handlers.push без пари в close — і є причиною."
+      en: "The module has an array handlers where every opened dialog puts its Escape function, and closing removes only the dialog itself from the page. Before the cycles handlers is empty. After 10 “open — close” cycles handlers holds 10 functions, and each closes over its dialog: there are no dialogs on the page, but 10 detached div elements live in memory. After 20 cycles — 20 functions and 20 detached elements: growth proportional to the number of repetitions. If you select one detached div and follow its retainer path, it leads back: div ← the variable dialog in the function's closure ← an item of the array handlers ← the module variable handlers. That very line of code — handlers.push with no partner in close — is the cause."
+    spec:
+      code: |
+        const handlers = [];
+        function openDialog() {
+          const dialog = document.createElement("div");
+          handlers.push(() => dialog.remove());
+          return () => dialog.remove();   // handlers keeps its item
+        }
+      states:
+        - caption:
+            uk: "Знімок 1, до циклів: `handlers` порожній, від’єднаних елементів немає."
+            en: "Snapshot 1, before the cycles: `handlers` is empty, there are no detached elements."
+          line: 1
+          bindings:
+            - { name: handlers, kind: const, value: { ref: list } }
+          heap:
+            list: { kind: array, items: [] }
+        - caption:
+            uk: "Знімок 2, після 10 циклів: у `handlers` 10 функцій, кожна замикає свій `div`. На сторінці їх немає — це **від’єднані** елементи."
+            en: "Snapshot 2, after 10 cycles: `handlers` holds 10 functions, each closing over its own `div`. They are not on the page — they are **detached** elements."
+          line: 4
+          bindings:
+            - { name: handlers, kind: const, value: { ref: list } }
+          heap:
+            list: { kind: object, ctor: "Array(10)", props: { "[0]": { ref: f1 }, "[1…8]": "%%more8%%", "[9]": { ref: f10 } } }
+            f1: { kind: object, ctor: closure, props: { dialog: { ref: d1 } } }
+            f10: { kind: object, ctor: closure, props: { dialog: { ref: d10 } } }
+            d1: { kind: object, ctor: "Detached <div>", props: { tag: "div" } }
+            d10: { kind: object, ctor: "Detached <div>", props: { tag: "div" } }
+        - caption:
+            uk: "Знімок 3, після 20 циклів: 20 функцій і 20 від’єднаних `div`. Число росте разом із кількістю циклів — це витік."
+            en: "Snapshot 3, after 20 cycles: 20 functions and 20 detached `div` elements. The number grows with the number of cycles — that is a leak."
+          line: 4
+          bindings:
+            - { name: handlers, kind: const, value: { ref: list } }
+          heap:
+            list: { kind: object, ctor: "Array(20)", props: { "[0]": { ref: f1 }, "[1…18]": "%%more18%%", "[19]": { ref: f20 } } }
+            f1: { kind: object, ctor: closure, props: { dialog: { ref: d1 } } }
+            f20: { kind: object, ctor: closure, props: { dialog: { ref: d20 } } }
+            d1: { kind: object, ctor: "Detached <div>", props: { tag: "div" } }
+            d20: { kind: object, ctor: "Detached <div>", props: { tag: "div" } }
+          changed: [list, f20, d20]
+        - caption:
+            uk: "Шлях утримання першого `div`: його тримає `dialog` у замиканні `f1`, `f1` — елемент масиву, масив — змінна модуля `handlers`. Виправлення — у рядку 5: `close` має прибрати й свій елемент із `handlers`."
+            en: "The retainer path of the first `div`: it is held by `dialog` in the closure `f1`, `f1` is an item of the array, the array is the module variable `handlers`. The fix is on line 5: `close` must also remove its item from `handlers`."
+          line: 5
+          bindings:
+            - { name: handlers, kind: const, value: { ref: list } }
+          heap:
+            list: { kind: object, ctor: "Array(20)", props: { "[0]": { ref: f1 }, "[1…18]": "%%more18%%", "[19]": { ref: f20 } } }
+            f1: { kind: object, ctor: closure, props: { dialog: { ref: d1 } } }
+            f20: { kind: object, ctor: closure, props: { dialog: { ref: d20 } } }
+            d1: { kind: object, ctor: "Detached <div>", props: { tag: "div" } }
+            d20: { kind: object, ctor: "Detached <div>", props: { tag: "div" } }
+          changed: []
+
+  - id: instrumented
+    kind: example
+    runtime: browser-js
+    dir: instrumented
+    entry: index.js
+    strings:
+      reminder: { uk: "Час пити воду", en: "Time to drink water" }
+      listeners: { uk: "живих listeners:", en: "live listeners:" }
+      timers: { uk: "живих таймерів:", en: "live timers:" }
+      start: { uk: "на старті —", en: "at the start —" }
+      after10: { uk: "після 10 циклів —", en: "after 10 cycles —" }
+      after20: { uk: "після 20 циклів —", en: "after 20 cycles —" }
+    title:
+      uk: "Сторінка з лічильником живих listeners і таймерів"
+      en: "A page with a counter of live listeners and timers"
+    body:
+      uk: |
+        Тут кожен listener іде через `listen`, а кожен інтервал — через `every`: обидва рахують, що ще живе. Діалог нагадування відкривають і закривають спершу 10, потім ще 10 разів. Натисни **Запустити**.
+
+        Числа ростуть: 0 → 10 → 20 listeners і 0 → 10 → 20 таймерів. Ріст пропорційний кількості циклів — отже, `close` щоразу щось забуває.
+      en: |
+        Here every listener goes through `listen`, and every interval through `every`: both count what is still live. The reminder dialog is opened and closed first 10, then another 10 times. Press **Run**.
+
+        The numbers grow: 0 → 10 → 20 listeners and 0 → 10 → 20 timers. Growth proportional to the number of cycles — so `close` forgets something every time.
+    tryIt:
+      uk: |
+        1. У `close` під `offClick();` додай `offEscape();`. Запусти: listeners тепер 0 → 0 → 0, а таймери досі ростуть.
+        2. Додай туди ж `stopBlink();`. Тепер обидва числа повертаються до 0 — до базового рівня — після будь-якої кількості циклів.
+        3. Заміни в рядку `cycles(10);` між звітами «після 10» і «після 20» число `10` на `100`. Числа все одно 0: повтори більше нічого не лишають.
+      en: |
+        1. In `close`, below `offClick();`, add `offEscape();`. Run: listeners are now 0 → 0 → 0, but the timers still grow.
+        2. Add `stopBlink();` there too. Now both numbers return to 0 — the baseline — after any number of cycles.
+        3. In the `cycles(10);` line between the “after 10” and “after 20” reports, replace `10` with `100`. The numbers are still 0: repetitions leave nothing behind any more.
+
+  - id: in-devtools
+    kind: explanation
+    title:
+      uk: "Те саме в DevTools: знімки й шлях утримання"
+      en: "The same in DevTools: snapshots and a retainer path"
+    body:
+      uk: |
+        Лічильник працює лише для того, що ти сам загорнув у `listen`. Для решти є панель **Memory** у DevTools браузера:
+
+        - [[heap-snapshot|Heap snapshot]] — знімок усіх об’єктів у пам’яті сторінки. Перед знімком DevTools сам запускає збирач сміття, тож у знімку лишається лише досяжне.
+        - Знімок до циклів і знімок після 20 циклів показують, **чого побільшало**. Від’єднані елементи шукають, ввівши `Detached` у поле **Filter by class**: DevTools групує їх під назвами на кшталт `Detached <div>`.
+        - Обраний об’єкт має [[retainer-path|шлях утримання]] (панель **Retainers**): ланцюжок посилань від об’єкта назад до кореня. Розгортай його рядок за рядком, доки не впізнаєш свою змінну чи масив, — саме там бракує прибирання.
+
+        Пісочниця платформи працює всередині сторінки платформи, тож її знімок показав би й об’єкти самої платформи. Чистий експеримент — у твоєму локальному проєкті.
+      en: |
+        The counter works only for what you wrapped in `listen` yourself. For everything else there is the **Memory** panel of the browser's DevTools:
+
+        - A [[heap-snapshot]] is a picture of every object in the page's memory. Before taking it, DevTools runs the garbage collector itself, so only reachable objects remain in the snapshot.
+        - A snapshot before the cycles and one after 20 cycles show **what increased**. Detached elements are found by typing `Detached` into the **Filter by class** field: DevTools groups them under names such as `Detached <div>`.
+        - A selected object has a [[retainer-path|retainer path]] (the **Retainers** pane): the chain of references from the object back to a root. Read it until you recognise your own variable or array — that is where cleanup is missing.
+
+        The platform's sandbox runs inside the platform's own page, so its snapshot would also show the platform's objects. The clean experiment happens in your local project.
+
+  - id: heap-snapshots-locally
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Знайди витік у знімках пам’яті у своєму локальному проєкті"
+      en: "Find a leak in heap snapshots in your local project"
+    intro:
+      uk: |
+        Ти додаси до експортованого проєкту маленьку сторінку з навмисним витоком і знайдеш його знімками пам’яті. Відкрий у VS Code теку свого проєкту з розділу JS-10 (наприклад, `~/js-course/wishlist`); якщо її ще немає, спершу пройди урок JS-10 «Експорт, відкриття у VS Code, встановлення, запуск». Твоїх файлів вправа не змінює: два нові файли лягають у теку `tools/` (там уже є `restore-data.html`), і після вправи їх можна видалити.
+
+        Створи у VS Code файл `tools/leak-lab.html`:
+
+        ```html
+        <!doctype html>
+        <html lang="uk">
+        <meta charset="utf-8">
+        <title>Leak lab</title>
+        <button id="cycle" type="button">Відкрити й закрити 20 разів</button>
+        <p id="status">Циклів: 0</p>
+        <script type="module" src="./leak-lab.js"></script>
+        </html>
+        ```
+
+        і поруч — `tools/leak-lab.js`:
+
+        ```js
+        // A deliberate leak for practising with heap snapshots.
+        const handlers = []; // every dialog puts its Escape handler here
+
+        function openDialog() {
+          const dialog = document.createElement("div");
+          dialog.className = "leak-dialog";
+          dialog.textContent = "dialog";
+          document.body.append(dialog);
+          handlers.push(() => dialog.remove());
+          return function close() {
+            dialog.remove(); // the handler stays in the array: the leak
+          };
+        }
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            for (const handler of handlers) {
+              handler();
+            }
+          }
+        });
+
+        let cycles = 0;
+        document.querySelector("#cycle").addEventListener("click", () => {
+          for (let i = 0; i < 20; i = i + 1) {
+            const close = openDialog();
+            close();
+          }
+          cycles = cycles + 20;
+          document.querySelector("#status").textContent = "Циклів: " + cycles;
+        });
+        ```
+
+        Назви панелей — для Google Chrome; DevTools відкривається клавішею F12 (у macOS — Cmd+Option+I).
+      en: |
+        You will add a small page with a deliberate leak to your exported project and find the leak with heap snapshots. Open your project folder from unit JS-10 in VS Code (for example `~/js-course/wishlist`); if you do not have it yet, first go through the JS-10 lesson “Export, open in VS Code, install, run”. The exercise does not change your files: two new files go into the `tools/` folder (it already holds `restore-data.html`), and you can delete them after the exercise.
+
+        Create the file `tools/leak-lab.html` in VS Code:
+
+        ```html
+        <!doctype html>
+        <html lang="en">
+        <meta charset="utf-8">
+        <title>Leak lab</title>
+        <button id="cycle" type="button">Open and close 20 times</button>
+        <p id="status">Cycles: 0</p>
+        <script type="module" src="./leak-lab.js"></script>
+        </html>
+        ```
+
+        and next to it `tools/leak-lab.js`:
+
+        ```js
+        // A deliberate leak for practising with heap snapshots.
+        const handlers = []; // every dialog puts its Escape handler here
+
+        function openDialog() {
+          const dialog = document.createElement("div");
+          dialog.className = "leak-dialog";
+          dialog.textContent = "dialog";
+          document.body.append(dialog);
+          handlers.push(() => dialog.remove());
+          return function close() {
+            dialog.remove(); // the handler stays in the array: the leak
+          };
+        }
+
+        document.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            for (const handler of handlers) {
+              handler();
+            }
+          }
+        });
+
+        let cycles = 0;
+        document.querySelector("#cycle").addEventListener("click", () => {
+          for (let i = 0; i < 20; i = i + 1) {
+            const close = openDialog();
+            close();
+          }
+          cycles = cycles + 20;
+          document.querySelector("#status").textContent = "Cycles: " + cycles;
+        });
+        ```
+
+        Panel names are given for Google Chrome; DevTools opens with F12 (on macOS, Cmd+Option+I).
+    tools:
+      - { name: "Node.js", version: "22.13+", note: { uk: "для `npm start` з експорту (мінімальна версія курсу); під час перевірки уроку — Node.js 25.2.1 і npm 11.6.2", en: "for `npm start` from the export (the course minimum); this lesson was checked with Node.js 25.2.1 and npm 11.6.2" } }
+      - { name: "Google Chrome", note: { uk: "або інший браузер із heap snapshots у DevTools; назви панелей можуть відрізнятися", en: "or another browser with heap snapshots in DevTools; panel names may differ" } }
+    steps:
+      - text:
+          uk: "У вбудованому терміналі VS Code, у корені проєкту, запусти локальний сервер (якщо він ще не працює)."
+          en: "In the VS Code integrated terminal, at the project root, start the local server (if it is not running yet)."
+        command: "npm start"
+        expect:
+          uk: "Рядки `Проєкт працює: http://127.0.0.1:4300/`, `Відновити збережені дані: …` і `Зупинити: Ctrl+C` (у проєкті, експортованому англійською, — ті самі рядки англійською)."
+          en: "The lines `The project is running: http://127.0.0.1:4300/`, `Restore saved data: …` and `Stop with Ctrl+C` (in a project exported in Ukrainian, the same lines in Ukrainian)."
+      - text:
+          uk: "Відкрий `http://127.0.0.1:4300/tools/leak-lab.html`, а в DevTools — панель **Memory**. Обери **Heap snapshot** і натисни **Take snapshot**."
+          en: "Open `http://127.0.0.1:4300/tools/leak-lab.html`, and in DevTools the **Memory** panel. Choose **Heap snapshot** and press **Take snapshot**."
+        expect:
+          uk: "У списку зліва з’являється Snapshot 1. Якщо ввести `Detached` у поле **Filter by class**, групи `Detached <div>` немає."
+          en: "Snapshot 1 appears in the list on the left. Typing `Detached` into the **Filter by class** field shows no `Detached <div>` group."
+      - text:
+          uk: "Натисни на сторінці кнопку «Відкрити й закрити 20 разів». Потім знову **Take snapshot**."
+          en: "Press the page's “Open and close 20 times” button. Then **Take snapshot** again."
+        expect:
+          uk: "Під кнопкою — «Циклів: 20». У Snapshot 2 за фільтром `Detached` є група `Detached <div>`; розгорнувши її, бачиш 20 рядків `Detached <div class=\"leak-dialog\">`, хоча на сторінці жодного діалогу немає."
+          en: "Below the button it says “Cycles: 20”. In Snapshot 2 the `Detached` filter shows the group `Detached <div>`; expanded, it lists 20 rows `Detached <div class=\"leak-dialog\">`, although there is no dialog on the page."
+      - text:
+          uk: "Розгорни групу, вибери один `Detached <div class=\"leak-dialog\">` і подивись на панель **Retainers** під списком. Розгортай перший рядок, доки не впізнаєш назву зі свого коду."
+          en: "Expand the group, select one `Detached <div class=\"leak-dialog\">` and look at the **Retainers** pane below the list. Expand the first row until you recognise a name from your code."
+        expect:
+          uk: "Ланцюжок: `dialog` у контексті (scope) замикання → елемент масиву `[…]` у `Array` → `handlers` → контекст функції `openDialog`. Тобто div тримає масив `handlers` із `leak-lab.js`."
+          en: "The chain: `dialog` in the context (scope) of a closure → an item `[…]` of an `Array` → `handlers` → the context of the function `openDialog`. So the div is held by the array `handlers` from `leak-lab.js`."
+      - text:
+          uk: "Виправ витік: у `openDialog` збережи функцію в змінну (`const onEscape = () => dialog.remove();`, `handlers.push(onEscape);`), а в `close` перед `dialog.remove();` прибери її з масиву: `handlers.splice(handlers.indexOf(onEscape), 1);`. Збережи файл, онови сторінку (Cmd+R / Ctrl+R), зроби знімок, натисни кнопку й зроби ще один."
+          en: "Fix the leak: in `openDialog` keep the function in a variable (`const onEscape = () => dialog.remove();`, `handlers.push(onEscape);`), and in `close`, before `dialog.remove();`, take it out of the array: `handlers.splice(handlers.indexOf(onEscape), 1);`. Save the file, reload the page (Cmd+R / Ctrl+R), take a snapshot, press the button and take another one."
+        expect:
+          uk: "Після 20 циклів фільтр `Detached` більше не показує групи `Detached <div>`: діалоги прибрано повністю."
+          en: "After 20 cycles the `Detached` filter no longer shows a `Detached <div>` group: the dialogs are cleaned up completely."
+    verify:
+      - id: twenty-detached
+        text:
+          uk: "Після 20 циклів у знімку було 20 від’єднаних `leak-dialog`, а до циклів — жодного."
+          en: "After 20 cycles the snapshot had 20 detached `leak-dialog` elements, and before the cycles none."
+      - id: retainer-found
+        text:
+          uk: "Панель Retainers привела мене до масиву `handlers` у `leak-lab.js`."
+          en: "The Retainers pane led me to the array `handlers` in `leak-lab.js`."
+      - id: fixed
+        text:
+          uk: "Після виправлення 20 циклів не залишили жодного від’єднаного `leak-dialog`."
+          en: "After the fix, 20 cycles left no detached `leak-dialog` elements."
+    troubleshooting:
+      - problem:
+          uk: "Сторінка показує `Not found`"
+          en: "The page shows `Not found`"
+        fix:
+          uk: "Перевір, що обидва файли лежать саме в теці `tools/` у корені проєкту (поруч із `restore-data.html`) і що адреса закінчується на `/tools/leak-lab.html`."
+          en: "Check that both files are in the `tools/` folder at the project root (next to `restore-data.html`) and that the address ends with `/tools/leak-lab.html`."
+      - problem:
+          uk: "Кнопка нічого не робить, «Циклів» лишається 0"
+          en: "The button does nothing, “Cycles” stays at 0"
+        fix:
+          uk: "Відкрий панель **Console**: найчастіше там `Failed to load module script` (файл `.js` названо інакше) або `SyntaxError` після копіювання. Порівняй назву й вміст файлу з текстом уроку."
+          en: "Open the **Console** panel: most often it shows `Failed to load module script` (the `.js` file has another name) or a `SyntaxError` after copying. Compare the file's name and content with the lesson's text."
+      - problem:
+          uk: "Фільтр `Detached` нічого не знаходить навіть до виправлення"
+          en: "The `Detached` filter finds nothing even before the fix"
+        fix:
+          uk: "Знімок має бути зроблений **після** натискання кнопки, а в полі має бути саме **Filter by class** над списком класів: назва класу `leak-dialog` у фільтрі нічого не знайде, бо DevTools групує елементи за тегом (`<div>`). Якщо твоя версія DevTools підписує їх інакше, у панелі **Memory** може бути окремий тип профілю **Detached elements**: обери його й натисни **Get detached elements** — він одразу показує від’єднані елементи."
+          en: "The snapshot must be taken **after** pressing the button, and the text must go into the **Filter by class** field above the class list: the class name `leak-dialog` finds nothing there, because DevTools groups elements by tag (`<div>`). If your DevTools version labels them differently, the **Memory** panel may have a separate **Detached elements** profiling type: choose it and press **Get detached elements** — it lists the detached elements directly."
+      - problem:
+          uk: "`npm start` пише, що порт 4300 зайнято"
+          en: "`npm start` says port 4300 is busy"
+        fix:
+          uk: "Мабуть, проєкт уже запущено в іншому терміналі — відкрий ту адресу. Або запусти на іншому порту: `npm start -- --port 4301` і відкривай `http://127.0.0.1:4301/tools/leak-lab.html`. Новий порт — нова адреса для браузера зі своїм порожнім `localStorage`; цій сторінці збережені дані не потрібні."
+          en: "The project is probably already running in another terminal — open that address. Or start on another port: `npm start -- --port 4301` and open `http://127.0.0.1:4301/tools/leak-lab.html`. A new port is a new address for the browser with its own empty `localStorage`; this page does not need the saved data."
+    recovery:
+      uk: "Обидва файли `tools/leak-lab.*` — тренувальні: їх можна просто видалити, твій проєкт від них не залежить. Сервер зупиняє Ctrl+C у терміналі."
+      en: "Both `tools/leak-lab.*` files are for practice: you can simply delete them, your project does not depend on them. Ctrl+C in the terminal stops the server."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: DevTools локального проєкту"
+      en: "Recall: DevTools of the local project"
+    items:
+      - id: which-panel
+        from: js-10-03-compare-and-inspect
+        prompt:
+          uk: "Локальний проєкт працює на `http://127.0.0.1:4300/`. Де в DevTools Chrome подивитися, що лежить у `localStorage` саме для цієї адреси?"
+          en: "The local project runs at `http://127.0.0.1:4300/`. Where in Chrome DevTools do you look at what `localStorage` holds for exactly this address?"
+        answer:
+          type: choice
+          options:
+            - id: application
+              text:
+                uk: "Панель **Application**, розділ **Local storage**, запис `http://127.0.0.1:4300`"
+                en: "The **Application** panel, the **Local storage** section, the entry `http://127.0.0.1:4300`"
+            - id: sources
+              text:
+                uk: "Панель **Sources**, тека `127.0.0.1:4300`"
+                en: "The **Sources** panel, the folder `127.0.0.1:4300`"
+              why:
+                uk: "**Sources** показує файли проєкту й точки зупинки, а не збережені дані."
+                en: "**Sources** shows the project's files and breakpoints, not the stored data."
+            - id: memory
+              text:
+                uk: "Панель **Memory** — там видно все, що є в пам’яті"
+                en: "The **Memory** panel — everything in memory is visible there"
+              why:
+                uk: "**Memory** показує об’єкти JavaScript у пам’яті сторінки. Вміст `localStorage` за адресами — у **Application**."
+                en: "**Memory** shows the JavaScript objects in the page's memory. The content of `localStorage` per address is in **Application**."
+          correct: [application]
+        explanation:
+          uk: "Кожна панель відповідає на своє питання: **Application** — що збережено, **Sources** — який код виконується й де зупинитися, **Memory** — що лишилося в пам’яті й хто це тримає."
+          en: "Each panel answers its own question: **Application** — what is stored, **Sources** — which code runs and where to pause, **Memory** — what is left in memory and who holds it."
+
+  - id: live-tracker
+    kind: exercise
+    mode: guided
+    runtime: browser-js
+    dir: live-tracker
+    entry: index.js
+    strings:
+      reminder: { uk: "Час пити воду", en: "Time to drink water" }
+    title:
+      uk: "Лічильник живих listeners для перевірок"
+      en: "A live-listener counter for checks"
+    instructions:
+      uk: |
+        Щоб перевірка могла сказати «після N циклів не лишилося жодного listener», потрібна інструментація. Допиши `createListenerTracker()`:
+
+        - `tracker.listen(target, type, handler)` **справді** додає listener і повертає `remove()`;
+        - `remove()` справді знімає його; повторний виклик того самого `remove()` нічого не змінює;
+        - `tracker.countLive()` — скільки listeners, доданих через цей tracker, досі увімкнено;
+        - той самий `handler` для тієї самої цілі й того самого типу браузер тримає **один раз** — і лічильник рахує його один раз;
+        - кожен tracker рахує лише свої listeners.
+
+        Перевірки проганяють 20 чистих циклів і 20 циклів, що забувають один listener, і очікують 0 та 20. Унизу файла готовий код: у консолі має з’явитися `0` і `2`.
+      en: |
+        For a check to say “after N cycles not a single listener is left”, you need instrumentation. Complete `createListenerTracker()`:
+
+        - `tracker.listen(target, type, handler)` **really** adds the listener and returns `remove()`;
+        - `remove()` really removes it; calling the same `remove()` again changes nothing;
+        - `tracker.countLive()` is how many listeners added through this tracker are still on;
+        - the browser holds the same `handler` for the same target and the same type **once** — and the counter counts it once;
+        - each tracker counts only its own listeners.
+
+        The checks run 20 clean cycles and 20 cycles that forget one listener, and expect 0 and 20. At the bottom of the file there is ready code: the console must show `0` and `2`.
+    testTitles:
+      "the program prints 0 and 2":
+        uk: "Програма друкує 0 і 2"
+        en: "The program prints 0 and 2"
+      "listen really adds the listener":
+        uk: "`listen` справді додає listener"
+        en: "`listen` really adds the listener"
+      "remove really removes the listener":
+        uk: "`remove` справді знімає listener"
+        en: "`remove` really removes the listener"
+      "countLive follows adds and removes":
+        uk: "`countLive` стежить за додаванням і зняттям"
+        en: "`countLive` follows adds and removes"
+      "calling remove twice counts once":
+        uk: "Повторний `remove` рахується один раз"
+        en: "Calling `remove` twice counts once"
+      "the same handler for the same target and type counts once":
+        uk: "Той самий handler для тієї самої цілі й типу рахується один раз"
+        en: "The same handler for the same target and type counts once"
+      "two trackers count separately":
+        uk: "Два trackers рахують окремо"
+        en: "Two trackers count separately"
+      "the tracker shows 0 after 20 clean cycles and 20 after 20 leaky ones":
+        uk: "Після 20 чистих циклів — 0, після 20 з витоком — 20"
+        en: "The tracker shows 0 after 20 clean cycles and 20 after 20 leaky ones"
+    hints:
+      nudge:
+        uk: "Що треба запам’ятати про кожен увімкнений listener, щоб потім знайти його й не порахувати двічі? Де це сховати, щоб у кожного tracker було своє?"
+        en: "What do you need to remember about each listener that is on, to find it later and not count it twice? Where do you keep that so that each tracker has its own?"
+      explanation:
+        uk: |
+          Простий лічильник `count++`/`count--` ламається на двох речах: повторному `remove()` і повторному додаванні тієї самої функції. Надійніше тримати **список увімкнених** записів `{ target, type, handler }` у замиканні `createListenerTracker` — тоді `countLive()` — це його довжина, а перед додаванням можна перевірити, чи такий запис уже є. Для повторного `remove()` підійде прапорець у його власному замиканні — як в ідемпотентному `teardown`:
+
+          ```js
+          function once(action) {
+            let used = false;
+            return () => {
+              if (used) {
+                return;
+              }
+              used = true;
+              action();
+            };
+          }
+          ```
+        en: |
+          A plain counter `count++`/`count--` breaks on two things: a repeated `remove()` and adding the same function again. It is more reliable to keep a **list of live** entries `{ target, type, handler }` in the closure of `createListenerTracker` — then `countLive()` is its length, and before adding you can check whether such an entry already exists. For a repeated `remove()` a flag in its own closure does the job — as in an idempotent `teardown`:
+
+          ```js
+          function once(action) {
+            let used = false;
+            return () => {
+              if (used) {
+                return;
+              }
+              used = true;
+              action();
+            };
+          }
+          ```
+    solutionNote:
+      uk: "Tracker тримає власний список записів `{ target, type, handler }`. `listen` додає listener і запис лише тоді, коли такого запису ще немає, — так само, як браузер ігнорує повторне додавання. `remove` має свій прапорець і прибирає запис зі списку, тож `countLive()` — завжди довжина списку. Варіант із `Map` → `Map` → `Set` робить те саме: `Set` сам ігнорує повтори."
+      en: "The tracker keeps its own list of entries `{ target, type, handler }`. `listen` adds the listener and the entry only when no such entry exists yet — just as the browser ignores a repeated add. `remove` has its own flag and takes the entry out of the list, so `countLive()` is always the length of the list. The `Map` → `Map` → `Set` version does the same: the `Set` ignores repeats by itself."
+    feedback:
+      - when: { test: "the program prints 0 and 2" }
+        message:
+          uk: "Ця перевірка очікує два рядки: `0` після 10 чистих циклів і `2` після одного відкритого й не закритого діалогу."
+          en: "This check expects two lines: `0` after 10 clean cycles and `2` after one dialog that was opened and not closed."
+      - when: { test: "listen really adds the listener" }
+        message:
+          uk: "Ця перевірка додає handler через `listen` і надсилає подію: handler має спрацювати рівно раз. Лічильник без справжнього `addEventListener` цю перевірку не пройде."
+          en: "This check adds a handler through `listen` and sends an event: the handler must run exactly once. A counter without a real `addEventListener` does not pass this check."
+      - when: { test: "remove really removes the listener" }
+        message:
+          uk: "Ця перевірка викликає `remove()` і надсилає подію: handler не має спрацювати."
+          en: "This check calls `remove()` and sends an event: the handler must not run."
+      - when: { test: "countLive follows adds and removes" }
+        message:
+          uk: "Ця перевірка очікує `countLive()`: 0 у нового tracker, 2 після двох `listen` і 1 після одного `remove()`."
+          en: "This check expects `countLive()` to be 0 for a new tracker, 2 after two `listen` calls and 1 after one `remove()`."
+      - when: { test: "calling remove twice counts once" }
+        message:
+          uk: "Ця перевірка двічі викликає той самий `remove()` і очікує, що з двох listeners лишився 1, а не 0."
+          en: "This check calls the same `remove()` twice and expects 1 of the two listeners to remain, not 0."
+      - when: { test: "the same handler for the same target and type counts once" }
+        message:
+          uk: "Ця перевірка двічі додає ту саму функцію для тієї самої цілі й типу й очікує `countLive()` — 1, один виклик handler на подію, а після обох `remove()` — 0."
+          en: "This check adds the same function twice for the same target and type and expects `countLive()` to be 1, one handler call per event, and 0 after both `remove()` calls."
+      - when: { test: "two trackers count separately" }
+        message:
+          uk: "Ця перевірка додає listener через один tracker і очікує 0 в іншого. Облік має жити всередині кожного `createListenerTracker()`, а не в змінній модуля."
+          en: "This check adds a listener through one tracker and expects 0 for the other. The record must live inside each `createListenerTracker()`, not in a module variable."
+      - when: { test: "the tracker shows 0 after 20 clean cycles and 20 after 20 leaky ones" }
+        message:
+          uk: "Ця перевірка проганяє 20 циклів, що знімають обидва listeners (очікує 0), і 20 циклів, що забувають `keydown` (очікує 20)."
+          en: "This check runs 20 cycles that remove both listeners (expects 0) and 20 cycles that forget `keydown` (expects 20)."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-13
+    body:
+      uk: "На кроці проєкту перевірки самі рахуватимуть listeners сторінки, підмінивши `addEventListener` і `removeEventListener`: після `teardown()` їх має бути 0, а після другого `start(storage)` — стільки ж, скільки після першого. А знімки пам’яті з цього уроку можна повторити вже на сторінці свого проєкту."
+      en: "In the project step the checks will count the page's listeners themselves by replacing `addEventListener` and `removeEventListener`: after `teardown()` there must be 0 of them, and after a second `start(storage)` as many as after the first. And the heap snapshots of this lesson can be repeated on your project's own page."

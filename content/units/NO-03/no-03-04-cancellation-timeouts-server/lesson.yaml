@@ -1,0 +1,421 @@
+id: no-03-04-cancellation-timeouts-server
+unit: NO-03
+title:
+  uk: "Скасування й тайм-аути на сервері"
+  en: "Cancellation and timeouts on the server"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Помічати клієнта, що відключився до кінця відповіді, і зупиняти незавершену роботу через `AbortController`."
+    en: "Detect a client that disconnected before the response finished and stop the pending work through an AbortController."
+  - uk: "Налаштовувати `server.requestTimeout` і `headersTimeout` разом із дедлайном обробника та передбачати, що відчують повільний клієнт і повільний обробник."
+    en: "Configure server.requestTimeout and headersTimeout plus a per-handler deadline, and predict what a slow client and a slow handler each experience."
+prerequisites: [no-03-03-routing-json-bodies, js-08-08-combinators-sequential-concurrent]
+subskills:
+  - { family: B-03, skill: "cancellation", depth: intro }
+glossary: [client-abort, handler-deadline]
+selfCheck: [predict-left, with-deadline]
+
+blocks:
+  - id: client-leaves
+    kind: explanation
+    title:
+      uk: "Клієнт пішов — а обробник працює далі"
+      en: "The client left — and the handler keeps working"
+    body:
+      uk: |
+        Користувач закрив вкладку, клієнт скасував `fetch` або в нього сплив власний тайм-аут — з’єднання закривається. Це [[client-abort|скасування клієнтом]]. Сервер дізнається про нього з події `'close'` об’єкта `res`, що настала **до** кінця відповіді:
+
+        ```js
+        res.on("close", () => {
+          if (!res.writableFinished) controller.abort(); // the answer never finished
+        });
+        ```
+
+        Але сам Node **твій код не зупиняє**. Обробник далі чекає на повільне сховище, рахує, а наприкінці пише в закрите з’єднання — запис просто зникає, без жодної помилки. Робота виконана даремно, а сервер під навантаженням витрачає на таких «привидів» пам’ять і час.
+
+        Тому на кожен запит створюють `AbortController`, скасовують його на `'close'` без `'finish'` і передають `controller.signal` усім повільним викликам. Як і з `fetch` у браузері, сигнал лише **повідомляє** про скасування: зупиняється тільки той виклик, що слухає свій `signal`.
+      en: |
+        The user closed the tab, the client cancelled its `fetch` or ran out of its own timeout — the connection closes. That is a [[client-abort]]. The server learns about it from the `'close'` event of `res` arriving **before** the answer finished:
+
+        ```js
+        res.on("close", () => {
+          if (!res.writableFinished) controller.abort(); // the answer never finished
+        });
+        ```
+
+        But Node itself **does not stop your code**. The handler keeps waiting for the slow storage, keeps computing, and finally writes into the closed connection — the write simply vanishes, without any error. The work was done for nothing, and a busy server spends memory and time on such “ghosts”.
+
+        So every request gets an `AbortController`, aborts it on `'close'` without `'finish'`, and passes `controller.signal` to every slow call. As with `fetch` in the browser, the signal only **announces** the cancellation: only a call that listens to its `signal` stops.
+
+  - id: two-clocks
+    kind: explanation
+    title:
+      uk: "Два різні годинники: повільний клієнт і повільний обробник"
+      en: "Two different clocks: a slow client and a slow handler"
+    body:
+      uk: |
+        У сервера `node:http` є тайм-аути, але вони стережуть **отримання запиту**, а не твій обробник:
+
+        | Налаштування | Що обмежує | Типово в Node 22 |
+        |---|---|---|
+        | `headersTimeout` | час, за який мають прийти всі заголовки | 60 000 мс, але не більше за `requestTimeout` |
+        | `requestTimeout` | час, за який має прийти весь запит разом із тілом | 300 000 мс |
+        | `connectionsCheckingInterval` | як часто Node перевіряє ці два | 30 000 мс |
+
+        Клієнт, що не встиг, отримує `408 Request Timeout`, і з’єднання закривається. Задають їх у `http.createServer({ requestTimeout: 1000, connectionsCheckingInterval: 100 }, handler)`; тоді й `headersTimeout` стає 1000 мс, бо типово він не більший за `requestTimeout`. Node помічає тайм-аут лише під час перевірки, тож без малого інтервалу секундний тайм-аут може спрацювати аж на 30 с пізніше.
+
+        Обробник, що думає над відповіддю хвилину, ці налаштування **не зачіпають** — запит уже отримано. Без власного обмеження такий запит не завершиться ніколи. Тож обробник ставить собі [[handler-deadline|дедлайн]]: не встиг за N мс — скасовує роботу й відповідає `503`.
+
+        Джерело: розділ про `http.createServer` і `server.requestTimeout` у [документації Node.js 22](https://nodejs.org/docs/latest-v22.x/api/http.html#httpcreateserveroptions-requestlistener).
+      en: |
+        A `node:http` server does have timeouts, but they guard **receiving the request**, not your handler:
+
+        | Setting | What it limits | Default in Node 22 |
+        |---|---|---|
+        | `headersTimeout` | the time for all the headers to arrive | 60,000 ms, but no more than `requestTimeout` |
+        | `requestTimeout` | the time for the whole request, body included, to arrive | 300,000 ms |
+        | `connectionsCheckingInterval` | how often Node checks those two | 30,000 ms |
+
+        A client that does not make it gets `408 Request Timeout`, and the connection closes. You set them with `http.createServer({ requestTimeout: 1000, connectionsCheckingInterval: 100 }, handler)`; then `headersTimeout` becomes 1000 ms too, because by default it is no larger than `requestTimeout`. Node notices a timeout only when it checks, so without a small interval a one-second timeout may fire as much as 30 s late.
+
+        A handler that thinks about its answer for a minute is **not affected** by these settings — the request has already arrived. Without a limit of its own such a request never ends. So the handler sets itself a [[handler-deadline]]: if the work is not done within N ms, it cancels the work and answers `503`.
+
+        Source: the section on `http.createServer` and `server.requestTimeout` in the [Node.js 22 documentation](https://nodejs.org/docs/latest-v22.x/api/http.html#httpcreateserveroptions-requestlistener).
+
+  - id: abort-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Клієнт пішов: зі скасуванням і без нього"
+      en: "The client left: with cancellation and without"
+    textEquivalent:
+      uk: "Клієнт надсилає GET /total. Обробник створює AbortController і кличе сховище total(signal), яке працює 800 мс. Через 200 мс клієнт перестає чекати й закриває з’єднання. На сервері res отримує подію 'close', а 'finish' ще не було, тож обробник викликає controller.abort(). Сигнал доходить до сховища, воно зупиняє свою роботу й відхиляє проміс з AbortError, і обробник нікому не відповідає, бо ніхто не чекає. Без переданого сигналу все інакше: сховище працює всі 800 мс, а обробник потім пише результат через res.end у вже закрите з’єднання — запис зникає без помилки, робота була даремною."
+      en: "The client sends GET /total. The handler creates an AbortController and calls the storage’s total(signal), which takes 800 ms. After 200 ms the client stops waiting and closes the connection. On the server res gets the 'close' event while there was no 'finish' yet, so the handler calls controller.abort(). The signal reaches the storage, which stops its work and rejects with an AbortError, and the handler answers nobody, because nobody is waiting. Without the signal passed down it goes differently: the storage works for the full 800 ms, and then the handler writes the result with res.end into the already closed connection — the write vanishes without an error, and the work was for nothing."
+    spec:
+      actors:
+        - { id: client, label: { uk: "Клієнт", en: "Client" } }
+        - { id: handler, label: { uk: "Обробник", en: "Handler" } }
+        - { id: repo, label: { uk: "Сховище", en: "Storage" } }
+      intro:
+        uk: "Клієнт, обробник і повільне сховище. Спершу — версія з переданим сигналом, наприкінці — без нього."
+        en: "The client, the handler and a slow storage. First the version with the signal passed down, at the end the one without."
+      messages:
+        - from: client
+          to: handler
+          kind: async
+          label: "GET /total"
+          caption:
+            uk: "Клієнт надсилає запит і чекає щонайбільше 200 мс."
+            en: "The client sends the request and waits 200 ms at most."
+        - from: handler
+          to: repo
+          label: "total(controller.signal)"
+          note: { uk: "800 мс роботи", en: "800 ms of work" }
+          caption:
+            uk: "Обробник створює `AbortController` і передає його `signal` у повільний виклик."
+            en: "The handler creates an `AbortController` and passes its `signal` to the slow call."
+        - from: client
+          to: handler
+          kind: async
+          label: { uk: "з’єднання закрито (200 мс)", en: "connection closed (200 ms)" }
+          note: { uk: "res: 'close' без 'finish'", en: "res: 'close' without 'finish'" }
+          caption:
+            uk: "Клієнт здався. На сервері `res` отримує `'close'`, а відповідь не закінчена: `res.writableFinished` — `false`."
+            en: "The client gave up. On the server `res` gets `'close'`, and the answer is not finished: `res.writableFinished` is `false`."
+        - from: handler
+          to: repo
+          kind: async
+          label: "controller.abort()"
+          caption:
+            uk: "Обробник скасовує свій контролер — сигнал переходить у стан «aborted»."
+            en: "The handler aborts its controller — the signal switches to “aborted”."
+        - from: repo
+          to: handler
+          kind: return
+          label: { uk: "відхилено: AbortError", en: "rejected: AbortError" }
+          caption:
+            uk: "Сховище слухає сигнал: зупиняє роботу й відхиляє проміс. Обробник нікому не відповідає — ніхто не чекає."
+            en: "The storage listens to the signal: it stops its work and rejects. The handler answers nobody — nobody is waiting."
+        - from: repo
+          to: repo
+          kind: note
+          label: { uk: "без signal: працює всі 800 мс", en: "without signal: works all 800 ms" }
+          caption:
+            uk: "А тепер версія без переданого сигналу: сховище не знає про скасування й працює до кінця."
+            en: "Now the version without the signal passed down: the storage knows nothing about the cancellation and works to the end."
+        - from: handler
+          to: client
+          kind: return
+          label: { uk: "res.end(…) у закрите з’єднання", en: "res.end(…) into a closed connection" }
+          caption:
+            uk: "Обробник пише результат у з’єднання, якого вже немає. Помилки немає, відповіді теж — робота була даремною."
+            en: "The handler writes the result into a connection that is gone. There is no error and no answer — the work was for nothing."
+
+  - id: predict-left
+    kind: prediction
+    prompt:
+      uk: "Обробник позначає в журналі, коли клієнт пішов, і кличе `slowTotal()` **без** сигналу — той працює 800 мс. Клієнт чекає лише 200 мс. Що з’явиться в журналі сервера?"
+      en: "The handler logs when the client leaves and calls `slowTotal()` **without** a signal — it takes 800 ms. The client waits only 200 ms. What appears in the server’s log?"
+    code: |
+      const server = http.createServer(async (req, res) => {
+        const controller = new AbortController();
+        res.on("close", () => {
+          if (!res.writableFinished) {
+            log("client left before the answer");
+            controller.abort();
+          }
+        });
+        const total = await slowTotal(); // 800 ms, no signal passed
+        log("work finished");
+        res.end(JSON.stringify({ totalMinor: total }));
+      });
+      // client: fetch(url, { signal: AbortSignal.timeout(200) })
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: both
+          text:
+            uk: "Близько 200 мс — «client left before the answer», близько 800 мс — «work finished»"
+            en: "Around 200 ms “client left before the answer”, around 800 ms “work finished”"
+        - id: only-left
+          text:
+            uk: "Лише «client left before the answer»: коли клієнт пішов, Node зупиняє обробник"
+            en: "Only “client left before the answer”: when the client leaves, Node stops the handler"
+          why:
+            uk: "Node не зупиняє твій код. `controller.abort()` тут нічого не скасовує, бо `slowTotal` сигналу не отримав, — тож обробник дочекається результату й дійде до «work finished»."
+            en: "Node does not stop your code. `controller.abort()` cancels nothing here, because `slowTotal` never got the signal — so the handler waits for the result and reaches “work finished”."
+        - id: only-finished
+          text:
+            uk: "Лише «work finished»: сервер не дізнається, що клієнт пішов"
+            en: "Only “work finished”: the server never learns that the client left"
+          why:
+            uk: "Дізнається: закрите з’єднання дає подію `'close'` на `res`, поки `res.writableFinished` ще `false`."
+            en: "It does learn: the closed connection gives a `'close'` event on `res` while `res.writableFinished` is still `false`."
+        - id: error
+          text:
+            uk: "«client left…», а потім помилка: `res.end` у закрите з’єднання кидає виняток"
+            en: "“client left…”, then an error: `res.end` into a closed connection throws"
+          why:
+            uk: "`res.end` після відключення клієнта нічого не кидає: запис мовчки зникає. Саме тому даремну роботу легко не помітити."
+            en: "`res.end` after the client disconnected throws nothing: the write silently vanishes. That is exactly why wasted work is easy to miss."
+      correct: [both]
+    explanation:
+      uk: "Сервер бачить відхід клієнта одразу, але скасування — лише повідомлення: `slowTotal` без сигналу його не чує й працює всі 800 мс. Потім `res.end` мовчки пише в нікуди. Передай `controller.signal` у `slowTotal`, і «work finished» зникне — спробуй у прикладі цього уроку."
+      en: "The server sees the client leave at once, but a cancellation is only a message: `slowTotal` without a signal never hears it and works the full 800 ms. Then `res.end` silently writes into nowhere. Pass `controller.signal` into `slowTotal` and “work finished” disappears — try it in this lesson’s example."
+
+  - id: predict-hanging-handler
+    kind: prediction
+    prompt:
+      uk: "Сервер створено як `http.createServer({ requestTimeout: 1000, connectionsCheckingInterval: 100 }, handler)`. Клієнт надсилає повний `GET /total` без тіла, а обробник чекає на проміс, що ніколи не виконується. Клієнт власного тайм-ауту не має. Що буде?"
+      en: "The server is created as `http.createServer({ requestTimeout: 1000, connectionsCheckingInterval: 100 }, handler)`. The client sends a complete `GET /total` without a body, and the handler awaits a promise that never settles. The client has no timeout of its own. What happens?"
+    answer:
+      type: choice
+      options:
+        - id: forever
+          text:
+            uk: "Запит висить, скільки триває з’єднання: `requestTimeout` стосується лише отримання запиту, а він уже прийшов"
+            en: "The request hangs for as long as the connection lasts: `requestTimeout` only concerns receiving the request, and it has already arrived"
+        - id: after-1s
+          text:
+            uk: "Через 1 с сервер відповідає `408` і закриває з’єднання"
+            en: "After 1 s the server answers `408` and closes the connection"
+          why:
+            uk: "`408` дістається клієнтам, що надто повільно **надсилають** запит. Тут запит отримано за мілісекунди; час обробника `requestTimeout` не лічить."
+            en: "`408` goes to clients that **send** their request too slowly. Here the request arrived within milliseconds; `requestTimeout` does not count the handler’s time."
+        - id: idle-close
+          text:
+            uk: "За кілька секунд Node сам закриває з’єднання, бо в нього нічого не пишуть"
+            en: "Within a few seconds Node closes the connection itself, because nothing is written to it"
+          why:
+            uk: "Тайм-ауту бездіяльності для запиту, що обробляється, типово немає (`server.timeout` — `0`). Сам собою такий запит не завершиться."
+            en: "There is no inactivity timeout for a request being handled by default (`server.timeout` is `0`). Such a request will not end by itself."
+      correct: [forever]
+    explanation:
+      uk: "Тайм-аути сервера захищають від повільних клієнтів, а не від повільних обробників. Обробник, що може зависнути, ставить собі власний дедлайн і відповідає `503`, — інакше запит без тайм-ауту так і висітиме, доки здасться клієнт чи хтось зупинить сервер."
+      en: "A server’s timeouts protect it from slow clients, not from slow handlers. A handler that can hang sets itself a deadline and answers `503` — otherwise a request without a timeout hangs on until the client gives up or someone stops the server."
+
+  - id: leaving-client
+    kind: example
+    runtime: isolated-node
+    dir: leaving-client
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      reportReady: { uk: "звіт готовий", en: "report ready" }
+      clientLeft: { uk: "клієнт пішов до відповіді", en: "client left before the answer" }
+      workFinished: { uk: "роботу завершено, сума", en: "work finished, total" }
+      workStopped: { uk: "роботу зупинено:", en: "work stopped:" }
+      gaveUp: { uk: "перестав чекати:", en: "stopped waiting:" }
+      closedSilently: { uk: "з’єднання закрито без відповіді", en: "connection closed without an answer" }
+      noAnswer: { uk: "жодної відповіді за 2 с", en: "no answer in 2 s" }
+    title:
+      uk: "Три незручні клієнти"
+      en: "Three awkward clients"
+    body:
+      uk: |
+        Сервер витрат із `requestTimeout: 1000` і трьома клієнтами в тому самому модулі:
+
+        - **клієнт 1** перестає чекати через 200 мс, а обробник рахує суму 800 мс;
+        - **клієнт 2** надсилає лише частину заголовків і замовкає — його зупинить `headersTimeout`, що тут, як і `requestTimeout`, дорівнює 1000 мс;
+        - **клієнт 3** просить звіт, який обробник готує 1,2 с — довше за `requestTimeout`.
+
+        Біля кожного рядка — мілісекунди від старту. Натисни **Запустити**.
+      en: |
+        An expense server with `requestTimeout: 1000` and three clients in the same module:
+
+        - **client 1** stops waiting after 200 ms, while the handler computes the total for 800 ms;
+        - **client 2** sends only part of its headers and goes quiet — it is stopped by `headersTimeout`, which here equals `requestTimeout`, 1000 ms;
+        - **client 3** asks for a report the handler prepares for 1.2 s — longer than `requestTimeout`.
+
+        Every line starts with the milliseconds since the start. Press **Run**.
+    tryIt:
+      uk: |
+        1. Заміни `PASS_SIGNAL = false` на `true`: тепер сигнал доходить до `slowTotal`, і замість «роботу завершено» одразу після відходу клієнта з’являється «роботу зупинено: AbortError».
+        2. Видали з `http.createServer(…)` перший аргумент разом із комою — об’єкт `{ requestTimeout: 1000, connectionsCheckingInterval: 100 }`. Клієнт 2 тепер не отримує нічого за 2 с: з типовими налаштуваннями Node чекав би на заголовки від хвилини до півтори — 60 с тайм-ауту плюс очікування найближчої перевірки, яка буває раз на 30 с. Клієнт 3, як і раніше, отримує `200`. Поверни об’єкт.
+        3. Тепер прибери з об’єкта лише `, connectionsCheckingInterval: 100`. Клієнт 2 знову без відповіді за 2 с: тайм-аут — 1 с, але Node перевіряє його типово раз на 30 с. Поверни як було.
+      en: |
+        1. Change `PASS_SIGNAL = false` to `true`: now the signal reaches `slowTotal`, and instead of “work finished” you see “work stopped: AbortError” right after the client leaves.
+        2. Delete the first argument of `http.createServer(…)` together with its comma — the object `{ requestTimeout: 1000, connectionsCheckingInterval: 100 }`. Client 2 now gets nothing within 2 s: with the default settings Node would wait for the headers for one to one and a half minutes — the 60 s timeout plus the wait for the next check, which comes once every 30 s. Client 3 still gets `200`. Put the object back.
+        3. Now remove only `, connectionsCheckingInterval: 100` from the object. Client 2 again has no answer within 2 s: the timeout is 1 s, but by default Node checks it once every 30 s. Restore it.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: хто насправді зупиняється"
+      en: "Recall: who actually stops"
+    items:
+      - id: callee-honors
+        from: js-08-09-cancellation-abort
+        prompt:
+          uk: "Функція `loadRecords(signal)` приймає `signal`, але ніде його не використовує й просто чекає 2 с на таймер. Код, що її викликав, через 100 мс робить `controller.abort()`. Що станеться з її роботою?"
+          en: "A function `loadRecords(signal)` takes a `signal` but never uses it and simply waits 2 s on a timer. The calling code does `controller.abort()` after 100 ms. What happens to its work?"
+        answer:
+          type: choice
+          options:
+            - id: continues
+              text:
+                uk: "Робота триває всі 2 с: скасування лише позначає сигнал і запускає подію `abort`, а слухати її мала сама функція"
+                en: "The work goes on for the full 2 s: aborting only marks the signal and fires an `abort` event, which the function itself had to listen to"
+            - id: stops
+              text:
+                uk: "Робота зупиняється, бо функція отримала той самий `signal`"
+                en: "The work stops, because the function received that same `signal`"
+              why:
+                uk: "Отримати сигнал мало: функція має перевіряти `signal.aborted` чи слухати подію `abort` і сама зупинитися. `fetch` робить це за тебе, саморобна функція — ні."
+                en: "Receiving the signal is not enough: the function has to check `signal.aborted` or listen to the `abort` event and stop by itself. `fetch` does that for you, a hand-written function does not."
+            - id: throws
+              text:
+                uk: "`controller.abort()` кидає помилку всередині функції"
+                en: "`controller.abort()` throws an error inside the function"
+              why:
+                uk: "`abort()` нічого не кидає в чужий код. Він змінює стан сигналу й повідомляє слухачів."
+                en: "`abort()` throws nothing into other code. It changes the signal’s state and notifies its listeners."
+          correct: [continues]
+        explanation:
+          uk: "`AbortController` — це домовленість: той, хто скасовує, подає сигнал, а той, хто працює, має його почути. На сервері так само: `controller.abort()` у `'close'` допомагає лише викликам, що слухають свій `signal`."
+          en: "An `AbortController` is an agreement: whoever cancels raises the signal, and whoever works has to hear it. The same on the server: `controller.abort()` in `'close'` helps only the calls that listen to their `signal`."
+
+  - id: with-deadline
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: with-deadline
+    entry: index.js
+    editable: [deadline.js]
+    capabilities: { network: loopback }
+    strings:
+      gaveUp: { uk: "перестав чекати:", en: "stopped waiting:" }
+      fast: { uk: "швидке сховище (100 мс), дедлайн 300 мс", en: "fast storage (100 ms), deadline 300 ms" }
+      slow: { uk: "повільне сховище (1,5 с), дедлайн 300 мс", en: "slow storage (1.5 s), deadline 300 ms" }
+      leaves: { uk: "клієнт іде через 200 мс, дедлайн 2 с", en: "the client leaves after 200 ms, deadline 2 s" }
+    title:
+      uk: "withDeadline: дедлайн обробника"
+      en: "withDeadline: a handler deadline"
+    instructions:
+      uk: |
+        Допиши в `deadline.js` функцію `withDeadline(ms, signal, work)`. Вона викликає `work(workSignal)` і:
+
+        - скасовує `workSignal`, коли минуло `ms` мілісекунд **або** коли скасовано `signal` того, хто викликає;
+        - на дедлайні відхиляє свій проміс помилкою з назвою `TimeoutError` — навіть якщо `work` свій сигнал ігнорує;
+        - якщо `work` завершилася раніше, виконується (чи відхиляється) так само, як вона, і не лишає по собі таймера, що й далі тримає процес.
+
+        `server.js` і `repository.js` лише для читання. Сервер передає як `signal` скасування клієнтом, на `TimeoutError` відповідає `503`, а коли клієнт пішов — мовчки зупиняється. **Запустити** проганяє три сценарії. **Перевірити** кличе `withDeadline` напряму й надсилає серверу справжні запити; одна з перевірок рахує через `activeResources()` таймери, що лишилися після роботи. `activeResources()` бачить лише таймери, які тримають процес: прибраний через `clearTimeout` таймер зникає з нього, а таймер `AbortSignal.timeout` процес не тримає й там не з’являється.
+      en: |
+        Finish the function `withDeadline(ms, signal, work)` in `deadline.js`. It calls `work(workSignal)` and:
+
+        - aborts `workSignal` when `ms` milliseconds have passed **or** when the caller’s `signal` is aborted;
+        - at the deadline rejects its promise with an error named `TimeoutError` — even if `work` ignores its signal;
+        - if `work` finishes earlier, resolves (or rejects) the same way as it did, and leaves behind no timer that still holds the process.
+
+        `server.js` and `repository.js` are read-only. The server passes the client abort as `signal`, answers `503` on a `TimeoutError`, and silently stops when the client has left. **Run** goes through three scenarios. **Check** calls `withDeadline` directly and sends the server real requests; one of the checks counts, through `activeResources()`, the timers left after the work. `activeResources()` sees only timers that hold the process: a timer removed with `clearTimeout` disappears from it, and the timer of `AbortSignal.timeout` does not hold the process and never shows up there.
+    testTitles:
+      "returns the result of work that finishes in time":
+        uk: "Повертає результат роботи, що встигла"
+        en: "Returns the result of work that finishes in time"
+      "rejects with a TimeoutError at the deadline":
+        uk: "На дедлайні відхиляється з `TimeoutError`, навіть коли робота ігнорує сигнал"
+        en: "Rejects with a `TimeoutError` at the deadline, even when the work ignores its signal"
+      "aborts the work's signal at the deadline":
+        uk: "На дедлайні скасовує сигнал роботи"
+        en: "Aborts the work’s signal at the deadline"
+      "aborts the work's signal when the caller's signal aborts":
+        uk: "Скасовує сигнал роботи, коли скасовано сигнал того, хто викликає"
+        en: "Aborts the work’s signal when the caller’s signal aborts"
+      "leaves no timer behind when the work finishes early":
+        uk: "Не лишає таймера, що тримає процес, коли робота завершилася раніше"
+        en: "Leaves no timer holding the process when the work finishes early"
+      "the server answers 503 at its deadline":
+        uk: "Сервер відповідає `503` на дедлайні"
+        en: "The server answers `503` at its deadline"
+      "the server stops the repository work when the client leaves":
+        uk: "Сервер зупиняє роботу сховища, коли клієнт пішов"
+        en: "The server stops the storage work when the client leaves"
+    hints:
+      nudge:
+        uk: "Тобі потрібен власний `AbortController` для роботи, таймер на `ms` і спосіб дізнатися, що сталося раніше: робота чи дедлайн."
+        en: "You need your own `AbortController` for the work, a timer for `ms` and a way to learn which came first: the work or the deadline."
+      explanation:
+        uk: "Сигнал роботи має реагувати на дві події, тож зроби новий контролер і скасуй його і з таймера, і зі слухача `abort` на сигналі того, хто викликає. Робота може ігнорувати сигнал, тому покладатися лише на неї не можна: змагання двох промісів — роботи й таймера — дає `Promise.race`, як у гонці запиту з тайм-аутом. Помилку з потрібною назвою дає `new DOMException(повідомлення, \"TimeoutError\")`. Прибирати таймер і слухача зручно в `.finally(…)`. Є й готові цеглини: `AbortSignal.timeout(ms)` і `AbortSignal.any([a, b])`."
+        en: "The work’s signal must react to two events, so make a new controller and abort it both from a timer and from an `abort` listener on the caller’s signal. The work may ignore its signal, so you cannot rely on it alone: a contest between two promises — the work and the timer — is `Promise.race`, as in racing a request against a timeout. `new DOMException(message, \"TimeoutError\")` gives an error with the right name. `.finally(…)` is a handy place to remove the timer and the listener. Ready-made bricks exist too: `AbortSignal.timeout(ms)` and `AbortSignal.any([a, b])`."
+    solutionNote:
+      uk: "Новий `AbortController` скасовують двоє: таймер дедлайну (з помилкою `TimeoutError`) і слухач сигналу того, хто викликає. `Promise.race` між роботою й промісом дедлайну відхиляється на дедлайні, навіть коли робота сигнал ігнорує, а `.finally` прибирає таймер і слухача, щойно щось завершилося. Коротший варіант — `AbortSignal.any([signal, AbortSignal.timeout(ms)])` і відхилення з `reason` цього сигналу: таймер `AbortSignal.timeout` не тримає процес і зникає сам."
+      en: "Two parties abort a new `AbortController`: the deadline timer (with a `TimeoutError`) and a listener on the caller’s signal. `Promise.race` between the work and the deadline promise rejects at the deadline even when the work ignores its signal, and `.finally` removes the timer and the listener as soon as something finished. A shorter version is `AbortSignal.any([signal, AbortSignal.timeout(ms)])` and rejecting with that signal’s `reason`: the timer of `AbortSignal.timeout` does not hold the process and goes away by itself."
+    feedback:
+      - when: { test: "returns the result of work that finishes in time" }
+        message:
+          uk: "Ця перевірка кличе `withDeadline(300, …)` з роботою, що одразу повертає `\"report-ok\"`, і чекає саме це значення."
+          en: "This check calls `withDeadline(300, …)` with work that immediately returns `\"report-ok\"` and expects exactly that value."
+      - when: { test: "rejects with a TimeoutError at the deadline" }
+        message:
+          uk: "Ця перевірка дає роботу, що ігнорує сигнал і ніколи не завершується, і чекає, що через 100 мс `withDeadline` відхилиться з помилкою з назвою `TimeoutError`. Якщо проміс досі «pending», робота сама не завершиться — потрібне змагання з таймером. Якщо назва інша, створи помилку як `new DOMException(…, \"TimeoutError\")`."
+          en: "This check gives work that ignores its signal and never finishes, and expects `withDeadline` to reject after 100 ms with an error named `TimeoutError`. If the promise is still “pending”, the work will not finish by itself — you need a race with the timer. If the name differs, create the error as `new DOMException(…, \"TimeoutError\")`."
+      - when: { test: "aborts the work's signal at the deadline" }
+        message:
+          uk: "Ця перевірка дивиться на сигнал, який отримала робота, і чекає, що після дедлайну він скасований. Передай роботі сигнал свого контролера й скасуй його в таймері."
+          en: "This check looks at the signal the work received and expects it to be aborted after the deadline. Give the work your own controller’s signal and abort it in the timer."
+      - when: { test: "aborts the work's signal when the caller's signal aborts" }
+        message:
+          uk: "Ця перевірка скасовує сигнал того, хто викликає, через 50 мс і чекає, що сигнал роботи теж скасовано. Підпишись на `abort` переданого `signal` (або об’єднай сигнали через `AbortSignal.any`)."
+          en: "This check aborts the caller’s signal after 50 ms and expects the work’s signal to be aborted too. Listen to `abort` on the given `signal` (or combine the signals with `AbortSignal.any`)."
+      - when: { test: "leaves no timer behind when the work finishes early" }
+        message:
+          uk: "Ця перевірка дає роботу, що завершується одразу, з дедлайном 5 с, і рахує через `activeResources()` таймери, що тримають процес, до й після. Таймер дедлайну, створений через `setTimeout`, треба прибрати через `clearTimeout`, щойно робота завершилася (або взяти `AbortSignal.timeout`, який процес не тримає)."
+          en: "This check gives work that finishes at once, with a 5 s deadline, and counts through `activeResources()` the timers that hold the process, before and after. A deadline timer made with `setTimeout` has to be cleared with `clearTimeout` as soon as the work has finished (or use `AbortSignal.timeout`, which does not hold the process)."
+      - when: { test: "the server answers 503 at its deadline" }
+        message:
+          uk: "Ця перевірка запускає сервер із дедлайном 150 мс і сховищем, що відповідає за 1 с, і чекає `503`. Сервер відповідає `503`, лише коли `withDeadline` відхиляється з `TimeoutError`."
+          en: "This check starts the server with a 150 ms deadline and a storage that answers in 1 s, and expects `503`. The server answers `503` only when `withDeadline` rejects with a `TimeoutError`."
+      - when: { test: "the server stops the repository work when the client leaves" }
+        message:
+          uk: "Ця перевірка обриває запит через 100 мс і чекає, що сигнал, який отримало сховище, буде скасовано протягом 600 мс. Сигнал роботи має реагувати на `signal`, який передає сервер."
+          en: "This check drops the request after 100 ms and expects the signal the storage received to be aborted within 600 ms. The work’s signal must react to the `signal` the server passes in."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-03
+    body:
+      uk: "Перший endpoint твого проєкту цього ще не використовує: крок NO-03 віддає `GET /records` з файла без жодного `AbortController`, і крок NO-04 теж його не додає. Сигнал на кожен запит і дедлайн — необов’язкове доповнення, яке варто зробити, щойно в обробнику з’явиться повільний виклик, що приймає `signal`."
+      en: "Your project’s first endpoint does not use this yet: step NO-03 serves `GET /records` from the file without any `AbortController`, and step NO-04 does not add one either. A per-request signal and a deadline are an optional addition, worth making as soon as your handler gets a slow call that accepts a `signal`."

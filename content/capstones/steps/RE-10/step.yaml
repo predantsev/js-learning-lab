@@ -1,0 +1,98 @@
+# Capstone step of unit RE-10 (wording shared by the four capstones; domain wording is in <capstone>/task.yaml).
+# The compiler also writes the syllabus lesson of kind capstone-step of RE-10 from this file.
+# A local step: done in the learner's editor, terminal and browser; no platform checks. The project page
+# shows only the intro of a local step, so the intro carries the whole procedure.
+# Every command was run on macOS (Node.js 25.2.1, npm 11.6.2, Git 2.51.0, Chrome 154) in a scratch home on
+# all four projects, continuing the RE-09 scratch projects. The failed-load walk-through (chunk deleted,
+# rebuilt, Try again, reload) and the Profiler typing run were driven in headless Chrome 154 against
+# `npm start`; quoted output is from the wishlist run.
+# reference/ holds the same file set as RE-09 (export- and npm-generated files excluded) plus the lazy
+# module and ui/SummaryRoute.tsx (habits also ui/streak.ts and tests/streak.test.js).
+unit: RE-10
+mode: local
+entry: index.html
+title:
+  uk: "Лінивий маршрут і пошук у transition"
+  en: "A lazy route and a search in a transition"
+intro:
+  uk: |
+    Один маршрут проєкту стає окремим файлом, який браузер завантажує лише тоді, коли маршрут відкривають; поки файл іде — `<Suspense>` показує рядок завантаження лише на місці цього маршруту. Пошук над списком лишає поле терміновим, а оновлення списку робить transition. `domain/`, `storage/` і `data/` не змінюються.
+
+    | Проєкт | Лінивий маршрут | Що показує | Пошук за |
+    |---|---|---|---|
+    | Список бажань | `#/items/summary`, `ItemTotals` | кількість, сума бажаного, без ціни | `name` або `category` |
+    | Планувальник | `#/tasks/summary`, `DueToday` | скільки справ станом на сьогодні, справи саме на сьогодні | `title` |
+    | Трекер звичок | `#/habits/summary`, `HabitStreaks` | частка виконань і серія для кожної звички (`ui/streak.ts`) | `name` |
+    | Трекер витрат | `#/expenses/summary`, `CategoryTotals` | суми категорій і загальна | `label` |
+
+    Нижче — «Список бажань»; перевірено на macOS (Node.js 25.2.1, React 19.3.0, TypeScript 7.0.2, esbuild 0.28.2, Chrome 154) на всіх чотирьох проєктах.
+
+    **1. Стан на початку.** `cd ~/js-course/wishlist`, `git status` — чисто, `git log --oneline -1` — commit кроку про схему API. `npm ls react react-dom esbuild` — `esbuild@0.28.2`, `react-dom@19.3.0`, `react@19.3.0`: `lazy`, `Suspense` і `useTransition` — стабільні API цієї версії React.
+
+    **2. Окремі файли збірки.** Без `--splitting` esbuild вкладає модуль з `import()` у той самий `dist/app.js`, і лінивий маршрут нічого не завантажує окремо. У `package.json`: `"build": "esbuild main.tsx --bundle --splitting --sourcemap --format=esm --outdir=dist --entry-names=app"` (з `--format=iife` esbuild каже `Splitting currently only works with the "esm" format`, з `--outfile` — `Must use "outdir" when code splitting is enabled`). `npm run build` друкує `dist/app.js`, `dist/chunk-3WBBQH2Z.js` (спільний код) і `dist/ItemTotals-EC2NVUYJ.js` — назви з хешем у тебе інші. `index.html` не змінюється: `dist/app.js` сам підтягує решту. Тести (`build:tests`) лишаються одним файлом.
+
+    **3. Лінивий модуль.** `ui/ItemTotals.tsx` з `export default function ItemTotals()` — заголовок «Підсумки бажань» з `useHeadingFocus`, `QueryState`, поки список не прийшов, і `<dl>` з `summarizeItems`: «Бажань», «Ще хочу на суму», «Без ціни»; посилання «← До списку». На цей модуль нічого не посилається статично — лише `import()`.
+
+    **4. Маршрут з межами — `ui/SummaryRoute.tsx`.** `loadSummary()` повертає `import("./ItemTotals.tsx")`; `const [Summary, setSummary] = useState(() => lazy(loadSummary));` і `<Suspense fallback={<p role="status">Завантажую підсумки…</p>}>` лише навколо `<Summary />`, а над ним — `ScreenBoundary` з `key={attempt}` і `onRetry={retry}`. React пам’ятає `lazy`, що впав, тому `retry()` робить `setSummary(() => lazy(loadSummary))` і `setAttempt(attempt + 1)` — нова лінива компонента й нова межа. Браузер теж пам’ятає: адресу модуля, що не завантажився, Chrome 154 до перезавантаження сторінки більше не запитує, тож після другої невдачі межа показує ще й «Перезавантажити сторінку» (`location.reload()`; адреса з `#/items/summary` лишається). У `ScreenBoundary` додай необов’язкові `onRetry` і `extra`. Для тестів `summaryImport = { failNext: false, delayMs: 0 }`: `failNext` один раз кидає помилку замість завантаження, `delayMs` затримує його. У `App` маршрут `{ path: "summary", element: <SummaryRoute /> }` стоїть **перед** `:id`, інакше `summary` стане id; на екрані списку — посилання «Підсумки бажань».
+
+    **5. Пошук у transition.** В `ItemsScreen`: `text` — значення поля «Пошук», оновлюється одразу; `const [isPending, startTransition] = useTransition();` і в `onChange` — `setText(value)`, потім `startTransition(() => { setQuery(value); setPages(1); })`. Список — `searchItems(shown, query)`, далі сторінки по 50, як раніше; порожній результат — «Нічого не знайдено.». Поки `isPending`, `<p role="status">` каже «Шукаю…», а список має клас `stale` і `aria-busy` (у `styles.css`: `.stale { opacity: 0.55; }`). З `?synthetic=2000&profile` введення двох знаків дало `profile list update 11.0 ms`, `10.3 ms`, `9.6 ms` — поле не чекає на ці оновлення.
+
+    **6. Тести.** У `tests/ui.test.tsx` `showApp()` спершу повертає адресу на `#/items` (`window.history.replaceState`), бо тест, що відкрив підсумки, лишає свою адресу. Чотири нові тести: з `summaryImport.delayMs = 300` спершу «Завантажую підсумки…» при заголовку проєкту, потім підсумок з числами; `failNext` → `role="alert"` → «Спробувати ще раз» → підсумок; дві невдачі поспіль → кнопка «Перезавантажити сторінку» (її не натискаємо — це перезавантажило б сторінку тестів); введення в «Пошук» — поле одразу має весь текст, а список — одну картку.
+
+    **7. Перевірка.** `npm run typecheck`, `npm run lint` — лише рядки заголовка; `npm test` — `Пройшли: 37 · не пройшли: 0`; `npm start`, `http://127.0.0.1:4310/tests.html` — `Пройшли: 12 · не пройшли: 0`. Ми перевірили, що тести ловлять три хибні версії: «Спробувати ще раз» без нового `lazy`, `Suspense` навколо всього застосунку (fallback ховає заголовок) і пошук, що не фільтрує список.
+
+    **8. Збій завантаження вручну.** При запущеному `npm start` відкрий `http://127.0.0.1:4310/#/items` (DevTools → Network: лише `app.js` і `chunk-….js`), видали `dist/ItemTotals-*.js` і натисни «Підсумки бажань»: «Цей екран не вдалося показати. (Failed to fetch dynamically imported module: http://127.0.0.1:4310/dist/ItemTotals-EC2NVUYJ.js)» і «Спробувати ще раз». В іншому терміналі `npm run build` — файл повернувся. «Спробувати ще раз» — та сама помилка, у Network нового запиту немає, і з’являється «Перезавантажити сторінку»; вона показує «Підсумки бажань» з «Бажань 6», «Ще хочу на суму 365 грн», «Без ціни 1».
+
+    **9. Commit з приміткою про версії.** `git status --short` — ` M index.html`, ` M package.json`, ` M styles.css`, ` M tests/ui.test.tsx`, ` M ui/App.tsx`, ` M ui/ItemsScreen.tsx`, ` M ui/ScreenBoundary.tsx`, `?? ui/ItemTotals.tsx`, `?? ui/SummaryRoute.tsx`. `git add -A`, `git commit -m "Load the summary route lazily and search in a transition" -m "Versions: react 19.3.0, react-dom 19.3.0, esbuild 0.28.2 (npm ls). lazy, Suspense and useTransition are stable React APIs in this version."` — `[main 98b21a2] Load the summary route lazily and search in a transition` і `9 files changed, 188 insertions(+), 10 deletions(-)`.
+
+    **Самоперевірка:** після `npm run build` у `dist/` є окремий файл лінивого модуля, і на списку він не завантажується; fallback з’являється на місці маршруту, а заголовок проєкту лишається; збій із кроку 8 закінчується підсумком після перезавантаження; кожна літера в «Пошук» видна одразу; `tests.html` — `не пройшли: 0`.
+
+    **Якщо щось пішло не так:** `esbuild` пише `Must use "outdir" when code splitting is enabled` — заміни `--outfile=dist/app.js` на `--outdir=dist --entry-names=app`. Посилання відкриває «не знайдено» — маршрут `summary` стоїть після `:id`. «Спробувати ще раз» після штучної помилки (`failNext`) знову показує помилку — `retry()` не створює новий `lazy`.
+
+    Еталон кроку — `Завантажити: RE-10 — Лінивий маршрут і пошук у transition` після експорту. Команди виконано лише на macOS і в Chrome; у Linux, Windows (Git Bash) та інших браузерах їх не запускали — Firefox і Safari можуть поводитися з модулем, що не завантажився, інакше.
+  en: |
+    One route of the project becomes a separate file the browser loads only when the route is opened; while the file is on its way, `<Suspense>` shows a loading line in place of that route only. The search above the list keeps the field urgent and runs the list update as a transition. `domain/`, `storage/` and `data/` do not change.
+
+    | Project | Lazy route | What it shows | Search by |
+    |---|---|---|---|
+    | Wishlist | `#/items/summary`, `ItemTotals` | count, wanted total, without a price | `name` or `category` |
+    | Planner | `#/tasks/summary`, `DueToday` | how many tasks are due as of today, the tasks due exactly today | `title` |
+    | Habit tracker | `#/habits/summary`, `HabitStreaks` | completion rate and streak per habit (`ui/streak.ts`) | `name` |
+    | Expense tracker | `#/expenses/summary`, `CategoryTotals` | category totals and the overall total | `label` |
+
+    Below is the wishlist; checked on macOS (Node.js 25.2.1, React 19.3.0, TypeScript 7.0.2, esbuild 0.28.2, Chrome 154) on all four projects.
+
+    **1. The starting state.** `cd ~/js-course/wishlist`, `git status` — clean, `git log --oneline -1` — the commit of the API schema step. `npm ls react react-dom esbuild` — `esbuild@0.28.2`, `react-dom@19.3.0`, `react@19.3.0`: `lazy`, `Suspense` and `useTransition` are stable APIs of this React version.
+
+    **2. Separate build files.** Without `--splitting`, esbuild puts a module loaded with `import()` into the same `dist/app.js`, and the lazy route loads nothing separately. In `package.json`: `"build": "esbuild main.tsx --bundle --splitting --sourcemap --format=esm --outdir=dist --entry-names=app"` (with `--format=iife` esbuild says `Splitting currently only works with the "esm" format`, with `--outfile` — `Must use "outdir" when code splitting is enabled`). `npm run build` prints `dist/app.js`, `dist/chunk-….js` (shared code) and `dist/ItemTotals-….js` (for us `ItemTotals-57JNKFLI.js`) — your hashed names differ. `index.html` does not change: `dist/app.js` fetches the rest itself. The tests (`build:tests`) stay one file.
+
+    **3. The lazy module.** `ui/ItemTotals.tsx` with `export default function ItemTotals()` — the heading “Wishlist totals” with `useHeadingFocus`, `QueryState` while the list has not arrived, and a `<dl>` from `summarizeItems`: “Wishes”, “Still wanted, total”, “Without a price”; the link “← To the list”. Nothing refers to this module statically — only `import()`.
+
+    **4. The route with its boundaries — `ui/SummaryRoute.tsx`.** `loadSummary()` returns `import("./ItemTotals.tsx")`; `const [Summary, setSummary] = useState(() => lazy(loadSummary));` and `<Suspense fallback={<p role="status">Loading the summary…</p>}>` around `<Summary />` only, and above it a `ScreenBoundary` with `key={attempt}` and `onRetry={retry}`. React remembers a `lazy` that failed, so `retry()` does `setSummary(() => lazy(loadSummary))` and `setAttempt(attempt + 1)` — a new lazy component and a new boundary. The browser remembers too: Chrome 154 does not request the address of a module that failed to load again until the page is reloaded, so after a second failure the boundary also shows “Reload the page” (`location.reload()`; the address with `#/items/summary` stays). Add the optional `onRetry` and `extra` to `ScreenBoundary`. For the tests, `summaryImport = { failNext: false, delayMs: 0 }`: `failNext` throws once instead of loading, `delayMs` delays the load. In `App` the route `{ path: "summary", element: <SummaryRoute /> }` stands **before** `:id`, or `summary` becomes an id; the list screen gets a link “Wishlist totals”.
+
+    **5. The search in a transition.** In `ItemsScreen`: `text` is the value of the “Search” field and updates at once; `const [isPending, startTransition] = useTransition();` and in `onChange` — `setText(value)`, then `startTransition(() => { setQuery(value); setPages(1); })`. The list is `searchItems(shown, query)`, then pages of 50 as before; an empty result says “Nothing found.”. While `isPending`, a `<p role="status">` says “Searching…”, and the list has the class `stale` and `aria-busy` (in `styles.css`: `.stale { opacity: 0.55; }`). With `?synthetic=2000&profile`, typing two characters gave `profile list update 11.0 ms`, `10.3 ms`, `9.6 ms` — the field does not wait for these updates.
+
+    **6. Tests.** In `tests/ui.test.tsx`, `showApp()` first puts the address back to `#/items` (`window.history.replaceState`), because a test that opened the summary leaves its address. Four new tests: with `summaryImport.delayMs = 300` first “Loading the summary…” with the project heading still there, then the summary with its numbers; `failNext` → `role="alert"` → “Try again” → the summary; two failures in a row → the “Reload the page” button (not clicked — it would reload the test page); typing into “Search” — the field has the whole text at once, and the list one card.
+
+    **7. Check.** `npm run typecheck`, `npm run lint` — only the header lines; `npm test` — `Passed: 37 · failed: 0`; `npm start`, `http://127.0.0.1:4310/tests.html` — `Passed: 12 · failed: 0`. We checked that the tests catch three wrong versions: “Try again” without a new `lazy`, `Suspense` around the whole app (the fallback hides the heading) and a search that does not filter the list.
+
+    **8. A failed load by hand.** With `npm start` running, open `http://127.0.0.1:4310/#/items` (DevTools → Network: only `app.js` and `chunk-….js`), delete `dist/ItemTotals-*.js` and press “Wishlist totals”: “This screen could not be shown. (Failed to fetch dynamically imported module: http://127.0.0.1:4310/dist/ItemTotals-57JNKFLI.js)” and “Try again”. In another terminal `npm run build` — the file is back. “Try again” — the same error, no new request in Network, and “Reload the page” appears; it shows “Wishlist totals” with “Wishes 6”, “Still wanted, total UAH 365”, “Without a price 1”.
+
+    **9. A commit with a version note.** `git status --short` — ` M index.html`, ` M package.json`, ` M styles.css`, ` M tests/ui.test.tsx`, ` M ui/App.tsx`, ` M ui/ItemsScreen.tsx`, ` M ui/ScreenBoundary.tsx`, `?? ui/ItemTotals.tsx`, `?? ui/SummaryRoute.tsx`. `git add -A`, `git commit -m "Load the summary route lazily and search in a transition" -m "Versions: react 19.3.0, react-dom 19.3.0, esbuild 0.28.2 (npm ls). lazy, Suspense and useTransition are stable React APIs in this version."` — `[main a5b2a0b] Load the summary route lazily and search in a transition` and `9 files changed, 188 insertions(+), 10 deletions(-)`.
+
+    **Self-check:** after `npm run build`, `dist/` has a separate file for the lazy module, and the list does not load it; the fallback appears in place of the route while the project heading stays; the failure of step 8 ends with the summary after the reload; every letter in “Search” shows at once; `tests.html` — `failed: 0`.
+
+    **If something goes wrong:** `esbuild` says `Must use "outdir" when code splitting is enabled` — replace `--outfile=dist/app.js` with `--outdir=dist --entry-names=app`. The link opens “not found” — the `summary` route stands after `:id`. “Try again” after the simulated error (`failNext`) shows the error again — `retry()` does not create a new `lazy`.
+
+    The step's reference is `Download: RE-10 — A lazy route and a search in a transition` after the export. The commands were run on macOS and in Chrome only; they were not run on Linux, Windows (Git Bash) or in other browsers — Firefox and Safari may treat a module that failed to load differently.
+purpose:
+  uk: "Це крок твого проєкту: лінивий маршрут із власною межею Suspense, повторну спробу після збою завантаження й transition з цього розділу ти застосовуєш до власного застосунку. Платформа цей крок не перевіряє: доказ — окремий файл у `dist/`, тести, ручний збій і commit з приміткою про версії."
+  en: "This is a step of your project: you apply this unit's lazy route behind its own Suspense boundary, the retry after a failed load and the transition to your own app. The platform does not check this step: the evidence is the separate file in `dist/`, the tests, the failure by hand and the commit with its version note."
+objectives:
+  - uk: "Ліниво завантажити один маршрут окремим файлом збірки з межею Suspense лише навколо нього й повторною спробою, що справді працює після збою."
+    en: "Lazy-load one route as a separate build file with a Suspense boundary around it only and a retry that really works after a failure."
+  - uk: "Залишити поле пошуку терміновим, а оновлення списку виконати в transition з видимим станом очікування, і обґрунтувати API встановленою версією React."
+    en: "Keep the search field urgent, run the list update as a transition with a visible pending state, and justify the APIs by the installed React version."
+transfer:
+  uk: "Цей крок виконується в редакторі, терміналі й браузері на твоєму комп’ютері: що змінити, очікуваний вивід і список самоперевірки — вище і на сторінці кроку в проєкті."
+  en: "This step is done in an editor, a terminal and a browser on your computer: what to change, the expected output and the self-check list are above and on the step's page in your project."

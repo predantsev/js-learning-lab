@@ -1,0 +1,353 @@
+id: no-02-06-errors-handle-cleanup
+unit: NO-02
+title:
+  uk: "Помилки й закриття дескрипторів"
+  en: "Errors and handle cleanup"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Розрізняти помилки `fs` за кодом (`ENOENT`, `EACCES`, `EISDIR`, `EEXIST`) і вирішувати, з яких відновлюватися, а про які повідомляти з `cause`."
+    en: "Classify fs errors by code (`ENOENT`, `EACCES`, `EISDIR`, `EEXIST`) and decide which to recover from and which to report with `cause`."
+  - uk: "Гарантувати через `try/finally`, що кожен FileHandle закривається після успіху, після помилки й після раннього `return`, і знаходити шлях, на якому він лишається відкритим."
+    en: "Guarantee with `try/finally` that every FileHandle is closed on success, on error and on early return, and spot the path that leaks one."
+prerequisites: [no-02-05-atomic-recoverable-updates, js-07-03-try-catch-finally]
+subskills:
+  - { family: B-02, skill: "errors and handle cleanup", depth: intro }
+glossary: [error-code, file-descriptor]
+selfCheck: [predict-leak, read-json-file]
+
+blocks:
+  - id: codes-not-messages
+    kind: explanation
+    title:
+      uk: "Розгалужуйся за кодом, а не за текстом"
+      en: "Branch on the code, not the text"
+    body:
+      uk: |
+        Кожна помилка `fs` має властивість `code` — [[error-code|код помилки]]:
+
+        | Код | Що сталося | Що зазвичай робити |
+        |---|---|---|
+        | `ENOENT` | файла немає | часто це очікувано: «ще нічого не збережено» — поверни порожній результат |
+        | `EACCES` | немає дозволу | повідомити: людина має виправити права |
+        | `EISDIR` | це тека, а не файл | повідомити: шлях хибний |
+        | `EEXIST` | файл уже існує (`open(…, 'wx')`) | обрати іншу назву або повідомити |
+
+        `message` — для людей: у ньому часто є шлях, і формулювання може змінитися з версією Node. `code` — частина API, тож у коді пиши `error.code === 'ENOENT'`, а не `error.message.includes(…)`.
+
+        Помилку, з якої ти не відновлюєшся, передавай далі, обгорнувши в нову з [[error-cause|`cause`]]: `new Error('cannot read settings', { cause: error })`. Тоді і зрозуміло, *що* не вдалося, і збережено *чому* — разом із кодом.
+      en: |
+        Every `fs` error has a `code` property — the [[error-code]]:
+
+        | Code | What happened | What to do, usually |
+        |---|---|---|
+        | `ENOENT` | the file does not exist | often expected: “nothing saved yet” — return an empty result |
+        | `EACCES` | no permission | report it: a person must fix the permissions |
+        | `EISDIR` | a folder, not a file | report it: the path is wrong |
+        | `EEXIST` | the file already exists (`open(…, 'wx')`) | pick another name or report it |
+
+        `message` is for people: it often contains the path, and its wording may change between Node versions. `code` is part of the API, so in code write `error.code === 'ENOENT'`, not `error.message.includes(…)`.
+
+        An error you do not recover from, pass on wrapped in a new one with a [[error-cause|`cause`]]: `new Error('cannot read settings', { cause: error })`. Then it is clear *what* failed, and *why* is kept — together with the code.
+
+  - id: error-codes
+    kind: example
+    runtime: isolated-node
+    dir: error-codes
+    entry: index.js
+    strings:
+      missingFile: { uk: "файла немає", en: "a file that does not exist" }
+      folderNotFile: { uk: "тека замість файла", en: "a folder instead of a file" }
+      wxExists: { uk: "створити, але файл уже є", en: "create, but it exists" }
+      noPermission: { uk: "немає дозволу на читання", en: "no permission to read" }
+      noError: { uk: "помилки немає", en: "no error" }
+    title:
+      uk: "Чотири невдачі — чотири коди"
+      en: "Four failures — four codes"
+    body:
+      uk: "Натисни **Запустити**. Програма навмисно робить чотири невдалі операції й друкує `code` і `message` кожної. Порівняй: код — одне коротке слово, а повідомлення — речення для людей, найчастіше зі шляхом (у `EISDIR` шляху немає, тож за самим текстом навіть не видно, яку теку читали). Останній випадок працює на macOS і Linux від звичайного користувача: `chmod` знімає всі дозволи з файла."
+      en: "Press **Run**. The program makes four failing operations on purpose and prints the `code` and `message` of each. Compare: the code is one short word, while the message is a sentence for people, usually with the path (the `EISDIR` one has none, so its text alone does not even say which folder was read). The last case works on macOS and Linux as a normal user: `chmod` removes every permission from the file."
+    tryIt:
+      uk: "Зміни `'wx'` на `'w'` у третій спробі: тепер помилки немає — `'w'` дозволяє перезаписати наявний файл (і спорожнює його!). Поверни `'wx'`."
+      en: "Change `'wx'` to `'w'` in the third attempt: now there is no error — `'w'` allows overwriting the existing file (and empties it!). Change it back to `'wx'`."
+
+  - id: closing-is-yours
+    kind: explanation
+    title:
+      uk: "Закрити файл — твоя робота"
+      en: "Closing the file is your job"
+    body:
+      uk: |
+        Кожен `open` дає процесу [[file-descriptor|файловий дескриптор]] — число, яким система позначає відкритий файл. Кількість дескрипторів на процес обмежує операційна система. Сервер, що «губить» один дескриптор на запит, рано чи пізно отримає `EMFILE` — і перестане відкривати будь-які файли.
+
+        «Збирач сміття закриє». Документація Node 22 радить на це не покладатися: таке закриття може й не відбутися, а сама поведінка застаріла (DEP0137), і Node друкує попередження. З Node 25 це вже помилка, що зупиняє процес (DEP0137 там позначено End-of-Life), — під час підготовки цього уроку Node 25 саме так і зупинився.
+
+        Надійний спосіб — `try/finally`, як у JS-07: `finally` виконується після `return`, після `throw` і після звичайного завершення. Закриття стоїть там — і жоден шлях його не обійде.
+      en: |
+        Every `open` gives the process a [[file-descriptor]] — a number the system uses for the open file. The operating system limits the number of descriptors per process. A server that “loses” one descriptor per request sooner or later gets `EMFILE` — and stops opening any files at all.
+
+        “The garbage collector will close it.” The Node 22 documentation advises against relying on that: such a close may not happen, the behaviour itself is deprecated (DEP0137), and Node prints a warning. Since Node 25 it is an error that stops the process (DEP0137 is marked End-of-Life there) — and Node 25 did stop that way while this lesson was prepared.
+
+        The reliable way is `try/finally`, as in JS-07: `finally` runs after `return`, after `throw` and after a normal finish. The close sits there — and no path can skip it.
+
+  - id: predict-leak
+    kind: prediction
+    prompt:
+      uk: "`readConfig` відкриває файл, і якщо він порожній, одразу повертає `{}`; `close()` стоїть лише після цієї перевірки. Файл `config.json` порожній, функцію викликають 100 разів. Скільки зі ста відкритих FileHandle сама `readConfig` залишить незакритими?"
+      en: "`readConfig` opens the file and, if it is empty, returns `{}` at once; `close()` comes only after that check. The file `config.json` is empty, and the function is called 100 times. How many of the hundred opened FileHandles does `readConfig` itself leave unclosed?"
+    code: |
+      async function readConfig(file) {
+        const handle = await open(file);
+        const text = await handle.readFile('utf8');
+        if (text.trim() === '') return {};
+        await handle.close();
+        return JSON.parse(text);
+      }
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: hundred
+          text:
+            uk: "100: кожен виклик виходить через ранній `return` і не доходить до `close()`"
+            en: "100: every call leaves through the early `return` and never reaches `close()`"
+        - id: zero
+          text:
+            uk: "0: коли функція завершилася, `handle` зникає, і файл закривається сам"
+            en: "0: when the function ends, `handle` is gone, and the file closes by itself"
+          why:
+            uk: "Змінна зникає, але дескриптор лишається відкритим, доки його не закриють. Збирач сміття колись може його прибрати, але це вже не `readConfig`, і покладатися на це не можна, — а з Node 25 це помилка, що зупиняє процес."
+            en: "The variable is gone, but the descriptor stays open until someone closes it. The garbage collector may clean it up at some point, but that is not `readConfig`, and you cannot rely on it — and since Node 25 it is an error that stops the process."
+        - id: one
+          text:
+            uk: "1: Node повторно використовує той самий відкритий файл"
+            en: "1: Node reuses the same open file"
+          why:
+            uk: "Кожен `open` відкриває файл заново й отримує новий дескриптор, навіть для того самого шляху."
+            en: "Every `open` opens the file anew and gets a new descriptor, even for the same path."
+      correct: [hundred]
+    explanation:
+      uk: "Ранній `return` обходить `close()`, тож кожен виклик лишає по відкритому файлу. Їх видно й за номерами дескрипторів: вони ростуть, бо попередні не звільняються. Що буде з ними далі, залежить від збирача сміття й версії Node: під час підготовки уроку Node 20 закрив частину з них ще посеред циклу, друкуючи попередження `Closing file descriptor … on garbage collection` (так поводиться й Node 22 — DEP0137 там лише застаріла поведінка), а Node 25 зупинив процес помилкою. Приклад цього уроку «100 викликів — 100 відкритих файлів» тримає всі FileHandle у масиві, тож збирач сміття їх не чіпає і лічба точна. (Цей фрагмент читає файли через `node:fs/promises`, тому «Запустити й перевірити» його не виконує.)"
+      en: "The early `return` skips `close()`, so every call leaves one file open. You can also see them in the descriptor numbers: they keep growing because the earlier ones are never freed. What happens to them next depends on the garbage collector and the Node version: while this lesson was prepared, Node 20 closed some of them in the middle of the loop, printing the warning `Closing file descriptor … on garbage collection` (Node 22 behaves the same — DEP0137 is only a deprecated behaviour there), while Node 25 stopped the process with an error. This lesson’s example “100 calls — 100 open files” keeps every FileHandle in an array, so the garbage collector leaves them alone and the count is exact. (This snippet reads files through `node:fs/promises`, so “Run and check” does not run it.)"
+
+  - id: leaky-config
+    kind: example
+    runtime: isolated-node
+    dir: leaky-config
+    entry: index.js
+    strings:
+      calls: { uk: "викликів", en: "calls" }
+      stillOpen: { uk: "ще відкриті", en: "still open" }
+      descriptors: { uk: "номери дескрипторів", en: "descriptor numbers" }
+      first: { uk: "перший", en: "first" }
+      last: { uk: "останній", en: "last" }
+    title:
+      uk: "100 викликів — 100 відкритих файлів"
+      en: "100 calls — 100 open files"
+    body:
+      uk: "Натисни **Запустити**. Програма викликає `readConfig` 100 разів для порожнього файла й рахує FileHandle, у яких `fd` ще не `-1`, тобто незакриті. Номери дескрипторів першого й останнього виклику показують, що кожен виклик забрав новий."
+      en: "Press **Run**. The program calls `readConfig` 100 times for an empty file and counts the FileHandles whose `fd` is not `-1` yet, that is, unclosed ones. The descriptor numbers of the first and the last call show that every call took a new one."
+    tryIt:
+      uk: "Перепиши тіло `readConfig` так, щоб після рядка з `descriptors.push(handle.fd)` усе стояло в `try { … } finally { await handle.close(); }`, і прибери окремий `await handle.close();`. Запусти: `ще відкриті: 0`, а перший і останній номер дескриптора однакові — система щоразу видає звільнений."
+      en: "Rewrite the body of `readConfig` so that everything after the line with `descriptors.push(handle.fd)` sits in `try { … } finally { await handle.close(); }`, and remove the separate `await handle.close();`. Run it: `still open: 0`, and the first and last descriptor numbers are the same — the system hands out the freed one each time."
+
+  - id: finally-trace
+    kind: visual
+    visual: code-trace
+    title:
+      uk: "Три читання, один лічильник відкритих файлів"
+      en: "Three reads, one counter of open files"
+    textEquivalent:
+      uk: "Код замінює fs імітацією: open лише збільшує лічильник openHandles, а close зменшує його; справжніх файлів тут немає. readSettings відкриває файл, у try розбирає JSON, у finally закриває. Перше читання, habits.json: open повертає дескриптор, лічильник 1; JSON.parse вдається, значення для return уже обчислено, але перед поверненням виконується finally — close повертає лічильник до 0. Друге читання, missing.json: open кидає помилку з кодом ENOENT ще до того, як файл відкрито, — лічильник не змінився, закривати нічого. Третє читання, broken.json: open вдається, лічильник 1; JSON.parse кидає SyntaxError, але finally усе одно виконується й закриває файл — лічильник 0, і лише потім помилка виходить із функції. Наприкінці програма друкує open handles: 0."
+      en: "The code replaces fs with a stand-in: open only increases the counter openHandles, and close decreases it; there are no real files here. readSettings opens the file, parses JSON in try and closes it in finally. The first read, habits.json: open returns a handle, the counter is 1; JSON.parse succeeds, the value for return is already computed, but before returning, finally runs — close brings the counter back to 0. The second read, missing.json: open throws an error with the code ENOENT before any file is opened — the counter did not change, there is nothing to close. The third read, broken.json: open succeeds, the counter is 1; JSON.parse throws a SyntaxError, but finally still runs and closes the file — the counter is 0, and only then does the error leave the function. At the end the program prints open handles: 0."
+    spec:
+      file: visuals/read-settings.js
+      captions:
+        - at: { line: 16, hit: 1 }
+          text:
+            uk: "Імітація `fs`: `open` лише рахує відкриті файли в `openHandles`, `close` — зменшує лічильник. Перше читання — `habits.json`."
+            en: "A stand-in for `fs`: `open` only counts open files in `openHandles`, `close` decreases the counter. The first read is `habits.json`."
+        - at: { line: 18, kind: return }
+          text:
+            uk: "`JSON.parse` вдався, значення для `return` обчислено, `openHandles` — 1. Але функція ще не повернулася: спершу `finally`."
+            en: "`JSON.parse` succeeded, the value for `return` is computed, `openHandles` is 1. But the function has not returned yet: `finally` comes first."
+        - at: { line: 20, kind: stmt, hit: 1 }
+          text:
+            uk: "`finally` виконується **після** `return` — `close` поверне лічильник до 0."
+            en: "`finally` runs **after** `return` — `close` brings the counter back to 0."
+        - at: { line: 6, kind: throw }
+          text:
+            uk: "`missing.json`: `open` кидає помилку з кодом `ENOENT` ще до відкриття. `openHandles` — 0, закривати нічого: `try` навіть не почався."
+            en: "`missing.json`: `open` throws an error with the code `ENOENT` before anything is opened. `openHandles` is 0, nothing to close: the `try` never even started."
+        - at: { line: 20, kind: stmt, hit: 2 }
+          text:
+            uk: "`broken.json`: файл відкрито (`openHandles` — 1), `JSON.parse` кинув `SyntaxError` — і `finally` все одно виконується."
+            en: "`broken.json`: the file is open (`openHandles` is 1), `JSON.parse` threw a `SyntaxError` — and `finally` still runs."
+        - at: { line: 20, kind: throw }
+          text:
+            uk: "Файл закрито, `openHandles` — 0, і лише тепер `SyntaxError` виходить із функції до `catch` у циклі."
+            en: "The file is closed, `openHandles` is 0, and only now does the `SyntaxError` leave the function for the `catch` in the loop."
+        - at: { line: 32, kind: end }
+          text:
+            uk: "Три шляхи — успіх, `ENOENT`, `SyntaxError` — і жодного відкритого файла: `open handles: 0`."
+            en: "Three paths — success, `ENOENT`, `SyntaxError` — and not one open file: `open handles: 0`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: коли виконується finally і що буває без обробника"
+      en: "Recall: when finally runs and what happens without a handler"
+    items:
+      - id: finally-after-return
+        from: js-07-03-try-catch-finally
+        prompt:
+          uk: "Що надрукує програма?"
+          en: "What does the program print?"
+        code: |
+          function pick() {
+            try {
+              return "from try";
+            } finally {
+              console.log("finally runs");
+            }
+          }
+          console.log(pick());
+        verify:
+          logs: ["finally runs", "from try"]
+        answer:
+          type: choice
+          options:
+            - id: finally-first
+              code: "finally runs\nfrom try"
+            - id: return-skips
+              code: "from try"
+              why:
+                uk: "`return` не обходить `finally`: блок виконується на кожному шляху виходу з `try`, і `return` теж."
+                en: "`return` does not skip `finally`: the block runs on every way out of `try`, `return` included."
+            - id: return-first
+              code: "from try\nfinally runs"
+              why:
+                uk: "`finally` виконується ще до того, як функція повернула значення, тож його рядок друкується раніше, ніж `console.log(pick())` отримає результат."
+                en: "`finally` runs before the function has returned its value, so its line prints before `console.log(pick())` gets the result."
+          correct: [finally-first]
+        explanation:
+          uk: "Значення для `return` обчислено, потім виконується `finally`, і лише тоді функція повертається. Тому `close()` у `finally` спрацьовує навіть після раннього `return`."
+          en: "The value for `return` is computed, then `finally` runs, and only then does the function return. That is why `close()` in `finally` works even after an early `return`."
+      - id: unhandled-error-event
+        from: no-01-05-eventemitter-errors
+        prompt:
+          uk: "Об’єкт EventEmitter у Node випускає подію `'error'`, а обробника `'error'` на ньому немає. Що станеться?"
+          en: "An EventEmitter in Node emits an `'error'` event, and it has no `'error'` listener. What happens?"
+        answer:
+          type: choice
+          options:
+            - id: process-ends
+              text:
+                uk: "Помилку буде кинуто як неперехоплену — і процес завершиться"
+                en: "The error is thrown as an uncaught exception — and the process ends"
+            - id: ignored
+              text:
+                uk: "Подію буде тихо проігноровано, бо її ніхто не слухає"
+                en: "The event is silently ignored, because nobody listens to it"
+              why:
+                uk: "Так поводяться всі інші події, але `'error'` — особлива: без обробника `emit('error', …)` кидає помилку."
+                en: "That is how every other event behaves, but `'error'` is special: without a listener, `emit('error', …)` throws the error."
+            - id: warning-only
+              text:
+                uk: "Node надрукує попередження, і програма працюватиме далі"
+                en: "Node prints a warning, and the program keeps running"
+              why:
+                uk: "Попередження Node друкує, наприклад, коли обробників забагато. Неперехоплена `'error'` — не попередження, а помилка, що зупиняє процес."
+                en: "Node prints a warning, for example, when there are too many listeners. An unhandled `'error'` is not a warning but an error that stops the process."
+          correct: [process-ends]
+        explanation:
+          uk: "Неопрацьована помилка не зникає: вона зупиняє процес. Із файлами так само — помилку треба або обробити (як `ENOENT` → «missing»), або передати далі з `cause`, але не загубити."
+          en: "An unhandled error does not vanish: it stops the process. Same with files — an error must be either handled (like `ENOENT` → “missing”) or passed on with `cause`, but never lost."
+
+  - id: read-json-file
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: read-json-file
+    entry: index.js
+    editable: [app.js]
+    strings:
+      habit1: { uk: "Ранкова зарядка", en: "Morning exercise" }
+      habit3: { uk: "Пити воду", en: "Drink water" }
+    title:
+      uk: "readJsonFile: код помилки, cause і finally"
+      en: "readJsonFile: an error code, cause and finally"
+    instructions:
+      uk: |
+        Зараз `readJsonFile(path)` у `app.js` падає на будь-якій проблемі й лишає файл відкритим, якщо JSON зламаний. Перероби її:
+
+        - наявний JSON-файл → `{ status: 'ok', value }`;
+        - файла немає (код `ENOENT`) → `{ status: 'missing' }`, без помилки;
+        - будь-яка інша невдача — тека замість файла, зламаний JSON — відхиляє нову `Error`, у `cause` якої лежить початкова помилка;
+        - кожен відкритий FileHandle закрито на кожному шляху.
+
+        **Запустити** читає чотири шляхи: звичайний файл, відсутній, зламаний і теку. Перевірка закриття підміняє `open` з `node:fs/promises`, щоб побачити, які FileHandle лишилися відкритими.
+      en: |
+        Right now `readJsonFile(path)` in `app.js` fails on any problem and leaves the file open when the JSON is broken. Rework it:
+
+        - an existing JSON file → `{ status: 'ok', value }`;
+        - no such file (code `ENOENT`) → `{ status: 'missing' }`, no error;
+        - any other failure — a folder instead of a file, broken JSON — rejects with a new `Error` whose `cause` holds the original error;
+        - every FileHandle it opens is closed on every path.
+
+        **Run** reads four paths: a normal file, a missing one, a broken one and a folder. The closing check replaces `open` from `node:fs/promises` to see which FileHandles stayed open.
+    testTitles:
+      'an existing JSON file gives { status: "ok", value }':
+        uk: "Наявний JSON-файл дає `{ status: 'ok', value }`"
+        en: "An existing JSON file gives `{ status: 'ok', value }`"
+      'a missing file gives { status: "missing" }':
+        uk: "Відсутній файл дає `{ status: 'missing' }`"
+        en: "A missing file gives `{ status: 'missing' }`"
+      "a folder rejects with the original fs error as cause":
+        uk: "Тека замість файла відхиляє з початковою помилкою `fs` у `cause`"
+        en: "A folder rejects with the original `fs` error as `cause`"
+      "broken JSON rejects with the SyntaxError as cause":
+        uk: "Зламаний JSON відхиляє з `SyntaxError` у `cause`"
+        en: "Broken JSON rejects with the `SyntaxError` as `cause`"
+      "the FileHandle is closed on every path":
+        uk: "FileHandle закрито на кожному шляху"
+        en: "The FileHandle is closed on every path"
+    hints:
+      nudge:
+        uk: "Помилка «файла немає» виникає ще в `open` — до того, як є що закривати. Решта — після. Скільки окремих місць для перехоплення це підказує?"
+        en: "The “no such file” error happens already in `open` — before there is anything to close. The rest happens after. How many separate places to catch does that suggest?"
+      explanation:
+        uk: "`catch` може вирішувати за `error.code`: один код — очікуваний випадок, з якого повертаєш результат, решта — `throw new Error(опис, { cause: error })`. Для закриття потрібен `finally` навколо всього, що йде після `open`. Схожа будова в коді, що читає кеш: `try { cache = await load(); } catch (error) { if (error.code === 'ENOENT') cache = new Map(); else throw new Error('cache is unreadable', { cause: error }); }`."
+        en: "A `catch` can decide by `error.code`: one code is an expected case from which you return a result, the rest is `throw new Error(description, { cause: error })`. Closing needs a `finally` around everything that comes after `open`. Code that reads a cache has a similar shape: `try { cache = await load(); } catch (error) { if (error.code === 'ENOENT') cache = new Map(); else throw new Error('cache is unreadable', { cause: error }); }`."
+    solutionNote:
+      uk: "`open` має власний `try/catch`: `ENOENT` дає `{ status: 'missing' }`, решта обгортається з `cause`. Після успішного `open` читання й `JSON.parse` стоять у `try` з `finally`, тож файл закривається і після `return`, і після `SyntaxError` чи `EISDIR`. Варіант з одним `try` і `await handle?.close()` у `finally` теж правильний."
+      en: "`open` has its own `try/catch`: `ENOENT` gives `{ status: 'missing' }`, the rest is wrapped with `cause`. After a successful `open`, reading and `JSON.parse` sit in a `try` with `finally`, so the file is closed after `return` and after a `SyntaxError` or `EISDIR` alike. A version with one `try` and `await handle?.close()` in `finally` is correct too."
+    feedback:
+      - when: { test: 'an existing JSON file gives { status: "ok", value }' }
+        message:
+          uk: "Ця перевірка очікує для файла зі звичками рівно `{ status: 'ok', value: <розібраний масив> }`."
+          en: "This check expects exactly `{ status: 'ok', value: <the parsed array> }` for the habits file."
+      - when: { test: 'a missing file gives { status: "missing" }' }
+        message:
+          uk: "Ця перевірка очікує, що для файла, якого немає, функція поверне `{ status: 'missing' }`, а не відхилиться. Перевір `error.code === 'ENOENT'` там, де помилку кидає `open`."
+          en: "This check expects the function to return `{ status: 'missing' }` for a file that does not exist, not to reject. Check `error.code === 'ENOENT'` where `open` throws."
+      - when: { test: "a folder rejects with the original fs error as cause" }
+        message:
+          uk: "Ця перевірка очікує, що для теки функція відхилиться з новою помилкою, `cause` якої — початкова помилка `fs` з кодом (на macOS і Linux — `EISDIR`). Якщо кожна помилка перетворюється на `missing`, справжня проблема ховається."
+          en: "This check expects the function to reject for a folder with a new error whose `cause` is the original `fs` error with its code (`EISDIR` on macOS and Linux). If every error turns into `missing`, the real problem is hidden."
+      - when: { test: "broken JSON rejects with the SyntaxError as cause" }
+        message:
+          uk: "Ця перевірка очікує відхилення з новою помилкою, `cause` якої — `SyntaxError` від `JSON.parse`. Передай її другим аргументом: `{ cause: error }`."
+          en: "This check expects a rejection with a new error whose `cause` is the `SyntaxError` from `JSON.parse`. Pass it as the second argument: `{ cause: error }`."
+      - when: { test: "the FileHandle is closed on every path" }
+        message:
+          uk: "Ця перевірка очікує нуль відкритих FileHandle після читання звичайного файла, зламаного JSON і теки. `close()` має стояти у `finally`, а не лише після успішного розбору."
+          en: "This check expects zero open FileHandles after reading a normal file, broken JSON and a folder. `close()` must sit in `finally`, not only after a successful parse."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-02
+    body:
+      uk: "У кроці проєкту цього розділу репозиторій під час першого запуску ще не знаходить файла даних: `readTextBounded` повертає `null` для `ENOENT` («записів поки немає», і `seed` записує стартові записи), а пошкоджений файл — помилка з `cause`: `npm run check` чекає `cause` типу `SyntaxError`. Кожен відкритий FileHandle закривається у `finally`."
+      en: "In this unit’s project step the repository does not find its data file on the very first start: `readTextBounded` returns `null` for `ENOENT` (“no records yet”, and `seed` writes the starting records), while a damaged file is an error with a `cause` — `npm run check` expects a `cause` of type `SyntaxError`. Every opened FileHandle is closed in `finally`."

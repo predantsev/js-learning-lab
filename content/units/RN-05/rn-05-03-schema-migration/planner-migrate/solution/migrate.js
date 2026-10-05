@@ -1,0 +1,30 @@
+export const CURRENT_VERSION = 1;
+
+// v0 (an older app version): a task had `due` — 'YYYY-MM-DD', or '' (or no `due` at all) when it had no date.
+// v1 (now): a task has `dueDate` — 'YYYY-MM-DD' or null — and no `due`.
+//
+// migrate(snapshot) returns
+//   { ok: true, snapshot }                     the snapshot at CURRENT_VERSION
+//   { ok: false, reason: 'newer' }             written by a newer app version
+//   { ok: false, reason: 'invalid' }           not a { schemaVersion: number, records: [...] } object
+const steps = {
+  0: (records) =>
+    records.map(({ due, ...task }) => ({ ...task, dueDate: due ? due : null })),
+};
+
+export function migrate(snapshot) {
+  const version = snapshot?.schemaVersion;
+  // Only whole versions from 0 up have steps: -1 or 0.5 would reach a step that does not exist.
+  if (!Number.isInteger(version) || version < 0 || !Array.isArray(snapshot.records)) {
+    return { ok: false, reason: 'invalid' };
+  }
+  if (snapshot.schemaVersion > CURRENT_VERSION) {
+    return { ok: false, reason: 'newer' };
+  }
+  let { schemaVersion, records } = snapshot;
+  while (schemaVersion < CURRENT_VERSION) {
+    records = steps[schemaVersion](records);
+    schemaVersion += 1;
+  }
+  return { ok: true, snapshot: { schemaVersion, records } };
+}

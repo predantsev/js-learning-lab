@@ -213,3 +213,22 @@ test('the content validator accepts a prediction whose code does not compile whe
   assert.match(output, /CONTENT VALID: 1 lesson\(s\), 1 example run\(s\), \d+ exercise fixture run\(s\), 1 verified prediction\(s\)/);
   assert.ok(path.isAbsolute(FIXTURE_CONTENT));
 });
+
+test('a local task shows a bilingual tool version in the lesson language and a plain version as written', async () => {
+  const lab = await Lab.start({ distDir });
+  try {
+    await lab.seed('profile', PROFILE);
+    const { page, problems, context } = await openApp(browser, lab, { hash: '#/lesson/js-01-02-fixture-practice/3' });
+    const tools = page.locator('#block-practice-local .tool-list');
+    await tools.waitFor();
+    assert.match(await tools.innerText(), /Node\.js 22\.13/);
+    assert.match(await tools.innerText(), /VS Code будь-яка свіжа версія/);
+    await page.locator('.lang-switch').getByRole('button', { name: 'EN', exact: true }).click();
+    await page.locator('#block-practice-local .tool-list', { hasText: 'VS Code any recent version' }).waitFor();
+    assert.doesNotMatch(await page.locator('#block-practice-local .tool-list').innerText(), /будь-яка/);
+    assert.deepEqual(problems, []);
+    await context.close();
+  } finally {
+    await lab.dispose();
+  }
+});

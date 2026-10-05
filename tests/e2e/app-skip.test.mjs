@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { after, before, test } from 'node:test';
-import { L1, L2, Lab, buildFixtureDist, editor, editorText, launchChrome, onboard, openApp, t, waitFor, waitSaved } from './helpers.mjs';
+import { L1, L2, Lab, buildFixtureDist, editor, editorText, gotoLesson, launchChrome, onboard, openApp, replaceEditor, t, waitFor, waitSaved } from './helpers.mjs';
 
 let distDir;
 let browser;
@@ -174,6 +174,51 @@ test('a failed self-check is recorded without a pass; skipping a whole unit skip
     assert.equal(await lessonProgress(lab, 'js-01-03-fixture-planned'), null, 'planned, unpublished lessons are not touched');
     assert.equal((await lessonProgress(lab, L2)).selfCheck.passedAt, undefined);
     assert.equal(await unit.locator('.state-icon.state-skipped').count(), 2);
+    assert.deepEqual(problems, []);
+    await context.close();
+  } finally {
+    await lab.dispose();
+  }
+});
+
+test('assessment lessons cannot be skipped and their assessment exercise opens the solution only after it passed', async () => {
+  const lab = await Lab.start({ distDir });
+  const A = 'js-02-03-fixture-assessment';
+  try {
+    const { page, problems, context } = await openApp(browser, lab);
+    await onboard(page);
+    await gotoLesson(page, A, 1);
+    const card = page.locator('#block-sum-check');
+    await card.waitFor();
+    assert.equal(await known(page).count(), 0, 'no "I know this" on an assessment lesson');
+    await page.locator('.lesson-footer').getByText(t('uk', 'lesson.assessmentNoSkip')).waitFor();
+    assert.equal(await card.getByRole('button', { name: t('uk', 'hint.solution') }).count(), 0, 'no "Show the solution" before the check passed');
+    await card.getByText(t('uk', 'hint.solutionAfterPass')).waitFor();
+
+    await replaceEditor(page, 'export function sum(a, b) {\n  return b + a;\n}\n');
+    await page.locator('.ws-actions').getByRole('button', { name: t('uk', 'ws.check') }).click();
+    await card.getByRole('button', { name: t('uk', 'hint.solution') }).waitFor({ timeout: 15_000 });
+    assert.equal(await card.getByText(t('uk', 'hint.solutionAfterPass')).count(), 0);
+    await waitFor(async () => (await lessonProgress(lab, A))?.state === 'completed', { message: 'assessment completed through its exercise' });
+
+    // Skipping the unit from the course map leaves an assessment lesson alone.
+    const lab2 = await Lab.start({ distDir });
+    try {
+      const second = await openApp(browser, lab2);
+      await onboard(second.page);
+      await second.page.goto(lab2.url('#/course'));
+      const unit = second.page.locator('.unit-card[aria-labelledby="unit-JS-02"]');
+      await unit.waitFor();
+      second.page.once('dialog', (d) => d.accept());
+      await unit.getByRole('button', { name: t('uk', 'course.skipUnit') }).click();
+      await waitFor(async () => (await lessonProgress(lab2, 'js-02-01-fixture-pages'))?.state === 'skipped', { message: 'unit skipped' });
+      assert.equal(await lessonProgress(lab2, A), null, 'the assessment lesson is not skipped with its unit');
+      assert.equal(await unit.getByRole('button', { name: t('uk', 'course.skipUnit') }).count(), 0, 'nothing skippable is left open');
+      assert.deepEqual(second.problems, []);
+      await second.context.close();
+    } finally {
+      await lab2.dispose();
+    }
     assert.deepEqual(problems, []);
     await context.close();
   } finally {

@@ -9,6 +9,8 @@ import type { FeedbackRule, L10n, RunError, TestResult } from './types';
  */
 export function errorFeedback(rules: readonly FeedbackRule[] | null | undefined, error: Pick<RunError, 'name'> & Partial<Pick<RunError, 'kind'>>): L10n | null {
   const name = error.kind === 'syntax' ? 'SyntaxError' : error.name;
+  // An error without a name (for example a module that failed to link) must not match rules that name a test.
+  if (!name) return null;
   return rules?.find((f) => f.when.error === name)?.message ?? null;
 }
 

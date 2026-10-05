@@ -1,0 +1,376 @@
+id: no-12-06-health-lifecycle-shutdown
+unit: NO-12
+title:
+  uk: "Health-перевірки, життєвий цикл процесу й коректне завершення"
+  en: "Health, process lifecycle and graceful shutdown"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Відкривати маршрути liveness і readiness та пояснювати, чому readiness не проходить, поки сховище недоступне, хоча процес живий."
+    en: "Expose liveness and readiness endpoints and explain why readiness fails while storage is unavailable even though the process is alive."
+  - uk: "На SIGTERM припиняти приймати з’єднання, дочекатися запитів у роботі до крайнього строку, записати сховище на диск і вийти з правильним кодом."
+    en: "On SIGTERM, stop accepting connections, finish in-flight requests within a deadline, flush storage and exit with the right code."
+prerequisites: [no-12-05-ci-checks-artifacts, no-11-06-workers-processes-graceful]
+subskills:
+  - { family: B-10, skill: "process lifecycle/health", depth: intro }
+  - { family: B-10, skill: "graceful shutdown", depth: intro }
+glossary: [liveness-check, readiness-check, graceful-shutdown]
+selfCheck: [predict-sigterm, graceful-server]
+
+blocks:
+  - id: alive-and-ready
+    kind: explanation
+    title:
+      uk: "Живий — ще не готовий"
+      en: "Alive is not yet ready"
+    body:
+      uk: |
+        Те, що процес працює, ще не означає, що сервіс здоровий: він може щойно стартувати й ще відкривати сховище, а може втратити доступ до диска. Тому сервер відповідає на два різні питання:
+
+        - **[[liveness-check|Liveness]]** — `GET /livez`: «процес живий і відповідає». Якщо ні, його треба перезапустити.
+        - **[[readiness-check|Readiness]]** — `GET /readyz`: «можна надсилати запити». Відповідає `503`, поки сховище не готове або поки сервер завершує роботу. Перезапуск тут не потрібен — треба зачекати.
+
+        Хто ставить ці питання? Будь-хто, хто керує процесом: менеджер процесів, проксі перед сервісом, скрипт оновлення, ти з `curl`. Якби був лише один маршрут, живий процес із недоступним сховищем або перезапускали б даремно, або слали б на нього запити, що падають.
+      en: |
+        The process running does not yet mean the service is healthy: it may have just started and still be opening its storage, or it may have lost access to the disk. So a server answers two different questions:
+
+        - **[[liveness-check|Liveness]]** — `GET /livez`: “the process is alive and answering”. If not, it must be restarted.
+        - **[[readiness-check|Readiness]]** — `GET /readyz`: “requests can be sent”. It answers `503` while the storage is not ready or while the server is shutting down. A restart is not needed here — waiting is.
+
+        Who asks these questions? Whoever manages the process: a process manager, a proxy in front of the service, an upgrade script, you with `curl`. With only one route, a live process with unavailable storage would either be restarted for nothing or be sent requests that fail.
+
+  - id: graceful
+    kind: explanation
+    title:
+      uk: "SIGTERM: зупинитися, не загубивши запису"
+      en: "SIGTERM: stop without losing a write"
+    body:
+      uk: |
+        Щоб зупинити сервіс, менеджер процесів надсилає сигнал `SIGTERM` (у NO-03 Ctrl+C надсилав `SIGINT`). Якщо обробника немає, Node завершує процес **одразу**: запит, що саме виконується, обривається посеред роботи, а клієнт отримує обірване з’єднання.
+
+        **[[graceful-shutdown|Коректне завершення]]** — це обробник сигналу, що робить кроки по черзі:
+
+        1. позначає readiness як `503` і лише раз реагує на сигнал;
+        2. `server.close()` — нових з’єднань більше не приймає;
+        3. чекає, доки завершаться запити в роботі, — але не довше за крайній строк (наприклад, 5 с);
+        4. записує сховище на диск (flush) і виходить із кодом `0`;
+        5. якщо строк минув — обриває з’єднання (`server.closeAllConnections()`), пише рядок у журнал і виходить із кодом `1`, щоб було видно, що зупинка не була чистою.
+
+        Одна пастка — keep-alive. Від Node 19 `server.close()` сам закриває з’єднання, які **в цю мить** вільні. Але з’єднання запиту, що ще в роботі, звільняється пізніше, і `close()` чекає, доки його закриє клієнт або спливе `server.keepAliveTimeout` (типово 5 с). Тому під час завершення відповідай із заголовком `Connection: close`: після такої відповіді з’єднання закривається одразу. (`server.closeIdleConnections()` після `close()` документація Node 22 називає непотрібним від Node 19, але нешкідливим.)
+
+        Документація Node.js 22: [`server.close()`](https://nodejs.org/docs/latest-v22.x/api/http.html#serverclosecallback), [події сигналів](https://nodejs.org/docs/latest-v22.x/api/process.html#signal-events).
+      en: |
+        To stop a service, a process manager sends the signal `SIGTERM` (in NO-03 Ctrl+C sent `SIGINT`). Without a handler, Node ends the process **at once**: a request that is running is cut off mid-work, and the client gets a broken connection.
+
+        A **[[graceful-shutdown]]** is a signal handler that takes the steps in turn:
+
+        1. marks readiness as `503` and reacts to the signal only once;
+        2. `server.close()` — no more new connections;
+        3. waits until the requests in flight finish — but not longer than a deadline (for example, 5 s);
+        4. writes the storage to disk (flush) and exits with code `0`;
+        5. if the deadline passed — cuts the connections (`server.closeAllConnections()`), writes a log line and exits with code `1`, so that it is visible the stop was not clean.
+
+        One trap is keep-alive. Since Node 19 `server.close()` itself closes the connections that are idle **at that moment**. But the connection of a request still in flight becomes idle later, and `close()` waits until the client closes it or `server.keepAliveTimeout` runs out (5 s by default). So while shutting down, answer with the header `Connection: close`: after such an answer the connection closes at once. (The Node 22 documentation calls `server.closeIdleConnections()` after `close()` unnecessary since Node 19, but harmless.)
+
+        Node.js 22 documentation: [`server.close()`](https://nodejs.org/docs/latest-v22.x/api/http.html#serverclosecallback), [signal events](https://nodejs.org/docs/latest-v22.x/api/process.html#signal-events).
+
+  - id: shutdown-sequence
+    kind: visual
+    visual: sequence
+    title:
+      uk: "SIGTERM під час повільного PATCH"
+      en: "SIGTERM during a slow PATCH"
+    textEquivalent:
+      uk: "Клієнт надсилає повільний PATCH /expenses/e-01, сервер починає оновлювати сховище. Приходить SIGTERM. Сервер позначає readiness як 503 і викликає server.close(), тож нові з’єднання більше не приймаються: новий запит клієнта отримує ECONNREFUSED. Сховище завершує оновлення, сервер відповідає на PATCH статусом 200 із заголовком Connection: close. Потім сервер записує сховище на диск і виходить із кодом 0. В іншому прогоні оновлення триває довше за крайній строк: сервер обриває з’єднання, пише рядок у журнал і виходить із кодом 1."
+      en: "The client sends a slow PATCH /expenses/e-01, and the server starts updating the store. SIGTERM arrives. The server marks readiness as 503 and calls server.close(), so no new connections are accepted: the client’s new request gets ECONNREFUSED. The store finishes the update, the server answers the PATCH with status 200 and the header Connection: close. Then the server writes the store to disk and exits with code 0. In another run the update takes longer than the deadline: the server cuts the connection, writes a log line and exits with code 1."
+    spec:
+      actors:
+        - { id: client, label: { uk: "Клієнт", en: "Client" } }
+        - { id: server, label: { uk: "Сервер", en: "Server" } }
+        - { id: store, label: { uk: "Сховище", en: "Store" } }
+      messages:
+        - from: client
+          to: server
+          label: "PATCH /expenses/e-01"
+          caption:
+            uk: "Клієнт надсилає повільний PATCH. Сервер починає оновлювати сховище — це триває 400 мс."
+            en: "The client sends a slow PATCH. The server starts updating the store — it takes 400 ms."
+        - from: server
+          to: server
+          kind: note
+          label: "SIGTERM"
+          note: { uk: "readyz → 503; server.close()", en: "readyz → 503; server.close()" }
+          caption:
+            uk: "Приходить `SIGTERM`. Обробник позначає readiness як 503 і викликає `server.close()`: нових з’єднань більше немає, а запит у роботі триває."
+            en: "`SIGTERM` arrives. The handler marks readiness as 503 and calls `server.close()`: no more new connections, while the request in flight goes on."
+        - from: client
+          to: server
+          kind: async
+          label: "GET /expenses"
+          note: { uk: "ECONNREFUSED", en: "ECONNREFUSED" }
+          caption:
+            uk: "Новий запит отримує `ECONNREFUSED`: сервер уже не слухає порт."
+            en: "A new request gets `ECONNREFUSED`: the server no longer listens on the port."
+        - from: store
+          to: server
+          kind: return
+          label: { uk: "оновлено", en: "updated" }
+          caption:
+            uk: "Сховище завершує оновлення в пам’яті."
+            en: "The store finishes the update in memory."
+        - from: server
+          to: client
+          kind: return
+          label: "200 · Connection: close"
+          caption:
+            uk: "PATCH отримує `200`. Заголовок `Connection: close` просить клієнта закрити з’єднання, щоб `server.close()` не чекав keep-alive."
+            en: "The PATCH gets `200`. The header `Connection: close` asks the client to close the connection, so that `server.close()` does not wait for keep-alive."
+        - from: server
+          to: store
+          label: "flush()"
+          note: { uk: "вихід, код 0", en: "exit, code 0" }
+          caption:
+            uk: "Запитів у роботі більше немає: сервер записує сховище на диск і виходить із кодом 0. Жоден підтверджений запис не загубився."
+            en: "No requests are in flight any more: the server writes the store to disk and exits with code 0. No confirmed write was lost."
+        - from: server
+          to: server
+          kind: note
+          label: { uk: "інший прогін: строк минув", en: "another run: deadline passed" }
+          note: { uk: "closeAllConnections(); код 1", en: "closeAllConnections(); code 1" }
+          caption:
+            uk: "Інший прогін: оновлення триває довше за крайній строк. Сервер обриває з’єднання, пише рядок у журнал і виходить із кодом 1 — зупинка не була чистою, і це видно."
+            en: "Another run: the update takes longer than the deadline. The server cuts the connection, writes a log line and exits with code 1 — the stop was not clean, and that is visible."
+
+  - id: predict-sigterm
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "Сервер витрат обробляє PATCH, що триває 600 мс. Через 100 мс після його початку процес отримує `SIGTERM`, а ще за 50 мс приходить новий запит. Що станеться з PATCH і з новим запитом (а) без обробника `SIGTERM` і (б) з обробником, що викликає `server.close()` і виходить після його завершення?"
+      en: "An expense server is handling a PATCH that takes 600 ms. 100 ms after it starts, the process receives `SIGTERM`, and 50 ms later a new request arrives. What happens to the PATCH and to the new request (a) without a `SIGTERM` handler and (b) with a handler that calls `server.close()` and exits once it is done?"
+    answer:
+      type: choice
+      options:
+        - id: cut-vs-finished
+          text:
+            uk: "(а) PATCH обірвано, новий запит відхилено; (б) PATCH отримує 200, новий запит відхилено, процес виходить із кодом 0"
+            en: "(a) the PATCH is cut off, the new request is refused; (b) the PATCH gets 200, the new request is refused, the process exits with code 0"
+        - id: node-waits
+          text:
+            uk: "В обох випадках PATCH отримує 200: Node сам дочекається запитів у роботі"
+            en: "In both cases the PATCH gets 200: Node itself waits for requests in flight"
+          why:
+            uk: "Без обробника сигнал `SIGTERM` завершує процес Node одразу — за 100 мс клієнт отримав обірване з’єднання (`UND_ERR_SOCKET`), а код виходу — сам сигнал. Чекати на запити Node не вміє, доки ти цього не напишеш."
+            en: "Without a handler, the signal `SIGTERM` ends a Node process at once — after 100 ms the client got a broken connection (`UND_ERR_SOCKET`), and the exit reason is the signal itself. Node does not wait for requests unless you write it."
+        - id: new-accepted
+          text:
+            uk: "(б) новий запит теж отримує 200: сервер ще працює, доки не завершився PATCH"
+            en: "(b) the new request gets 200 too: the server is still working until the PATCH finishes"
+          why:
+            uk: "`server.close()` одразу перестає слухати порт, тож нове з’єднання отримує `ECONNREFUSED`. Дочікуються лише запити, що вже були в роботі."
+            en: "`server.close()` stops listening on the port at once, so a new connection gets `ECONNREFUSED`. Only the requests already in flight are waited for."
+        - id: killed-is-fine
+          text:
+            uk: "(а) і (б) однакові: процес усе одно завершується, тож різниці немає"
+            en: "(a) and (b) are the same: the process ends anyway, so there is no difference"
+          why:
+            uk: "Різниця — у запиті: без обробника клієнт отримує обірване з’єднання й не знає, чи збережено його зміну. З обробником він отримує 200, а зміну записано на диск."
+            en: "The difference is in the request: without a handler the client gets a broken connection and does not know whether its change was saved. With a handler it gets 200, and the change is written to disk."
+      correct: [cut-vs-finished]
+    explanation:
+      uk: "Ми виміряли саме це з окремим процесом сервера на Node v25.2.1 і v22.23.3: без обробника PATCH обірвався через ~120 мс (`UND_ERR_SOCKET`), новий запит отримав `ECONNREFUSED`, процес завершився сигналом `SIGTERM`; з обробником PATCH отримав 200 через ~610 мс, новий запит — `ECONNREFUSED`, а процес вийшов із кодом 0."
+      en: "We measured exactly this with a separate server process on Node v25.2.1 and v22.23.3: without a handler the PATCH was cut off after ~120 ms (`UND_ERR_SOCKET`), the new request got `ECONNREFUSED`, and the process ended by the signal `SIGTERM`; with a handler the PATCH got 200 after ~610 ms, the new request `ECONNREFUSED`, and the process exited with code 0."
+
+  - id: expense-shutdown
+    kind: example
+    runtime: isolated-node
+    dir: expense-shutdown
+    entry: index.js
+    capabilities: { network: loopback }
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      received: { uk: "отримано: сервер більше не приймає з’єднань", en: "received: the server accepts no more connections" }
+      flushed: { uk: "сховище записано на диск;", en: "store flushed to disk;" }
+      newRequest: { uk: "новий запит", en: "new request" }
+      inFlight: { uk: "запит у роботі", en: "request in flight" }
+    title:
+      uk: "SIGTERM посеред PATCH"
+      en: "SIGTERM in the middle of a PATCH"
+    body:
+      uk: |
+        Натисни **Запустити**. `index.js` запускає сервер витрат, надсилає повільний PATCH (оновлення триває 400 мс), через 100 мс надсилає **самому собі** справжній сигнал `SIGTERM` — так, як це зробив би менеджер процесів, — і пробує ще один запит. Кожен рядок має позначку часу від запуску.
+
+        Обробник тут найпростіший: `server.close()`, а коли сервер закрився, — запис сховища. Readiness, крайній строк і повторні сигнали ти додаси у вправі.
+      en: |
+        Press **Run**. `index.js` starts the expense server, sends a slow PATCH (the update takes 400 ms), after 100 ms sends a real `SIGTERM` signal **to itself** — the way a process manager would — and tries one more request. Every line is stamped with the time since start.
+
+        The handler here is the simplest one: `server.close()`, and once the server has closed, the store is written. You add readiness, a deadline and repeated signals in the exercise.
+    tryIt:
+      uk: |
+        1. Подивись на час: новий запит отримує `ECONNREFUSED` одразу після сигналу, PATCH отримує 200 приблизно через 310 мс після сигналу (оновлення триває 400 мс), а запис на диск іде слідом. Самі позначки часу залежать від того, як швидко стартує Node: на v25.2.1 PATCH відповів близько 480-ї мілісекунди, на v22.13.1 — близько 980-ї.
+        2. У `server.js` прибери рядок `if (!server.listening) headers.connection = 'close';` і запусти. Тепер між відповіддю на PATCH і записом на диск минає близько 3 секунд (так на Node v25.2.1 і v22.13.1): `server.close()` чекав, доки клієнт сам закриє вільне keep-alive з’єднання — `fetch` робить це за 2 с до `timeout=5`, який сервер оголосив у заголовку `Keep-Alive`. Поверни рядок.
+        3. У `index.js` закоментуй увесь виклик `process.on('SIGTERM', …)` — вісім рядків від `process.on` до `});` на початку рядка (усередині є ще одна `});` з відступом — вона закриває `server.close`) — і запусти. Процес завершується одразу після сигналу, і рядків про PATCH, новий запит і запис на диск у консолі вже немає: обробника немає, і Node зупинив процес сигналом. Платформа показує під кнопкою червоний рядок «Node.js аварійно завершив програму (SIGTERM) — найчастіше через нестачу пам’яті»: здогад про пам’ять тут ні до чого — сигнал надіслав твій же `index.js`. Поверни обробник.
+      en: |
+        1. Look at the times: the new request gets `ECONNREFUSED` right after the signal, the PATCH gets 200 about 310 ms after the signal (the update takes 400 ms), and the write to disk follows. The stamps themselves depend on how fast Node starts: on v25.2.1 the PATCH answered at about the 480th millisecond, on v22.13.1 at about the 980th.
+        2. In `server.js`, remove the line `if (!server.listening) headers.connection = 'close';` and run. Now about 3 seconds pass between the PATCH answer and the write to disk (so on Node v25.2.1 and v22.13.1): `server.close()` waited until the client closed the idle keep-alive connection itself — `fetch` does that 2 s before the `timeout=5` the server announced in its `Keep-Alive` header. Put the line back.
+        3. In `index.js`, comment out the whole call `process.on('SIGTERM', …)` — eight lines from `process.on` to the `});` at the start of a line (there is another, indented `});` inside: it closes `server.close`) — and run. The process ends right after the signal, and the console no longer has the lines about the PATCH, the new request and the write to disk: there is no handler, and Node stopped the process by the signal. The platform shows a red line under the button, “Node.js ended the program abnormally (SIGTERM) — most often it ran out of memory”: the memory guess does not apply here — your own `index.js` sent the signal. Put the handler back.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: Ctrl+C у NO-03"
+      en: "Recall: Ctrl+C in NO-03"
+    items:
+      - id: ctrl-c
+        from: no-03-05-start-stop-restart-local
+        prompt:
+          uk: "У NO-03 сервер `tiny-server.mjs` мав обробник `process.on('SIGINT', () => { … server.close(() => console.log('Server closed. Bye.')); })`. Що надсилає сигнал `SIGINT`, коли ти працюєш у терміналі?"
+          en: "In NO-03 the server `tiny-server.mjs` had the handler `process.on('SIGINT', () => { … server.close(() => console.log('Server closed. Bye.')); })`. What sends the signal `SIGINT` when you work in a terminal?"
+        answer:
+          type: choice
+          options:
+            - id: ctrl-c
+              text:
+                uk: "Натискання Ctrl+C у терміналі, де працює сервер"
+                en: "Pressing Ctrl+C in the terminal where the server runs"
+            - id: close-tab
+              text:
+                uk: "Виклик `server.close()`"
+                en: "Calling `server.close()`"
+              why:
+                uk: "`server.close()` — це те, що обробник **робить** у відповідь на сигнал. Сам сигнал приходить ззовні процесу: від термінала, менеджера процесів чи команди `kill`."
+                en: "`server.close()` is what the handler **does** in response to the signal. The signal itself comes from outside the process: from the terminal, a process manager or the `kill` command."
+            - id: exit
+              text:
+                uk: "`process.exit()` у кінці програми"
+                en: "`process.exit()` at the end of the program"
+              why:
+                uk: "`process.exit()` завершує процес зсередини, без жодного сигналу. Сигнал — це повідомлення процесу ззовні."
+                en: "`process.exit()` ends the process from inside, without any signal. A signal is a message to the process from outside."
+          correct: [ctrl-c]
+        explanation:
+          uk: "Ctrl+C надсилає `SIGINT`, а менеджери процесів зупиняють сервіс сигналом `SIGTERM`. Тому production-сервер обробляє обидва однаково: той самий коректний вихід, хоч би хто його зупиняв."
+          en: "Ctrl+C sends `SIGINT`, while process managers stop a service with the signal `SIGTERM`. So a production server handles both the same way: the same graceful exit, whoever stops it."
+
+  - id: graceful-server
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: graceful-server
+    entry: index.js
+    editable: [app.js]
+    capabilities: { network: loopback, timeoutMs: 30000 }
+    strings:
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      flushed: { uk: "записано на диск", en: "flushed to disk" }
+      later: { uk: "через 150 мс", en: "150 ms later" }
+    title:
+      uk: "Сервер із health-перевірками й коректним завершенням"
+      en: "A server with health checks and a graceful shutdown"
+    instructions:
+      uk: |
+        Допиши `startServer({ port, host, store, deadlineMs = 5000 }, { exit, log })` в `app.js`. `store` має методи `isReady()`, `list()`, `update(id, changes)` (може бути повільним) і `flush()`. `exit(code)` у production — це `process.exit`; перевірки підставляють свою функцію.
+
+        Маршрути:
+
+        - `GET /livez` → завжди `200`;
+        - `GET /readyz` → `200`, коли `store.isReady()` і сервер не завершує роботу, інакше `503`;
+        - `GET /expenses` → `200` і `store.list()`; `PATCH /expenses/<id>` → `200` і результат `store.update(id, тіло)`.
+
+        Сигнали `SIGTERM` і `SIGINT` запускають **одне** коректне завершення (повторні сигнали нічого не роблять):
+
+        1. прибрати свої обробники сигналів із `process`;
+        2. `server.close()` — нових з’єднань не приймати; відповіді під час завершення — із `Connection: close`;
+        3. дочекатися запитів у роботі, але не довше `deadlineMs`;
+        4. встигли — `await store.flush()`, потім `exit(0)`; не встигли — `server.closeAllConnections()`, потім `exit(1)`.
+
+        Перевірки не надсилають справжнього сигналу, а викликають `process.emit('SIGTERM', 'SIGTERM')` — так Node викликає обробники сигналу, але без обробника нічого не зупиняється й перевірка просто не пройде. Після сигналу перевірки чекають на `exit` до 1,5 с.
+      en: |
+        Finish `startServer({ port, host, store, deadlineMs = 5000 }, { exit, log })` in `app.js`. `store` has the methods `isReady()`, `list()`, `update(id, changes)` (it can be slow) and `flush()`. `exit(code)` is `process.exit` in production; the checks pass their own function.
+
+        Routes:
+
+        - `GET /livez` → always `200`;
+        - `GET /readyz` → `200` when `store.isReady()` and the server is not shutting down, otherwise `503`;
+        - `GET /expenses` → `200` and `store.list()`; `PATCH /expenses/<id>` → `200` and the result of `store.update(id, body)`.
+
+        The signals `SIGTERM` and `SIGINT` start **one** graceful shutdown (repeated signals do nothing):
+
+        1. remove your signal handlers from `process`;
+        2. `server.close()` — accept no new connections; answers during the shutdown carry `Connection: close`;
+        3. wait for the requests in flight, but not longer than `deadlineMs`;
+        4. in time — `await store.flush()`, then `exit(0)`; too late — `server.closeAllConnections()`, then `exit(1)`.
+
+        The checks do not send a real signal; they call `process.emit('SIGTERM', 'SIGTERM')` — that is how Node calls signal handlers, but without a handler nothing stops and the check simply fails. After a signal the checks wait up to 1.5 s for `exit`.
+    testTitles:
+      "GET /livez and GET /readyz answer 200 when the store is ready":
+        uk: "`GET /livez` і `GET /readyz` відповідають 200, коли сховище готове"
+        en: "`GET /livez` and `GET /readyz` answer 200 when the store is ready"
+      "GET /readyz answers 503 while the store is not ready, /livez stays 200":
+        uk: "`GET /readyz` відповідає 503, поки сховище не готове, а `/livez` — 200"
+        en: "`GET /readyz` answers 503 while the store is not ready, `/livez` stays 200"
+      "SIGTERM lets the PATCH in flight finish, flushes, then exits with 0":
+        uk: "`SIGTERM` дає PATCH завершитися, записує сховище й виходить із 0"
+        en: "`SIGTERM` lets the PATCH in flight finish, flushes, then exits with 0"
+      "after SIGTERM new connections are refused":
+        uk: "Після `SIGTERM` нові з’єднання відхиляються"
+        en: "After `SIGTERM` new connections are refused"
+      "SIGINT starts the same shutdown":
+        uk: "`SIGINT` запускає те саме завершення"
+        en: "`SIGINT` starts the same shutdown"
+      "past the deadline it cuts the request off and exits with 1":
+        uk: "Після крайнього строку запит обривається, а вихід — із кодом 1"
+        en: "Past the deadline the request is cut off and the exit code is 1"
+      "a second signal does not start a second shutdown":
+        uk: "Другий сигнал не запускає другого завершення"
+        en: "A second signal does not start a second shutdown"
+      "the shutdown removes its signal listeners":
+        uk: "Завершення прибирає свої обробники сигналів"
+        en: "The shutdown removes its signal listeners"
+    hints:
+      nudge:
+        uk: "Заведи прапорець `shuttingDown`. Одна async-функція `shutdown(signal)` обробляє обидва сигнали: на початку перевіряє й ставить прапорець і прибирає себе з `process`, далі — `server.close()` і змагання двох promise: «сервер закрився» проти «минув строк»."
+        en: "Start a flag `shuttingDown`. One async function `shutdown(signal)` handles both signals: at the start it checks and sets the flag and removes itself from `process`, then `server.close()` and a race of two promises: “the server closed” against “the deadline passed”."
+      explanation:
+        uk: "Змагання на іншому прикладі — відповідь кешу або 300 мс, що станеться раніше: `const winner = await Promise.race([cache.get(key), new Promise((resolve) => setTimeout(resolve, 300, 'timeout'))]);`. У тебе перший учасник — `new Promise((resolve) => server.close(() => resolve('closed')))`: колбек `close` викликається, лише коли закрито **всі** з’єднання, тобто запити в роботі завершилися. Обробник, переданий у `process.on`, треба прибрати тією самою функцією: `process.off('SIGTERM', shutdown)`. А щоб `close()` не чекав keep-alive, перевіряй прапорець, коли відповідаєш, і додавай заголовок `connection: 'close'`."
+        en: "A race on another example — a cache answer or 300 ms, whichever comes first: `const winner = await Promise.race([cache.get(key), new Promise((resolve) => setTimeout(resolve, 300, 'timeout'))]);`. Your first runner is `new Promise((resolve) => server.close(() => resolve('closed')))`: the `close` callback is called only when **all** connections are closed, that is, the requests in flight have finished. A handler given to `process.on` must be removed with the very same function: `process.off('SIGTERM', shutdown)`. And so that `close()` does not wait for keep-alive, check the flag when you answer and add the header `connection: 'close'`."
+    solutionNote:
+      uk: "Код виходу тут — повідомлення для того, хто керує процесом: `0` — «зупинився чисто, нічого не втрачено», `1` — «довелося обірвати запити, подивись у журнал». Крайній строк обов’язковий: менеджер процесів не чекатиме вічно й після свого строку надішле `SIGKILL`, який обробити неможливо. Тож краще самому вийти трохи раніше й залишити рядок у журналі. Варіант, що сам рахує запити в роботі й чекає, доки їх стане нуль, теж правильний."
+      en: "The exit code here is a message to whoever manages the process: `0` — “stopped cleanly, nothing lost”, `1` — “had to cut requests off, look at the log”. The deadline is required: a process manager will not wait forever and after its own deadline sends `SIGKILL`, which cannot be handled. So it is better to exit a little earlier yourself and leave a log line. A version that counts the requests in flight itself and waits until there are none is correct too."
+    feedback:
+      - when: { test: "GET /readyz answers 503 while the store is not ready, /livez stays 200" }
+        message:
+          uk: "Ця перевірка дає сховище з `isReady()` = `false` і очікує `/livez` → 200, `/readyz` → 503. Readiness залежить від сховища, liveness — ні."
+          en: "This check gives a store with `isReady()` = `false` and expects `/livez` → 200, `/readyz` → 503. Readiness depends on the store, liveness does not."
+      - when: { test: "SIGTERM lets the PATCH in flight finish, flushes, then exits with 0" }
+        message:
+          uk: "Ця перевірка надсилає PATCH, що триває 300 мс, через 80 мс викликає `SIGTERM` і очікує саме такий порядок: оновлення завершилося → `flush` → `exit(0)`, причому `exit(0)` — протягом 1,5 с після відповіді на PATCH. Чекай на колбек `server.close()`, а не виходь одразу. Якщо в списку є лише `update done`, перевір заголовок `Connection: close`: без нього `close()` чекає keep-alive з’єднання близько 3 с."
+          en: "This check sends a PATCH that takes 300 ms, triggers `SIGTERM` after 80 ms and expects exactly this order: the update finished → `flush` → `exit(0)`, with `exit(0)` within 1.5 s after the PATCH answer. Wait for the `server.close()` callback instead of exiting at once. If the list holds only `update done`, check the `Connection: close` header: without it `close()` waits about 3 s for the keep-alive connection."
+      - when: { test: "after SIGTERM new connections are refused" }
+        message:
+          uk: "Ця перевірка після `SIGTERM` надсилає новий запит і очікує `ECONNREFUSED`. Виклич `server.close()` одразу в обробнику сигналу."
+          en: "This check sends a new request after `SIGTERM` and expects `ECONNREFUSED`. Call `server.close()` right in the signal handler."
+      - when: { test: "SIGINT starts the same shutdown" }
+        message:
+          uk: "Ця перевірка викликає `SIGINT` і очікує `flush`, а потім `exit(0)`. Під’єднай той самий обробник і до `SIGINT`."
+          en: "This check triggers `SIGINT` and expects `flush` and then `exit(0)`. Attach the same handler to `SIGINT` too."
+      - when: { test: "past the deadline it cuts the request off and exits with 1" }
+        message:
+          uk: "Ця перевірка дає оновлення на 2,5 с і `deadlineMs: 200` та очікує `exit(1)` менш ніж за секунду, а PATCH без статусу 200. Порівнюй закриття сервера з таймером через `Promise.race` і після строку виклич `server.closeAllConnections()`."
+          en: "This check gives a 2.5 s update and `deadlineMs: 200` and expects `exit(1)` in under a second, and the PATCH without status 200. Race the server closing against a timer with `Promise.race`, and after the deadline call `server.closeAllConnections()`."
+      - when: { test: "a second signal does not start a second shutdown" }
+        message:
+          uk: "Ця перевірка викликає `SIGTERM`, `SIGTERM` і `SIGINT` поспіль і очікує рівно один виклик `exit(0)`. Познач початок завершення прапорцем і виходь із функції, якщо його вже поставлено."
+          en: "This check triggers `SIGTERM`, `SIGTERM` and `SIGINT` in a row and expects exactly one `exit(0)` call. Mark the start of the shutdown with a flag and return from the function if it is already set."
+      - when: { test: "the shutdown removes its signal listeners" }
+        message:
+          uk: "Ця перевірка рахує обробники `SIGTERM` і `SIGINT` на `process` після завершення й очікує стільки ж, скільки було до `startServer`. Прибери обидва через `process.off` тією самою функцією."
+          en: "This check counts the `SIGTERM` and `SIGINT` handlers on `process` after the shutdown and expects as many as before `startServer`. Remove both with `process.off` and the very same function."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-12
+    body:
+      uk: "У кроці проєкту цього розділу сервер отримує `GET /livez`, `GET /readyz` (`200`, лише коли сховище читається й завершення не почалося, інакше `503`) і одне завершення для `SIGTERM` і `SIGINT` з дедлайном `SHUTDOWN_DEADLINE_MS`: нові з’єднання не приймаються, запити в польоті завершуються — код `0`, не встигли — обрив і код `1`. `tests/ops.test.ts` перевіряє це на справжньому процесі, як у прикладі: запит у польоті, сигнал — відповідь `201` і запис на диску; репетиція повторює це під `npm run load`."
+      en: "In this unit’s project step the server gets `GET /livez`, `GET /readyz` (`200` only while the store reads and the shutdown has not begun, `503` otherwise) and one shutdown for `SIGTERM` and `SIGINT` with the `SHUTDOWN_DEADLINE_MS` deadline: new connections are refused, the requests in flight finish — exit code `0`; if they do not make it, the connections are cut and the code is `1`. `tests/ops.test.ts` checks it on a real process, as in the example: a request in flight, a signal — a `201` and the record on disk; the rehearsal repeats it under `npm run load`."

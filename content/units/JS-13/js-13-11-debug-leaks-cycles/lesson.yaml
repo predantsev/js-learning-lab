@@ -1,0 +1,360 @@
+id: js-13-11-debug-leaks-cycles
+unit: JS-13
+title:
+  uk: "Налагодження: listener, що витікає, розбіжність байтів і тексту, цикл імпортів"
+  en: "Debug: leaked listener, byte/text mismatch, import cycle"
+kind: instructional
+minutes: 15
+contentVersion: 1
+objectives:
+  - uk: "Знайти й прибрати listener, що витікає, і забутий інтервал за лічильником живих об’єктів, із прибиранням, яке спрацьовує й передає помилку далі, коли налаштування падає."
+    en: "Find and remove a leaked listener and a forgotten interval with the live-object counter, with cleanup that still runs and rethrows when setup fails."
+  - uk: "Виправити розбіжність байтів і тексту (`length` замість кількості байтів, декодування кожного шматка окремо) та цикл імпортів, що проявляється як `ReferenceError` під час завантаження."
+    en: "Repair a byte/text mismatch (`length` used as a byte count, per-chunk decoding) and an import cycle that surfaces as a `ReferenceError` at load."
+prerequisites: [js-13-10-weakref-resources-legacy]
+subskills:
+  - { family: J-12, skill: "encoding boundaries", depth: assess }
+  - { family: J-12, skill: "listeners/timers/handles cleanup", depth: assess }
+  - { family: J-12, skill: "memory leak diagnosis", depth: assess }
+  - { family: J-10, skill: "cleanup and propagation", depth: assess }
+  - { family: J-10, skill: "module load/circular dependency diagnosis", depth: assess }
+glossary: []
+selfCheck: [predict-first-symptom, repair]
+
+blocks:
+  - id: five-defects
+    kind: explanation
+    title:
+      uk: "Один проєкт — п’ять дефектів цього розділу"
+      en: "One project — five defects of this unit"
+    body:
+      uk: |
+        У невеликому проєкті сховано п’ять дефектів, і кожен ти вже бачив окремо:
+
+        | Файл | Дефект | Симптом |
+        |---|---|---|
+        | `panel.js` | `teardown` не знімає listener з `document` і не зупиняє інтервал | лічильник живих росте з кожним циклом |
+        | `panel.js` | `catch` ковтає помилку `render` і нічого не прибирає | помилки не видно, а лічильник росте ще більше |
+        | `text.js` | кожен шматок байтів декодується окремо | `Київ` стає `К��їв` |
+        | `text.js` | `byteLength` повертає `length` | 20 байтів «влазять» у ліміт 16 |
+        | `limits.js` ↔ `describe.js` | цикл імпортів | `ReferenceError` під час завантаження |
+
+        Головне правило налагодження — **спершу те, що зупиняє все**. Поки модулі не завантажуються, жоден інший симптом не видно. Далі — по одному дефекту: виправив, запустив, порівняв із лічильником і консоллю.
+      en: |
+        A small project hides five defects, and you have already seen each one on its own:
+
+        | File | Defect | Symptom |
+        |---|---|---|
+        | `panel.js` | `teardown` does not remove the listener from `document` and does not stop the interval | the live counter grows with every cycle |
+        | `panel.js` | `catch` swallows the `render` error and cleans up nothing | no error is visible, and the counter grows even more |
+        | `text.js` | every chunk of bytes is decoded on its own | `Київ` becomes `К��їв` |
+        | `text.js` | `byteLength` returns `length` | 20 bytes “fit” into the limit of 16 |
+        | `limits.js` ↔ `describe.js` | an import cycle | a `ReferenceError` while loading |
+
+        The main debugging rule is **first whatever stops everything**. While the modules do not load, no other symptom is visible. Then one defect at a time: fix, run, compare with the counter and the console.
+
+  - id: predict-first-symptom
+    kind: prediction
+    prompt:
+      uk: "Проєкт з усіма п’ятьма дефектами запускають уперше. `index.js` імпортує `counter.js`, `panel.js` і `text.js`, а `text.js` — `limits.js`, який утворює цикл із `describe.js`. Що з’явиться в консолі?"
+      en: "The project with all five defects is run for the first time. `index.js` imports `counter.js`, `panel.js` and `text.js`, and `text.js` imports `limits.js`, which forms a cycle with `describe.js`. What appears in the console?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: only-error
+          text:
+            uk: "Лише картка помилки: `ReferenceError: Cannot access 'MAX_BYTES' before initialization` у `describe.js`. Жодного рядка з `index.js`."
+            en: "Only an error card: `ReferenceError: Cannot access 'MAX_BYTES' before initialization` in `describe.js`. Not a single line from `index.js`."
+        - id: counter-first
+          text:
+            uk: "Спершу рядок лічильника, потім `К��їв`, а потім помилка, коли дійде до ліміту."
+            en: "First the counter line, then `К��їв`, and then the error when it gets to the limit."
+          why:
+            uk: "Імпорти виконуються до першого рядка `index.js`. Помилка під час виконання `describe.js` зупиняє завантаження, тож код `index.js` не починається взагалі."
+            en: "Imports run before the first line of `index.js`. The error while running `describe.js` stops loading, so the code of `index.js` does not start at all."
+        - id: all-symptoms
+          text:
+            uk: "Усі п’ять симптомів одночасно: лічильник, зламаний текст, `null`, без помилки `render` і `ReferenceError`."
+            en: "All five symptoms at once: the counter, broken text, `null`, no `render` error, and a `ReferenceError`."
+          why:
+            uk: "Дефекти ховають одне одного: поки цикл зупиняє завантаження, решта коду не виконується й інших симптомів не видно."
+            en: "Defects hide each other: while the cycle stops loading, the rest of the code does not run, and no other symptom is visible."
+      correct: [only-error]
+    explanation:
+      uk: "Під час підготовки уроку цей проєкт запускали в пісочниці: консоль порожня, картка показує `ReferenceError` у `describe.js`, рядок 3. Тому починають із циклу — лише тоді проявляться інші дефекти."
+      en: "While this lesson was prepared, the project was run in the sandbox: the console is empty, and the card shows a `ReferenceError` in `describe.js`, line 3. So you start with the cycle — only then do the other defects show."
+
+  - id: symptoms
+    kind: example
+    runtime: browser-js
+    dir: symptoms
+    entry: index.js
+    strings:
+      summary: { uk: "Витрат за тиждень: 6", en: "Expenses this week: 6" }
+      live: { uk: "живих listeners і таймерів:", en: "live listeners and timers:" }
+      tooBig: { uk: "понад {max} байтів", en: "over {max} bytes" }
+      broken: { uk: "не вдалося намалювати панель", en: "could not draw the panel" }
+    title:
+      uk: "Той самий проєкт, але цикл уже розірвано"
+      en: "The same project, with the cycle already broken"
+    body:
+      uk: |
+        Тут цикл імпортів уже виправлено, тож видно решту симптомів. `counter.js` рахує кожен listener і кожен інтервал, які ще живі. Натисни **Запустити** й зістав рядки з таблицею дефектів:
+
+        - `5 5` після п’яти циклів — кожен `teardown` лишає listener `keydown` і інтервал;
+        - `К��їв` — шматки декодовано окремо;
+        - `null` — 20 байтів «влізли» в ліміт;
+        - `render failed` замість тексту помилки — її проковтнуто;
+        - `7 6` наприкінці — невдале монтування додало ще два listeners і інтервал і нічого не прибрало.
+      en: |
+        Here the import cycle is already fixed, so the other symptoms are visible. `counter.js` counts every listener and every interval that is still live. Press **Run** and match the lines with the table of defects:
+
+        - `5 5` after five cycles — each `teardown` leaves a `keydown` listener and an interval;
+        - `К��їв` — the chunks were decoded separately;
+        - `null` — 20 bytes “fit” into the limit;
+        - `render failed` instead of the error's text — it was swallowed;
+        - `7 6` at the end — the failed mount added two more listeners and an interval and cleaned up nothing.
+    tryIt:
+      uk: |
+        1. У `panel.js` в `teardown` додай `document.removeEventListener("keydown", onKey);`. Запусти: перший рядок лічильника — `0 5`. Listeners більше не течуть, а таймери — так.
+        2. Додай туди ж `clearInterval(timer);`. Тепер `0 0`. Останній рядок досі `2 1`: невдале монтування нічого не прибрало. Це виправиш у вправі.
+      en: |
+        1. In `panel.js`, in `teardown`, add `document.removeEventListener("keydown", onKey);`. Run: the first counter line is `0 5`. Listeners no longer leak, but timers still do.
+        2. Add `clearInterval(timer);` there too. Now `0 0`. The last line is still `2 1`: the failed mount cleaned up nothing. You will fix that in the exercise.
+
+  - id: leak-graph
+    kind: visual
+    visual: memory-graph
+    strings:
+      more3: { uk: "… ще 3", en: "… 3 more" }
+    title:
+      uk: "Що тримає старі панелі після п’яти циклів"
+      en: "What holds on to old panels after five cycles"
+    textEquivalent:
+      uk: "Після п’яти циклів монтування й teardown зі старим teardown: document тримає п’ять listeners keydown, а браузер — п’ять інтервалів; кожна з цих функцій замикає root, тож панель і її дані утримано, хоча teardown уже відпрацював. Лічильник показує 5 і 5. Коли teardown знімає keydown через removeEventListener з тією самою функцією onKey і зупиняє інтервал через clearInterval(timer), після тих самих п’яти циклів ні в document, ні в браузера не лишається жодної функції цієї панелі: лічильник показує 0 і 0, а від коренів до root веде лише змінна, через яку його показують."
+      en: "After five mount and teardown cycles with the old teardown: document holds five keydown listeners, and the browser five intervals; each of these functions closes over root, so the panel and its data are retained although teardown has already run. The counter shows 5 and 5. Once teardown removes keydown through removeEventListener with the same onKey function and stops the interval with clearInterval(timer), after the same five cycles neither document nor the browser keeps any function of this panel: the counter shows 0 and 0, and the only path from the roots to root is the variable through which it is shown."
+    spec:
+      code: |
+        for (let i = 0; i < 5; i = i + 1) {
+          const teardown = mountPanel(root, render);
+          teardown();
+        }
+      states:
+        - caption:
+            uk: "Старий `teardown`: після 5 циклів `document` тримає 5 listeners `keydown`, браузер — 5 інтервалів. Кожна функція замикає `root`."
+            en: "The old `teardown`: after 5 cycles `document` holds 5 `keydown` listeners, the browser 5 intervals. Every function closes over `root`."
+          line: 3
+          bindings:
+            - { name: root, kind: const, value: { ref: section } }
+            - { name: document, kind: var, value: { ref: doc } }
+            - { name: timers, kind: var, value: { ref: ticking } }
+          heap:
+            section: { kind: object, ctor: HTMLElement, props: { tag: "section" } }
+            doc: { kind: object, props: { keydownListeners: { ref: keys } } }
+            keys: { kind: object, ctor: "Array(5)", props: { "[0]": { ref: k1 }, "[1…3]": "%%more3%%", "[4]": { ref: k5 } } }
+            k1: { kind: object, ctor: closure, props: { root: { ref: section } } }
+            k5: { kind: object, ctor: closure, props: { root: { ref: section } } }
+            ticking: { kind: object, ctor: "Array(5)", props: { "[0]": { ref: t1 }, "[1…3]": "%%more3%%", "[4]": { ref: t5 } } }
+            t1: { kind: object, ctor: closure, props: { root: { ref: section } } }
+            t5: { kind: object, ctor: closure, props: { root: { ref: section } } }
+        - caption:
+            uk: "Виправлений `teardown` знімає `onKey` і зупиняє інтервал. Після тих самих 5 циклів обидва списки порожні — лічильник показує `0 0`."
+            en: "The fixed `teardown` removes `onKey` and stops the interval. After the same 5 cycles both lists are empty — the counter shows `0 0`."
+          line: 3
+          bindings:
+            - { name: root, kind: const, value: { ref: section } }
+            - { name: document, kind: var, value: { ref: doc } }
+            - { name: timers, kind: var, value: { ref: ticking } }
+          heap:
+            section: { kind: object, ctor: HTMLElement, props: { tag: "section" } }
+            doc: { kind: object, props: { keydownListeners: { ref: keys } } }
+            keys: { kind: array, items: [] }
+            ticking: { kind: array, items: [] }
+          changed: [keys, ticking]
+
+  - id: predict-leftovers
+    kind: prediction
+    prompt:
+      uk: "Після того як `teardown` виправлено, останній рядок лічильника — `2 1`. Звідки ці два listeners і один інтервал?"
+      en: "After `teardown` was fixed, the last counter line is `2 1`. Where do those two listeners and one interval come from?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: failed-mount
+          text:
+            uk: "З монтування, у якому `render` кинув помилку: `catch` повернув порожню функцію, тож `keydown`, `click` та інтервал ніхто не зняв."
+            en: "From the mount where `render` threw: the `catch` returned an empty function, so nobody removed `keydown`, `click` and the interval."
+        - id: counter-bug
+          text:
+            uk: "Лічильник помиляється: після помилки браузер сам знімає listeners."
+            en: "The counter is wrong: after an error the browser removes the listeners by itself."
+          why:
+            uk: "Браузер нічого не знімає сам — ні після помилки, ні після `remove()` елемента. Лічильник показує правду."
+            en: "The browser removes nothing by itself — neither after an error nor after `remove()` of an element. The counter tells the truth."
+        - id: last-cycle
+          text:
+            uk: "З останнього з п’яти циклів: `teardown` спрацьовує із запізненням."
+            en: "From the last of the five cycles: `teardown` works with a delay."
+          why:
+            uk: "`teardown` синхронний: після п’яти циклів лічильник уже був `0 0`. Зайве додало саме невдале монтування."
+            en: "`teardown` is synchronous: after five cycles the counter was already `0 0`. The extra items were added by the failed mount."
+      correct: [failed-mount]
+    explanation:
+      uk: "Коли налаштування падає на півдорозі, `teardown` ніхто не отримує. Тому прибрати мусить сам `mountPanel` — у `catch` чи `finally` — і передати помилку далі, а не ковтати її."
+      en: "When setup fails part-way, nobody receives `teardown`. So `mountPanel` itself must clean up — in `catch` or `finally` — and pass the error on instead of swallowing it."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: проковтнута помилка"
+      en: "Recall: a swallowed error"
+    items:
+      - id: swallowed
+        from: js-07-09-debug-swallowed-errors
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          function load(text) {
+            try {
+              return JSON.parse(text);
+            } catch (error) {
+              return [];
+            }
+          }
+          const records = load("{ broken");
+          console.log(records.length);
+        verify:
+          logs: ["0"]
+        answer:
+          type: choice
+          options:
+            - id: zero
+              code: "0"
+            - id: syntax-error
+              code: "SyntaxError"
+              why:
+                uk: "`catch` перехопив `SyntaxError` і повернув `[]` — помилка до викликача не дійшла. Саме тому така помилка «проковтнута»."
+                en: "The `catch` caught the `SyntaxError` and returned `[]` — the error never reached the caller. That is exactly why it is “swallowed”."
+          correct: [zero]
+        explanation:
+          uk: "Програма каже «0 записів», хоча насправді дані зламані. З `mountPanel` так само: `catch`, що повертає порожню функцію, ховає і помилку, і невидалені listeners."
+          en: "The program says “0 records”, although the data is actually broken. `mountPanel` is the same: a `catch` that returns an empty function hides both the error and the listeners that were not removed."
+
+  - id: repair
+    kind: exercise
+    mode: debug
+    runtime: browser-js
+    dir: repair
+    entry: index.js
+    editable: [panel.js, text.js, limits.js, describe.js]
+    strings:
+      summary: { uk: "Витрат за тиждень: 6", en: "Expenses this week: 6" }
+      live: { uk: "живих listeners і таймерів:", en: "live listeners and timers:" }
+      tooBig: { uk: "понад {max} байтів", en: "over {max} bytes" }
+      broken: { uk: "не вдалося намалювати панель", en: "could not draw the panel" }
+    title:
+      uk: "Виправ п’ять дефектів"
+      en: "Repair five defects"
+    instructions:
+      uk: |
+        Це проєкт з усіма п’ятьма дефектами. Виправ кожен **найменшою зміною**, по одному, щоразу запускаючи програму:
+
+        1. цикл імпортів `limits.js` ↔ `describe.js` — обидва модулі мають і далі експортувати те саме (`MAX_BYTES` і `checkSize` з `limits.js`, `LIMIT_TEXT` з `describe.js`), а циклу в графі не має лишитися;
+        2. `teardown` у `panel.js` знімає **всі** listeners і зупиняє інтервал;
+        3. якщо `render` кидає помилку, `mountPanel` прибирає все, що встиг увімкнути, і передає **ту саму** помилку далі;
+        4. `decodeChunks` склеює літери, розрізані між шматками;
+        5. `byteLength` рахує байти UTF-8.
+
+        `index.js` і `counter.js` змінювати не можна. Готова програма друкує `0 0`, `Київ`, текст ліміту, текст помилки малювання і знову `0 0`.
+      en: |
+        This is the project with all five defects. Repair each one with **the smallest change**, one at a time, running the program every time:
+
+        1. the import cycle `limits.js` ↔ `describe.js` — both modules must keep exporting the same things (`MAX_BYTES` and `checkSize` from `limits.js`, `LIMIT_TEXT` from `describe.js`), and no cycle must remain in the graph;
+        2. `teardown` in `panel.js` removes **all** listeners and stops the interval;
+        3. if `render` throws, `mountPanel` cleans up everything it has switched on and passes **the same** error on;
+        4. `decodeChunks` joins letters cut between chunks;
+        5. `byteLength` counts UTF-8 bytes.
+
+        You cannot change `index.js` and `counter.js`. The finished program prints `0 0`, `Київ`, the limit's text, the drawing error's text and `0 0` again.
+    testTitles:
+      "the program prints 0 0, Київ, the limit, the render error and 0 0":
+        uk: "Програма друкує 0 0, Київ, ліміт, помилку малювання і 0 0"
+        en: "The program prints 0 0, Київ, the limit, the render error and 0 0"
+      "every module loads and no import cycle remains":
+        uk: "Усі модулі завантажуються, і циклу імпортів не лишилося"
+        en: "Every module loads and no import cycle remains"
+      "the limit modules keep their exports":
+        uk: "Модулі ліміту зберегли свої експорти"
+        en: "The limit modules keep their exports"
+      "five mount/teardown cycles leave no listener and no timer":
+        uk: "П’ять циклів mount/teardown не лишають ні listener, ні таймера"
+        en: "Five mount/teardown cycles leave no listener and no timer"
+      "after teardown Escape and clicks change nothing":
+        uk: "Після teardown Escape і кліки нічого не змінюють"
+        en: "After teardown Escape and clicks change nothing"
+      "a failing render is cleaned up and its own error reaches the caller":
+        uk: "Після помилки `render` усе прибрано, а викликач отримує саме її"
+        en: "A failing `render` is cleaned up and its own error reaches the caller"
+      "chunks are decoded without breaking letters":
+        uk: "Шматки декодовано без зламаних літер"
+        en: "Chunks are decoded without breaking letters"
+      "byteLength counts UTF-8 bytes":
+        uk: "`byteLength` рахує байти UTF-8"
+        en: "`byteLength` counts UTF-8 bytes"
+    hints:
+      nudge:
+        uk: "Почни з картки помилки: який модуль читає значення, яке ще не ініціалізовано, і хто з ким імпортує одне одного? Потім стеж за рядками лічильника: що кожен цикл лишає по собі?"
+        en: "Start with the error card: which module reads a value that is not initialized yet, and who imports whom in both directions? Then watch the counter lines: what does each cycle leave behind?"
+      explanation:
+        uk: "Цикл розриває переселення спільного значення туди, звідки обидва модулі можуть його взяти без зустрічної стрілки, а експорт зберігає `export { … }`. Кожне «увімкнув» у `mountPanel` (два listeners, інтервал) потребує пари в `teardown` — з **тими самими** функціями й номером. Для помилки в `render` прибирання й повторне кидання тієї самої помилки (або `finally` з прапорцем) не дають `catch` нічого сховати. Для байтів: один декодер із `{ stream: true }` на всі шматки й фінальний виклик без нього; довжину в байтах дає `TextEncoder`."
+        en: "Moving the shared value to where both modules can take it without an arrow pointing back breaks the cycle, and `export { … }` keeps the export. Every “switch on” in `mountPanel` (two listeners, an interval) needs a partner in `teardown` — with **the same** functions and id. For the error in `render`, cleaning up and throwing the same error again (or `finally` with a flag) leaves nothing for the `catch` to hide. For bytes: one decoder with `{ stream: true }` for all chunks and a final call without it; `TextEncoder` gives the length in bytes."
+    solutionNote:
+      uk: "`MAX_BYTES` переїхав у `describe.js`, а `limits.js` бере його звідти й експортує далі — стрілок назад немає. `teardown` знімає `onKey` з `document`, `onClick` з `root` і зупиняє `timer`; при помилці `render` `catch` викликає `teardown` і кидає ту саму помилку. `decodeChunks` використовує один декодер із `stream: true`, а `byteLength` — `TextEncoder`."
+      en: "`MAX_BYTES` moved into `describe.js`, and `limits.js` takes it from there and exports it on — there are no arrows back. `teardown` removes `onKey` from `document`, `onClick` from `root` and stops `timer`; when `render` fails, the `catch` calls `teardown` and throws the same error. `decodeChunks` uses one decoder with `stream: true`, and `byteLength` uses `TextEncoder`."
+    feedback:
+      - when: { test: "the program prints 0 0, Київ, the limit, the render error and 0 0" }
+        message:
+          uk: "Ця перевірка очікує п’ять рядків: лічильник `0 0`, `Київ`, текст ліміту на 16 байтів, текст помилки малювання і знову `0 0`. Порожня консоль означає, що модулі досі не завантажуються."
+          en: "This check expects five lines: the counter `0 0`, `Київ`, the text of the 16-byte limit, the drawing error's text and `0 0` again. An empty console means the modules still do not load."
+      - when: { test: "every module loads and no import cycle remains" }
+        message:
+          uk: "Ця перевірка імпортує кожен модуль і очікує, що жоден не кидає помилку, а потім будує граф імпортів і показує знайдений цикл стрілками. Програма може запуститися й із циклом — але його не має лишитися."
+          en: "This check imports every module and expects none to throw, then builds the import graph and shows a cycle it found as arrows. The program may start even with a cycle — but none must remain."
+      - when: { test: "the limit modules keep their exports" }
+        message:
+          uk: "Ця перевірка очікує `MAX_BYTES` 16 і функцію `checkSize` з `limits.js` (16 — `null`, 17 — текст ліміту) і `LIMIT_TEXT` з `describe.js`."
+          en: "This check expects `MAX_BYTES` 16 and the function `checkSize` from `limits.js` (16 gives `null`, 17 the limit's text) and `LIMIT_TEXT` from `describe.js`."
+      - when: { test: "five mount/teardown cycles leave no listener and no timer" }
+        message:
+          uk: "Ця перевірка порівнює лічильник до і після п’яти циклів `mountPanel` + `teardown` і очікує ті самі числа. Якщо listeners більше — `teardown` знімає не все; якщо таймерів — не зупиняє інтервал."
+          en: "This check compares the counter before and after five `mountPanel` + `teardown` cycles and expects the same numbers. More listeners means `teardown` does not remove everything; more timers means it does not stop the interval."
+      - when: { test: "after teardown Escape and clicks change nothing" }
+        message:
+          uk: "Ця перевірка після `teardown` натискає Escape і клікає панель: `hidden` має лишитися `false`, а `data-clicks` — не з’явитися."
+          en: "After `teardown` this check presses Escape and clicks the panel: `hidden` must stay `false`, and `data-clicks` must not appear."
+      - when: { test: "a failing render is cleaned up and its own error reaches the caller" }
+        message:
+          uk: "Ця перевірка дає `render`, що кидає помилку, і очікує, що з `mountPanel` вилетить саме вона, а лічильник лишиться таким, яким був до монтування."
+          en: "This check gives a `render` that throws and expects exactly that error to come out of `mountPanel`, with the counter unchanged from before the mount."
+      - when: { test: "chunks are decoded without breaking letters" }
+        message:
+          uk: "Ця перевірка ріже байти `\"Київ 🐈\"` у кожному місці на два шматки (і ще раз на три) і очікує щоразу цілий текст. Повідомлення називає байт, після якого розріз зламав текст."
+          en: "This check cuts the bytes of `\"Київ 🐈\"` into two chunks at every position (and once into three) and expects the whole text every time. The message names the byte after which the cut broke the text."
+      - when: { test: "byteLength counts UTF-8 bytes" }
+        message:
+          uk: "Ця перевірка очікує 8 байтів для `\"Київ\"`, 4 для `\"🐈\"`, 20 і текст ліміту для `\"Київ, Львів\"` та `null` для `\"Київ\"`."
+          en: "This check expects 8 bytes for `\"Київ\"`, 4 for `\"🐈\"`, 20 and the limit's text for `\"Київ, Львів\"`, and `null` for `\"Київ\"`."
+      - when: { error: ReferenceError }
+        message:
+          uk: "`Cannot access '…' before initialization` — модуль із картки в циклі виконався раніше за той, чиє значення читає на верхньому рівні. Подивись, хто з ким імпортує одне одного."
+          en: "`Cannot access '…' before initialization` — the module on the card ran in a cycle before the one whose value it reads at its top level. Look at who imports whom in both directions."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-13
+    body:
+      uk: "Той самий порядок налагодження знадобиться в проєкті: спершу те, що не дає завантажитися, потім — кількість listeners після `teardown()` і повторного `start(storage)`, і лише потім дрібніші симптоми. Саме цю кількість рахують перевірки кроку цього розділу."
+      en: "The same debugging order will be useful in the project: first whatever prevents loading, then the number of listeners after `teardown()` and a repeated `start(storage)`, and only then the smaller symptoms. That number is exactly what this unit's step checks count."

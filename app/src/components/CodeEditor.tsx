@@ -54,6 +54,9 @@ function languageFor(path: string) {
     case 'ts': return javascript({ typescript: true });
     case 'tsx': return javascript({ typescript: true, jsx: true });
     case 'html': return html();
+    // XML (an Android network security config): the HTML mode highlights tags and attributes;
+    // the editor ships no separate XML language package.
+    case 'xml': return html({ autoCloseTags: false });
     case 'css': return css();
     case 'json': return json();
     case 'md': return markdown();

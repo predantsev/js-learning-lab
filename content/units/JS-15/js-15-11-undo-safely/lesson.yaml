@@ -1,0 +1,410 @@
+id: js-15-11-undo-safely
+unit: JS-15
+title:
+  uk: "Безпечно скасовуємо зміни"
+  en: "Undo safely"
+kind: local-task
+minutes: 12
+contentVersion: 1
+purpose:
+  uk: "У Git є кілька способів «скасувати», і вони дуже різні: одні лише прибирають правку з файла, інші додають новий commit, а деякі безповоротно стирають незбережену роботу. Ти спробуєш кожен на одноразовій копії репозиторію і знатимеш, який обрати, ще до того, як щось піде не так."
+  en: "Git has several ways to “undo”, and they are very different: some only remove an edit from a file, others add a new commit, and some erase unsaved work for good. You will try each one on a disposable copy of the repository and know which to choose before anything goes wrong."
+objectives:
+  - uk: "Обрати безпечне скасування для кожної ситуації: `git restore` для незбережених правок, `git restore --staged`, щоб вийняти з індексу, `git revert` для зміни в commit і `git reflog`, щоб знайти загублений commit."
+    en: "Choose the safe undo for each situation: git restore for unstaged edits, git restore --staged to unstage, git revert for a committed change, and git reflog to find a lost commit."
+  - uk: "Пояснити, чому `git revert` безпечний для спільної історії, а `git reset --hard` може знищити незакомічену роботу."
+    en: "Explain why git revert is safe on shared history while git reset --hard can destroy uncommitted work."
+prerequisites: [js-15-10-resolve-conflicts]
+subskills:
+  - { family: P-02, skill: "undo safely", depth: intro }
+glossary: [git-restore, git-revert, reflog]
+
+blocks:
+  - id: which-undo
+    kind: explanation
+    title:
+      uk: "Яке «скасувати» тобі потрібне"
+      en: "Which “undo” you need"
+    body:
+      uk: |
+        Спершу визнач, **де** зараз зміна, яку хочеш прибрати:
+
+        | Ситуація | Команда | Що змінює | Чи можна повернути |
+        |---|---|---|---|
+        | Правка у файлі, ще не в індексі | `git restore файл` | лише файл у робочому дереві | ні: правку стерто |
+        | Файл додано в індекс помилково | `git restore --staged файл` | лише індекс; правка лишається у файлі | нічого не втрачено |
+        | Помилка вже в commit | `git revert id` | додає **новий** commit, що робить протилежне | так: обидва commits в історії |
+        | Commit «зник» з гілки | `git reflog` | нічого, лише показує журнал | так: знайди id і створи гілку |
+
+        [[git-restore|git restore]] і [[git-revert|git revert]] безпечні для історії: перша не чіпає commits, друга лише додає. [[reflog]] — журнал, куди ставав HEAD; він зберігає commits, але **не** незакомічені правки.
+
+        Окремо — `git reset --hard`. Він пересуває гілку назад **і** перезаписує робоче дерево. Commits, з яких гілка пішла, ще можна знайти через reflog, але незакомічені правки зникають назавжди. Тому перед ним завжди дивляться `git status` і `git log`.
+      en: |
+        First decide **where** the change you want to remove is right now:
+
+        | Situation | Command | What it changes | Can you get it back |
+        |---|---|---|---|
+        | An edit in a file, not staged yet | `git restore file` | only the file in the working tree | no: the edit is erased |
+        | A file was staged by mistake | `git restore --staged file` | only the staging area; the edit stays in the file | nothing is lost |
+        | The mistake is already in a commit | `git revert id` | adds a **new** commit that does the opposite | yes: both commits stay in history |
+        | A commit “disappeared” from a branch | `git reflog` | nothing, it only shows the journal | yes: find the id and create a branch |
+
+        [[git-restore|git restore]] and [[git-revert|git revert]] are safe for history: the first does not touch commits, the second only adds. The [[reflog]] is the journal of where HEAD has been; it keeps commits but **not** uncommitted edits.
+
+        Separately there is `git reset --hard`. It moves the branch back **and** overwrites the working tree. The commits the branch left behind can still be found through the reflog, but uncommitted edits are gone for good. So before it you always look at `git status` and `git log`.
+
+  - id: undo-picture
+    kind: visual
+    visual: git-graph
+    title:
+      uk: "Restore, revert, reset і reflog на одній історії"
+      en: "Restore, revert, reset and reflog on one history"
+    textEquivalent:
+      uk: >-
+        Після двох commits README.md редагують і git restore повертає файл до стану commit — правка
+        зникає, історія та сама. Потім правку додають в індекс, і git restore --staged виймає її назад
+        у робоче дерево, а ще один git restore її стирає. Далі commit c3 вносить помилку в label.mjs;
+        git revert додає commit c4, що робить протилежну зміну, — обидва commits лишаються в історії.
+        Commit c5 додає пояснення в README, а git reset --hard на c4 відсуває гілку назад: c5 більше не
+        в main. git reflog показує, що HEAD був на c5; з цього commit створюють гілку recovered і зливають
+        її в main — c5 знову в історії.
+      en: >-
+        After two commits README.md is edited and git restore returns the file to the commit’s state —
+        the edit is gone, the history is the same. Then an edit is staged, git restore --staged takes it
+        back into the working tree, and another git restore erases it. Next, commit c3 puts a bug into
+        label.mjs; git revert adds commit c4 that makes the opposite change — both commits stay in
+        history. Commit c5 adds an explanation to README, and git reset --hard to c4 moves the branch
+        back: c5 is no longer on main. git reflog shows that HEAD was on c5; a branch recovered is created
+        from that commit and merged into main — c5 is in the history again.
+    spec:
+      steps:
+        - op: init
+          caption:
+            uk: "Одноразова копія навчального репозиторію."
+            en: "A disposable copy of the practice repository."
+        - op: commit
+          message: "Add habit label with a test"
+          files: [README.md, label.mjs]
+          caption:
+            uk: "Історія коротка, щоб було видно головне."
+            en: "The history is kept short to show what matters."
+        - op: commit
+          message: "Merge branch 'feature/paused-mark'"
+          files: [label.mjs]
+          caption:
+            uk: "Стан після попереднього уроку."
+            en: "The state after the previous lesson."
+        - op: modify
+          files: [README.md]
+          caption:
+            uk: "Випадкова правка в `README.md` — лише в робочому дереві."
+            en: "An accidental edit in `README.md` — only in the working tree."
+        - op: restore
+          files: [README.md]
+          caption:
+            uk: "`git restore README.md`: файл знову як у commit. Правку стерто, а історія не змінилася."
+            en: "`git restore README.md`: the file is as in the commit again. The edit is erased, the history did not change."
+        - op: modify
+          files: [README.md]
+          caption:
+            uk: "Нова правка…"
+            en: "A new edit…"
+        - op: stage
+          files: [README.md]
+          caption:
+            uk: "…помилково додана в індекс."
+            en: "…staged by mistake."
+        - op: restore
+          files: [README.md]
+          staged: true
+          caption:
+            uk: "`git restore --staged README.md`: зміна вийшла з індексу, але **лишилася у файлі** — нічого не втрачено."
+            en: "`git restore --staged README.md`: the change left the staging area but **stayed in the file** — nothing is lost."
+        - op: restore
+          files: [README.md]
+          caption:
+            uk: "Тепер і її прибираємо з файла звичайним `git restore`."
+            en: "Now we remove it from the file too with a plain `git restore`."
+        - op: commit
+          message: "Simplify the label"
+          files: [label.mjs]
+          caption:
+            uk: "Commit `c3` вносить помилку: зникла позначка paused, тест падає."
+            en: "Commit `c3` brings in a bug: the paused mark is gone, a test fails."
+        - op: commit
+          message: "Revert \"Simplify the label\""
+          files: [label.mjs]
+          caption:
+            uk: "`git revert --no-edit HEAD` створює **новий** commit `c4`, що робить протилежну зміну. `c3` лишився в історії — нічого не переписано, тож це безпечно навіть для спільних commits."
+            en: "`git revert --no-edit HEAD` creates a **new** commit `c4` that makes the opposite change. `c3` stays in history — nothing is rewritten, so it is safe even for shared commits."
+        - op: commit
+          message: "Explain weekly habits"
+          files: [README.md]
+          caption:
+            uk: "Commit `c5` — корисна зміна, яку зараз «загублять»."
+            en: "Commit `c5` — a useful change that is about to be “lost”."
+        - op: reset
+          to: c4
+          mode: hard
+          caption:
+            uk: "`git reset --hard HEAD~1`: `main` відступає на `c4`, робоче дерево перезаписано. `c5` більше не в гілці, а незакомічені правки, якби вони були, зникли б назавжди."
+            en: "`git reset --hard HEAD~1`: `main` moves back to `c4`, the working tree is overwritten. `c5` is no longer on the branch, and uncommitted edits, had there been any, would be gone for good."
+        - op: note
+          caption:
+            uk: "`git reflog` показує, де був HEAD: `HEAD@{1}: commit: Explain weekly habits` — з id `c5`. Commit не зник: на нього просто не вказує жодна гілка."
+            en: "`git reflog` shows where HEAD was: `HEAD@{1}: commit: Explain weekly habits` — with the id of `c5`. The commit is not gone: no branch points at it any more."
+        - op: checkout
+          commit: c5
+          caption:
+            uk: "Щоб дати `c5` назву, стаємо на нього…"
+            en: "To give `c5` a name, we stand on it…"
+        - op: branch
+          name: recovered
+          caption:
+            uk: "…і створюємо гілку `recovered`. (У терміналі те саме робить одна команда `git branch recovered <id>`.)"
+            en: "…and create the branch `recovered`. (In the terminal one command does the same: `git branch recovered <id>`.)"
+        - op: checkout
+          name: main
+          caption:
+            uk: "Назад на `main`."
+            en: "Back to `main`."
+        - op: merge
+          from: recovered
+          caption:
+            uk: "`git merge recovered` — fast-forward: `main` знову на `c5`. Commit урятовано."
+            en: "`git merge recovered` — a fast-forward: `main` is on `c5` again. The commit is rescued."
+
+  - id: predict-shared-bug
+    kind: prediction
+    prompt:
+      uk: "Commit із помилкою ти вже надіслав, і колеги взяли його собі. Як прибрати помилку?"
+      en: "You have already sent a commit with a bug, and your colleagues took it. How do you remove the bug?"
+    answer:
+      type: choice
+      options:
+        - id: revert
+          code: "git revert <id of the commit>"
+        - id: reset-hard
+          code: "git reset --hard HEAD~1"
+          why:
+            uk: "Reset переписує **твою** історію: у тебе commit зникне, а в колег лишиться. Наступний обмін принесе його назад або дасть плутанину. До того ж `--hard` стирає незакомічені правки."
+            en: "Reset rewrites **your** history: the commit disappears for you but stays for your colleagues. The next exchange brings it back or causes confusion. And `--hard` erases uncommitted edits too."
+        - id: restore
+          code: "git restore label.mjs"
+          why:
+            uk: "`git restore` повертає файл до стану **останнього commit** — тобто разом із помилкою. Commit він не чіпає."
+            en: "`git restore` returns the file to the state of the **last commit** — bug included. It does not touch commits."
+      correct: [revert]
+    explanation:
+      uk: "`git revert` додає новий commit із протилежною зміною. Історія лише росте, тож усі, хто має старий commit, просто отримають ще один. Це єдиний із трьох способів, безпечний для спільної історії."
+      en: "`git revert` adds a new commit with the opposite change. History only grows, so everyone who has the old commit simply gets one more. It is the only one of the three that is safe for shared history."
+
+  - id: predict-reflog-limits
+    kind: prediction
+    prompt:
+      uk: "У тебе є commit «Explain weekly habits» і незбережений новий рядок у `README.md`. Ти виконуєш `git reset --hard HEAD~1`. Що з цього можна повернути через `git reflog`?"
+      en: "You have a commit “Explain weekly habits” and an unsaved new line in `README.md`. You run `git reset --hard HEAD~1`. What of this can you get back through `git reflog`?"
+    answer:
+      type: choice
+      options:
+        - id: commit-only
+          text:
+            uk: "Лише commit; незбережений рядок зник назавжди"
+            en: "Only the commit; the unsaved line is gone for good"
+        - id: both
+          text:
+            uk: "І commit, і рядок"
+            en: "Both the commit and the line"
+          why:
+            uk: "Reflog записує, на які **commits** вказував HEAD. Рядок ніколи не був у commit, тож запису про нього немає ніде."
+            en: "The reflog records which **commits** HEAD pointed at. The line was never in a commit, so there is no record of it anywhere."
+        - id: neither
+          text:
+            uk: "Нічого: `--hard` стирає все"
+            en: "Nothing: `--hard` erases everything"
+          why:
+            uk: "Commit не стерто — гілка лише перестала на нього вказувати. Reflog пам’ятає його id."
+            en: "The commit is not erased — the branch simply stopped pointing at it. The reflog remembers its id."
+      correct: [commit-only]
+    explanation:
+      uk: "Закомічене майже неможливо втратити: reflog знайде. Незакомічене захищене лише тим, що ти не запускаєш руйнівних команд. Звідси звичка: перед `reset --hard` чи `restore` — `git status`, а щойно щось вартує збереження — commit."
+      en: "What is committed is almost impossible to lose: the reflog finds it. What is uncommitted is protected only by your not running destructive commands. Hence the habit: before `reset --hard` or `restore` — `git status`, and as soon as something is worth keeping — a commit."
+
+  - id: undo-lab
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Чотири скасування на одноразовій копії"
+      en: "Four undos on a disposable copy"
+    intro:
+      uk: |
+        Усе робиш у **копії** `git-lab`, щоб оригінал лишився цілим. Копіювання: macOS і Linux — `cp -R`, Windows PowerShell — `Copy-Item -Recurse`. Правки у файлах роби в редакторі. Id commits у тебе інші — бери їх зі свого виводу.
+      en: |
+        You do everything in a **copy** of `git-lab` so the original stays whole. Copying: macOS and Linux `cp -R`, Windows PowerShell `Copy-Item -Recurse`. Make the edits in files with the editor. Your commit ids differ — take them from your own output.
+    tools:
+      - name: "Git"
+        version: { uk: "2.28 або новіша (перевірено з 2.51)", en: "2.28 or newer (checked with 2.51)" }
+      - name: "Node.js"
+        version: { uk: "22.13 або новіша", en: "22.13 or newer" }
+      - name: { uk: "Редактор коду", en: "A code editor" }
+        version: { uk: "VS Code або будь-який редактор простого тексту", en: "VS Code or any plain-text editor" }
+    steps:
+      - text:
+          uk: "Зроби копію й перейди в неї (на Windows: `Copy-Item -Recurse git-lab undo-copy`):"
+          en: "Make a copy and go into it (on Windows: `Copy-Item -Recurse git-lab undo-copy`):"
+        command: "cd ~/js-course\ncp -R git-lab undo-copy\ncd undo-copy\ngit status"
+        expect:
+          uk: "`nothing to commit, working tree clean`."
+          en: "`nothing to commit, working tree clean`."
+      - text:
+          uk: "**Restore.** Допиши в `README.md` будь-який рядок і збережи. Потім:"
+          en: "**Restore.** Add any line to `README.md` and save. Then:"
+        command: "git status --short\ngit restore README.md\ngit status --short"
+        expect:
+          uk: "Спершу ` M README.md`, після `git restore` — нічого: правку стерто, файл як у commit."
+          en: "First ` M README.md`, after `git restore` — nothing: the edit is erased, the file is as in the commit."
+      - text:
+          uk: "**Restore --staged.** Знову допиши рядок, збережи й додай в індекс. Потім вийми його з індексу:"
+          en: "**Restore --staged.** Add a line again, save and stage it. Then unstage it:"
+        command: "git add README.md\ngit status --short\ngit restore --staged README.md\ngit status --short\ngit restore README.md"
+        expect:
+          uk: "`M  README.md` (M у першому стовпчику — в індексі), після `--staged` — ` M README.md` (M у другому — лише у файлі; правка ціла). Останній `git restore` прибирає й її."
+          en: "`M  README.md` (M in the first column — staged), after `--staged` — ` M README.md` (M in the second column — only in the file; the edit is intact). The last `git restore` removes it too."
+      - text:
+          uk: |
+            **Revert.** Внеси помилку й закоміть її. У `label.mjs` заміни тіло функції на один рядок коду ``return `${habit.name} · ${habit.frequency}`;`` (позначка paused зникне). Потім:
+          en: |
+            **Revert.** Bring in a bug and commit it. In `label.mjs` replace the function body with one line, ``return `${habit.name} · ${habit.frequency}`;`` (the paused mark disappears). Then:
+        command: "git add label.mjs\ngit commit -m \"Simplify the label\"\nnpm test\ngit revert --no-edit HEAD\ngit log --oneline -3\nnpm test"
+        expect:
+          uk: |
+            Перший `npm test` — `✖ marks a paused habit`, `ℹ fail 1`. Потім:
+
+            ```text
+            [main cec82e6] Revert "Simplify the label"
+             Date: …
+             1 file changed, 2 insertions(+), 1 deletion(-)
+            cec82e6 Revert "Simplify the label"
+            1480f07 Simplify the label
+            9f8df5f Merge branch 'feature/paused-mark'
+            ```
+
+            У рядку `Date:` — дата й час commit, у тебе вони інші. Обидва commits в історії; другий `npm test` — `ℹ fail 0`.
+          en: |
+            The first `npm test` shows `✖ marks a paused habit`, `ℹ fail 1`. Then:
+
+            ```text
+            [main cec82e6] Revert "Simplify the label"
+             Date: …
+             1 file changed, 2 insertions(+), 1 deletion(-)
+            cec82e6 Revert "Simplify the label"
+            1480f07 Simplify the label
+            9f8df5f Merge branch 'feature/paused-mark'
+            ```
+
+            The `Date:` line holds the commit’s date and time; yours differ. Both commits are in history; the second `npm test` shows `ℹ fail 0`.
+      - text:
+          uk: |
+            **Reset і reflog — свідомо, у копії.** Допиши в `README.md` рядок `Weekly habits count once per week.`, додай і закоміть (`git add README.md`, `git commit -m "Explain weekly habits"`). Потім допиши ще рядок `Unsaved idea` і **не** коміть його. `git reset --hard` руйнівний, тому спершу подивись, що саме він знищить:
+          en: |
+            **Reset and reflog — on purpose, in the copy.** Add the line `Weekly habits count once per week.` to `README.md`, stage and commit it (`git add README.md`, `git commit -m "Explain weekly habits"`). Then add one more line, `Unsaved idea`, and do **not** commit it. `git reset --hard` is destructive, so first look at exactly what it will destroy:
+        command: "git status --short\ngit log --oneline -2"
+        expect:
+          uk: |
+            ` M README.md` — це рядок `Unsaved idea`: його `reset --hard` зітре **назавжди**. Угорі `git log` — `Explain weekly habits`: цей commit вийде з гілки, але його можна буде знайти.
+          en: |
+            ` M README.md` is the line `Unsaved idea`: `reset --hard` will erase it **for good**. At the top of `git log` is `Explain weekly habits`: this commit will leave the branch but can still be found.
+      - text:
+          uk: "Тепер виконай reset і подивись на результат:"
+          en: "Now run the reset and look at the result:"
+        command: "git reset --hard HEAD~1\ngit status --short\ngit log --oneline -2"
+        expect:
+          uk: "`HEAD is now at cec82e6 Revert \"Simplify the label\"`; `git status --short` нічого не друкує — `Unsaved idea` зник; у `git log` уже немає `Explain weekly habits`."
+          en: "`HEAD is now at cec82e6 Revert \"Simplify the label\"`; `git status --short` prints nothing — `Unsaved idea` is gone; `git log` no longer shows `Explain weekly habits`."
+      - text:
+          uk: "Знайди загублений commit у журналі й поверни його гілкою. Підстав **свій** id із рядка `commit: Explain weekly habits` замість `d79d229`:"
+          en: "Find the lost commit in the journal and bring it back with a branch. Use **your** id from the line `commit: Explain weekly habits` instead of `d79d229`:"
+        command: "git reflog -4\ngit branch recovered d79d229\ngit merge recovered\ngit log --oneline -2"
+        expect:
+          uk: |
+            ```text
+            cec82e6 HEAD@{0}: reset: moving to HEAD~1
+            d79d229 HEAD@{1}: commit: Explain weekly habits
+            cec82e6 HEAD@{2}: revert: Revert "Simplify the label"
+            1480f07 HEAD@{3}: commit: Simplify the label
+            Updating cec82e6..d79d229
+            Fast-forward
+             README.md | 1 +
+             1 file changed, 1 insertion(+)
+            d79d229 Explain weekly habits
+            cec82e6 Revert "Simplify the label"
+            ```
+
+            Commit повернувся. Рядок `Unsaved idea` — ні: його ніколи не було в commit.
+          en: |
+            ```text
+            cec82e6 HEAD@{0}: reset: moving to HEAD~1
+            d79d229 HEAD@{1}: commit: Explain weekly habits
+            cec82e6 HEAD@{2}: revert: Revert "Simplify the label"
+            1480f07 HEAD@{3}: commit: Simplify the label
+            Updating cec82e6..d79d229
+            Fast-forward
+             README.md | 1 +
+             1 file changed, 1 insertion(+)
+            d79d229 Explain weekly habits
+            cec82e6 Revert "Simplify the label"
+            ```
+
+            The commit is back. The line `Unsaved idea` is not: it was never in a commit.
+    verify:
+      - id: restore-done
+        text:
+          uk: "`git restore` прибрав правку з файла, а `git restore --staged` вийняв її з індексу, не стерши."
+          en: "`git restore` removed an edit from the file, and `git restore --staged` took it out of the staging area without erasing it."
+      - id: revert-done
+        text:
+          uk: "Після `git revert` в історії є і commit із помилкою, і commit `Revert …`, а тести знову проходять."
+          en: "After `git revert` the history has both the buggy commit and the `Revert …` commit, and the tests pass again."
+      - id: reflog-recovered
+        text:
+          uk: "Я знайшов у `git reflog` id commit «Explain weekly habits» і повернув його в `main` через гілку `recovered`."
+          en: "I found the id of the commit “Explain weekly habits” in `git reflog` and brought it back into `main` through the branch `recovered`."
+      - id: unsaved-lost
+        text:
+          uk: "Я переконався, що незакомічений рядок після `reset --hard` повернути неможливо."
+          en: "I made sure that the uncommitted line cannot be brought back after `reset --hard`."
+    troubleshooting:
+      - problem:
+          uk: "Windows PowerShell: `git branch recovered HEAD@{1}` дає дивну помилку"
+          en: "Windows PowerShell: `git branch recovered HEAD@{1}` gives a strange error"
+        fix:
+          uk: "У PowerShell фігурні дужки мають власне значення. Тому в уроці використано id commit (`git branch recovered d79d229`). Якщо хочеш форму з `@{1}`, бери її в лапки: `git branch recovered 'HEAD@{1}'`."
+          en: "In PowerShell curly braces have their own meaning. That is why the lesson uses the commit id (`git branch recovered d79d229`). If you want the `@{1}` form, put it in quotes: `git branch recovered 'HEAD@{1}'`."
+      - problem:
+          uk: "`fatal: not a valid object name: 'd79d229'`"
+          en: "`fatal: not a valid object name: 'd79d229'`"
+        fix:
+          uk: "Ти скопіював id з уроку, а не зі свого `git reflog`. Підстав id з рядка `commit: Explain weekly habits` у своєму виводі."
+          en: "You copied the id from the lesson instead of from your own `git reflog`. Use the id from the line `commit: Explain weekly habits` in your output."
+      - problem:
+          uk: "`git revert` відкрив редактор"
+          en: "`git revert` opened an editor"
+        fix:
+          uk: "Бракує `--no-edit`. Повідомлення вже готове: у Vim — `:wq` і Enter, у nano — Ctrl + O, Enter, Ctrl + X."
+          en: "`--no-edit` is missing. The message is ready: in Vim type `:wq` and Enter, in nano Ctrl + O, Enter, Ctrl + X."
+      - problem:
+          uk: "Я виконав `reset --hard` не в копії, а в `git-lab`"
+          en: "I ran `reset --hard` in `git-lab` instead of the copy"
+        fix:
+          uk: "Не панікуй і нічого більше не запускай. `git reflog` у `git-lab` покаже, де був HEAD до reset; `git branch recovered <той id>` і `git merge recovered` повернуть commits. Незакомічених правок там не було, якщо ти починав із чистого `git status`."
+          en: "Do not panic and run nothing else. `git reflog` in `git-lab` shows where HEAD was before the reset; `git branch recovered <that id>` and `git merge recovered` bring the commits back. There were no uncommitted edits if you started from a clean `git status`."
+    recovery:
+      uk: "`undo-copy` одноразова: якщо все заплуталося, видали саме її (macOS/Linux: `rm -rf ~/js-course/undo-copy`, Windows: `Remove-Item -Recurse -Force ~/js-course/undo-copy` — перевір назву двічі) і скопіюй `git-lab` знову. Будь-який закомічений стан знаходиться через `git reflog`."
+      en: "`undo-copy` is disposable: if everything got tangled, delete exactly that folder (macOS/Linux: `rm -rf ~/js-course/undo-copy`, Windows: `Remove-Item -Recurse -Force ~/js-course/undo-copy` — check the name twice) and copy `git-lab` again. Any committed state can be found through `git reflog`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-15
+    body:
+      uk: "У своєму проєкті ти комітитимеш часто — саме тому майже нічого не зможеш втратити. Помилку в спільній історії виправляє `git revert`, а `reset --hard` лишається інструментом лише для власних одноразових копій."
+      en: "In your project you will commit often — that is exactly why you can lose almost nothing. A bug in shared history is fixed with `git revert`, while `reset --hard` stays a tool for your own disposable copies only."

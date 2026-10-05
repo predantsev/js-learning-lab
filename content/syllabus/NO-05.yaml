@@ -84,12 +84,12 @@ lessons:
       - "A failed migration can simply be run again."
     prerequisites: [no-05-02-initialization-seed]
     glossary: [migration-dry-run]
-    visual: { kind: git-graph, concept: "Store versions as commits on one line (v1 to v2): the migration first runs on a copy branch, its checks pass, and only then does the live store’s version pointer advance; a failing check leaves the pointer on v1 and the copy is discarded." }
+    visual: { kind: diagram, concept: "The live v1 store is copied, the copy is migrated and checked (count, invariants, rerun); only when the checks pass does one rename make v2 the live store, data and version together; a failing check discards the copy and leaves the live store on v1. (A git-graph was planned, but its player shows git commands for every step, which would mislead here.)" }
     analogy: null
     practice:
       - { kind: predict, runtime: isolated-node, summary: "Predict the records and version after migrating a v1 store, a v2 store and a store where one record cannot be transformed." }
       - { kind: run-change, runtime: isolated-node, summary: "Run the migration in the Node child on a scratch copy, compare counts and invariants, then rerun it and confirm nothing changes." }
-      - { kind: write, runtime: isolated-node, summary: "Write migrate1to2(store) and a test that runs it on a copy of the synthetic notes store and asserts the count, the invariants and an idempotent rerun." }
+      - { kind: write, runtime: isolated-node, summary: "Write a pure migrate1to2(store) and dryRun(store, migrate) — the migration's test harness — that runs any migration on a copy of the synthetic notes store and reports a lost record, a throw or an unsafe rerun instead of throwing." }
     retrieval:
       - { concept: "numbered migrations recorded by a version", from: no-09-07-migrations-seed }
   - id: no-05-04-backup-restore-verification
@@ -97,7 +97,7 @@ lessons:
     kind: instructional
     minutes: 12
     objectives:
-      - "Take a consistent backup while the server runs: a copy of the last complete file, or a SQLite snapshot with VACUUM INTO (or the backup API where the Node version provides it)."
+      - "Take a consistent backup while the server runs: a copy of the last complete file, or a SQLite snapshot with the backup API (sqlite.backup(), Node 22.16+) or VACUUM INTO (terminal only: the course runner refuses VACUUM INTO)."
       - "Verify a backup by restoring it into a scratch location and comparing counts, a checksum and domain invariants with the source."
     subskills:
       - { family: B-05, skill: "backup/restore verification", depth: intro }
@@ -109,8 +109,8 @@ lessons:
     visual: { kind: sequence, concept: "Server, store, backup file and a scratch restore over time: in the naive copy a write lands mid-copy and the restore yields broken data, while the consistent snapshot restores into a store whose counts and checksum match the source." }
     analogy: null
     practice:
-      - { kind: predict, runtime: isolated-node, summary: "Predict whether a plain file copy taken during a write and a VACUUM INTO snapshot each restore into a valid store." }
-      - { kind: run-change, runtime: isolated-node, summary: "Take both backups in the Node child while a writer loop runs, restore each into scratch and compare counts and checksums." }
+      - { kind: predict, runtime: isolated-node, summary: "Predict whether a plain file copy taken during a write transaction and a sqlite.backup() snapshot each restore into a valid store." }
+      - { kind: run-change, runtime: isolated-node, summary: "Take both backups in the Node child around a large write transaction, restore each into scratch and compare integrity_check, counts, per-category totals and checksums." }
       - { kind: write, runtime: isolated-node, summary: "Write backupStore() and verifyBackup(backupPath) that restores into a scratch path and returns a report of counts, checksum and invariant checks." }
     retrieval:
       - { concept: "all-or-nothing replacement of a file", from: no-02-05-atomic-recoverable-updates }
@@ -155,9 +155,9 @@ lessons:
     practice:
       - { kind: predict, runtime: isolated-node, summary: "Predict the stored record after two concurrent PATCH requests change different fields of the same record, with and without the write queue." }
       - { kind: run-change, runtime: isolated-node, summary: "Send 50 concurrent PATCH requests from the Node child to the scratch server, count the lost changes, then enable the queue or the transaction and rerun." }
-      - { kind: write, runtime: isolated-node, summary: "Write withWriteLock(fn) that serializes repository writes, and a test that fires concurrent updates and asserts none is lost." }
+      - { kind: write, runtime: isolated-node, summary: "Write withWriteLock(fn) that serializes repository writes and survives a failing write, and put the whole read-modify-write of updateNote under it; the checks fire concurrent updates and assert none is lost." }
     retrieval:
-      - { concept: "overlapping saves lose an update", from: no-09-08-file-vs-relational }
+      - { concept: "other code runs during an await of async I/O", from: no-02-02-async-io }  # was no-09-08 (overlapping saves): that lesson teaches the same lost update this lesson opens with, so the retrieval asks for the mechanism underneath instead
   - id: no-05-07-debug-failed-migration
     title: { uk: "Налагодження: невдала міграція", en: "Debug: a failed migration" }
     kind: instructional
@@ -198,6 +198,7 @@ lessons:
     visual: null
     analogy: null
     practice:
+      - { kind: independent, runtime: isolated-node, summary: "No-hint store.js for synthetic room bookings (a JSON file or SQLite, chosen with a one-line reason): contract on load and on every change, idempotent initStore that refuses a damaged store, serialized concurrent add/update with a no-double-booking invariant, backupStore with a manifest and verifyBackup into scratch; checked only through its exports." }
       - { kind: independent, runtime: local-node, summary: "No-hint task in your own terminal: a synthetic bookings store (file or SQLite, with a one-line reason); the supplied check script fires concurrent writes, kills and restarts the server, restores your backup into scratch and compares counts and invariants, and you record its report." }
     retrieval:
       - { concept: "invariants checked before and after a change", from: js-17-05-invariants-boundaries }
@@ -215,7 +216,7 @@ lessons:
     visual: null
     analogy: null
     practice:
-      - { kind: write, runtime: local-node, summary: "In server/, add the storage contract, initStore, migrate1to2 with its test, backupStore with verifyBackup and recoverStore behind the existing repository interface, and record why you chose a file or SQLite." }
-      - { kind: run-change, runtime: local-node, summary: "In your terminal, migrate the NO-02 store, restart the server, run the CRUD curl script, corrupt the store, restart and confirm recovery from the verified backup; record the outputs." }
+      - { kind: write, runtime: local-node, summary: "In server/, add the storage contract (src/contract.ts), a write queue for every change, initStore, migrate1to2 with dryRun and npm run migrate, backupStore with verifyBackup and recoverStore, tests/storage.test.ts, and record why you chose a file or SQLite." }
+      - { kind: run-change, runtime: local-node, summary: "In your terminal, migrate the version 1 store the NO-04 server wrote, take a verified backup with npm run backup, restart the server, run node try-api.mjs, corrupt the store, restart and confirm recovery from the verified backup, then confirm the refusal without one; record the outputs." }
     retrieval:
       - { concept: "the /v1 CRUD routes and their error model", from: no-04-09-capstone-crud-api }

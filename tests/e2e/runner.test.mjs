@@ -42,6 +42,34 @@ test('learner code produces real output and edits change it', async () => {
   assert.deepEqual(b.console[0].args.slice(3).map((x) => x.t), ['null', 'undefined']);
 });
 
+test('console format specifiers are applied like the browser console: %s %d %i %f %o %O, %c styling ignored', async () => {
+  const code = [
+    'console.log("%s has %d items", "Cart", 3.7);',
+    'console.warn("%c styled %s", "color: red", "text");',
+    'console.log("%o and %O", { a: 1 }, [1, 2]);',
+    'console.log("%i/%f", "42px", "2.5kg", "extra", 7);',
+    'console.log("100% sure %s");',
+    'console.log("only %s", "one", "%d");',
+    'console.error("Warning: Each child in a list should have a unique \\"key\\" prop.%s%s", "\\n\\nCheck the render method of `List`.", "");',
+    'console.assert(false, "%s failed", "check");',
+    'console.table(["%s", "x"]);',
+  ].join('\n');
+  const tests = 'test("formatted", () => { globalThis.__logs = logs(); globalThis.__raw = rawLogs(); expect(logs()[0]).toBe("Cart has 3 items"); expect(rawLogs()[0].args).toEqual(["Cart has 3 items"]); });';
+  const r = await run({ files: { 'index.js': code }, tests: { path: '__tests__.js', source: tests } });
+  assert.deepEqual(r.tests.map((t) => [t.status, t.message ?? '']), [['pass', '']]);
+  const shown = logs(r);
+  assert.equal(shown[0], 'Cart has 3 items');
+  assert.equal(shown[1], ' styled text');
+  assert.equal(shown[2], '{"a":1} and [1,2]');
+  assert.equal(shown[3], '42/2.5 extra 7');
+  assert.equal(shown[4], '100% sure %s', 'a single argument is printed as written');
+  assert.equal(shown[5], 'only one %d', 'an argument is not formatted again');
+  assert.equal(shown[6], 'Warning: Each child in a list should have a unique "key" prop.\n\nCheck the render method of `List`.');
+  assert.equal(shown[7], 'Assertion failed: check failed');
+  assert.equal(r.console[8].level, 'table');
+  assert.equal(r.console[8].args[0].t, 'array', 'console.table shows its data unformatted');
+});
+
 test('multi-file ES modules, JSON import and live bindings work natively', async () => {
   const r = await run({
     files: {
@@ -144,6 +172,19 @@ test('network is denied by default and limited to lab fixtures when enabled', as
 test('project files are served to fetch() without any network', async () => {
   const r = await run({ files: { 'index.js': 'const r = await fetch("./data/items.json"); console.log(r.status, (await r.json()).length);\nconst missing = await fetch("./nope.json"); console.log(missing.status);', 'data/items.json': '[1,2]' } });
   assert.deepEqual(logs(r), ['200 2', '404']);
+  const xml = await run({ files: { 'index.js': 'const r = await fetch("./res/xml/config.xml"); const doc = new DOMParser().parseFromString(await r.text(), "application/xml"); console.log(r.headers.get("content-type"), doc.documentElement.tagName);', 'res/xml/config.xml': '<?xml version="1.0" encoding="utf-8"?>\n<network-security-config/>\n' } });
+  assert.deepEqual(logs(xml), ['application/xml; charset=utf-8 network-security-config']);
+});
+
+test('waitFor keeps waiting while the condition is falsy (false, null, undefined, 0) and resolves with the first truthy value', async () => {
+  const source = [
+    'test("null from a query keeps waiting", async () => { setTimeout(() => document.body.append(Object.assign(document.createElement("button"), { textContent: "Late" })), 150); const b = await waitFor(() => screen.byRole("button")); expect(b).toHaveTextContent("Late"); });',
+    'test("undefined and 0 keep waiting", async () => { const list = []; setTimeout(() => list.push("a"), 100); expect(await waitFor(() => list[0])).toBe("a"); expect(await waitFor(() => list.length)).toBe(1); });',
+    'test("a condition that stays falsy fails with its last value", async () => { await waitFor(() => null, { timeout: 100 }); });',
+  ].join('\n');
+  const r = await run({ files: { 'index.js': '' }, tests: { path: '__tests__.js', source } });
+  assert.deepEqual(r.tests.map((t) => t.status), ['pass', 'pass', 'fail']);
+  assert.match(r.tests[2].message, /waitFor: the condition stayed false \(last value: null\)/);
 });
 
 test('learner code cannot reach the platform page, its storage or the API', async () => {
@@ -215,6 +256,22 @@ test('behavior tests see top-level bindings, console output, DOM events and asyn
   assert.match(r.tests[5].message, /timed out/);
 });
 
+test('test helpers tell the truth about hidden elements and page text', async () => {
+  const files = {
+    'index.html': '<!doctype html><html><body><h1>Shop</h1><div id="panel" style="display:none"><p id="inner">Secret</p><button>Hidden save</button></div><section hidden><button>Attr hidden</button></section><div style="visibility:hidden"><button id="vis">Invisible</button><button style="visibility:visible" id="back">Shown again</button></div><button>Save</button><style>.x { color: red }</style><script type="module" src="index.js"></script></body></html>',
+    'index.js': 'document.querySelector("h1").dataset.ready = "yes";',
+  };
+  const tests = [
+    'test("inner of display none is not visible", () => { expect(screen.$("#inner")).not.toBeVisible(); });',
+    'test("visibility hidden and visible again", () => { expect(screen.$("#vis")).not.toBeVisible(); expect(screen.$("#back")).toBeVisible(); expect(screen.$("h1")).toBeVisible(); });',
+    'test("role queries skip hidden", () => { expect(screen.allByRole("button").map((b) => b.textContent)).toEqual(["Shown again", "Save"]); expect(screen.byRole("button", { name: "Hidden save" })).toBeNull(); expect(screen.byRole("button", { name: "Hidden save", hidden: true })).not.toBeNull(); expect(screen.allByRole("button", { hidden: true })).toHaveLength(5); });',
+    'test("page text has no script or style", () => { expect(screen.text()).not.toMatch(/color: red|querySelector/); expect(screen.text()).toMatch(/^Shop/); });',
+  ].join("\n");
+  const r = await run({ entry: 'index.html', files, tests: { path: '__tests__.js', source: tests } });
+  assert.deepEqual(r.tests.map((t) => [t.name, t.status, t.message ?? '']), r.tests.map((t) => [t.name, 'pass', '']));
+  assert.equal(r.tests.length, 4);
+});
+
 test('a form submitted without preventDefault is explained instead of reloading the sandbox', async () => {
   const r = await run({
     entry: 'index.html',
@@ -242,6 +299,35 @@ test('React components render and respond to events (browser-react)', async () =
   });
   assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
   assert.deepEqual(r.tests.map((t) => t.status), ['pass']);
+});
+
+test('an Animated animation in the preview can be stopped and unmounted without an error; learner code still has no `global`', async () => {
+  const r = await run({
+    runtime: 'concept-preview',
+    entry: 'main.jsx',
+    files: {
+      'main.jsx': [
+        'import { createRoot } from "react-dom/client";',
+        'import { Animated, Pressable, Text, View } from "react-native";',
+        'import { useEffect, useRef, useState } from "react";',
+        'function Fade() {',
+        '  const opacity = useRef(new Animated.Value(0)).current;',
+        '  useEffect(() => { const animation = Animated.timing(opacity, { toValue: 1, duration: 5000, useNativeDriver: false }); animation.start(); return () => animation.stop(); }, [opacity]);',
+        '  return <Animated.View style={{ opacity }}><Text>Fading</Text></Animated.View>;',
+        '}',
+        'function App() {',
+        '  const [shown, setShown] = useState(true);',
+        '  return <View><Pressable accessibilityRole="button" onPress={() => setShown(false)}><Text>Hide</Text></Pressable>{shown ? <Fade /> : <Text>Hidden</Text>}</View>;',
+        '}',
+        'createRoot(document.getElementById("root")).render(<App />);',
+        'console.log(typeof global);',
+      ].join('\n'),
+    },
+    tests: { path: '__tests__.js', source: 'test("stop on unmount", async () => { await waitFor(() => screen.byText("Fading")); await sleep(50); await user.click(screen.byRole("button")); await waitFor(() => screen.byText("Hidden")); expect(loadError()).toBeNull(); });' },
+  });
+  assert.equal(r.errors.length, 0, JSON.stringify(r.errors));
+  assert.deepEqual(r.tests.map((t) => [t.status, t.message ?? '']), [['pass', '']]);
+  assert.deepEqual(logs(r), ['undefined'], 'the RN global name is not added to learner code (as in a browser)');
 });
 
 test('React Native components render through the labeled web preview (concept-preview)', async () => {

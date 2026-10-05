@@ -1,0 +1,350 @@
+id: no-11-01-streams-backpressure
+unit: NO-11
+title:
+  uk: "Потоки й backpressure"
+  en: "Streams and backpressure"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Читати великий файл шматками через readable stream і передбачати, скільки пам’яті він тримає порівняно з `readFile` на тому самому синтетичному файлі на 32 МБ."
+    en: "Read a large file chunk by chunk with a readable stream and predict how much memory it holds compared with `readFile` on the same 32 MB synthetic file."
+  - uk: "Пояснити, що означає `false` від `write()`, і зупиняти виробника, доки writable stream не надішле `'drain'`."
+    en: "Explain what `write()` returning `false` means and pause the producer until the writable stream emits `'drain'`."
+prerequisites: [no-02-04-bounded-reads-writes, no-01-05-eventemitter-errors]
+subskills:
+  - { family: B-08, skill: "read/write streams and backpressure", depth: intro }
+glossary: [backpressure, high-water-mark, drain-event, json-lines]
+selfCheck: [predict-false, write-json-lines]
+
+blocks:
+  - id: chunks-not-files
+    kind: explanation
+    title:
+      uk: "Потік віддає дані шматками"
+      en: "A stream hands data over in chunks"
+    body:
+      uk: |
+        У NO-02 ти читав великий файл циклом шматків через FileHandle, а в NO-03 збирав тіло запиту з подій `'data'` і `'end'`. Тіло запиту — це вже був **потік** (stream): об’єкт-[[event-emitter|EventEmitter]], що віддає дані частинами, щойно вони є.
+
+        - **Readable stream** дає шматки. `createReadStream(path)` з `node:fs` читає файл шматками до 64 КіБ і віддає кожен подією `'data'`; кінець — подія `'end'`.
+        - **Writable stream** приймає шматки. `writable.write(chunk)` віддає шматок, `writable.end()` каже «більше нічого не буде», а подія `'finish'` означає, що все прийнято.
+
+        Пам’ять потоку залежить від розміру шматка, а не файла. Тому великі обсяги записів часто зберігають як [[json-lines|JSON lines]]: один запис — один рядок JSON. Такий файл можна обробляти рядок за рядком, не тримаючи його цілим.
+      en: |
+        In NO-02 you read a large file with a chunk loop through a FileHandle, and in NO-03 you collected a request body from `'data'` and `'end'` events. That request body already was a **stream**: an [[event-emitter|EventEmitter]] that hands data over in parts, as soon as they are there.
+
+        - A **readable stream** gives chunks. `createReadStream(path)` from `node:fs` reads a file in chunks of up to 64 KiB and hands each one over with a `'data'` event; the end is the `'end'` event.
+        - A **writable stream** takes chunks. `writable.write(chunk)` hands a chunk over, `writable.end()` says “nothing more will come”, and the `'finish'` event means everything was accepted.
+
+        A stream’s memory depends on the chunk size, not the file size. That is why large amounts of records are often stored as [[json-lines|JSON lines]]: one record per line of JSON. Such a file can be processed line by line without holding it whole.
+
+  - id: predict-memory
+    kind: prediction
+    prompt:
+      uk: "Програма створює файл витрат у форматі JSON lines на 32 МБ. Потім читає його через `createReadStream` і передає кожен шматок у навмисно повільний writable stream, а після цього — ще раз через `readFile`. Що буде?"
+      en: "A program creates a 32 MB JSON-lines file of expenses. Then it reads it with `createReadStream` and passes every chunk to a deliberately slow writable stream, and after that once more with `readFile`. What happens?"
+    answer:
+      type: choice
+      options:
+        - id: chunk-vs-whole
+          text:
+            uk: "Потік тримає близько 0,1 МБ, `readFile` — один Buffer на 32 МБ; повільний writer раз у раз відповідає `false` на `write()`"
+            en: "The stream holds about 0.1 MB, `readFile` one 32 MB Buffer; the slow writer answers `false` to `write()` again and again"
+        - id: faster-readfile
+          text:
+            uk: "Обидва тримають близько 32 МБ: потік — це просто швидший `readFile`; `write()` завжди відповідає `true`"
+            en: "Both hold about 32 MB: a stream is just a faster `readFile`; `write()` always answers `true`"
+          why:
+            uk: "Потік віддає файл шматками по 64 КіБ і не складає їх докупи. А `write()` відповідає `false`, щойно у writer назбиралося стільки, скільки дозволяє його ліміт, — з повільним writer це стається постійно."
+            en: "A stream hands the file over in 64 KiB chunks and never gathers them together. And `write()` answers `false` as soon as the writer has collected as much as its limit allows — with a slow writer that happens all the time."
+        - id: stream-never-false
+          text:
+            uk: "Потік тримає близько 0,1 МБ, `readFile` — 32 МБ; `write()` ніколи не відповідає `false`, бо потік сам усе регулює"
+            en: "The stream holds about 0.1 MB, `readFile` 32 MB; `write()` never answers `false`, because the stream regulates everything by itself"
+          why:
+            uk: "Writable stream сам нічого не зупиняє: він лише повідомляє через `false`, що його буфер повний. Читати менше має код, який викликає `write()`."
+            en: "A writable stream stops nothing by itself: it only reports with `false` that its buffer is full. It is the code calling `write()` that has to read less."
+      correct: [chunk-vs-whole]
+    runnable: false
+    explanation:
+      uk: "Потік тримає один-два шматки, хоч би яким був файл; `readFile` складає весь файл в один Buffer. Повільний writer відповідає `false` майже на кожен шматок, бо кожен шматок у 64 КіБ одразу заповнює його ліміт у 64 КіБ. Ці числа друкує приклад цього уроку «Повільний writer: з backpressure і без»."
+      en: "The stream holds one or two chunks, whatever the file size; `readFile` gathers the whole file into one Buffer. The slow writer answers `false` to almost every chunk, because each 64 KiB chunk fills its 64 KiB limit at once. The example of this lesson “A slow writer: with backpressure and without” prints these numbers."
+
+  - id: false-means-wait
+    kind: explanation
+    title:
+      uk: "false від write() означає «зачекай», а не «втрачено»"
+      en: "false from write() means “wait”, not “lost”"
+    body:
+      uk: |
+        Writable stream має внутрішній буфер — чергу шматків, які він ще не встиг записати. Межа цієї черги — [[high-water-mark|highWaterMark]], за документацією Node.js 22 типово 64 КіБ.
+
+        Поки потік відкритий, `write(chunk)` **завжди** ставить шматок у чергу. Відповідь лише повідомляє, чи є ще місце: `true` — пиши далі, `false` — черга дійшла до межі. Шматок при цьому **не втрачено**: записати його вдруге означає записати двічі.
+
+        Після `false` той, хто пише, має зупинитися, доки writable stream не спорожнить чергу й не надішле подію [[drain-event|`'drain'`]]. Це й є [[backpressure]] — сигнал «повільніше» від споживача до виробника. Хто виробник — вирішує код: readable stream ставлять на паузу (`pause()`, потім `resume()`), а власний цикл чекає `await once(writable, 'drain')`.
+
+        Якщо сигнал ігнорувати, нічого не ламається одразу — черга просто росте, доки не вмістить усі дані.
+      en: |
+        A writable stream has an internal buffer — a queue of chunks still waiting to be written. The limit of that queue is the [[high-water-mark|highWaterMark]], by default 64 KiB according to the Node.js 22 documentation.
+
+        While the stream is open, `write(chunk)` **always** queues the chunk. The answer only reports whether there is room left: `true` — keep writing, `false` — the queue has reached its limit. The chunk is **not lost**: writing it again means writing it twice.
+
+        After `false` the writer has to stop until the writable stream empties its queue and emits the [[drain-event|`'drain'`]] event. That is [[backpressure]] — a “slow down” signal from the consumer to the producer. Who the producer is depends on the code: a readable stream gets paused (`pause()`, later `resume()`), and your own loop waits with `await once(writable, 'drain')`.
+
+        If you ignore the signal, nothing breaks at once — the queue just grows until it holds all the data.
+
+  - id: predict-false
+    kind: prediction
+    prompt:
+      uk: "Writable stream з лімітом 40 байтів зберігає кожен шматок за 10 мс. Йому дають три рядки по 16 байтів і закривають. Що надрукує програма?"
+      en: "A writable stream with a 40-byte limit stores each chunk in 10 ms. It gets three 16-byte lines and is closed. What does the program print?"
+    code: |
+      import { Writable } from 'node:stream';
+
+      const tray = new Writable({
+        highWaterMark: 40,
+        write(chunk, encoding, done) {
+          setTimeout(() => {
+            console.log('stored', String(chunk).trim());
+            done();
+          }, 10);
+        },
+      });
+
+      console.log(tray.write('h-01 2026-03-01\n'));
+      console.log(tray.write('h-02 2026-03-01\n'));
+      console.log(tray.write('h-03 2026-03-01\n'));
+      tray.end();
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: false-but-kept
+          code: "true\ntrue\nfalse\nstored h-01 2026-03-01\nstored h-02 2026-03-01\nstored h-03 2026-03-01"
+        - id: false-is-lost
+          code: "true\ntrue\nfalse\nstored h-01 2026-03-01\nstored h-02 2026-03-01"
+          why:
+            uk: "`false` не відкидає шматок: `write()` уже поставив `h-03` у чергу й лише повідомив, що черга дійшла до межі. Тож `h-03` теж збережено."
+            en: "`false` does not drop the chunk: `write()` has already queued `h-03` and only reported that the queue reached its limit. So `h-03` is stored too."
+        - id: always-true
+          code: "true\ntrue\ntrue\nstored h-01 2026-03-01\nstored h-02 2026-03-01\nstored h-03 2026-03-01"
+          why:
+            uk: "Після третього рядка в черзі 48 байтів — більше за ліміт 40, тож відповідь `false`. Ліміт не забороняє писати, але про нього повідомляють."
+            en: "After the third line the queue holds 48 bytes — more than the 40-byte limit, so the answer is `false`. The limit does not forbid writing, but it is reported."
+      correct: [false-but-kept]
+    explanation:
+      uk: "16 і 32 байти — менше за 40, тож перші дві відповіді `true`; з третім рядком у черзі 48 байтів, і `write()` відповідає `false`. Але всі три рядки вже в черзі, і writer зберігає їх по черзі. Перевірено в Node.js v25.2.1 і v22.23.3 (мінімум курсу — 22): вивід однаковий."
+      en: "16 and 32 bytes are less than 40, so the first two answers are `true`; with the third line the queue holds 48 bytes, and `write()` answers `false`. But all three lines are already queued, and the writer stores them in order. Checked on Node.js v25.2.1 and v22.23.3 (the course minimum is 22): the output is the same."
+
+  - id: conveyor
+    kind: analogy
+    body:
+      uk: "Уяви конвеєр, що везе коробки до пакувальника. Коли на столі пакувальника вже лежить стільки коробок, скільки вміщається, він вмикає червону лампу — і оператор конвеєра зупиняє стрічку. Пакувальник звільнив стіл — лампа гасне, стрічка їде далі. Коробка, що приїхала саме тоді, коли лампа загорілася, не падає на підлогу: вона вже на столі."
+      en: "Picture a conveyor belt carrying boxes to a packer. When the packer’s table already holds as many boxes as it can, the packer turns on a red lamp — and the belt operator stops the belt. The packer clears the table — the lamp goes out, the belt moves again. The box that arrived just as the lamp came on does not fall on the floor: it is already on the table."
+    limits:
+      uk: "На справжньому конвеєрі червону лампу важко не помітити, а в Node ніщо не зупиняється автоматично: «оператор» — це твій код, і якщо він не дивиться на `false` від `write()`, коробки складаються в пам’яті без кінця. Автоматично зупиняють стрічку лише `pipe()` і `pipeline()` — про другий у наступному уроці."
+      en: "On a real conveyor a red lamp is hard to miss, while in Node nothing stops automatically: the “operator” is your code, and if it ignores `write()`’s `false`, the boxes pile up in memory without end. Only `pipe()` and `pipeline()` stop the belt for you — the latter comes in the next lesson."
+
+  - id: belt-and-tray
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Шматки, черга writer і сигнал «зачекай»"
+      en: "Chunks, the writer’s queue and the “wait” signal"
+    textEquivalent:
+      uk: "Readable stream читає файл шматками по 64 КіБ і передає їх у writable stream, а той повільно записує їх на диск. У writer є черга з лімітом 64 КіБ. Перший шматок заповнює чергу до ліміту, і write() відповідає false. Код ставить читання на паузу: нові шматки не читаються, у черзі writer лише те, що вже там було. Writer записує чергу на диск і, коли вона спорожніла, надсилає подію 'drain'. Код знову вмикає читання, і цикл повторюється — черга writer не виростає понад 0,1 МБ. Якщо ж на false не зважати, читання не зупиняється: файл читається швидше, ніж writer записує, черга росте до майже всього файла — близько 31 МБ з 32 (виміряно в Node.js v25.2.1 і v22.23.3)."
+      en: "A readable stream reads the file in 64 KiB chunks and passes them to a writable stream, which slowly writes them to disk. The writer has a queue with a 64 KiB limit. The first chunk fills the queue up to the limit, and write() answers false. The code pauses the reading: no new chunks are read, the writer’s queue holds only what was already in it. The writer writes the queue to disk and, once it is empty, emits the 'drain' event. The code turns reading back on, and the cycle repeats — the writer’s queue never grows past 0.1 MB. If false is ignored, the reading never stops: the file is read faster than the writer writes, and the queue grows to almost the whole file — about 31 MB of 32 (measured on Node.js v25.2.1 and v22.23.3)."
+    spec:
+      layout: tb
+      nodes:
+        - { id: reader, label: "createReadStream", shape: round, w: 170 }
+        - { id: queue, label: { uk: "черга writer · ліміт 64 КіБ", en: "writer queue · limit 64 KiB" }, w: 230 }
+        - { id: disk, label: { uk: "повільний диск", en: "slow disk" }, shape: cylinder, w: 150 }
+      edges:
+        - { id: chunk, from: reader, to: queue, label: "write(chunk)" }
+        - { id: store, from: queue, to: disk }
+      steps:
+        - caption:
+            uk: "`createReadStream` віддає шматок у 64 КіБ, і код передає його у `write(chunk)`."
+            en: "`createReadStream` hands over a 64 KiB chunk, and the code passes it to `write(chunk)`."
+          highlight: [reader, chunk]
+        - caption:
+            uk: "Черга дійшла до ліміту: `write()` відповідає **`false`**. Шматок у черзі — він не втрачений."
+            en: "The queue has reached its limit: `write()` answers **`false`**. The chunk is in the queue — it is not lost."
+          highlight: [queue]
+          annotate:
+            - { id: queue, text: "false" }
+        - caption:
+            uk: "Код ставить читання на паузу (`reader.pause()`): нових шматків немає, а writer тим часом записує чергу на диск."
+            en: "The code pauses the reading (`reader.pause()`): no new chunks come, and meanwhile the writer writes its queue to disk."
+          highlight: [queue, store, disk]
+          dim: [reader, chunk]
+        - caption:
+            uk: "Черга порожня — writer надсилає **`'drain'`**, код викликає `reader.resume()`, і все повторюється. Черга writer не виростає понад 0,1 МБ."
+            en: "The queue is empty — the writer emits **`'drain'`**, the code calls `reader.resume()`, and it all repeats. The writer’s queue never grows past 0.1 MB."
+          highlight: [reader, chunk, queue]
+          annotate:
+            - { id: queue, text: "'drain'" }
+        - caption:
+            uk: "Інший запуск: `false` ігнорують. Читання не зупиняється, черга росте швидше, ніж диск записує, — до близько 31 МБ з 32."
+            en: "Another run: `false` is ignored. Reading never stops, and the queue grows faster than the disk writes — to about 31 MB of 32."
+          highlight: [reader, chunk, queue]
+          annotate:
+            - { id: queue, text: { uk: "≈ 31 МБ", en: "≈ 31 MB" } }
+
+  - id: slow-consumer
+    kind: example
+    runtime: isolated-node
+    dir: slow-consumer
+    entry: index.js
+    strings:
+      mb: { uk: "МБ", en: "MB" }
+      kib: { uk: "КіБ", en: "KiB" }
+      coffee: { uk: "Кава із собою", en: "Coffee to go" }
+      chunkSize: { uk: "розмір шматка", en: "chunk size" }
+      bufferLimit: { uk: "ліміт черги writer", en: "writer queue limit" }
+      waiting: { uk: "чекає в черзі", en: "waiting in the queue" }
+      stream: { uk: "потік", en: "stream" }
+      falseCalls: { uk: "відповідей false", en: "false answers" }
+      peak: { uk: "найбільше в черзі", en: "most ever queued" }
+      oneBuffer: { uk: "один Buffer на", en: "one Buffer of" }
+    title:
+      uk: "Повільний writer: з backpressure і без"
+      en: "A slow writer: with backpressure and without"
+    body:
+      uk: |
+        Натисни **Запустити**. Програма створює файл витрат на 32 МБ, читає його через `createReadStream` і передає шматки writer, що «зберігає» кожен шматок щонайменше 1 мс. Кожні 100 мс вона друкує `writableLength` — скільки байтів чекає в черзі writer. Наприкінці той самий файл читає `readFile`. (МБ тут — 1024 × 1024 байтів.)
+
+        Саме `writableLength` чесно показує, що тримає програма. Загальні числа `process.memoryUsage()` тут гірші: вони рахують і вже оброблені шматки, які збирач сміття ще не прибрав.
+
+        У Node.js v25.2.1 і v22.23.3 (по 10 запусків) підсумок щоразу однаковий: `false` — 511 разів на 512 шматків, найбільше в черзі — 0,1 МБ, `readFile` — один Buffer на 32,0 МБ.
+      en: |
+        Press **Run**. The program creates a 32 MB file of expenses, reads it with `createReadStream` and passes the chunks to a writer that “stores” each chunk in at least 1 ms. Every 100 ms it prints `writableLength` — how many bytes wait in the writer’s queue. At the end `readFile` reads the same file. (An MB here is 1024 × 1024 bytes.)
+
+        `writableLength` is what honestly shows what the program holds. The general numbers of `process.memoryUsage()` are worse here: they also count chunks already processed that the garbage collector has not freed yet.
+
+        On Node.js v25.2.1 and v22.23.3 (10 runs each) the summary was the same every time: `false` 511 times for 512 chunks, the most ever queued 0.1 MB, `readFile` one 32.0 MB Buffer.
+    tryIt:
+      uk: "Зміни `RESPECT_BACKPRESSURE` на `false` і запусти знову: `write()` так само відповідає `false`, але читання не зупиняється. Уже перший рядок «чекає в черзі» показує близько 26 МБ — за перші 100 мс файл майже весь опинився в черзі, — далі числа спадають, а підсумок каже, що найбільше в черзі було близько 31 МБ (Node.js v25.2.1 і v22.23.3). Поверни `true`."
+      en: "Change `RESPECT_BACKPRESSURE` to `false` and run again: `write()` still answers `false`, but the reading does not stop. The very first “waiting in the queue” line already shows about 26 MB — within the first 100 ms almost the whole file ended up in the queue — then the numbers fall, and the summary says the most ever queued was about 31 MB (Node.js v25.2.1 and v22.23.3). Set it back to `true`."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: межа до читання"
+      en: "Recall: a limit before reading"
+    items:
+      - id: bounded-buffer
+        from: no-02-04-bounded-reads-writes
+        prompt:
+          uk: "Цикл читає файл через `handle.read(buffer, 0, buffer.length, null)` в один і той самий Buffer на 64 КБ. Від чого залежить, скільки пам’яті під дані він тримає?"
+          en: "A loop reads a file with `handle.read(buffer, 0, buffer.length, null)` into one and the same 64 KB Buffer. What decides how much memory for the data it holds?"
+        answer:
+          type: choice
+          options:
+            - id: chunk-size
+              text:
+                uk: "Від розміру Buffer, тобто шматка, — не від розміру файла"
+                en: "The size of the Buffer, that is, of the chunk — not the size of the file"
+            - id: file-size
+              text:
+                uk: "Від розміру файла: прочитати файл означає тримати його в пам’яті"
+                en: "The size of the file: reading a file means holding it in memory"
+              why:
+                uk: "Кожне читання перезаписує той самий Buffer: попередній шматок уже оброблено, і тримати його не треба."
+                en: "Each read overwrites the same Buffer: the previous chunk has already been processed, and there is no need to keep it."
+            - id: number-of-reads
+              text:
+                uk: "Від кількості викликів `read`: кожен виклик додає ще 64 КБ"
+                en: "The number of `read` calls: each call adds another 64 KB"
+              why:
+                uk: "Виклики не створюють нових Buffers — вони пишуть у той самий. Пам’ять росла б лише тоді, коли б кожен шматок кудись складали."
+                en: "The calls create no new Buffers — they write into the same one. Memory would grow only if every chunk were collected somewhere."
+          correct: [chunk-size]
+        explanation:
+          uk: "Обмежене читання тримає стільки, скільки займає шматок. Readable stream працює так само, тільки шматки віддає сам, подіями."
+          en: "A bounded read holds as much as one chunk takes. A readable stream works the same way, only it hands over the chunks itself, with events."
+
+  - id: write-json-lines
+    kind: exercise
+    mode: guided
+    runtime: isolated-node
+    dir: write-json-lines
+    entry: index.js
+    editable: [app.js]
+    strings:
+      wish: { uk: "Бажання", en: "Wish" }
+      stored: { uk: "збережено рядків", en: "lines stored" }
+      finished: { uk: "writer завершив", en: "writer finished" }
+      peakWaiting: { uk: "найбільше в черзі", en: "most ever queued" }
+      limit: { uk: "ліміт", en: "limit" }
+      kib: { uk: "КіБ", en: "KiB" }
+      stillRunning: { uk: "За 8 с запис не завершився — мабуть, функція чекає події, яка не настане.", en: "Writing did not finish within 8 s — the function is probably waiting for an event that never comes." }
+    title:
+      uk: "writeJsonLines: власний цикл, що чекає 'drain'"
+      en: "writeJsonLines: your own loop that waits for 'drain'"
+    instructions:
+      uk: |
+        Тут виробник — не readable stream, а твій цикл. Допиши `writeJsonLines(records, writable)` у `app.js`:
+
+        - пише кожен запис з `records` (масив або генератор) одним рядком JSON — `JSON.stringify(record)` і `'\n'` у кінці, по порядку, рівно один раз;
+        - не дає черзі writer рости понад його ліміт: коли `write()` відповідає `false`, зупиняється до `'drain'`;
+        - повертає promise, що виконується лише тоді, коли writer завершив роботу (`'finish'`).
+
+        `index.js` і `slow-disk.js` лише для читання: **Запустити** пише 200 000 синтетичних бажань у повільний диск. Перевірки дають функції власний повільний writer з лімітом 1024 байти й після кожного `write()` дивляться на його `writableLength`.
+      en: |
+        Here the producer is not a readable stream but your loop. Finish `writeJsonLines(records, writable)` in `app.js`:
+
+        - it writes every record of `records` (an array or a generator) as one line of JSON — `JSON.stringify(record)` and `'\n'` at the end, in order, exactly once;
+        - it does not let the writer’s queue grow past its limit: when `write()` answers `false`, it stops until `'drain'`;
+        - it returns a promise that fulfills only once the writer has finished (`'finish'`).
+
+        `index.js` and `slow-disk.js` are read-only: **Run** writes 200,000 synthetic wishes into a slow disk. The checks give the function their own slow writer with a 1024-byte limit and look at its `writableLength` after every `write()`.
+    testTitles:
+      "writes every record as one JSON line, in order, exactly once":
+        uk: "Пише кожен запис одним рядком JSON, по порядку, рівно один раз"
+        en: "Writes every record as one JSON line, in order, exactly once"
+      "never lets more than the buffer limit pile up in a slow writer":
+        uk: "Не дає назбиратися в повільному writer більше, ніж дозволяє ліміт"
+        en: "Never lets more than the buffer limit pile up in a slow writer"
+      "writes the records of a generator too, not only of an array":
+        uk: "Записує й записи з генератора, а не лише з масиву"
+        en: "Writes the records of a generator too, not only of an array"
+      "resolves only after the writer has finished":
+        uk: "Виконується лише після того, як writer завершив роботу"
+        en: "Resolves only after the writer has finished"
+    hints:
+      nudge:
+        uk: "Що каже `write()` своєю відповіддю, і на яку подію треба чекати, коли вона `false`? А як writer дізнається, що записів більше не буде?"
+        en: "What does `write()` tell you with its answer, and which event do you wait for when it is `false`? And how does the writer learn that no more records will come?"
+      explanation:
+        uk: "`once(emitter, name)` з `node:events` повертає promise, що виконується, коли emitter надішле подію `name`, — наприклад, `await once(importer, 'done')` чекає, доки `importer` надішле `'done'`. У циклі `for...of` можна чекати такий promise лише тоді, коли `write()` відповів `false`; рядок при цьому вже в черзі. Після циклу `end()` каже writer, що даних більше не буде, а його подія `'finish'` означає, що все записано."
+        en: "`once(emitter, name)` from `node:events` returns a promise that fulfills when the emitter emits the event `name` — for example, `await once(importer, 'done')` waits until `importer` emits `'done'`. Inside a `for...of` loop you can await such a promise only when `write()` answered `false`; the line is already queued at that point. After the loop `end()` tells the writer that no more data will come, and its `'finish'` event means everything has been written."
+    solutionNote:
+      uk: "Кожен рядок записується один раз; після `false` цикл чекає `'drain'`, тож у черзі ніколи не буває більше за ліміт плюс один рядок. `end()` закриває writer, а `once(writable, 'finish')` чекає, доки все записано. Рівноцінні варіанти — власний promise для `'drain'` і `end(callback)`, або `Readable.from` з генератора рядків разом з `pipeline` з наступного уроку, який стежить за backpressure сам."
+      en: "Each line is written once; after `false` the loop waits for `'drain'`, so the queue never holds more than the limit plus one line. `end()` closes the writer, and `once(writable, 'finish')` waits until everything is written. Equivalent versions use a hand-made promise for `'drain'` and `end(callback)`, or `Readable.from` over a generator of lines together with `pipeline` from the next lesson, which watches backpressure by itself."
+    feedback:
+      - when: { test: "writes every record as one JSON line, in order, exactly once" }
+        message:
+          uk: "Ця перевірка пише 300 бажань і очікує рівно 300 рядків — кожен `JSON.stringify(record)` з `'\\n'`, у тому самому порядку. Якщо рядків більше, якийсь рядок записано двічі: `false` від `write()` не означає, що рядок втрачено, — він уже в черзі."
+          en: "This check writes 300 wishes and expects exactly 300 lines — each `JSON.stringify(record)` with `'\\n'`, in the same order. If there are more lines, some line was written twice: `false` from `write()` does not mean the line was lost — it is already queued."
+      - when: { test: "never lets more than the buffer limit pile up in a slow writer" }
+        message:
+          uk: "Ця перевірка пише 5000 бажань у writer з лімітом 1024 байти й очікує, що в черзі ніколи не буде більше за ліміт плюс один рядок. Після кожного `false` від `write()` чекай `'drain'`, перш ніж писати далі."
+          en: "This check writes 5000 wishes into a writer with a 1024-byte limit and expects the queue never to hold more than the limit plus one line. After every `false` from `write()` wait for `'drain'` before writing on."
+      - when: { test: "writes the records of a generator too, not only of an array" }
+        message:
+          uk: "Ця перевірка передає генератор на 2000 бажань і очікує рівно 2000 рядків. Якщо рядків 0 — у генератора немає `length` і доступу за індексом, тож цикл має брати записи по одному: `for...of` працює і з масивом, і з генератором. Якщо рядків більше — якийсь рядок записано двічі."
+          en: "This check passes a generator of 2000 wishes and expects exactly 2000 lines. If there are 0 lines — a generator has no `length` and no index access, so the loop has to take records one by one: `for...of` works with an array and a generator alike. If there are more — some line was written twice."
+      - when: { test: "resolves only after the writer has finished" }
+        message:
+          uk: "Ця перевірка очікує, що в момент, коли promise виконався, `writer.writableFinished` уже `true`. Після циклу виклич `end()` і дочекайся `'finish'`."
+          en: "This check expects `writer.writableFinished` to be `true` at the moment the promise fulfills. After the loop call `end()` and wait for `'finish'`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: NO-11
+    body:
+      uk: "У кроці проєкту цього розділу `src/jsonl.ts` віддає записи твого домену як JSON lines, і читання чекає щоразу, коли запис не встигає: `GET /v1/export` і `npm run export` пропускають рядки через `pipeline`, а `writeJsonLines(lines, writable)`, яким `npm run -s synth -- 10000` створює великий файл для імпорту, чекає на `'drain'`, коли `write()` повертає `false`, і ніколи не пише рядок двічі. `tests/streams.test.ts` перевіряє це повільним потоком: черга запису ніколи не перевищує ліміт більш ніж на один рядок."
+      en: "In this unit’s project step `src/jsonl.ts` streams your domain’s records out as JSON lines, and reading waits whenever writing cannot keep up: `GET /v1/export` and `npm run export` pass the lines through `pipeline`, and `writeJsonLines(lines, writable)`, with which `npm run -s synth -- 10000` generates the big import file, waits for `'drain'` when `write()` returns `false` and never writes a line twice. `tests/streams.test.ts` checks it with a slow stream: the writer’s queue never holds more than its limit plus one line."

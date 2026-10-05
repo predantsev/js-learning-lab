@@ -1,0 +1,307 @@
+id: rn-03-05-touch-js-vs-ui
+unit: RN-03
+title:
+  uk: "Дотики та робота JS проти UI"
+  en: "Touch interaction and JS vs UI work"
+kind: instructional
+minutes: 10
+contentVersion: 1
+objectives:
+  - uk: "Пояснити, що обробники подій і рендер React виконуються в потоці JS, а нативна прокрутка й малювання — у потоці UI, і передбачити, що довгий синхронний обробник `onPress` робить із відгуком на натискання."
+    en: "Explain that event handlers and React rendering run on the JS thread while native scrolling and drawing run on the UI thread, and predict what a long synchronous onPress handler does to pressed feedback."
+  - uk: "Винести важку роботу з обробника натискання (відкласти, розбити чи порахувати заздалегідь), щоб відгук з’являвся одразу, а зона дотику відповідала мінімуму."
+    en: "Move heavy work out of a press handler (defer, split or precompute) so the pressed state appears at once and the touch target still meets the minimum."
+prerequisites: [rn-03-04-flatlist-keys, js-08-01-timers-and-the-event-loop]
+subskills:
+  - { family: N-04, skill: "JS vs UI work", depth: intro }
+  - { family: N-02, skill: "touch targets", depth: practice }
+glossary: [pressable, js-thread, ui-thread]
+selfCheck: [predict-busy-press, quick-toggle]
+
+blocks:
+  - id: two-threads
+    kind: explanation
+    title:
+      uk: "Два потоки одного дотику"
+      en: "Two threads of one tap"
+    body:
+      uk: |
+        У застосунку React Native працюють два головні потоки:
+
+        - [[js-thread|потік JS]] — увесь твій JavaScript: обробники подій, рендер React, логіка, запити. Документація React Native каже, що тут же обробляються й події дотику;
+        - [[ui-thread|потік UI]] — головний нативний потік: малює view, прокручує `ScrollView` і `FlatList`, виконує нативні анімації.
+
+        Дотик проходить обидва. Палець торкнувся — потік UI передає подію в потік JS. Там [[pressable|Pressable]] викликає `onPressIn`, а відпустив — `onPressOut` і `onPress`. Твій обробник змінює стан, React рендерить і робить commit, і лише тоді потік UI малює зміну.
+
+        Потік JS — **один**. Поки обробник щось довго рахує, JS не може ні відрендерити результат цього натискання, ні обробити наступне — жодної кнопки на екрані. А от потік UI не чекає: список, який гортається нативно, гортається далі.
+      en: |
+        A React Native app has two main threads:
+
+        - the [[js-thread|JS thread]] — all of your JavaScript: event handlers, React rendering, logic, requests. The React Native documentation says touch events are processed here as well;
+        - the [[ui-thread|UI thread]] — the main native thread: it draws the views, scrolls `ScrollView` and `FlatList`, runs native animations.
+
+        A tap goes through both. A finger touches — the UI thread passes the event to the JS thread. There a [[pressable|Pressable]] calls `onPressIn`, and on release `onPressOut` and `onPress`. Your handler changes state, React renders and commits, and only then does the UI thread draw the change.
+
+        There is **one** JS thread. While a handler is busy computing, JS can neither render the result of this press nor handle the next one — for any button on the screen. The UI thread, however, does not wait: a list that scrolls natively keeps scrolling.
+
+  - id: predict-busy-press
+    kind: prediction
+    runnable: false
+    prompt:
+      uk: "У рядку планувальника є кнопка. Її `onPress` спершу викликає `setTask` з `done: true`, а потім синхронно сортує 50 000 синтетичних справ для звіту. Що побачить користувач, коли торкнеться кнопки?"
+      en: "A planner row has a button. Its `onPress` first calls `setTask` with `done: true` and then synchronously sorts 50,000 synthetic tasks for a report. What does the user see when they tap the button?"
+    code: |
+      function handlePress() {
+        setTask({ ...task, done: true });
+        setReport(buildReport(allTasks)); // sorts 50,000 records
+      }
+    answer:
+      type: choice
+      options:
+        - id: after-sort
+          text:
+            uk: "Позначка «виконано» з’являється лише після сортування; поки воно триває, не реагує жодна кнопка екрана"
+            en: "The done mark appears only after the sort; while it runs, no button on the screen responds"
+        - id: before-sort
+          text:
+            uk: "Позначка з’являється одразу, бо `setTask` стоїть першим рядком"
+            en: "The mark appears at once, because `setTask` is the first line"
+          why:
+            uk: "`setTask` лише ставить оновлення в чергу. React рендерить і робить commit після того, як обробник поверне керування, — тобто після сортування."
+            en: "`setTask` only queues an update. React renders and commits after the handler returns — that is, after the sort."
+        - id: only-this
+          text:
+            uk: "Позначка з’являється після сортування, але інші кнопки екрана працюють як звичайно"
+            en: "The mark appears after the sort, but the other buttons on the screen work as usual"
+          why:
+            uk: "Потік JS один на весь застосунок. Поки він сортує, дотики до будь-якої кнопки чекають у черзі."
+            en: "There is one JS thread for the whole app. While it sorts, taps on any button wait in the queue."
+        - id: native-smooth
+          text:
+            uk: "Нічого не затримується: нативний застосунок завжди плавний"
+            en: "Nothing is delayed: a native app is always smooth"
+          why:
+            uk: "Нативними є view й прокрутка, а твій обробник — JavaScript у потоці JS. Повільний JavaScript робить повільною реакцію на дотик і на телефоні."
+            en: "The views and the scrolling are native, but your handler is JavaScript on the JS thread. Slow JavaScript makes the reaction to a tap slow on a phone too."
+      correct: [after-sort]
+    explanation:
+      uk: "Оновлення стану стає видимим лише після рендеру й commit, а вони можливі, коли обробник закінчився. Тому важка робота в обробнику затримує саме те, заради чого натискали, і блокує всі інші дотики. У браузерному перегляді все це — один головний потік, а на телефоні JS і UI — різні потоки, але висновок той самий."
+      en: "A state update becomes visible only after a render and a commit, and those are possible once the handler has finished. So heavy work in a handler delays exactly what the user tapped for, and blocks every other tap. In the browser preview all of this is one main thread, while on a phone JS and UI are different threads, but the conclusion is the same."
+
+  - id: busy-press
+    kind: example
+    runtime: concept-preview
+    dir: busy-press
+    entry: main.jsx
+    strings:
+      task: { uk: "Архівна справа", en: "Archived task" }
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      report: { uk: "Виконано в історії", en: "Done in history" }
+    title:
+      uk: "Обробник, що затримує власний результат"
+      en: "A handler that delays its own result"
+    body:
+      uk: |
+        Рядок справи й звіт за 50 000 архівних справ. `useLayoutEffect` пише в консоль момент, коли рядок справді показує новий стан.
+
+        Натисни **Запустити** й натисни рядок на **Сторінці**. Порядок у консолі: `onPress started`, потім `report rebuilt in … ms`, і лише тоді `the row shows done = true`. Рядок змінився **після** звіту.
+      en: |
+        A task row and a report over 50,000 archived tasks. `useLayoutEffect` writes to the console the moment the row really shows the new state.
+
+        Press **Run** and press the row on the **Page**. The order in the console: `onPress started`, then `report rebuilt in … ms`, and only then `the row shows done = true`. The row changed **after** the report.
+    tryIt:
+      uk: |
+        1. Заміни рядок `rebuildReport([next]);` на `requestAnimationFrame(() => rebuildReport([next]));` — так документація React Native радить відкладати важку роботу з обробника. Запусти й натисни: тепер `the row shows …` іде **перед** `report rebuilt`. Оком різницю тут можна й не помітити: у браузері колбек `requestAnimationFrame` виконується ще до малювання кадру, тож у перегляді змінюється порядок у консолі, а не те, що ти бачиш. На телефоні малює окремий потік UI.
+        2. Зверни увагу на натиснутий стиль (світло-блакитний фон): його вмикає `onPressIn` ще до `onPress`, тож він з’являється одразу. А от вимикається він лише після того, як твій обробник поверне керування: поки JS зайнятий, кнопка лишається «натиснутою». Якщо ж JS був зайнятий уже в момент дотику, на телефоні зачекає й сам натиснутий стиль.
+      en: |
+        1. Replace the line `rebuildReport([next]);` with `requestAnimationFrame(() => rebuildReport([next]));` — this is how the React Native documentation suggests deferring heavy work from a handler. Run and press: now `the row shows …` comes **before** `report rebuilt`. You may not see a difference with your eyes here: in a browser a `requestAnimationFrame` callback runs before the frame is painted, so in the preview the console order changes, not what you see. On a phone a separate UI thread does the drawing.
+        2. Notice the pressed style (the light blue background): `onPressIn` turns it on before `onPress` runs, so it appears at once. It turns off only after your handler returns, though: while JS is busy, the button stays “pressed”. And if JS was already busy at the moment of the touch, on a phone the pressed style itself waits too.
+    limits:
+      uk: "Це перегляд у браузері через react-native-web, а не нативний застосунок: тут усе — і твій JavaScript, і малювання сторінки — ділить один головний потік браузера, а не окремі потоки JS і UI телефона. Мілісекунди в консолі — це швидкість твого комп’ютера, не пристрою. Немає нативних модулів, жестів, крім миші й клавіатури, вигляду платформи, нативної прокрутки й продуктивності телефона. Порядок «стан → commit → наступна робота» тут той самий, що на телефоні; швидкість — лише на пристрої."
+      en: "This is a browser preview through react-native-web, not a native app: here everything — your JavaScript and the page's drawing — shares the browser's one main thread rather than the phone's separate JS and UI threads. The milliseconds in the console are your computer's speed, not the device's. There are no native modules, no gestures beyond mouse and keyboard, no platform look, no native scrolling and no phone performance. The order “state → commit → next work” is the same here as on a phone; the speed only on a device."
+
+  - id: tap-on-two-threads
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Один дотик на двох потоках"
+      en: "One tap on two threads"
+    textEquivalent:
+      uk: "Ліворуч потік UI, праворуч потік JS. Користувач торкається кнопки: потік UI отримує дотик і передає подію в потік JS. Потік JS викликає onPress. Якщо обробник синхронно сортує 50 000 записів, потік JS зайнятий, і оновлення стану, рендер та commit чекають, доки сортування закінчиться; лише після commit потік UI малює позначку й знімає натиснутий стиль, який увімкнувся ще на onPressIn. Тим часом потік UI не стоїть: нативний ScrollView гортається далі, бо прокрутка живе в потоці UI. Якщо ж важку роботу відкласти, наприклад через requestAnimationFrame, обробник одразу повертає керування, React робить commit, потік UI малює зміну, а звіт рахується вже після цього."
+      en: "On the left the UI thread, on the right the JS thread. The user taps a button: the UI thread receives the touch and passes the event to the JS thread. The JS thread calls onPress. If the handler synchronously sorts 50,000 records, the JS thread is busy, and the state update, render and commit wait until the sort ends; only after the commit does the UI thread draw the mark and remove the pressed style, which turned on back at onPressIn. Meanwhile the UI thread does not stand still: a native ScrollView keeps scrolling, because scrolling lives on the UI thread. If the heavy work is deferred, for example with requestAnimationFrame, the handler returns at once, React commits, the UI thread draws the change, and the report is computed only after that."
+    spec:
+      layout: grid
+      nodes:
+        - { id: touch, label: { uk: "UI: дотик", en: "UI: touch" }, col: 0, row: 0, w: 150 }
+        - { id: scroll, label: { uk: "UI: прокрутка триває", en: "UI: scrolling goes on" }, col: 0, row: 1, w: 150 }
+        - { id: draw, label: { uk: "UI: малює зміну", en: "UI: draws the change" }, col: 0, row: 2, w: 150 }
+        - { id: handler, label: "JS: onPress", col: 1, row: 0, w: 180 }
+        - { id: sort, label: { uk: "JS: сортує 50 000", en: "JS: sorts 50,000" }, col: 1, row: 1, w: 180 }
+        - { id: commit, label: { uk: "JS: render і commit", en: "JS: render and commit" }, col: 1, row: 2, w: 180 }
+      edges:
+        - { from: touch, to: handler }
+        - { from: handler, to: sort }
+        - { from: sort, to: commit }
+        - { from: commit, to: draw }
+      steps:
+        - caption:
+            uk: "Палець торкнувся кнопки. Потік UI отримує дотик і передає подію в потік JS."
+            en: "A finger touched the button. The UI thread receives the touch and passes the event to the JS thread."
+          highlight: [touch, handler, touch->handler]
+          dim: [scroll, draw, sort, commit]
+        - caption:
+            uk: "`onPress` викликає `setTask` — оновлення лише стає в чергу — і синхронно сортує 50 000 записів. Потік JS зайнятий; інші дотики чекають."
+            en: "`onPress` calls `setTask` — the update is only queued — and synchronously sorts 50,000 records. The JS thread is busy; other taps wait."
+          highlight: [sort, handler->sort]
+          dim: [draw, commit]
+        - caption:
+            uk: "Потік UI тим часом не стоїть: нативний список гортається далі. Але нової позначки ще немає — її має намалювати commit, якого ще не було."
+            en: "Meanwhile the UI thread does not stand still: a native list keeps scrolling. But there is no new mark yet — a commit has to draw it, and there has not been one."
+          highlight: [scroll, sort]
+          dim: [draw, commit]
+        - caption:
+            uk: "Сортування скінчилося. Лише тепер React рендерить і робить commit, а потік UI малює позначку. Відкладена робота (`requestAnimationFrame`) поміняла б ці кроки місцями: спершу commit, потім звіт."
+            en: "The sort is over. Only now does React render and commit, and the UI thread draws the mark. Deferred work (`requestAnimationFrame`) would swap these steps: the commit first, the report after."
+          highlight: [commit, draw, sort->commit, commit->draw]
+
+  - id: keep-it-quick
+    kind: explanation
+    title:
+      uk: "Як лишити дотик швидким"
+      en: "How to keep a tap quick"
+    body:
+      uk: |
+        Обробник натискання має зробити лише те, що користувач має **побачити одразу**, — змінити стан. Решту — геть з обробника:
+
+        - **відкласти**: `requestAnimationFrame(() => …)` чи `setTimeout(…, 0)` — обробник повертає керування, React робить commit, а важка робота йде наступним завданням;
+        - **розбити**: обробляти великий масив порціями по кілька сотень записів, кожну окремим завданням;
+        - **порахувати заздалегідь**: тримати готовий відсортований список і при натисканні лише оновлювати один запис у ньому.
+
+        Відкладена робота все одно займе потік JS — просто **після** того, як React зробив commit позначки; на телефоні потік UI тим часом її малює. Якщо вона триває секунди, користувач усе одно відчує затримку на наступному дотику; тоді її розбивають на порції.
+
+        І друга половина відгуку — розмір. Зона дотику має бути не меншою за мінімум платформ: близько 44 × 44 pt в iOS і 48 × 48 dp в Android. Найпростіше — `minWidth: 48, minHeight: 48` чи відступи, що доводять кнопку до цього розміру. `hitSlop` теж розширює зону дотику без зміни вигляду, але не за межі батьківського view.
+      en: |
+        A press handler should do only what the user must **see at once** — change the state. Everything else goes out of the handler:
+
+        - **defer**: `requestAnimationFrame(() => …)` or `setTimeout(…, 0)` — the handler returns, React commits, and the heavy work runs as a next task;
+        - **split**: process a big array in batches of a few hundred records, each as a separate task;
+        - **precompute**: keep a ready sorted list and on a press update just one record in it.
+
+        Deferred work still occupies the JS thread — only **after** React has committed the mark; on a phone the UI thread draws it meanwhile. If it takes seconds, the user still feels a delay on the next tap; then it is split into batches.
+
+        And the other half of feedback is size. A touch target must be no smaller than the platforms' minimum: about 44 × 44 pt on iOS and 48 × 48 dp on Android. The simplest way is `minWidth: 48, minHeight: 48` or padding that brings the button to that size. `hitSlop` also extends the touch area without changing the look, but not beyond the parent view.
+
+  - id: recall-event-loop
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: long-task-blocks-timer
+        from: js-08-01-timers-and-the-event-loop
+        prompt:
+          uk: "Що надрукує цей код і коли виконається колбек таймера?"
+          en: "What does this code print, and when does the timer callback run?"
+        code: |
+          setTimeout(() => console.log("timer"), 0);
+          const until = Date.now() + 200;
+          while (Date.now() < until) {} // busy for 200 ms
+          console.log("loop done");
+        verify:
+          logs: ["loop done", "timer"]
+        answer:
+          type: choice
+          options:
+            - id: after
+              text:
+                uk: "`loop done`, потім `timer` — таймер чекає, доки цикл звільнить потік"
+                en: "`loop done`, then `timer` — the timer waits until the loop frees the thread"
+            - id: interrupts
+              text:
+                uk: "`timer` посеред циклу, потім `loop done` — таймер на 0 мс спрацьовує одразу"
+                en: "`timer` in the middle of the loop, then `loop done` — a 0 ms timer fires at once"
+              why:
+                uk: "Колбек таймера — окреме завдання. Він не перериває код, що виконується, а чекає, доки стек звільниться."
+                en: "A timer callback is a separate task. It does not interrupt running code; it waits until the stack is empty."
+          correct: [after]
+        explanation:
+          uk: "Довге синхронне завдання тримає потік: усе інше, зокрема колбеки таймерів і обробники подій, чекає. У React Native так само чекають дотики, поки потік JS зайнятий твоїм обробником."
+          en: "A long synchronous task holds the thread: everything else, timer callbacks and event handlers included, waits. In React Native taps wait the same way while the JS thread is busy with your handler."
+
+  - id: quick-toggle
+    kind: exercise
+    mode: guided
+    runtime: concept-preview
+    dir: quick-toggle
+    entry: main.jsx
+    editable: [TaskList.jsx]
+    strings:
+      water: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      toggle: { uk: "Виконано", en: "Done" }
+      report: { uk: "Виконано в історії", en: "Done in history" }
+    title:
+      uk: "Швидка позначка «виконано»"
+      en: "A quick done toggle"
+    instructions:
+      uk: |
+        У `TaskList.jsx` кожна справа має кнопку-позначку, а під списком — звіт за всю історію (`buildReport` сортує 50 000 архівних справ). Зараз кнопка крихітна, а звіт рахується прямо в обробнику. Виправ обидва:
+
+        - кожна кнопка-позначка — щонайменше **48 × 48** (перевірки вимірюють видимий розмір кнопки в перегляді; `hitSlop` перегляд не застосовує й не перевіряє, тож тут потрібні розмір чи відступи);
+        - після натискання рядок показує новий стан **раніше**, ніж почнеться `buildReport`: перевірка стежить за змінами сторінки й за моментом запуску звіту;
+        - звіт однаково оновлюється й показує правильні числа.
+
+        `report.js` і `main.jsx` редагувати не можна.
+      en: |
+        In `TaskList.jsx` every task has a toggle button, and under the list there is a report over the whole history (`buildReport` sorts 50,000 archived tasks). Right now the button is tiny, and the report is computed right inside the handler. Fix both:
+
+        - every toggle button is at least **48 × 48** (the checks measure the button's visible size in the preview; the preview neither applies nor checks `hitSlop`, so size or padding is needed here);
+        - after a press the row shows the new state **before** `buildReport` starts: the check watches the page changes and the moment the report starts;
+        - the report still updates and shows the right numbers.
+
+        `report.js` and `main.jsx` cannot be edited.
+    limits:
+      uk: "Перевірки натискають кнопки в перегляді react-native-web, де JavaScript і малювання ділять один головний потік браузера. Вони перевіряють порядок «рядок змінився → звіт почався» і розмір кнопки, але не швидкість на телефоні, не потоки JS і UI пристрою й не `hitSlop`."
+      en: "The checks press buttons in the react-native-web preview, where JavaScript and drawing share the browser's one main thread. They check the order “the row changed → the report started” and the button size, but not the speed on a phone, not the device's JS and UI threads and not `hitSlop`."
+    testTitles:
+      "every toggle is at least 48 × 48":
+        uk: "Кожна кнопка-позначка — щонайменше 48 × 48"
+        en: "Every toggle is at least 48 × 48"
+      "the row shows the new state before the report is rebuilt":
+        uk: "Рядок показує новий стан раніше, ніж починається звіт"
+        en: "The row shows the new state before the report is rebuilt"
+      "the report catches up with every toggle":
+        uk: "Звіт наздоганяє кожне натискання"
+        en: "The report catches up with every toggle"
+    hints:
+      nudge:
+        uk: "Що з обробника користувач мусить побачити одразу, а що може зачекати? І якого розміру зараз кнопка — скільки займає символ ○ з відступом 2?"
+        en: "What in the handler must the user see at once, and what can wait? And how big is the button now — how much room does the ○ symbol with a padding of 2 take?"
+      explanation:
+        uk: "Обробник лишає собі тільки зміну стану рядка, а важку роботу кладе в наступне завдання. Наприклад, обробник «оновити кошик» міг би бути таким: `setCart(next); requestAnimationFrame(() => setStats(computeStats(next)));`. Розмір задають у `styles`: `minWidth` і `minHeight` чи відступи, що разом із вмістом дають щонайменше 48 одиниць з кожного боку."
+        en: "The handler keeps only the row's state change for itself and puts the heavy work into a next task. For example, an “update cart” handler could be: `setCart(next); requestAnimationFrame(() => setStats(computeStats(next)));`. The size is set in `styles`: `minWidth` and `minHeight`, or padding that together with the content gives at least 48 units on each side."
+    solutionNote:
+      uk: "`setTasks(next)` лишився в обробнику, а `buildReport` пішов у `setTimeout(…, 0)`: React робить commit рядка, щойно обробник закінчився, а звіт рахується наступним завданням. `minWidth: 48, minHeight: 48` дає зону дотику мінімального розміру. Так само годиться `requestAnimationFrame` (його показує документація React Native) чи `useDeferredValue` з `useMemo`: React спершу малює термінове оновлення, а відкладену копію рахує потім."
+      en: "`setTasks(next)` stayed in the handler, while `buildReport` moved into `setTimeout(…, 0)`: React commits the row as soon as the handler has finished, and the report is computed as a next task. `minWidth: 48, minHeight: 48` gives a touch target of the minimum size. `requestAnimationFrame` (shown in the React Native documentation) or `useDeferredValue` with `useMemo` work too: React draws the urgent update first and computes the deferred copy afterwards."
+    feedback:
+      - when: { test: "every toggle is at least 48 × 48" }
+        message:
+          uk: "Ця перевірка вимірює кожну кнопку-позначку й очікує ширину й висоту щонайменше 48. У повідомленні видно, яка з них і який вимір менший."
+          en: "This check measures every toggle button and expects a width and a height of at least 48. The message shows which one and which dimension is smaller."
+      - when: { test: "the row shows the new state before the report is rebuilt" }
+        message:
+          uk: "Ця перевірка натискає першу кнопку й очікує, що позначка в рядку зміниться раніше, ніж почнеться `buildReport`. Якщо звіт рахується в самому обробнику, React зробить commit лише після нього."
+          en: "This check presses the first button and expects the row's mark to change before `buildReport` starts. If the report is computed in the handler itself, React commits only after it."
+      - when: { test: "the report catches up with every toggle" }
+        message:
+          uk: "Ця перевірка натискає другу кнопку й чекає до 3 с, що звіт покаже «виконано» = 50 000 + кількість позначених рядків, з 50 004 загалом. Відкладений звіт теж має оновлювати стан звіту."
+          en: "This check presses the second button and waits up to 3 s for the report to show done = 50,000 + the number of checked rows, out of 50,004 in total. A deferred report must still update the report state."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-03
+    body:
+      uk: "У кроці проєкту зміна статусу в рядку FlatList (отримано, виконано, призупинено — залежно від проєкту) не повинна чекати на підсумки (`summarizeItems`, `countDueTasks`, `summarizeHabit` чи `summarizeExpenses`). Як швидко рядок реагує і чи влучаєш ти в кнопку, перевір на своєму пристрої."
+      en: "In the project step a status change in a FlatList row (acquired, done or paused, depending on the project) must not wait for the summaries (`summarizeItems`, `countDueTasks`, `summarizeHabit` or `summarizeExpenses`). Check on your own device how quickly the row reacts and whether you hit the button."

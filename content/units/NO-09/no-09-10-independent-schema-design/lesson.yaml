@@ -1,0 +1,464 @@
+id: no-09-10-independent-schema-design
+unit: NO-09
+title:
+  uk: "Самостійно: спроєктуй, запитай, мігруй"
+  en: "Independent: design, query, migrate"
+kind: assessment
+minutes: 40
+contentVersion: 1
+purpose:
+  uk: "Перевірити, що ти без підказок проєктуєш реляційну схему для нових даних: ключі й обмеження, які відкидають погані рядки самі, запити зі з’єднаннями й агрегатами, безпечні до ін’єкцій, індекс, обґрунтований планом запиту, і міграцію з seed, що оновлює наявну базу без втрати рядків. А потім доводиш оновлення на справжньому файлі бази у своєму терміналі."
+  en: "To check that you design, without hints, a relational schema for new data: keys and constraints that refuse bad rows by themselves, injection-safe queries with joins and aggregates, an index justified by its query plan, and a migration with a seed that upgrades an existing database without losing rows. Then you prove the upgrade on a real database file in your own terminal."
+objectives:
+  - uk: "Без підказок спроєктувати схему з ключами й обмеженнями для незнайомого синтетичного набору даних, написати запити зі з’єднаннями й агрегатами, яких він потребує, і обґрунтувати один індекс його планом запиту."
+    en: "Design, without hints, a schema with keys and constraints for an unseen synthetic dataset, write the join and aggregate queries it asks for, and justify one index with its query plan."
+  - uk: "Написати й перевірити міграцію та seed, що оновлюють наявну базу без втрати рядків, і пояснити, коли вистачило б файлового репозиторію."
+    en: "Write and test a migration plus seed that upgrade an existing database without losing rows, and explain when a file repository would have been enough."
+prerequisites: [no-09-09-debug-injection-rollback]
+subskills:
+  - { family: B-04, skill: "tables/keys/relationships", depth: assess }
+  - { family: B-04, skill: "SELECT/join/group/aggregate", depth: assess }
+  - { family: B-04, skill: "indexes/query plans", depth: assess }
+  - { family: B-04, skill: "migrations/seed", depth: assess }
+  - { family: B-05, skill: "file vs relational repository tradeoffs", depth: assess }
+glossary: []
+selfCheck: [workshop-db]
+
+blocks:
+  - id: what-is-checked
+    kind: explanation
+    title:
+      uk: "Що перевіряється"
+      en: "What is checked"
+    body:
+      uk: |
+        Тема — запис на заняття майстерні: **аудиторії**, **заняття** й **записи** людей на заняття. Підказок немає: користуйся тим, що вивчив у цьому розділі.
+
+        Дві частини:
+
+        1. **У курсі** — увесь код у `workshop.js`. Автоматичні перевірки пробують вставити погані рядки, порівнюють результати запитів, читають план запиту й мігрують базу, що вже має дані.
+        2. **У твоєму терміналі** — той самий `workshop.js` оновлює справжній файл бази `workshop.db` зі старої версії до нової, а ти переконуєшся, що невдала міграція нічого не ламає.
+      en: |
+        The topic is booking workshop sessions: **rooms**, **sessions** and people’s **bookings** for sessions. There are no hints: use what you learned in this unit.
+
+        Two parts:
+
+        1. **In the course** — all the code in `workshop.js`. The automatic checks try to insert bad rows, compare query results, read a query plan and migrate a database that already holds data.
+        2. **In your terminal** — the same `workshop.js` upgrades a real database file `workshop.db` from the old version to the new one, and you make sure a failed migration breaks nothing.
+
+  - id: workshop-db
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: isolated-node
+    dir: workshop-db
+    entry: index.js
+    editable: [workshop.js]
+    strings:
+      room1: { uk: "Аудиторія 1", en: "Room 1" }
+      lab: { uk: "Лабораторія", en: "Lab" }
+      introSql: { uk: "Вступ до SQL", en: "Intro to SQL" }
+      indexes: { uk: "Індекси", en: "Indexes" }
+      migrations: { uk: "Міграції", en: "Migrations" }
+      lina: { uk: "Ліна", en: "Lina" }
+      denys: { uk: "Денис", en: "Denys" }
+      anna: { uk: "Анна", en: "Anna" }
+    title:
+      uk: "База записів на заняття"
+      en: "A session booking database"
+    instructions:
+      uk: |
+        Дані — у `data.js` (лише для читання). Напиши все в `workshop.js`.
+
+        **Схема — міграція 1** у масиві `migrations` (`{ version, up }`):
+
+        - `rooms (id, name, capacity)`: місткість — ціле число більше за 0; дві аудиторії не мають однакової назви;
+        - `sessions (id, title, roomId, day)`: заняття проходить в існуючій аудиторії; `day` — текст `'YYYY-MM-DD'`;
+        - `bookings (sessionId, attendee)`: запис стосується існуючого заняття; людина (`attendee` — текст) записується на те саме заняття лише раз, але може бути записана на кілька занять;
+        - жодна таблиця не копіює полів іншої.
+
+        **Міграція 2:** у `sessions` з’являється обов’язковий стовпець `level` зі значеннями лише `'intro'` чи `'advanced'`; заняття, що вже були в базі, отримують `'intro'`.
+
+        **Функції:**
+
+        - `migrate(db)` — застосовує лише міграції, новіші за `PRAGMA user_version`, по черзі, кожну разом із новою версією в одній транзакції; повертає масив застосованих версій;
+        - `seed(db)` — вставляє `fixtures` з `data.js`, лише якщо `rooms` порожня; повторний виклик нічого не змінює й не кидає помилки;
+        - `sessionsWithRoom(db, day)` — заняття цього дня як `{ title, room }` (назва аудиторії), за `id` заняття; день — лише дані, ніколи не частина SQL;
+        - `bookingsPerSession(db)` — кожне заняття як `{ title, booked }`, нуль теж; спершу найбільше записів, за однакової кількості — за `id`;
+        - `fullSessions(db)` — назви занять, де записів не менше, ніж місткість аудиторії, за `id`.
+
+        **Індекс:** `indexSql` — SQL, після якого запит `attendeeQuery` з `data.js` (записи однієї людини) шукає за індексом, а не переглядає `bookings`. Якщо твоя схема вже дає такий пошук, `indexSql` може бути порожнім.
+
+        **Звіт:** `report.indexReason` — чому план без індексу був поганим і що змінив індекс; `report.storageChoice` — чи вистачило б тут JSON-файла й за яких умов. Кожне — щонайменше 30 символів.
+
+        `index.js` будує базу твоїми функціями й друкує результати та план до й після `indexSql`.
+      en: |
+        The data is in `data.js` (read-only). Write everything in `workshop.js`.
+
+        **Schema — migration 1** in the array `migrations` (`{ version, up }`):
+
+        - `rooms (id, name, capacity)`: the capacity is an integer above 0; no two rooms share a name;
+        - `sessions (id, title, roomId, day)`: a session takes place in an existing room; `day` is text `'YYYY-MM-DD'`;
+        - `bookings (sessionId, attendee)`: a booking is for an existing session; a person (`attendee` is text) books the same session only once, but may book several sessions;
+        - no table copies fields of another.
+
+        **Migration 2:** `sessions` gets a required column `level` whose only values are `'intro'` and `'advanced'`; sessions already in the database get `'intro'`.
+
+        **Functions:**
+
+        - `migrate(db)` applies only the migrations newer than `PRAGMA user_version`, in order, each together with its new version in one transaction; it returns an array of the versions applied;
+        - `seed(db)` inserts the `fixtures` of `data.js` only when `rooms` is empty; a repeated call changes nothing and does not throw;
+        - `sessionsWithRoom(db, day)` returns the sessions of that day as `{ title, room }` (the room’s name), by session `id`; the day is only data, never part of the SQL;
+        - `bookingsPerSession(db)` returns every session as `{ title, booked }`, zero included; most bookings first, equal counts by `id`;
+        - `fullSessions(db)` returns the titles of the sessions whose bookings are at least the room’s capacity, by `id`.
+
+        **Index:** `indexSql` is SQL after which the query `attendeeQuery` of `data.js` (one person’s bookings) searches an index instead of scanning `bookings`. If your schema already gives such a search, `indexSql` may be empty.
+
+        **Report:** `report.indexReason` says why the plan without the index was poor and what the index changed; `report.storageChoice` says whether a JSON file would have been enough here, and under which conditions. Each at least 30 characters.
+
+        `index.js` builds the database with your functions and prints the results and the plan before and after `indexSql`.
+    testTitles:
+      "a room needs a positive capacity and a name no other room has":
+        uk: "Аудиторії потрібна додатна місткість і назва, якої немає в інших"
+        en: "A room needs a positive capacity and a name no other room has"
+      "a session must be in an existing room":
+        uk: "Заняття має бути в існуючій аудиторії"
+        en: "A session must be in an existing room"
+      "an attendee books a session only once, but may book several sessions":
+        uk: "Людина записується на заняття лише раз, але може — на кілька занять"
+        en: "An attendee books a session only once, but may book several sessions"
+      "sessionsWithRoom lists the sessions of a day with their room":
+        uk: "`sessionsWithRoom` дає заняття дня з їхньою аудиторією"
+        en: "`sessionsWithRoom` lists the sessions of a day with their room"
+      "sessionsWithRoom treats the day only as data":
+        uk: "`sessionsWithRoom` вважає день лише даними"
+        en: "`sessionsWithRoom` treats the day only as data"
+      "bookingsPerSession counts every session, zero included, most booked first":
+        uk: "`bookingsPerSession` рахує кожне заняття, нуль теж, найбільші першими"
+        en: "`bookingsPerSession` counts every session, zero included, most booked first"
+      "fullSessions lists the sessions whose bookings reach the room capacity":
+        uk: "`fullSessions` дає заняття, де записів не менше за місткість"
+        en: "`fullSessions` lists the sessions whose bookings reach the room capacity"
+      "the lookup of an attendee’s bookings searches an index":
+        uk: "Пошук записів людини йде за індексом"
+        en: "The lookup of an attendee’s bookings searches an index"
+      "migrate brings a version 1 database with data to version 2 without losing rows":
+        uk: "`migrate` переводить базу версії 1 з даними на версію 2 без втрати рядків"
+        en: "`migrate` brings a version 1 database with data to version 2 without losing rows"
+      "migrate on an empty database applies 1 and 2, and a rerun applies nothing":
+        uk: "`migrate` на порожній базі застосовує 1 і 2, а повторний запуск — нічого"
+        en: "`migrate` on an empty database applies 1 and 2, and a rerun applies nothing"
+      "a level other than intro or advanced is refused":
+        uk: "Рівень, відмінний від `intro` чи `advanced`, відхилено"
+        en: "A level other than `intro` or `advanced` is refused"
+      "seed fills an empty database once and leaves a filled one alone":
+        uk: "`seed` заповнює порожню базу один раз і не чіпає заповнену"
+        en: "`seed` fills an empty database once and leaves a filled one alone"
+      "the report explains the index and the storage choice":
+        uk: "Звіт пояснює індекс і вибір сховища"
+        en: "The report explains the index and the storage choice"
+    solutionNote:
+      uk: "Еталон: `rooms` з `UNIQUE` на назві й `CHECK (capacity > 0)`, `sessions` із зовнішнім ключем на аудиторію, `bookings` із зовнішнім ключем на заняття й первинним ключем `(sessionId, attendee)`. Міграція 2 — `ALTER TABLE … ADD COLUMN level TEXT NOT NULL DEFAULT 'intro' CHECK (…)`: без `DEFAULT` SQLite не додасть стовпець `NOT NULL` до таблиці з рядками. Запити — з параметрами, `LEFT JOIN` для нулів і `HAVING COUNT(*) >= rooms.capacity`. Ключ `(sessionId, attendee)` не допомагає шукати за `attendee`, тому потрібен індекс на `attendee`; схема з ключем `(attendee, sessionId)` дає цей пошук сама — це теж правильно, як і підзапит замість `LEFT JOIN`."
+      en: "Reference: `rooms` with `UNIQUE` on the name and `CHECK (capacity > 0)`, `sessions` with a foreign key to the room, `bookings` with a foreign key to the session and the primary key `(sessionId, attendee)`. Migration 2 is `ALTER TABLE … ADD COLUMN level TEXT NOT NULL DEFAULT 'intro' CHECK (…)`: without `DEFAULT` SQLite will not add a `NOT NULL` column to a table with rows. The queries use parameters, a `LEFT JOIN` for the zeros and `HAVING COUNT(*) >= rooms.capacity`. The key `(sessionId, attendee)` does not help a search by `attendee`, so an index on `attendee` is needed; a schema with the key `(attendee, sessionId)` gives that search by itself — correct too, as is a subquery instead of the `LEFT JOIN`."
+    feedback:
+      - when: { test: "a room needs a positive capacity and a name no other room has" }
+        message:
+          uk: "Ця перевірка вставляє аудиторію з місткістю 0 і аудиторію з наявною назвою й очікує, що обидві вставки впадуть, а нова правильна аудиторія пройде. Якщо всі перевірки не проходять разом, прочитай першу помилку в консолі після **Запустити**."
+          en: "This check inserts a room with capacity 0 and a room with an existing name and expects both inserts to fail, while a valid new room goes through. If every check fails at once, read the first error in the console after **Run**."
+      - when: { test: "a session must be in an existing room" }
+        message:
+          uk: "Ця перевірка вставляє заняття в аудиторію 99 й очікує відмову."
+          en: "This check inserts a session in room 99 and expects a refusal."
+      - when: { test: "an attendee books a session only once, but may book several sessions" }
+        message:
+          uk: "Ця перевірка очікує відмову для повторного запису на заняття 1 і для запису на заняття 99, а запис тієї самої людини на заняття 3 — прийнятим."
+          en: "This check expects a refusal for a repeated booking of session 1 and for a booking of session 99, and accepts the same person booking session 3."
+      - when: { test: "sessionsWithRoom lists the sessions of a day with their room" }
+        message:
+          uk: "Ця перевірка очікує для `2026-04-10` два заняття як `{ title, room }` за `id`."
+          en: "This check expects two sessions for `2026-04-10` as `{ title, room }` by `id`."
+      - when: { test: "sessionsWithRoom treats the day only as data" }
+        message:
+          uk: "Ця перевірка передає день `x' OR 1=1 --` й очікує порожній список."
+          en: "This check passes the day `x' OR 1=1 --` and expects an empty list."
+      - when: { test: "bookingsPerSession counts every session, zero included, most booked first" }
+        message:
+          uk: "Ця перевірка очікує три заняття з кількістю 2, 1 і 0 у такому порядку, як `{ title, booked }`."
+          en: "This check expects three sessions with the counts 2, 1 and 0 in that order, as `{ title, booked }`."
+      - when: { test: "fullSessions lists the sessions whose bookings reach the room capacity" }
+        message:
+          uk: "Ця перевірка очікує заняття, де записів рівно стільки, скільки місць, а після двох нових записів — ще одне."
+          en: "This check expects the session whose bookings equal the number of places, and one more after two new bookings."
+      - when: { test: "the lookup of an attendee’s bookings searches an index" }
+        message:
+          uk: "Ця перевірка виконує `indexSql` і очікує в плані `attendeeQuery` рядок `SEARCH bookings USING … INDEX`."
+          en: "This check runs `indexSql` and expects a line `SEARCH bookings USING … INDEX` in the plan of `attendeeQuery`."
+      - when: { test: "migrate brings a version 1 database with data to version 2 without losing rows" }
+        message:
+          uk: "Ця перевірка створює базу міграцією 1, заповнює її, ставить `user_version` 1 і очікує від `migrate` `[2]`, версію 2, ту саму кількість рядків і `level` `intro` у старих заняттях."
+          en: "This check creates a database with migration 1, fills it, sets `user_version` 1 and expects `[2]` from `migrate`, version 2, the same row counts and `level` `intro` on the old sessions."
+      - when: { test: "migrate on an empty database applies 1 and 2, and a rerun applies nothing" }
+        message:
+          uk: "Ця перевірка очікує `[1, 2]` від першого запуску на порожній базі, `[]` від другого й версію 2."
+          en: "This check expects `[1, 2]` from the first run on an empty database, `[]` from the second and version 2."
+      - when: { test: "a level other than intro or advanced is refused" }
+        message:
+          uk: "Ця перевірка очікує, що `advanced` приймається, а `expert` і `NULL` — ні."
+          en: "This check expects `advanced` to be accepted, and `expert` and `NULL` to be refused."
+      - when: { test: "seed fills an empty database once and leaves a filled one alone" }
+        message:
+          uk: "Ця перевірка викликає `seed` двічі й очікує 2 аудиторії, 3 заняття й 3 записи обидва рази, без помилки на другому виклику."
+          en: "This check calls `seed` twice and expects 2 rooms, 3 sessions and 3 bookings both times, with no error on the second call."
+      - when: { test: "the report explains the index and the storage choice" }
+        message:
+          uk: "Ця перевірка очікує в `report` поля `indexReason` і `storageChoice`, кожне щонайменше 30 символів."
+          en: "This check expects `report` to have the fields `indexReason` and `storageChoice`, each at least 30 characters long."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай: модель домену як тип"
+      en: "Recall: a domain model as a type"
+    items:
+      - id: optional-field
+        from: js-14-02-modeling-domain-types
+        prompt:
+          uk: "Справу в TypeScript описано як `interface Task { readonly id: string; title: string; dueDate?: string }`. Який стовпець таблиці найточніше передає `dueDate?`?"
+          en: "A task is described in TypeScript as `interface Task { readonly id: string; title: string; dueDate?: string }`. Which table column matches `dueDate?` most closely?"
+        answer:
+          type: choice
+          options:
+            - id: nullable
+              code: "dueDate TEXT"
+            - id: not-null
+              code: "dueDate TEXT NOT NULL"
+              why:
+                uk: "`?` означає «поля може не бути». `NOT NULL` вимагав би дату в кожної справи — це вже обов’язкове поле."
+                en: "`?` means “the field may be missing”. `NOT NULL` would require a date on every task — that is a required field."
+            - id: empty-default
+              code: "dueDate TEXT NOT NULL DEFAULT ''"
+              why:
+                uk: "Порожній текст — це значення, а не його відсутність: запит `dueDate IS NULL` такої справи не знайде, а порівняння дат почне враховувати `''`."
+                en: "Empty text is a value, not its absence: a query `dueDate IS NULL` will not find such a task, and date comparisons start to include `''`."
+          correct: [nullable]
+        explanation:
+          uk: "Необов’язкове поле типу — стовпець, що допускає `NULL`. Обов’язкове — `NOT NULL`; `readonly id` відповідає первинному ключу, якого не змінюють. Тип описує форму в коді, а схема з обмеженнями — ту саму форму в базі."
+          en: "An optional field of a type is a column that allows `NULL`. A required one is `NOT NULL`; `readonly id` matches a primary key that is never changed. The type describes the shape in code, and the schema with constraints describes the same shape in the database."
+
+  - id: upgrade-locally
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Справжній файл бази: оновлення зі старої версії"
+      en: "A real database file: an upgrade from the old version"
+    intro:
+      uk: |
+        Тут потрібні лише Node.js і термінал, жодних npm-пакетів: `node:sqlite` вбудовано в Node 22.13 і новіші. Почни, коли всі перевірки вправи «База записів на заняття» зелені.
+
+        Під час підготовки уроку ці кроки виконано на macOS з Node.js v25.2.1; вивід нижче справжній (уривки позначено `…`). Node 22 і Windows ми не перевіряли. Node друкує для `node:sqlite` рядок `ExperimentalWarning: SQLite is an experimental feature and might change at any time` — на v25.2.1 ми його бачили; документація Node 22 теж позначає модуль експериментальним, тож чекай його й там. Це попередження, не помилка.
+
+        **Скрипт `upgrade-check.mjs`** (створи його в кроці 3):
+
+        ```js
+        // Upgrade check for workshop.js on a real database file: workshop.db next to this script.
+        // The first run creates the file as an older app version would (migration 1 only, with data),
+        // then runs your migrate; later runs only run migrate on the file that already exists.
+        import { existsSync } from 'node:fs';
+        import { DatabaseSync } from 'node:sqlite';
+        import { fixtures } from './data.js';
+        import { migrations, migrate } from './workshop.js';
+
+        const created = !existsSync('workshop.db');
+        const db = new DatabaseSync('workshop.db');
+        if (created) {
+          db.exec(migrations.find((m) => m.version === 1).up);
+          db.exec('PRAGMA user_version = 1');
+          const rows = { rooms: ['id', 'name', 'capacity'], sessions: ['id', 'title', 'roomId', 'day'], bookings: ['sessionId', 'attendee'] };
+          for (const [table, columns] of Object.entries(rows)) {
+            const insert = db.prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`);
+            for (const row of fixtures[table]) insert.run(...columns.map((c) => row[c]));
+          }
+        }
+        const state = () => {
+          const n = (table) => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+          return `version ${db.prepare('PRAGMA user_version').get().user_version}, rooms ${n('rooms')}, sessions ${n('sessions')}, bookings ${n('bookings')}`;
+        };
+        console.log(created ? `created workshop.db at ${state()}` : `opened workshop.db at ${state()}`);
+        console.log('migrate applied:', JSON.stringify(migrate(db)));
+        console.log(`now: ${state()}`);
+        console.log('levels:', db.prepare('SELECT level FROM sessions ORDER BY id').all().map((s) => s.level).join(', '));
+        db.close();
+        ```
+
+        **Крок 5 — перший запуск:**
+
+        ```text
+        created workshop.db at version 1, rooms 2, sessions 3, bookings 3
+        migrate applied: [2]
+        now: version 2, rooms 2, sessions 3, bookings 3
+        levels: intro, intro, intro
+        ```
+
+        **Крок 8 — міграція 2 без `DEFAULT` на новій базі версії 1 (уривок):**
+
+        ```text
+        created workshop.db at version 1, rooms 2, sessions 3, bookings 3
+        …
+        Error: Cannot add a NOT NULL column with default value NULL
+        ```
+
+        **Крок 9 — той самий файл після невдачі (уривок):**
+
+        ```text
+        opened workshop.db at version 1, rooms 2, sessions 3, bookings 3
+        …
+        ```
+      en: |
+        You need only Node.js and a terminal here, no npm packages: `node:sqlite` is built into Node 22.13 and newer. Start when every check of the exercise “A session booking database” is green.
+
+        While preparing this lesson these steps were run on macOS with Node.js v25.2.1; the output below is real (excerpts are marked with `…`). We did not check Node 22 or Windows. Node prints the line `ExperimentalWarning: SQLite is an experimental feature and might change at any time` for `node:sqlite` — we saw it on v25.2.1; the Node 22 documentation marks the module experimental too, so expect it there as well. It is a warning, not an error.
+
+        **The script `upgrade-check.mjs`** (create it in step 3):
+
+        ```js
+        // Upgrade check for workshop.js on a real database file: workshop.db next to this script.
+        // The first run creates the file as an older app version would (migration 1 only, with data),
+        // then runs your migrate; later runs only run migrate on the file that already exists.
+        import { existsSync } from 'node:fs';
+        import { DatabaseSync } from 'node:sqlite';
+        import { fixtures } from './data.js';
+        import { migrations, migrate } from './workshop.js';
+
+        const created = !existsSync('workshop.db');
+        const db = new DatabaseSync('workshop.db');
+        if (created) {
+          db.exec(migrations.find((m) => m.version === 1).up);
+          db.exec('PRAGMA user_version = 1');
+          const rows = { rooms: ['id', 'name', 'capacity'], sessions: ['id', 'title', 'roomId', 'day'], bookings: ['sessionId', 'attendee'] };
+          for (const [table, columns] of Object.entries(rows)) {
+            const insert = db.prepare(`INSERT INTO ${table} (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`);
+            for (const row of fixtures[table]) insert.run(...columns.map((c) => row[c]));
+          }
+        }
+        const state = () => {
+          const n = (table) => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n;
+          return `version ${db.prepare('PRAGMA user_version').get().user_version}, rooms ${n('rooms')}, sessions ${n('sessions')}, bookings ${n('bookings')}`;
+        };
+        console.log(created ? `created workshop.db at ${state()}` : `opened workshop.db at ${state()}`);
+        console.log('migrate applied:', JSON.stringify(migrate(db)));
+        console.log(`now: ${state()}`);
+        console.log('levels:', db.prepare('SELECT level FROM sessions ORDER BY id').all().map((s) => s.level).join(', '));
+        db.close();
+        ```
+
+        **Step 5 — the first run:**
+
+        ```text
+        created workshop.db at version 1, rooms 2, sessions 3, bookings 3
+        migrate applied: [2]
+        now: version 2, rooms 2, sessions 3, bookings 3
+        levels: intro, intro, intro
+        ```
+
+        **Step 8 — migration 2 without `DEFAULT` on a new version 1 database (excerpt):**
+
+        ```text
+        created workshop.db at version 1, rooms 2, sessions 3, bookings 3
+        …
+        Error: Cannot add a NOT NULL column with default value NULL
+        ```
+
+        **Step 9 — the same file after the failure (excerpt):**
+
+        ```text
+        opened workshop.db at version 1, rooms 2, sessions 3, bookings 3
+        …
+        ```
+    tools:
+      - { name: "Node.js", version: { uk: "22.13 або новіший", en: "22.13 or newer" }, note: { uk: "перевірено з v25.2.1", en: "checked with v25.2.1" } }
+    steps:
+      - text:
+          uk: "Створи теку для перевірки й перейди в неї."
+          en: "Create a folder for the check and go into it."
+        command: "mkdir -p ~/js-course/no09-workshop\ncd ~/js-course/no09-workshop"
+      - text:
+          uk: "Перевір версію Node: потрібна 22.13 або новіша, бо раніше `node:sqlite` був доступний лише з прапорцем."
+          en: "Check the Node version: 22.13 or newer is needed, because before that `node:sqlite` was available only behind a flag."
+        command: "node --version"
+        expect:
+          uk: "`v22.13.0` чи новіша (у нас — `v25.2.1`)."
+          en: "`v22.13.0` or newer (ours was `v25.2.1`)."
+      - text:
+          uk: "Створи в цій теці у VS Code чотири файли: `package.json` з одним рядком `{ \"type\": \"module\" }` (щоб Node читав файли `.js` як модулі ES); `data.js` — вміст однойменного файла вправи; `workshop.js` — твій розв’язок, з яким усі перевірки зелені; `upgrade-check.mjs` — скрипт зі вступу."
+          en: "In VS Code, create four files in this folder: `package.json` with the single line `{ \"type\": \"module\" }` (so that Node reads `.js` files as ES modules); `data.js` with the content of the exercise file of that name; `workshop.js` with your solution that has every check green; `upgrade-check.mjs` with the script from the introduction."
+        expect:
+          uk: "У теці чотири файли: `package.json`, `data.js`, `workshop.js`, `upgrade-check.mjs`."
+          en: "The folder holds four files: `package.json`, `data.js`, `workshop.js`, `upgrade-check.mjs`."
+      - text:
+          uk: "Збережи запасну копію свого розв’язку — вона знадобиться в кроці 10."
+          en: "Keep a backup of your solution — you need it in step 10."
+        command: "cp workshop.js workshop.ok.js"
+      - text:
+          uk: "Запусти перевірку. Скрипт створить `workshop.db` як стара версія застосунку (лише міграція 1, з даними) і викличе твій `migrate`."
+          en: "Run the check. The script creates `workshop.db` as the old app version would (migration 1 only, with data) and calls your `migrate`."
+        command: "node upgrade-check.mjs"
+        expect:
+          uk: "`migrate applied: [2]`, версія 2, кількість рядків та сама, що й до міграції, `levels: intro, intro, intro` — як у кроці 5 вступу."
+          en: "`migrate applied: [2]`, version 2, the same row counts as before the migration, `levels: intro, intro, intro` — as in step 5 of the introduction."
+      - text:
+          uk: "Запусти ще раз: тепер скрипт відкриває наявний файл."
+          en: "Run it again: now the script opens the existing file."
+        command: "node upgrade-check.mjs"
+        expect:
+          uk: "`opened workshop.db at version 2, …` і `migrate applied: []` — повторний запуск нічого не застосовує."
+          en: "`opened workshop.db at version 2, …` and `migrate applied: []` — the rerun applies nothing."
+      - text:
+          uk: "Тепер зламай міграцію навмисно: у `workshop.js` прибери з міграції 2 частину `DEFAULT 'intro'` і збережи файл. Якщо твоя міграція 2 додає стовпець інакше й такої частини не має, допиши в кінець її SQL `; SELECT * FROM missing_table` — тоді в наступних кроках буде помилка `no such table: missing_table`. Видали базу, щоб скрипт створив нову стару базу."
+          en: "Now break the migration on purpose: in `workshop.js` remove the `DEFAULT 'intro'` part from migration 2 and save the file. If your migration 2 adds the column another way and has no such part, append `; SELECT * FROM missing_table` to its SQL instead — the next steps then show the error `no such table: missing_table`. Delete the database so that the script creates a new old one."
+        command: "rm workshop.db"
+      - text:
+          uk: "Запусти перевірку з поламаною міграцією."
+          en: "Run the check with the broken migration."
+        command: "node upgrade-check.mjs"
+        expect:
+          uk: "Рядок `created workshop.db at version 1, …`, а потім помилка `Cannot add a NOT NULL column with default value NULL` — як у кроці 8 вступу."
+          en: "The line `created workshop.db at version 1, …`, then the error `Cannot add a NOT NULL column with default value NULL` — as in step 8 of the introduction."
+      - text:
+          uk: "Запусти ще раз і подивись на перший рядок: невдала міграція відкотилася."
+          en: "Run once more and look at the first line: the failed migration rolled back."
+        command: "node upgrade-check.mjs"
+        expect:
+          uk: "`opened workshop.db at version 1, rooms 2, sessions 3, bookings 3` — версія й дані ті самі, що до невдалої спроби; далі та сама помилка."
+          en: "`opened workshop.db at version 1, rooms 2, sessions 3, bookings 3` — the version and the data are the same as before the failed attempt; then the same error."
+      - text:
+          uk: "Поверни свій розв’язок і запусти на тому самому файлі версії 1."
+          en: "Restore your solution and run it on the same version 1 file."
+        command: "cp workshop.ok.js workshop.js\nnode upgrade-check.mjs"
+        expect:
+          uk: "`opened workshop.db at version 1, …`, `migrate applied: [2]` і `now: version 2, rooms 2, sessions 3, bookings 3`."
+          en: "`opened workshop.db at version 1, …`, `migrate applied: [2]` and `now: version 2, rooms 2, sessions 3, bookings 3`."
+    verify:
+      - id: upgraded
+        text:
+          uk: "Мій `migrate` оновив справжній файл версії 1 до версії 2 без втрати рядків, а повторний запуск нічого не застосував."
+          en: "My `migrate` upgraded a real version 1 file to version 2 without losing rows, and a rerun applied nothing."
+      - id: rolled-back
+        text:
+          uk: "Із поламаною міграцією файл лишився на версії 1 з усіма рядками, а виправлена міграція потім застосувалася до нього."
+          en: "With the broken migration the file stayed at version 1 with all its rows, and the repaired migration then applied to it."
+    troubleshooting:
+      - problem:
+          uk: "`No such built-in module: node:sqlite` або схожа помилка про `node:sqlite`"
+          en: "`No such built-in module: node:sqlite` or a similar error about `node:sqlite`"
+        fix:
+          uk: "Твій Node старіший за 22.13. Цей рядок (`Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: node:sqlite`) ми бачили на Node v20.18.0, де модуля ще немає; у Node 22.5–22.12 він був лише з прапорцем `--experimental-sqlite` (документація Node 22, історія `node:sqlite`; ці версії ми не перевіряли). Онови Node до 22.13 або новішого."
+          en: "Your Node is older than 22.13. We saw this line (`Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: node:sqlite`) on Node v20.18.0, which has no such module yet; in Node 22.5–22.12 it existed only behind the flag `--experimental-sqlite` (Node 22 documentation, the `node:sqlite` history; we did not check those versions). Update Node to 22.13 or newer."
+      - problem:
+          uk: "Другий запуск каже `created workshop.db …` замість `opened …`"
+          en: "The second run says `created workshop.db …` instead of `opened …`"
+        fix:
+          uk: "Скрипт шукає `workshop.db` у поточній теці. Запускай його з `~/js-course/no09-workshop` — тієї самої теки, де лежить файл бази."
+          en: "The script looks for `workshop.db` in the current folder. Run it from `~/js-course/no09-workshop` — the same folder where the database file is."
+    recovery:
+      uk: "Видали `workshop.db` (`rm workshop.db`) — наступний запуск створить нову базу версії 1. Твій розв’язок лежить у `workshop.ok.js`, і він же — у вправі курсу."
+      en: "Delete `workshop.db` (`rm workshop.db`) — the next run creates a new version 1 database. Your solution is kept in `workshop.ok.js`, and in the course exercise as well."

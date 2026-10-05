@@ -1,5 +1,6 @@
 // Content loading and compilation: YAML sources + real code files → JSON the app loads.
 // Used by build.mjs (compile) and validate.mjs (static + real-browser checks).
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -17,9 +18,9 @@ export const CONTENT_DIR = process.env.JSLL_CONTENT_ROOT ? path.resolve(process.
 // Fields shown inside a line (no paragraph wrapper) and fields used as plain text (attributes,
 // headings). Everything else is block Markdown. `testTitles` values are compiled as inline text.
 const INLINE_KEYS = new Set(['title', 'text', 'why', 'label', 'name', 'problem', 'note', 'objectives']);
-const PLAIN_KEYS = new Set(['title', 'name', 'placeholder']);
+const PLAIN_KEYS = new Set(['title', 'name', 'placeholder', 'version']);
 const RAW_KEYS = new Set(['strings', 'spec']);
-const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.env', '.gitignore', '']);
+const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.xml', '.env', '.gitignore', '']);
 
 const exists = (p) => fs.access(p).then(() => true, () => false);
 const readYaml = async (file) => YAML.parse(await fs.readFile(file, 'utf8'));
@@ -43,6 +44,37 @@ async function readTree(dir, base = dir) {
   return out;
 }
 
+// The glossary-link tokenizer of createMarkdown: `[[id]]` or `[[id|shown text]]` (`\|` in tables).
+const GLOSSARY_TOKEN = /^\[\[([a-z0-9-]+)(?:\\?\|([^\]]+))?\]\]/;
+
+/**
+ * `[[id|text]]` links in Markdown source that will not render as links (content/README.md, rule 46):
+ * the shown text ends at the first `]` — also one inside a code span such as `items[0]` — so the
+ * link stays raw text; and the shown text cannot hold another link. Code spans and fenced blocks
+ * outside a link are skipped (`[[k, v]]` in code is not a link). Returns a list of messages.
+ */
+export function glossaryLinkProblems(source) {
+  const text = String(source).replace(/^(\s*)(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1\2[^\n]*$/gm, '');
+  const problems = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '`') {
+      const run = /^`+/.exec(text.slice(i))[0];
+      const close = text.indexOf(run, i + run.length);
+      if (close !== -1) i = close + run.length - 1;
+      continue;
+    }
+    if (!text.startsWith('[[', i)) continue;
+    const attempt = /^\[\[([a-z0-9-]+)\\?\|/.exec(text.slice(i));
+    if (!attempt) continue;
+    const link = GLOSSARY_TOKEN.exec(text.slice(i));
+    const excerpt = text.slice(i, i + 50).split('\n')[0];
+    if (!link) problems.push(`the glossary link "${excerpt}…" does not close: its shown text ends at the first "]" (a code span such as \`items[0]\` included), so the learner sees the raw [[…]] text. Rephrase the shown text without "]" (content/README.md, rule 46)`);
+    else if (link[2].includes('[[')) problems.push(`the glossary link "${link[0]}" holds another link in its shown text; a link cannot contain a link (content/README.md, rule 46)`);
+    if (link) i += link[0].length - 1;
+  }
+  return problems;
+}
+
 /** Markdown renderer with glossary links, callouts and build-time syntax highlighting. */
 export function createMarkdown(glossary) {
   const highlight = (code, lang) => {
@@ -53,10 +85,11 @@ export function createMarkdown(glossary) {
       return escapeHtml(code);
     }
   };
+  // The shown text of [[id|text]] is inline Markdown (a code span, bold); the default label is the term.
   const termHtml = (id, shown) => {
     const term = glossary.get(id);
-    const label = shown ?? term?.term ?? id;
-    return `<button type="button" class="term" data-term="${escapeHtml(id)}">${escapeHtml(label)}</button>`;
+    const label = shown !== undefined ? marked.parseInline(shown).trim() : escapeHtml(term?.term ?? id);
+    return `<button type="button" class="term" data-term="${escapeHtml(id)}">${label}</button>`;
   };
   const marked = new Marked({
     gfm: true,
@@ -67,7 +100,7 @@ export function createMarkdown(glossary) {
         level: 'inline',
         start: (src) => src.indexOf('[['),
         tokenizer(src) {
-          const m = /^\[\[([a-z0-9-]+)(?:\|([^\]]+))?\]\]/.exec(src);
+          const m = GLOSSARY_TOKEN.exec(src);
           return m ? { type: 'glossaryLink', raw: m[0], id: m[1], shown: m[2] } : undefined;
         },
         renderer: (token) => termHtml(token.id, token.shown),
@@ -84,8 +117,15 @@ export function createMarkdown(glossary) {
         if (m) return `<aside class="callout callout-${m[1].toLowerCase()}">${html.replace(m[0], '<p>')}</aside>\n`;
         return `<blockquote>${html}</blockquote>\n`;
       },
+      // Raw HTML in authored Markdown is shown as text, never inserted as markup: prose quotes tags
+      // (`<ul>`, “<name>”) far more often than it means them, and markup from content must not run.
+      html({ text }) {
+        return escapeHtml(text);
+      },
       link({ href, title, tokens }) {
         const text = this.parser.parseInline(tokens);
+        // Only web, mail, relative and in-page addresses become links (no javascript: or data: URLs).
+        if (/^\s*[a-z][a-z0-9+.-]*:/i.test(href) && !/^(https?|mailto):/i.test(href.trim())) return text;
         const external = /^https?:/i.test(href);
         return `<a href="${escapeHtml(href)}"${title ? ` title="${escapeHtml(title)}"` : ''}${external ? ' target="_blank" rel="noopener noreferrer" data-external="true"' : ''}>${text}</a>`;
       },
@@ -102,6 +142,32 @@ export function createMarkdown(glossary) {
     plain: (md) => String(md).replace(GLOSSARY_LINK, (_, id, shown) => shown ?? glossary.get(id)?.term ?? id),
     highlight,
   };
+}
+
+// Fields of a block that are not learner-facing prose: the strings table itself, a visual's spec
+// (compiled per language by shared/visuals) and code, accepted answers and verification data, which
+// are resolved per language where they are used.
+const NON_PROSE_KEYS = new Set(['strings', 'spec', 'code', 'accept', 'verify']);
+
+/** Every bilingual { uk, en } text of a block outside NON_PROSE_KEYS, with its field path. */
+function prosePairs(value, at = '', out = []) {
+  if (isLocalized(value)) out.push([at, value]);
+  else if (Array.isArray(value)) value.forEach((v, i) => prosePairs(v, `${at}[${i}]`, out));
+  else if (value !== null && typeof value === 'object') for (const [k, v] of Object.entries(value)) if (!NON_PROSE_KEYS.has(k)) prosePairs(v, at ? `${at}.${k}` : k, out);
+  return out;
+}
+
+/**
+ * Resolve %%key%% placeholders in every prose field of a block (instructions, test titles, hints,
+ * feedback, prompts, answer options, body, tryIt, solutionNote, …) from the block's own `strings`,
+ * each language from its own table. Runs on the Markdown source, before it is rendered.
+ */
+function localizeProse(value, block) {
+  if (!block.strings) return value;
+  if (isLocalized(value)) return localizePair(value, block);
+  if (Array.isArray(value)) return value.map((v) => localizeProse(v, block));
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, NON_PROSE_KEYS.has(k) ? v : localizeProse(v, block)]));
+  return value;
 }
 
 /** Convert every bilingual markdown string inside a value to HTML ({uk, en} → {uk, en}). */
@@ -131,6 +197,7 @@ export async function loadGlossary(issues) {
     for (const term of list) {
       const termIssues = validateGlossaryTerm(term);
       issues.push(...termIssues.list.map((i) => ({ ...i, file: `content/glossary/${file}` })));
+      for (const [at, pair] of prosePairs({ definition: term.definition, context: term.context, note: term.example?.note })) for (const lang of LANGS) for (const message of glossaryLinkProblems(pair[lang])) issues.push({ path: `glossary ${term.id} › ${at}.${lang}`, message, file: `content/glossary/${file}` });
       if (terms.has(term.id)) issues.push({ path: `glossary ${term.id}`, message: `duplicate term id (also in ${terms.get(term.id).file})`, file: `content/glossary/${file}` });
       terms.set(term.id, { ...term, file });
     }
@@ -237,6 +304,8 @@ export function staticIssuesForLesson(lesson, ctx) {
   const result = validateLessonSource(source, { glossary: known, lessonOrder: ctx.lessonOrder, competencies: ctx.competencies.families });
   const issues = [...result.list];
   const add = (p, message) => issues.push({ path: `lesson ${source?.id} › ${p}`, message });
+  // Warnings do not fail validation: they point at content that is probably wrong (the validator lists them).
+  const warn = (p, message) => issues.push({ path: `lesson ${source?.id} › ${p}`, message, level: 'warning' });
   for (const block of source?.blocks ?? []) {
     const a = assets[block.id];
     if (block.kind === 'example') {
@@ -251,13 +320,89 @@ export function staticIssuesForLesson(lesson, ctx) {
       for (const f of block.editable ?? []) if (!(f in a.starter)) add(`block "${block.id}".editable`, `"${f}" does not exist in the starter`);
       for (const f of Object.keys(a.solution)) if (!(f in a.starter) && !(block.allowNewFiles === true)) add(`block "${block.id}"`, `solution adds "${f}" which is not in the starter (set allowNewFiles: true if the learner must create files)`);
       if (!Object.keys(a.variants).some((v) => v.startsWith('wrong'))) add(`block "${block.id}"`, `needs at least one deliberately failing fixture directory ${block.dir}/wrong/ (or wrong-<name>/)`);
+      // A learner-written test suite runs inside the course runner (testing.js), which catches what a
+      // learner test throws and reports that test as failed: the error never reaches the platform, so
+      // `when: { error: ReferenceError }` fires only for an error while the program loads or one thrown
+      // by a check itself.
+      const courseRunner = 'testing.js' in a.starter || /from\s*['"]\.\/testing\.js['"]/.test(a.tests ?? '');
+      // Checks that first assert the type of a function fail with an assertion after a load crash, so
+      // the learner never reads "… is not a function" there (content/README.md, rule 33).
+      const guarded = /typeof\s+scope(Of\([^)]*\))?\.[\w$]+\s*[,)]|requireFunction\s*\(|scope(Of\([^)]*\))?\.[\w$]+\s*(,[^)]*)?\)\s*\.toBeTypeOf\(\s*['"]function['"]\s*\)/.test(a.tests ?? '');
+      for (const [i, rule] of (block.feedback ?? []).entries()) {
+        if (guarded && rule?.when?.error === 'TypeError' && LANGS.some((l) => /is not a function|не є функцією/i.test(String(rule.message?.[l] ?? '')))) warn(`block "${block.id}".feedback[${i}]`, 'the TypeError feedback quotes "… is not a function", but the checks first assert that the function exists (typeof / requireFunction): after a load crash they report `type of X: expected "undefined" to be "function"`, and only the error card shows "… is not a function". Check that the text describes what the learner sees in each case (content/README.md, rule 33)');
+        if (courseRunner && rule?.when?.error === 'ReferenceError') warn(`block "${block.id}".feedback[${i}]`, 'when: { error: ReferenceError } does not fire for errors inside the learner\'s own tests: the course runner (testing.js) catches them and reports a failed learner test. It matches only an error while the program loads or one thrown by a check; if this advice is for an error inside the learner\'s tests, put it into the feedback of the check that runs them (when: { test }) — content/README.md, "Feedback and course runners"');
+      }
     }
-    // Every %%key%% used in code must exist in the block's strings table. (A visual's spec and the
-    // files it reads are checked when it compiles: shared/visuals/index.js compileVisual.)
-    const texts = block.kind === 'example' ? Object.values(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.values(a.starter), ...Object.values(a.solution), a.tests ?? '', ...Object.values(a.variants).flatMap((v) => Object.values(v))] : block.kind === 'visual' ? [block.title, block.textEquivalent].flatMap((pair) => (pair && typeof pair === 'object' ? Object.values(pair) : [])) : [block.code ?? '', ...(block.items ?? []).map((i) => i.code ?? '')];
-    for (const text of texts) for (const m of String(text).matchAll(STRING_PLACEHOLDER)) if (!(block.strings && m[1] in block.strings)) add(`block "${block.id}"`, `placeholder %%${m[1]}%% has no entry in strings`);
+    // Every %%key%% used in code or prose must exist in the block's strings table. (A visual's spec
+    // and the files it reads are checked when it compiles: shared/visuals/index.js compileVisual.)
+    const files = block.kind === 'example' ? Object.values(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.values(a.starter), ...Object.values(a.solution), a.tests ?? '', ...Object.values(a.variants).flatMap((v) => Object.values(v))] : [];
+    const questionCode = block.kind === 'prediction' || block.kind === 'review' ? [block, ...(block.items ?? [])].flatMap((q) => [q.code, ...(q.answer?.options ?? q.answer?.items ?? []).map((o) => o.code), ...(q.answer?.accept ?? []), ...(q.verify?.logs ?? [])]) : [];
+    const texts = [...files, ...questionCode.filter((t) => t !== undefined && t !== null), ...prosePairs(block).flatMap(([, pair]) => LANGS.map((l) => pair[l]))];
+    const missing = new Set();
+    for (const text of texts) for (const m of String(text).matchAll(STRING_PLACEHOLDER)) if (!(block.strings && m[1] in block.strings)) missing.add(m[1]);
+    for (const key of missing) add(`block "${block.id}"`, `placeholder %%${key}%% has no entry in strings${block.kind === 'review' ? ' (the review block\'s strings: its questions share one table)' : ''}`);
+  }
+  // Glossary links that would stay raw text (rule 46) — also in fields the smoke test never shows
+  // (hints, feedback, review questions, solution notes).
+  const { blocks: _blocks, ...meta } = source ?? {};
+  for (const [owner, value] of [['', meta], ...(source?.blocks ?? []).flatMap((b) => [[`block "${b?.id}"`, b], [`block "${b?.id}".spec`, b?.spec]])]) {
+    for (const [at, pair] of prosePairs(value)) for (const lang of LANGS) for (const message of glossaryLinkProblems(pair[lang])) add([owner, `${at}.${lang}`].filter(Boolean).join(' › '), message);
   }
   return issues;
+}
+
+/** Natural width limit of a compiled `diagram` (content/VISUALS.md, section 6). */
+export const DIAGRAM_MAX_WIDTH = 450;
+
+// Names the repository's .gitignore drops (used when the content root is not inside a git work tree).
+const IGNORED_SEGMENT = /(^|\/)(dist|build|coverage|node_modules|\.idea|\.vscode)\//;
+const IGNORED_NAME = /(^|\/)(\.env(\.(?!example$)[^/]*)?|\.DS_Store|[^/]*\.log)$/;
+
+/** Every file a lesson reads from its block directories, as absolute paths. */
+function lessonFilePaths(lesson) {
+  const out = [];
+  for (const block of lesson.source?.blocks ?? []) {
+    const a = lesson.assets[block?.id];
+    if (!a || typeof block.dir !== 'string') continue;
+    const base = path.join(lesson.dir, block.dir);
+    if (block.kind === 'example') for (const rel of Object.keys(a.files ?? {})) out.push(path.join(base, rel));
+    if (block.kind === 'exercise') {
+      for (const [sub, files] of [['starter', a.starter], ['solution', a.solution], ...Object.entries(a.variants ?? {})]) for (const rel of Object.keys(files ?? {})) out.push(path.join(base, sub, rel));
+    }
+  }
+  return out;
+}
+
+/**
+ * Lesson files that git would not commit (they match .gitignore: dist/, build/, coverage/, .env…):
+ * they work locally and silently disappear from the repository. Asks git once for all lessons;
+ * outside a git work tree it applies the same patterns statically. Returns Map<lessonId, string[]>.
+ */
+export function gitIgnoredLessonFiles(lessons) {
+  const byLesson = new Map();
+  const all = [];
+  for (const [id, lesson] of lessons) for (const file of lessonFilePaths(lesson)) all.push([id, lesson.dir, file]);
+  if (all.length === 0) return byLesson;
+  let ignored = null;
+  const git = spawnSync('git', ['check-ignore', '--stdin'], { cwd: CONTENT_DIR, input: all.map(([, , f]) => f).join('\n'), encoding: 'utf8' });
+  // Exit 0: some paths ignored, 1: none; anything else (no git, not a work tree): use the static list.
+  if (!git.error && (git.status === 0 || git.status === 1)) ignored = new Set(git.stdout.split('\n').filter(Boolean).map((f) => path.resolve(CONTENT_DIR, f)));
+  for (const [id, dir, file] of all) {
+    const rel = path.relative(dir, file).split(path.sep).join('/');
+    const hit = ignored ? ignored.has(file) : IGNORED_SEGMENT.test(`/${rel}`) || IGNORED_NAME.test(rel);
+    if (hit) byLesson.set(id, [...(byLesson.get(id) ?? []), rel]);
+  }
+  return byLesson;
+}
+
+/**
+ * A render-timeline's commit panel shows native views in a React Native lesson (stage RN, or any
+ * concept-preview block) and the DOM elsewhere, unless the spec names its `screen`.
+ */
+function visualSpecFor(block, spec, source) {
+  if (block.visual !== 'render-timeline' || spec === null || typeof spec !== 'object' || spec.screen !== undefined) return spec;
+  const native = String(source.id ?? '').startsWith('rn-') || (source.blocks ?? []).some((b) => b?.runtime === 'concept-preview');
+  return { ...spec, screen: native ? 'native' : 'dom' };
 }
 
 /** Compile one lesson to its runtime JSON. `visuals` is the optional shared/visuals module. */
@@ -276,15 +421,21 @@ export async function compileLesson(lesson, ctx) {
       compiled = renderLocalized({ ...meta, title: localizePair(meta.title, block), textEquivalent: localizePair(meta.textEquivalent, block) }, md);
       if (ctx.visuals) {
         try {
-          const out = await ctx.visuals.compileVisual(block.visual, spec, { readFile: (rel) => fs.readFile(path.join(dir, rel), 'utf8'), mdInline: md.inline, langs: LANGS, strings: block.strings });
+          const out = await ctx.visuals.compileVisual(block.visual, visualSpecFor(block, spec, source), { readFile: (rel) => fs.readFile(path.join(dir, rel), 'utf8'), mdInline: md.inline, langs: LANGS, strings: block.strings });
           compiled.spec = out.spec;
           for (const i of out.issues ?? []) issues.push({ path: `lesson ${source.id} › block "${block.id}".spec${i.path ? ` › ${i.path}` : ''}`, message: i.message });
+          // The lesson column leaves a diagram about 450 px (content/VISUALS.md, section 6): wider ones
+          // make the panel scroll. A warning while authoring, an error for a release.
+          for (const [lang, variant] of out.spec?.byLang ? Object.entries(out.spec.byLang) : [[null, out.spec]]) {
+            const width = variant?.kind === 'diagram' ? variant.layout?.width : undefined;
+            if (width > DIAGRAM_MAX_WIDTH) issues.push({ path: `lesson ${source.id} › block "${block.id}".spec${lang ? ` (${lang})` : ''}`, message: `the diagram is ${width} px wide; the lesson column fits ${DIAGRAM_MAX_WIDTH} px (content/VISUALS.md, section 6: narrower nodes, fewer columns or shorter labels)`, ...(ctx.release ? {} : { level: 'warning' }) });
+          }
         } catch (error) {
           issues.push({ path: `lesson ${source.id} › block "${block.id}".spec`, message: `visual failed to compile: ${error.message}` });
           compiled.spec = null;
         }
       } else compiled.spec = spec;
-    } else compiled = renderLocalized(rest, md);
+    } else compiled = renderLocalized(localizeProse(rest, block), md);
     if (block.kind === 'prediction' || block.kind === 'review') {
       // Code shown in questions is resolved per language (authored UI text follows the lesson language).
       const perLang = (text) => Object.fromEntries(LANGS.map((l) => [l, localizeText(String(text), block, l)]));
@@ -324,10 +475,11 @@ export async function compileLesson(lesson, ctx) {
 
 export const sha = (text) => createHash('sha256').update(text).digest('hex');
 
-/** Build everything into dist/content. Returns { index, issues }. */
+/** Build everything into dist/content. Returns { index, issues, warnings, all }. */
 export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content'), quiet = false, release = false, capstonesDir } = {}) {
   const all = await loadAll({ capstonesDir });
   const issues = [...all.issues];
+  const warnings = [];
   const md = createMarkdown(all.glossary);
   let visuals = null;
   if (await exists(path.join(ROOT, 'shared', 'visuals', 'index.js'))) visuals = await import(path.join(ROOT, 'shared', 'visuals', 'index.js'));
@@ -337,12 +489,16 @@ export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content')
   await fs.mkdir(path.join(outDir, 'capstones'), { recursive: true });
   const hash = createHash('sha256');
   const compiledMeta = new Map();
+  for (const [id, files] of gitIgnoredLessonFiles(all.lessons)) {
+    warnings.push({ path: `lesson ${id}`, message: `git ignores ${files.map((f) => `"${f}"`).join(', ')} (.gitignore: dist/, build/, coverage/, .env…): the lesson works locally, but these files are never committed. Rename the folder or file`, level: 'warning', file: path.relative(ROOT, all.lessons.get(id).dir) });
+  }
   for (const [id, lesson] of all.lessons) {
-    const staticIssues = staticIssuesForLesson(lesson, ctx);
-    issues.push(...staticIssues.map((i) => ({ ...i, file: path.relative(ROOT, lesson.dir) })));
+    const staticIssues = staticIssuesForLesson(lesson, ctx).map((i) => ({ ...i, file: path.relative(ROOT, lesson.dir) }));
+    issues.push(...staticIssues.filter((i) => i.level !== 'warning'));
+    warnings.push(...staticIssues.filter((i) => i.level === 'warning'));
     try {
       const { lesson: compiled, issues: compileIssues } = await compileLesson(lesson, ctx);
-      issues.push(...compileIssues.map((i) => ({ ...i, file: path.relative(ROOT, lesson.dir) })));
+      for (const i of compileIssues) (i.level === 'warning' ? warnings : issues).push({ ...i, file: path.relative(ROOT, lesson.dir) });
       const text = JSON.stringify(compiled);
       hash.update(text);
       await fs.writeFile(path.join(outDir, 'lessons', `${id}.json`), text);
@@ -401,6 +557,6 @@ export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content')
     counts: { lessonsAuthored: compiledMeta.size, lessonsPlanned: all.order.length, glossaryTerms: glossary.length },
   };
   await fs.writeFile(path.join(outDir, 'index.json'), JSON.stringify(index));
-  if (!quiet) console.log(`content: ${compiledMeta.size}/${all.order.length} lessons, ${glossary.length} glossary terms, version ${index.contentVersion}, ${issues.length} issue(s)`);
-  return { index, issues, all };
+  if (!quiet) console.log(`content: ${compiledMeta.size}/${all.order.length} lessons, ${glossary.length} glossary terms, version ${index.contentVersion}, ${issues.length} issue(s)${warnings.length > 0 ? `, ${warnings.length} warning(s)` : ''}`);
+  return { index, issues, warnings, all };
 }

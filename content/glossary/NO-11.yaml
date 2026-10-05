@@ -1,0 +1,149 @@
+# Terms introduced in NO-11 (streams, backpressure and bounded jobs). One file per unit keeps parallel authoring conflict-free.
+- id: backpressure
+  term: backpressure
+  name: { uk: "backpressure (зворотний тиск)", en: "backpressure" }
+  definition:
+    uk: "Сигнал «повільніше» від споживача даних до виробника. У Node його подає writable stream: `write()` відповідає `false`, коли черга дійшла до ліміту, а подія `'drain'` каже, що можна продовжувати. Сам потік нічого не зупиняє: виробник має послухатися, інакше дані складаються в пам’яті. `pipe()` і `pipeline()` слухаються самі."
+    en: "A “slow down” signal from the consumer of data to its producer. In Node a writable stream gives it: `write()` answers `false` when its queue has reached the limit, and the `'drain'` event says it is fine to go on. The stream itself stops nothing: the producer has to obey, otherwise data piles up in memory. `pipe()` and `pipeline()` obey by themselves."
+  example:
+    code: "if (!socket.write(frame)) { camera.pause(); socket.once('drain', () => camera.resume()); }"
+  see: [high-water-mark, drain-event]
+- id: high-water-mark
+  term: highWaterMark
+  name: { uk: "highWaterMark (ліміт черги потоку)", en: "highWaterMark" }
+  definition:
+    uk: "Межа внутрішнього буфера потоку в байтах (або в об’єктах для потоку в object mode). Writable stream відповідає `false` на `write()`, щойно в черзі стільки або більше; readable stream читає наперед до цієї межі. За документацією Node.js 22 типово 64 КіБ (16 об’єктів в object mode). Це поріг для сигналу, а не жорстка заборона: `write()` приймає шматок і понад нею."
+    en: "The limit of a stream’s internal buffer in bytes (or in objects for an object-mode stream). A writable stream answers `false` to `write()` as soon as its queue holds that much or more; a readable stream reads ahead up to this limit. According to the Node.js 22 documentation the default is 64 KiB (16 objects in object mode). It is a threshold for the signal, not a hard ban: `write()` accepts a chunk above it too."
+  example:
+    code: "new Writable({ highWaterMark: 1024, write(chunk, encoding, done) { /* … */ } })"
+  see: [backpressure]
+- id: drain-event
+  term: "'drain' event"
+  name: { uk: "подія 'drain'", en: "'drain' event" }
+  definition:
+    uk: "Подія writable stream, що настає після того, як `write()` відповів `false`, а черга знову спорожніла. Вона означає «місце є, можна писати далі». Після `false` не пиши нових шматків, доки не прийде `'drain'`."
+    en: "A writable stream’s event that comes after `write()` answered `false` and the queue has emptied again. It means “there is room, go on writing”. After `false`, write no new chunks until `'drain'` arrives."
+  example:
+    code: "writable.once('drain', () => reader.resume());"
+  see: [backpressure]
+- id: json-lines
+  term: JSON lines
+  name: { uk: "JSON lines (по запису на рядок)", en: "JSON lines" }
+  aliases: [JSONL, NDJSON, newline-delimited JSON]
+  definition:
+    uk: "Текстовий формат, у якому кожен рядок — окремий завершений JSON, найчастіше один запис. На відміну від одного великого масиву JSON, такий файл можна читати й писати рядок за рядком, не тримаючи його цілим у пам’яті, а зламаний рядок не псує решти."
+    en: "A text format in which every line is a separate complete JSON value, usually one record. Unlike one large JSON array, such a file can be read and written line by line without holding it whole in memory, and one broken line does not spoil the rest."
+  example:
+    code: "{\"id\":\"e-01\",\"amountMinor\":4500}\n{\"id\":\"e-02\",\"amountMinor\":1200}"
+- id: transform-stream
+  term: transform stream
+  name: { uk: "transform stream (потік-перетворювач)", en: "transform stream" }
+  definition:
+    uk: "Потік, який з одного боку writable (приймає шматки), а з другого readable (віддає змінені): розбирає рядки JSON, перевіряє записи, стискає. Його ставлять між джерелом і призначенням. У `pipeline` ту саму роль може грати асинхронна функція-генератор."
+    en: "A stream that is writable on one side (it takes chunks) and readable on the other (it hands over changed ones): it parses JSON lines, validates records, compresses. It sits between a source and a destination. In `pipeline` an async generator function can play the same role."
+  example:
+    code: "new Transform({ transform(chunk, encoding, done) { done(null, chunk.toString().toUpperCase()); } })"
+  see: [stream-pipeline]
+- id: stream-pipeline
+  term: stream.pipeline
+  name: { uk: "stream.pipeline", en: "stream.pipeline" }
+  aliases: [pipeline]
+  definition:
+    uk: "Функція Node, що з’єднує потоки в ланцюжок і стежить за backpressure. Версія з `node:stream/promises` повертає один promise: коли будь-який етап падає або спрацьовує переданий `signal`, вона закриває (`destroy`) усі потоки й відхиляє promise один раз. Частково записаних файлів вона не видаляє. На відміну від неї `.pipe()` лише передає дані й не закриває інших етапів при помилці."
+    en: "A Node function that connects streams into a chain and watches backpressure. The version from `node:stream/promises` returns one promise: when any stage fails or the given `signal` fires, it destroys every stream and rejects the promise once. It does not delete partly written files. Unlike it, `.pipe()` only moves data and does not close the other stages on an error."
+  example:
+    code: "await pipeline(createReadStream('photo.raw'), createGzip(), createWriteStream('photo.raw.gz'));"
+  see: [transform-stream, backpressure]
+- id: cpu-bound-work
+  term: CPU-bound work
+  name: { uk: "робота, що навантажує процесор (CPU-bound)", en: "CPU-bound work" }
+  definition:
+    uk: "Робота, яку обмежує швидкість процесора, а не очікування диска чи мережі: контрольні суми, розбір великого JSON, сортування, стиснення. У Node вона виконується на тому самому потоці, що й обробники запитів, тож поки вона триває, жоден інший колбек не отримує ходу. `async` цього не змінює; допомагають порції з паузами, а для справді важкої роботи — окремий потік чи процес."
+    en: "Work limited by the speed of the processor rather than by waiting for a disk or the network: checksums, parsing large JSON, sorting, compression. In Node it runs on the same thread as the request handlers, so while it lasts no other callback gets a turn. `async` does not change that; batches with pauses help, and for really heavy work, a separate thread or process."
+  example:
+    code: "for (const record of records) hash = hashRecord(record, hash); // holds the loop until the end"
+  see: [event-loop-delay]
+- id: event-loop-delay
+  term: event loop delay
+  name: { uk: "затримка event loop", en: "event loop delay" }
+  aliases: [event loop lag, monitorEventLoopDelay]
+  definition:
+    uk: "На скільки пізніше запланованого колбек отримує хід, бо потік зайнятий іншою роботою. `monitorEventLoopDelay()` з `node:perf_hooks` вимірює її таймером (типово кожні 10 мс) і повертає гістограму в наносекундах: `percentile(99)`, `max`. Висока затримка означає, що всі запити сервера в цей час чекали."
+    en: "How much later than planned a callback gets its turn because the thread is busy with other work. `monitorEventLoopDelay()` from `node:perf_hooks` measures it with a timer (every 10 ms by default) and returns a histogram in nanoseconds: `percentile(99)`, `max`. A high delay means every request to the server waited during that time."
+  example:
+    code: "const delay = monitorEventLoopDelay(); delay.enable(); /* … */ delay.percentile(99) / 1e6 // ms"
+  see: [cpu-bound-work]
+- id: concurrency-limit
+  term: concurrency limit
+  name: { uk: "обмеження одночасності (concurrency limit)", en: "concurrency limit" }
+  definition:
+    uk: "Найбільша кількість задач, що виконуються одночасно; решта чекає своєї черги. Обмеження тримає пікову пам’ять і навантаження на спільний ресурс (базу даних, диск, чужий API) у межах, яких цей ресурс витримує. Воно не має бути більшим за межу самого ресурсу."
+    en: "The largest number of jobs running at once; the rest wait their turn. The limit keeps peak memory and the load on a shared resource (a database, a disk, someone else’s API) within what that resource can take. It should be no higher than the resource’s own limit."
+  example:
+    code: "await Promise.all(Array.from({ length: 4 }, worker)); // 4 workers share one list of jobs"
+  see: [bounded-queue]
+- id: bounded-queue
+  term: bounded queue
+  name: { uk: "обмежена черга (bounded queue)", en: "bounded queue" }
+  definition:
+    uk: "Черга задач з максимальною довжиною. Коли місць немає, нова задача не додається: її відхиляють одразу (сервер відповідає `503`), змушують чекати або відкидають найстарішу. Черга без межі в пам’яті під навантаженням росте, доки не закінчиться пам’ять."
+    en: "A job queue with a maximum length. When there is no room, a new job is not added: it is rejected at once (a server answers `503`), made to wait, or the oldest one is dropped. An unbounded in-memory queue under load grows until memory runs out."
+  example:
+    code: "if (pendingUploads.length === MAX_PENDING) return res.writeHead(503).end();"
+  see: [concurrency-limit, load-shedding, fifo-queue]
+- id: load-shedding
+  term: load shedding
+  name: { uk: "load shedding (скидання навантаження)", en: "load shedding" }
+  definition:
+    uk: "Свідома відмова в частині роботи, коли система перевантажена: сервер одразу відповідає `503 Service Unavailable` (часто з `Retry-After`), замість того щоб приймати все й повільно не встигати ні для кого. Клієнт отримує швидку зрозумілу відповідь і може повторити пізніше."
+    en: "Deliberately refusing part of the work when a system is overloaded: the server answers `503 Service Unavailable` at once (often with `Retry-After`) instead of accepting everything and slowly failing everyone. The client gets a quick, clear answer and can retry later."
+  example:
+    code: "response.writeHead(503, { 'retry-after': '1' }).end();"
+  see: [bounded-queue]
+- id: retry-jitter
+  term: jitter
+  name: { uk: "jitter (випадковий розкид пауз)", en: "jitter" }
+  aliases: [full jitter, retry jitter]
+  definition:
+    uk: "Випадкова частина паузи перед повтором. Якщо багато клієнтів упали одночасно, з однаковими паузами вони й повторять одночасно й знову перевантажать сервіс. Тому експоненційну паузу множать на випадкове число від 0 до 1 («full jitter»): `random() × baseMs × 2^(n − 1)`."
+    en: "A random part of the pause before a retry. If many clients failed at the same moment, with equal pauses they also retry at the same moment and overload the service again. So the exponential pause is multiplied by a random number from 0 to 1 (“full jitter”): `random() × baseMs × 2^(n − 1)`."
+  example:
+    code: "const pauseMs = Math.random() * 100 * 2 ** (attempt - 1); // 0–100, 0–200, 0–400 ms"
+  see: [exponential-backoff, bounded-retry]
+- id: at-least-once-delivery
+  term: at-least-once delivery
+  name: { uk: "доставка «щонайменше один раз» (at-least-once)", en: "at-least-once delivery" }
+  definition:
+    uk: "Обіцянка системи задач чи черги повідомлень: задача точно виконається, але може виконатися більше ніж раз — наприклад, коли запис відбувся, а підтвердження загубилося, і задачу повторили. Тому кожен крок такої задачі має бути ідемпотентним: друге виконання з тим самим id нічого не змінює."
+    en: "A promise of a job system or message queue: a job will surely run, but may run more than once — for example, when the write happened but the acknowledgement got lost and the job was retried. So every step of such a job has to be idempotent: a second run with the same id changes nothing."
+  example:
+    code: "if (alreadyProcessed(messageId)) return; // a second delivery of the same message"
+  see: [idempotency, retry-jitter]
+- id: worker-thread
+  term: worker thread
+  name: { uk: "worker thread (потік-працівник)", en: "worker thread" }
+  aliases: [worker_threads, Worker]
+  definition:
+    uk: "Окремий потік JavaScript у тому самому процесі Node, з власним event loop (`new Worker(file)` з `node:worker_threads`). Важкі обчислення в ньому не блокують головного потоку, але й не стають швидшими. Дані передаються через `postMessage` копією; `ArrayBuffer` зі списку передачі переміщується без копії й у відправника порожніє."
+    en: "A separate JavaScript thread in the same Node process, with its own event loop (`new Worker(file)` from `node:worker_threads`). Heavy computation in it does not block the main thread, but it does not get faster either. Data goes through `postMessage` as a copy; an `ArrayBuffer` in the transfer list is moved without copying and becomes empty for the sender."
+  example:
+    code: "worker.postMessage({ amounts }, [amounts.buffer]); // moved, not copied"
+  see: [web-worker, child-process, cpu-bound-work]
+- id: child-process
+  term: child process
+  name: { uk: "дочірній процес (child process)", en: "child process" }
+  definition:
+    uk: "Окрема програма, яку запускає процес Node (`spawn`, `fork` з `node:child_process`). За документацією Node.js 22 дочірній процес Node має власну пам’ять і власний V8, а з батьківським спілкується через канал повідомлень. Він дорожчий за worker thread, зате ізольований: його аварія не руйнує батьківського процесу."
+    en: "A separate program started by a Node process (`spawn`, `fork` from `node:child_process`). According to the Node.js 22 documentation a Node child process has its own memory and its own V8 and talks to the parent through a message channel. It costs more than a worker thread but is isolated: its crash does not bring down the parent."
+  example:
+    code: "const child = fork('report.js'); child.on('exit', (code) => console.log('exit', code));"
+  see: [worker-thread]
+- id: resource-budget
+  term: resource budget
+  name: { uk: "бюджет ресурсів задачі", en: "resource budget" }
+  definition:
+    uk: "Межі, які задача має ще до початку: скільки записів вона обробить, скільки файлів і таймерів відкриє, скільки часу триватиме. Понад межу — зрозуміла помилка (`RangeError`), а все відкрите закривається в одному `finally` після успіху, помилки й скасування. Node не прибирає за задачею сам."
+    en: "The limits a job has before it starts: how many records it processes, how many files and timers it opens, how long it runs. Above a limit — a clear error (`RangeError`), and everything opened is closed in one `finally` after success, failure and cancellation. Node does not clean up after a job by itself."
+  example:
+    code: "const deadline = setTimeout(stop, 5000); try { await serve(); } finally { clearTimeout(deadline); server.close(); }"
+  see: [resource-handle]

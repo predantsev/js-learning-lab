@@ -1,0 +1,377 @@
+id: rn-07-04-crash-diagnosis
+unit: RN-07
+title:
+  uk: "Діагностика падінь"
+  en: "Crash diagnosis"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Відрізнити виняток JS, native-падіння й завершення через нестачу пам’яті за першими рядками журналу та видимою поведінкою застосунку."
+    en: "Tell a JS exception, a native crash and an out-of-memory kill apart from their first log lines and the app's visible behavior."
+  - uk: "Пройти звіт про падіння від симптому до відтворюваного кроку, а тоді прочитати символізований стек до відповідального модуля."
+    en: "Follow a crash report from the symptom to a reproducible step, then read a symbolicated stack down to the responsible module."
+prerequisites: [rn-07-03-mocks-vs-device-checks, js-07-01-call-stack-and-errors]
+subskills:
+  - { family: N-10, skill: "crash diagnosis", depth: intro }
+glossary: [native-crash, symbolication, crash-report]
+selfCheck: [predict-crash-kind, crash-notes]
+
+blocks:
+  - id: three-endings
+    kind: explanation
+    title:
+      uk: "Три способи, якими застосунок зникає"
+      en: "Three ways an app disappears"
+    body:
+      uk: |
+        «Застосунок закрився» — це симптом, а не діагноз. За ним стоїть одне з трьох:
+
+        | Що сталося | Що бачить людина | Що шукати в журналі пристрою |
+        |---|---|---|
+        | **виняток JS** | у debug — червоний екран зі стеком; у release — застосунок закривається | назву помилки JS (`TypeError: …`) і стек із позиціями в bundle; на Android у release — ще й `FATAL EXCEPTION` з класом `com.facebook.react.common.JavascriptException` |
+        | **[[native-crash\|native-падіння]]** | у release — застосунок зникає одразу, без червоного екрана | на Android — `FATAL EXCEPTION` від `AndroidRuntime` і клас винятку Java/Kotlin (`NullPointerException`…); на iOS — [[crash-report\|звіт про падіння]] |
+        | **завершення через пам’ять** | застосунок зникає, часто після важкої роботи чи у фоні; наступне відкриття починається з нуля | жодного винятку: лише запис системи, що процес завершено (на iOS — окремий звіт Jetsam, а не звіт про падіння) |
+
+        Перший крок — визначити рядок таблиці. Від нього залежить, що читати далі: стек JavaScript, стек native-коду чи використання пам’яті. Тому в рядку `FATAL EXCEPTION` читай **клас** винятку: `JavascriptException` — це помилка JavaScript, яку React Native у release-збірці перетворив на падіння.
+
+        Debug-збірка поводиться інакше. Виняток native-модуля, який JavaScript щойно викликав, React Native 0.86 перехоплює й показує на червоному екрані — із Java- чи Kotlin-стеком замість стеку JavaScript. Обидві поведінки — і цю, і `JavascriptException` у release — ми взяли з коду React Native 0.86 (`ReactHostImpl.kt`, `DevSupportManagerBase.kt`, `ExceptionsManagerModule.kt`), а не побачили на пристрої. Точний вигляд усіх цих записів залежить від версій ОС і React Native, і під час підготовки уроку їх на пристрої не перевіряли — записуй те, що бачиш сам.
+      en: |
+        “The app closed” is a symptom, not a diagnosis. Behind it is one of three things:
+
+        | What happened | What a person sees | What to look for in the device log |
+        |---|---|---|
+        | **a JS exception** | in debug, a red screen with a stack; in release, the app closes | the JS error name (`TypeError: …`) and a stack with positions in the bundle; on Android in release, also `FATAL EXCEPTION` with the class `com.facebook.react.common.JavascriptException` |
+        | **a [[native-crash]]** | in release, the app vanishes at once, with no red screen | on Android, `FATAL EXCEPTION` from `AndroidRuntime` and the Java/Kotlin exception class (`NullPointerException`…); on iOS, a [[crash-report]] |
+        | **an out-of-memory kill** | the app vanishes, often after heavy work or in the background; the next open starts from scratch | no exception at all: only the system's note that the process ended (on iOS a separate Jetsam report, not a crash report) |
+
+        The first step is to find the table row. It decides what you read next: the JavaScript stack, the native stack or memory use. So in a `FATAL EXCEPTION` line, read the exception **class**: `JavascriptException` is a JavaScript error that React Native turned into a crash in a release build.
+
+        A debug build behaves differently. An exception from a native module that JavaScript has just called is caught by React Native 0.86 and shown on the red screen — with a Java or Kotlin stack instead of a JavaScript one. Both behaviors — this one and `JavascriptException` in release — come from the React Native 0.86 code (`ReactHostImpl.kt`, `DevSupportManagerBase.kt`, `ExceptionsManagerModule.kt`), not from a device. The exact look of all these records depends on the OS and React Native versions, and they were not checked on a device while preparing this lesson — write down what you see yourself.
+
+  - id: crash-timeline
+    kind: visual
+    visual: sequence
+    title:
+      uk: "Від натискання до звіту про падіння"
+      en: "From a press to a crash report"
+    textEquivalent:
+      uk: "У release-збірці користувач натискає «Зберегти чек», хоча фото не вибрано. JavaScript викликає native-модуль ReceiptStore.save із шляхом null — для JavaScript це звичайний виклик без помилки. Native-код Kotlin перевіряє параметр і кидає NullPointerException. У release-збірці виняток ніхто не перехоплює, і процес застосунку завершується — без червоного екрана (debug-збірка показала б його на червоному екрані з Kotlin-стеком). Система записує FATAL EXCEPTION у Logcat (на iOS — звіт про падіння). Розробник бере звіт і символізує стек файлами символів тієї самої збірки, щоб побачити назви функцій і рядки."
+      en: "In a release build the user presses “Save receipt” although no photo was chosen. JavaScript calls the native module ReceiptStore.save with the path null — for JavaScript an ordinary call with no error. The Kotlin native code checks the parameter and throws a NullPointerException. In a release build nobody catches the exception, and the app’s process ends — without a red screen (a debug build would show it on the red screen with a Kotlin stack). The system writes FATAL EXCEPTION into Logcat (on iOS, a crash report). The developer takes the report and symbolicates the stack with the symbol files of the same build to see function names and lines."
+    spec:
+      actors:
+        - { id: js, label: "JavaScript" }
+        - { id: native, label: { uk: "native-модуль", en: "native module" } }
+        - { id: os, label: { uk: "ОС і журнали", en: "OS and logs" } }
+      messages:
+        - from: js
+          to: js
+          kind: note
+          label: { uk: "натискання «Зберегти чек»", en: "press “Save receipt”" }
+          caption:
+            uk: "Release-збірка. Користувач натискає «Зберегти чек», хоча фото не вибрано. JavaScript нічого не перевіряє."
+            en: "A release build. The user presses “Save receipt” although no photo was chosen. JavaScript checks nothing."
+        - from: js
+          to: native
+          label: "ReceiptStore.save(null)"
+          caption:
+            uk: "JavaScript викликає native-модуль із шляхом `null`. Для JavaScript це звичайний виклик — помилки в ньому ще немає."
+            en: "JavaScript calls the native module with the path `null`. For JavaScript this is an ordinary call — there is no error in it yet."
+        - from: native
+          to: native
+          kind: note
+          label: "NullPointerException"
+          note: { uk: "Parameter specified as non-null is null", en: "Parameter specified as non-null is null" }
+          caption:
+            uk: "Kotlin сам перевіряє параметри, що не можуть бути `null`, і кидає виняток з повідомленням `Parameter specified as non-null is null`."
+            en: "Kotlin checks parameters that cannot be `null` by itself and throws an exception with the message `Parameter specified as non-null is null`."
+        - from: native
+          to: os
+          label: { uk: "процес завершено", en: "process ends" }
+          caption:
+            uk: "У release-збірці виняток ніхто не перехоплює — система завершує процес без червоного екрана. Debug-збірка React Native 0.86 показала б його на червоному екрані з Kotlin-стеком."
+            en: "In a release build nobody catches the exception — the system ends the process with no red screen. A React Native 0.86 debug build would show it on the red screen with a Kotlin stack."
+        - from: os
+          to: os
+          kind: note
+          label: { uk: "FATAL EXCEPTION · звіт", en: "FATAL EXCEPTION · report" }
+          caption:
+            uk: "Система записує падіння: у Logcat — рядки `FATAL EXCEPTION` зі стеком Kotlin, на iOS — звіт про падіння. Саме тут видно причину."
+            en: "The system records the crash: in Logcat, `FATAL EXCEPTION` lines with the Kotlin stack; on iOS, a crash report. This is where the cause is visible."
+        - from: os
+          to: os
+          kind: note
+          label: { uk: "символізація", en: "symbolication" }
+          caption:
+            uk: "Якщо код release-збірки стиснено, назви в стеку короткі. Розробник символізує його файлами символів **тієї самої** збірки й бачить назви функцій і рядки."
+            en: "If the release build’s code is minified, the names in the stack are short. The developer symbolicates it with the symbol files of **the same** build and sees function names and lines."
+
+  - id: predict-crash-kind
+    kind: prediction
+    prompt:
+      uk: |
+        Три уривки із журналу пристрою Android (складені для уроку у форматі Logcat):
+
+        ```text
+        (1) E AndroidRuntime: FATAL EXCEPTION: main
+            E AndroidRuntime: java.lang.NullPointerException: Parameter specified as non-null is null: method lab.receipts.ReceiptStore.save, parameter path
+        (2) E ReactNativeJS: TypeError: Cannot read property 'amountMinor' of undefined
+            E ReactNativeJS: … index.android.bundle:1:184533
+        (3) I ActivityManager: Process com.example.rn07lab (pid 4721) has died
+            (no FATAL EXCEPTION and no ReactNativeJS line before it)
+        ```
+
+        Що це за три завершення?
+      en: |
+        Three excerpts from an Android device log (assembled for the lesson in Logcat's format):
+
+        ```text
+        (1) E AndroidRuntime: FATAL EXCEPTION: main
+            E AndroidRuntime: java.lang.NullPointerException: Parameter specified as non-null is null: method lab.receipts.ReceiptStore.save, parameter path
+        (2) E ReactNativeJS: TypeError: Cannot read property 'amountMinor' of undefined
+            E ReactNativeJS: … index.android.bundle:1:184533
+        (3) I ActivityManager: Process com.example.rn07lab (pid 4721) has died
+            (no FATAL EXCEPTION and no ReactNativeJS line before it)
+        ```
+
+        Which three endings are these?
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: right
+          text:
+            uk: "(1) native-падіння · (2) виняток JS · (3) завершення системою, найчастіше через пам’ять"
+            en: "(1) a native crash · (2) a JS exception · (3) the system ending the process, most often for memory"
+        - id: all-js
+          text:
+            uk: "Усі три — винятки JS: у React Native весь код — JavaScript"
+            en: "All three are JS exceptions: in React Native all code is JavaScript"
+          why:
+            uk: "`java.lang.NullPointerException` від `AndroidRuntime` — виняток Kotlin/Java у native-модулі, а не JavaScript. React Native-застосунок має обидва світи."
+            en: "`java.lang.NullPointerException` from `AndroidRuntime` is a Kotlin/Java exception in a native module, not JavaScript. A React Native app has both worlds."
+        - id: no-error
+          text:
+            uk: "(1) native-падіння · (2) виняток JS · (3) помилки немає — застосунок просто закрився"
+            en: "(1) a native crash · (2) a JS exception · (3) no error — the app just closed"
+          why:
+            uk: "Без червоного екрана й без винятку застосунок усе одно не «просто закривається»: його завершила система. Це теж причина, яку треба знайти, — найчастіше нестача пам’яті."
+            en: "Without a red screen and without an exception the app still did not “just close”: the system ended it. That is a cause to find too — most often a lack of memory."
+        - id: swapped
+          text:
+            uk: "(1) виняток JS · (2) native-падіння · (3) завершення через пам’ять"
+            en: "(1) a JS exception · (2) a native crash · (3) an out-of-memory kill"
+          why:
+            uk: "Тег `ReactNativeJS` і `TypeError` з позицією в `index.android.bundle` — це JavaScript. А `FATAL EXCEPTION` з Java-класом — native."
+            en: "The `ReactNativeJS` tag and a `TypeError` with a position in `index.android.bundle` are JavaScript. `FATAL EXCEPTION` with a Java class is native."
+      correct: [right]
+    explanation:
+      uk: "Дивись на перший рядок і на його тег: `AndroidRuntime` з `FATAL EXCEPTION` і Java-класом на кшталт `NullPointerException` — native (а клас `JavascriptException` означав би помилку JavaScript, яку release-збірка перетворила на падіння), `ReactNativeJS` з помилкою JS — JavaScript, лише запис `ActivityManager` без винятку — процес завершила система. Точний текст залежить від версій; ці уривки складено для уроку."
+      en: "Look at the first line and its tag: `AndroidRuntime` with `FATAL EXCEPTION` and a Java class such as `NullPointerException` is native (the class `JavascriptException` would mean a JavaScript error that a release build turned into a crash), `ReactNativeJS` with a JS error is JavaScript, only an `ActivityManager` note with no exception means the system ended the process. The exact text depends on versions; these excerpts were assembled for the lesson."
+
+  - id: minified-not-useless
+    kind: explanation
+    title:
+      uk: "Release-стек не марний"
+      en: "A release stack is not useless"
+    body:
+      uk: |
+        У release-збірці JavaScript стиснено в один файл, і кадри стека схожі на `at n (index.android.bundle:1:48210)`: назви коротшають, а все стоїть у рядку 1. Але **позиція** в кадрі справжня. Карта коду — [[source-map]], як у JS-15, — каже, з якого файлу, рядка й функції походить кожна позиція. Повернення назв за картою — [[symbolication|символізація]]; як її зробити командою `metro-symbolicate`, описує сторінка [«Debugging Release Builds»](https://reactnative.dev/docs/0.86/debugging-release-builds) документації React Native 0.86.
+
+        Карту треба зберегти **під час збирання**: `npx expo export --platform android --source-maps` у нашому проєкті записав поруч із `index-d0a70ba3….hbc` (1,1 МБ) файл `index-d0a70ba3….hbc.map` (3,5 МБ). Однакова частина назви — ознака однієї збірки. Карта іншої збірки дасть назви, але **не ті** — і це небезпечніше, ніж жодних назв.
+      en: |
+        In a release build the JavaScript is compressed into one file, and stack frames look like `at n (index.android.bundle:1:48210)`: names get shorter, and everything sits on line 1. But the **position** in the frame is real. A [[source-map]], as in JS-15, says which file, line and function every position comes from. Getting the names back through the map is [[symbolication]]; the [“Debugging Release Builds”](https://reactnative.dev/docs/0.86/debugging-release-builds) page of the React Native 0.86 documentation shows how to do it with `metro-symbolicate`.
+
+        The map has to be kept **at build time**: `npx expo export --platform android --source-maps` in our project wrote the file `index-d0a70ba3….hbc.map` (3.5 MB) next to `index-d0a70ba3….hbc` (1.1 MB). The shared part of the name marks one build. A map of another build gives names, but **the wrong ones** — and that is more dangerous than no names at all.
+
+  - id: map-viewer
+    kind: example
+    runtime: concept-preview
+    dir: map-viewer
+    entry: main.jsx
+    strings:
+      stackOf: { uk: "стек зі збірки", en: "stack from build" }
+      mapOf: { uk: "карта збірки", en: "map of build" }
+    title:
+      uk: "Стек до й після карти"
+      en: "A stack before and after the map"
+    body:
+      uk: |
+        `releaseStack.js` — **синтетичний** release-стек планувальника зі збірки 41: три кадри, усі в рядку 1. `sourceMaps.js` — **спрощені** карти двох збірок, 41 і 42. `settings.js` обирає, яку карту застосувати. Натисни **Запустити**: у **Консолі** стек без карти.
+      en: |
+        `releaseStack.js` is a **synthetic** release stack of the planner from build 41: three frames, all on line 1. `sourceMaps.js` holds **simplified** maps of two builds, 41 and 42. `settings.js` chooses which map to apply. Press **Run**: the **Console** shows the stack with no map.
+    tryIt:
+      uk: |
+        1. У `settings.js` заміни `null` на `'b41'` і запусти: кадри стають `formatDueDate (src/planner/dueLabel.ts:7)`, `TaskRow (src/planner/TaskRow.tsx:22)` і функція React Native. Помилка — у `formatDueDate`, а викликав її `TaskRow`.
+        2. Заміни `'b41'` на `'b42'` і запусти: назви знову є, але перший кадр тепер `priorityRank`. Стек прийшов зі збірки 41, а карта — від 42, тож позиції вказують не туди.
+        3. Поверни `'b41'`. Висновок: карту бери лише від тієї збірки, з якої прийшов стек.
+      en: |
+        1. In `settings.js` replace `null` with `'b41'` and run: the frames become `formatDueDate (src/planner/dueLabel.ts:7)`, `TaskRow (src/planner/TaskRow.tsx:22)` and a React Native function. The error is in `formatDueDate`, and `TaskRow` called it.
+        2. Replace `'b41'` with `'b42'` and run: names are there again, but the first frame is now `priorityRank`. The stack came from build 41 and the map from 42, so the positions point elsewhere.
+        3. Put `'b41'` back. The conclusion: take the map only from the build the stack came from.
+    limits:
+      uk: "Концептуальний перегляд через react-native-web. Стек і карти синтетичні й спрощені: справжня карта стиснена (кодування VLQ) і важить мегабайти, для байт-коду Hermes потрібна саме карта байт-коду (`.hbc.map`), а native-код (Kotlin, Swift) має власні файли символів тієї самої збірки (mapping-файл R8 на Android, dSYM на iOS)."
+      en: "A concept preview through react-native-web. The stack and the maps are synthetic and simplified: a real map is compressed (VLQ encoding) and weighs megabytes, Hermes bytecode needs the bytecode map itself (`.hbc.map`), and native code (Kotlin, Swift) has its own symbol files of the same build (an R8 mapping file on Android, a dSYM on iOS)."
+
+  - id: crash-notes
+    kind: exercise
+    mode: guided
+    runtime: concept-preview
+    dir: crash-notes
+    entry: main.jsx
+    editable: [diagnosis.js]
+    strings:
+      report: { uk: "Звіт про падіння", en: "Crash report" }
+      notes: { uk: "Мої нотатки", en: "My notes" }
+      ownFrame: { uk: "Перший власний кадр", en: "First own frame" }
+      hypothesis: { uk: "Гіпотеза", en: "Hypothesis" }
+      csv: { uk: "CSV", en: "CSV" }
+      bOpened: { uk: "відкрито екран «Витрати»", en: "screen Expenses opened" }
+      bTap: { uk: "натискання «Імпорт CSV»", en: "tap Import CSV" }
+      bImported: { uk: "імпорт: 3 рядки, 1 без суми", en: "import: 3 rows, 1 without amount" }
+      bCrash: { uk: "падіння", en: "crash" }
+      s0: { uk: "Встановити release-збірку 1.0.3 (41) на емулятор Android 15", en: "Install the release build 1.0.3 (41) on an Android 15 emulator" }
+      s1: { uk: "Відкрити екран «Витрати»", en: "Open the Expenses screen" }
+      s2: { uk: "Натиснути «Імпорт CSV» і вибрати файл із рядком без суми", en: "Press Import CSV and pick a file with a row that has no amount" }
+      s3: { uk: "Дочекатися, поки список покаже імпортовані рядки: застосунок закривається", en: "Wait until the list shows the imported rows: the app closes" }
+      sVague: { uk: "Застосунок інколи падає", en: "The app sometimes crashes" }
+      hyp: { uk: "ExpenseRow передає formatMinor суму undefined для імпортованого рядка без суми, а formatMinor викликає на ній toLocaleString.", en: "ExpenseRow passes formatMinor an undefined amount for an imported row without an amount, and formatMinor calls toLocaleString on it." }
+      hypAlt: { uk: "Рядок CSV без суми потрапляє в список, і ExpenseRow (рядок 31) показує його суму, якої немає.", en: "A CSV row without an amount gets into the list, and ExpenseRow (line 31) shows its amount, which does not exist." }
+      hypLib: { uk: "Бібліотека lab-money зламана й падає на звичайних даних.", en: "The lab-money library is broken and crashes on ordinary data." }
+    title:
+      uk: "Від звіту до кроків і гіпотези"
+      en: "From a report to steps and a hypothesis"
+    instructions:
+      uk: |
+        `crashReport.js` — **синтетичний**, уже символізований звіт про падіння release-збірки трекера витрат: помилка, стек і «хлібні крихти» (`breadcrumbs`) — останні дії перед падінням. Заповни в `diagnosis.js`:
+
+        - `steps` — щонайменше три кроки відтворення, по рядку тексту на крок (кожен від 5 символів), і серед них — дія з «хлібних крихт», що веде до падіння;
+        - `firstOwnFrame` — **перший згори кадр із твого коду**, як `файл:рядок`;
+        - `hypothesis` — одне речення: яка функція отримує що й чому падає; назви в ньому функцію цього кадру.
+
+        Сторінка показує звіт і твої нотатки.
+      en: |
+        `crashReport.js` is a **synthetic**, already symbolicated crash report of the expense tracker's release build: the error, the stack and the breadcrumbs — the last actions before the crash. Fill in `diagnosis.js`:
+
+        - `steps` — at least three reproduction steps, one text per step (each at least 5 characters), including the action from the breadcrumbs that leads to the crash;
+        - `firstOwnFrame` — **the first frame from the top that is your own code**, as `file:line`;
+        - `hypothesis` — one sentence: which function gets what and why it fails; name the function of that frame in it.
+
+        The page shows the report and your notes.
+    testTitles:
+      "the first own frame is the first frame from src":
+        uk: "Перший власний кадр — перший кадр із `src`"
+        en: "The first own frame is the first frame from `src`"
+      "the reproduction has at least three steps":
+        uk: "Відтворення має щонайменше три кроки"
+        en: "The reproduction has at least three steps"
+      "the reproduction includes the action from the breadcrumbs":
+        uk: "Серед кроків є дія з «хлібних крихт»"
+        en: "The reproduction includes the action from the breadcrumbs"
+      "the hypothesis names the function of that frame":
+        uk: "Гіпотеза називає функцію цього кадру"
+        en: "The hypothesis names the function of that frame"
+    hints:
+      nudge:
+        uk: "Іди стеком згори вниз і для кожного кадру питай: це мій файл чи бібліотека в `node_modules`? А «хлібні крихти» читай як сценарій: що людина робила за секунду до падіння?"
+        en: "Walk the stack from the top down and ask for each frame: is this my file or a library in `node_modules`? And read the breadcrumbs as a script: what was the person doing a second before the crash?"
+      explanation:
+        uk: "Верхній кадр — там, де помилка виникла, але це може бути бібліотека, яка отримала погані дані. Перший кадр з `src/` — місце, де **твій** код передав ці дані: з нього починається виправлення. Кроки відтворення беруть із «хлібних крихт» і заголовка звіту (збірка, пристрій). Наприклад, для стеку `at parseDate (node_modules/lab-dates/parse.js:4)`, `at HabitRow (src/habits/HabitRow.tsx:12)` перший власний кадр — `src/habits/HabitRow.tsx:12`."
+        en: "The top frame is where the error happened, but it can be a library that received bad data. The first frame from `src/` is where **your** code passed that data: the fix starts there. Reproduction steps come from the breadcrumbs and the report header (build, device). For example, for the stack `at parseDate (node_modules/lab-dates/parse.js:4)`, `at HabitRow (src/habits/HabitRow.tsx:12)` the first own frame is `src/habits/HabitRow.tsx:12`."
+    solutionNote:
+      uk: "Помилка виникла в `formatMinor` з бібліотеки, але бібліотека лише отримала `undefined`. Перший кадр твого коду — `src/expenses/ExpenseRow.tsx:31`: там рядок передає суму, якої в імпортованому записі немає. «Хлібні крихти» дають сценарій: відкрити «Витрати», імпортувати CSV з рядком без суми, побачити падіння. Звідси й виправлення — перевіряти імпортований рядок (як `validateExpense`) до того, як він потрапить у список."
+      en: "The error happened in the library's `formatMinor`, but the library only received `undefined`. The first frame of your code is `src/expenses/ExpenseRow.tsx:31`: there the row passes an amount the imported record does not have. The breadcrumbs give the script: open Expenses, import a CSV with a row without an amount, see the crash. Hence the fix — validate the imported row (like `validateExpense`) before it gets into the list."
+    feedback:
+      - when: { test: "the first own frame is the first frame from src" }
+        message:
+          uk: "Ця перевірка очікує в `firstOwnFrame` файл `ExpenseRow.tsx` і рядок 31. Верхній кадр — `node_modules/lab-money/…`: це бібліотека, а не твій код. Шукай перший кадр, шлях якого починається з `src/`."
+          en: "This check expects `firstOwnFrame` to hold the file `ExpenseRow.tsx` and line 31. The top frame is `node_modules/lab-money/…`: a library, not your code. Look for the first frame whose path starts with `src/`."
+      - when: { test: "the reproduction has at least three steps" }
+        message:
+          uk: "Ця перевірка очікує в `steps` масив щонайменше з трьох текстів, кожен від 5 символів. «Застосунок падає» — не крок: напиши, що відкрити, що натиснути й що побачити."
+          en: "This check expects `steps` to be an array of at least three texts, each at least 5 characters. “The app crashes” is not a step: write what to open, what to press and what to see."
+      - when: { test: "the reproduction includes the action from the breadcrumbs" }
+        message:
+          uk: "Ця перевірка очікує, що один із кроків згадує «%%csv%%» — дію з «хлібних крихт», після якої сталося падіння."
+          en: "This check expects one of the steps to mention “%%csv%%” — the action from the breadcrumbs after which the crash happened."
+      - when: { test: "the hypothesis names the function of that frame" }
+        message:
+          uk: "Ця перевірка очікує, що `hypothesis` згадує `ExpenseRow` — функцію першого власного кадру. Гіпотеза «бібліотека зламана» не пояснює, звідки взялося `undefined`."
+          en: "This check expects `hypothesis` to mention `ExpenseRow` — the function of the first own frame. The hypothesis “the library is broken” does not explain where the `undefined` came from."
+    limits:
+      uk: "Концептуальний перегляд через react-native-web. Звіт синтетичний і вже символізований; справжній звіт інструмента звітів чи системи має більше полів, а його вигляд залежить від інструмента й платформи."
+      en: "A concept preview through react-native-web. The report is synthetic and already symbolicated; a real report from a reporting tool or the system has more fields, and its look depends on the tool and the platform."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай"
+      en: "Recall"
+    items:
+      - id: top-frame
+        from: js-07-01-call-stack-and-errors
+        prompt:
+          uk: "Стек помилки: `at total (cart.js:4:19)`, `at render (page.js:12:3)`, `at main (index.js:2:1)`. Де помилка **виникла**?"
+          en: "An error's stack: `at total (cart.js:4:19)`, `at render (page.js:12:3)`, `at main (index.js:2:1)`. Where did the error **happen**?"
+        answer:
+          type: choice
+          options:
+            - id: top
+              text:
+                uk: "У `total`, `cart.js`, рядок 4"
+                en: "In `total`, `cart.js`, line 4"
+            - id: bottom
+              text:
+                uk: "У `main`, `index.js`, рядок 2"
+                en: "In `main`, `index.js`, line 2"
+              why:
+                uk: "Нижній кадр — те, з чого все почалося. Помилка виникла у верхньому кадрі, найглибшому виклику."
+                en: "The bottom frame is where everything started. The error happened in the top frame, the deepest call."
+            - id: middle
+              text:
+                uk: "У `render`: там викликано функцію з помилкою"
+                en: "In `render`: the failing function was called there"
+              why:
+                uk: "`render` лише викликав `total`. Сама помилка — всередині `total`."
+                en: "`render` only called `total`. The error itself is inside `total`."
+          correct: [top]
+        explanation:
+          uk: "Верхній кадр — місце помилки, нижчі — хто кого викликав. У звіті про падіння додається ще одне питання: який із кадрів — **твій** код."
+          en: "The top frame is where the error is; the lower ones show who called whom. A crash report adds one more question: which of the frames is **your** code."
+      - id: recover-not-crash
+        from: rn-05-06-debug-corrupt-schema
+        prompt:
+          uk: "Після оновлення застосунок падає на старті: у сховищі лежить JSON старої схеми, і код читає поле, якого там немає. Що робить правильний ремонт?"
+          en: "After an update the app crashes on start: storage holds JSON of an old schema, and the code reads a field that is not there. What does the right repair do?"
+        answer:
+          type: choice
+          options:
+            - id: recover
+              text:
+                uk: "Перевіряє збережене під час завантаження й показує стан відновлення замість падіння, нічого не стираючи мовчки"
+                en: "Checks what is stored while loading and shows a recovery state instead of crashing, deleting nothing silently"
+            - id: clear
+              text:
+                uk: "Очищає сховище під час кожного запуску"
+                en: "Clears storage on every start"
+              why:
+                uk: "Так зникне падіння — разом з усіма даними людини."
+                en: "The crash goes away — together with all of the person's data."
+            - id: try-ignore
+              text:
+                uk: "Обгортає весь застосунок у `try`/`catch`, що нічого не показує"
+                en: "Wraps the whole app in a `try`/`catch` that shows nothing"
+              why:
+                uk: "Помилка зникає з очей, але людина бачить порожній екран і не знає, що сталося з даними."
+                en: "The error disappears from view, but the person sees an empty screen and does not know what happened to the data."
+          correct: [recover]
+        explanation:
+          uk: "Дані ззовні (сховище, імпорт, мережа) перевіряють на вході. Падіння із цього уроку — той самий випадок: імпортований рядок без суми мав зупинитися на перевірці, а не дійти до `ExpenseRow`."
+          en: "Data from outside (storage, import, network) is checked at the entrance. This lesson's crash is the same case: an imported row without an amount should have stopped at validation, not reached `ExpenseRow`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RN-07
+    body:
+      uk: "Коли налагоджуватимеш справжній збій свого native-підпроєкту в кроці проєкту цього розділу, спершу визнач вид завершення за першим рядком журналу пристрою, а тоді запиши кроки відтворення й перший кадр зі свого коду — до будь-яких змін."
+      en: "When you debug a real failure of your native subproject in this unit's project step, first identify the kind of ending from the first line of the device log, then write down the reproduction steps and the first frame from your own code — before any change."

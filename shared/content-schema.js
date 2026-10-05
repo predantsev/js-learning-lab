@@ -11,6 +11,21 @@ export const WORKSPACE_BLOCK_KINDS = ['example', 'exercise'];
 export const EXECUTABLE_RUNTIMES = ['browser-js', 'browser-react', 'concept-preview', 'isolated-node'];
 export const LOCAL_RUNTIMES = ['local-web', 'local-native', 'local-node'];
 export const RUNTIME_KINDS = [...EXECUTABLE_RUNTIMES, ...LOCAL_RUNTIMES];
+/**
+ * Runtime honesty per stage (REQ-013/014): the runtimes a lesson block or a syllabus practice entry
+ * of each stage may declare. Shared by the content validator and scripts/content/validate-syllabus.mjs.
+ * React Native units may also run computer-side Node.js (the supplied mock service of rn-06-01:
+ * an `isolated-node` example and a `local-node` task); that is never native evidence, so every RN
+ * unit still needs a `local-native` task (STAGE_REQUIRED_RUNTIMES). content/README.md, "Runtimes".
+ */
+export const STAGE_RUNTIMES = {
+  JS: ['browser-js', 'local-web', 'concept-preview'],
+  RE: ['browser-react', 'browser-js', 'local-web', 'concept-preview'],
+  RN: ['browser-js', 'concept-preview', 'local-native', 'local-web', 'isolated-node', 'local-node'],
+  NO: ['browser-js', 'browser-react', 'concept-preview', 'isolated-node', 'local-node', 'local-web', 'local-native'],
+};
+/** At least one practice entry of each unit of these stages uses one of these runtimes (syllabus). */
+export const STAGE_REQUIRED_RUNTIMES = { RN: ['local-native'], NO: ['isolated-node', 'local-node'] };
 export const EXERCISE_MODES = ['guided', 'debug', 'independent'];
 export const PREDICTION_TYPES = ['choice', 'multi', 'text', 'order'];
 export const VISUAL_KINDS = ['code-trace', 'memory-graph', 'pipeline', 'event-loop', 'diagram', 'sequence', 'git-graph', 'render-timeline'];
@@ -25,6 +40,19 @@ const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArr
 const nonEmpty = (v) => typeof v === 'string' && v.trim().length > 0;
 
 export const unitOfLesson = (lessonId) => lessonId.slice(0, 5).toUpperCase();
+
+/**
+ * Why an id field is not usable text, or null when it is a non-empty string. YAML reads an unquoted
+ * `null`, `~`, `true` or `12` as a value of another type ("id: null" is no id at all), which is easy
+ * to write for prediction options; the message names that cause.
+ */
+export function idProblem(value, label = 'id') {
+  if (value === undefined) return `missing ${label}`;
+  if (value === null) return `${label} is null (unquoted null or ~? YAML reads it as no value: quote it, ${label}: "null", or choose another id)`;
+  if (typeof value !== 'string') return `${label} is the YAML ${typeof value} ${JSON.stringify(value)}, not text (unquoted? quote it: ${label}: "${String(value)}")`;
+  if (value.trim() === '') return `${label} is empty`;
+  return null;
+}
 
 /** Collects errors as { path, message }. */
 export class Issues {
@@ -90,7 +118,8 @@ function checkPredictionItem(issues, item, path) {
     if (!Array.isArray(answer.options) || answer.options.length < 2) issues.add(`${path}.answer.options`, 'needs at least two options');
     const ids = new Set();
     for (const [i, option] of (answer.options ?? []).entries()) {
-      if (!nonEmpty(option.id)) issues.add(`${path}.answer.options[${i}].id`, 'missing id');
+      const optionIdProblem = idProblem(option.id);
+      if (optionIdProblem) issues.add(`${path}.answer.options[${i}].id`, optionIdProblem);
       if (ids.has(option.id)) issues.add(`${path}.answer.options[${i}].id`, 'duplicate option id');
       ids.add(option.id);
       if (option.code === undefined) checkLocalized(issues, option.text, `${path}.answer.options[${i}].text`);
@@ -111,9 +140,12 @@ function checkPredictionItem(issues, item, path) {
       if (it.code === undefined) checkLocalized(issues, it.text, `${path}.answer.items[${i}].text`);
     }
   }
+  // `code` and `verify` belong to the question itself (a prediction block or a review item), next to
+  // `prompt` — not inside `answer`, where they would be ignored.
+  for (const key of ['code', 'verify']) if (isPlainObject(answer) && answer[key] !== undefined) issues.add(`${path}.answer.${key}`, `"${key}" belongs to the question, next to "prompt", not inside "answer"`);
   if (item.verify !== undefined) {
     if (!isPlainObject(item.verify) || !Array.isArray(item.verify.logs)) issues.add(`${path}.verify.logs`, 'must list the exact console lines the code prints');
-    if (!nonEmpty(item.code)) issues.add(`${path}.verify`, 'verify needs "code" to execute');
+    if (!nonEmpty(item.code)) issues.add(`${path}.verify`, 'verify runs this question\'s own "code" field (as in a prediction), and this question has no code: add the code the learner reads, or remove verify');
   }
 }
 
@@ -149,6 +181,10 @@ function checkBlock(issues, block, lesson, ctx) {
     return;
   }
   if (block.title !== undefined) checkLocalized(issues, block.title, `${p}.title`);
+  const stage = typeof lesson.id === 'string' ? lesson.id.slice(0, 2).toUpperCase() : null;
+  if (['example', 'exercise', 'local-task'].includes(block.kind) && RUNTIME_KINDS.includes(block.runtime) && STAGE_RUNTIMES[stage] && !STAGE_RUNTIMES[stage].includes(block.runtime)) {
+    issues.add(`${p}.runtime`, `runtime ${block.runtime} is not honest for stage ${stage} (allowed: ${STAGE_RUNTIMES[stage].join(', ')}; content/README.md, "Runtimes")`);
+  }
   switch (block.kind) {
     case 'explanation':
       checkLocalized(issues, block.title, `${p}.title`);
@@ -172,7 +208,10 @@ function checkBlock(issues, block, lesson, ctx) {
       if (!Array.isArray(block.items) || block.items.length === 0) issues.add(`${p}.items`, 'a review block needs at least one question');
       for (const [i, item] of (block.items ?? []).entries()) {
         checkPredictionItem(issues, item, `${p}.items[${i}]`);
-        if (!nonEmpty(item.id) || !BLOCK_ID_PATTERN.test(item.id)) issues.add(`${p}.items[${i}].id`, 'missing or invalid id');
+        if (item.strings !== undefined) issues.add(`${p}.items[${i}].strings`, 'put strings on the review block: its questions share one table');
+        const itemIdProblem = idProblem(item.id);
+        if (itemIdProblem) issues.add(`${p}.items[${i}].id`, itemIdProblem);
+        else if (!BLOCK_ID_PATTERN.test(item.id)) issues.add(`${p}.items[${i}].id`, `invalid id "${item.id}" (kebab-case: lowercase letters, digits and dashes, starting with a letter)`);
         if (!nonEmpty(item.from) || !LESSON_ID_PATTERN.test(item.from)) issues.add(`${p}.items[${i}].from`, 'must name the earlier lesson id this question retrieves');
         else if (ctx.lessonOrder && ctx.lessonOrder.has(item.from) && ctx.lessonOrder.has(lesson.id) && ctx.lessonOrder.get(item.from) >= ctx.lessonOrder.get(lesson.id)) issues.add(`${p}.items[${i}].from`, 'must be an earlier lesson');
       }
@@ -217,6 +256,15 @@ function checkBlock(issues, block, lesson, ctx) {
       checkLocalized(issues, block.intro, `${p}.intro`);
       if (!LOCAL_RUNTIMES.includes(block.runtime)) issues.add(`${p}.runtime`, `must be one of ${LOCAL_RUNTIMES.join(', ')}`);
       if (!Array.isArray(block.tools) || block.tools.length === 0) issues.add(`${p}.tools`, 'list required tools with versions');
+      for (const [i, tool] of (Array.isArray(block.tools) ? block.tools : []).entries()) {
+        if (!isPlainObject(tool) || tool.name === undefined || tool.name === null) { issues.add(`${p}.tools[${i}].name`, 'needs the tool name'); continue; }
+        // A product name is the same text in both languages ("Node.js"); a described tool ("A code
+        // editor") is bilingual text.
+        if (!nonEmpty(tool.name)) checkLocalized(issues, tool.name, `${p}.tools[${i}].name`);
+        // A version is the same text in both languages ("22.13 or newer" is not) — or bilingual text.
+        if (tool.version !== undefined && !nonEmpty(tool.version)) checkLocalized(issues, tool.version, `${p}.tools[${i}].version`);
+        if (tool.note !== undefined) checkLocalized(issues, tool.note, `${p}.tools[${i}].note`);
+      }
       if (!Array.isArray(block.steps) || block.steps.length === 0) issues.add(`${p}.steps`, 'needs ordered steps');
       for (const [i, step] of (block.steps ?? []).entries()) {
         checkLocalized(issues, step.text, `${p}.steps[${i}].text`);
@@ -224,7 +272,8 @@ function checkBlock(issues, block, lesson, ctx) {
       }
       if (!Array.isArray(block.verify) || block.verify.length === 0) issues.add(`${p}.verify`, 'needs at least one verification item the learner confirms');
       for (const [i, v] of (block.verify ?? []).entries()) {
-        if (!nonEmpty(v.id)) issues.add(`${p}.verify[${i}].id`, 'missing id');
+        const verifyIdProblem = idProblem(v?.id);
+        if (verifyIdProblem) issues.add(`${p}.verify[${i}].id`, verifyIdProblem);
         checkLocalized(issues, v.text, `${p}.verify[${i}].text`);
       }
       if (!Array.isArray(block.troubleshooting) || block.troubleshooting.length === 0) issues.add(`${p}.troubleshooting`, 'needs common failure causes with fixes');
@@ -250,7 +299,9 @@ export function validateLessonSource(lesson, ctx = {}) {
     issues.add('', 'lesson.yaml must contain a mapping');
     return issues;
   }
-  if (!nonEmpty(lesson.id) || !LESSON_ID_PATTERN.test(lesson.id)) issues.add('id', 'must match <stage>-<unit nn>-<order nn>-<slug>, for example js-05-03-filter');
+  const lessonIdProblem = idProblem(lesson.id);
+  if (lessonIdProblem) issues.add('id', lessonIdProblem);
+  else if (!LESSON_ID_PATTERN.test(lesson.id)) issues.add('id', 'must match <stage>-<unit nn>-<order nn>-<slug>, for example js-05-03-filter');
   if (!nonEmpty(lesson.unit) || (nonEmpty(lesson.id) && unitOfLesson(lesson.id) !== lesson.unit)) issues.add('unit', 'must equal the unit encoded in the lesson id (for example JS-05)');
   checkLocalized(issues, lesson.title, 'title');
   if (!LESSON_KINDS.includes(lesson.kind)) issues.add('kind', `must be one of ${LESSON_KINDS.join(', ')}`);
@@ -283,12 +334,14 @@ export function validateLessonSource(lesson, ctx = {}) {
   const blocks = Array.isArray(lesson.blocks) ? lesson.blocks : [];
   if (blocks.length === 0) issues.add('blocks', 'a lesson needs blocks');
   const ids = new Set();
-  for (const block of blocks) {
+  for (const [i, block] of blocks.entries()) {
     if (!isPlainObject(block)) {
-      issues.add('blocks', 'each block must be a mapping');
+      issues.add(`blocks[${i}]`, 'each block must be a mapping');
       continue;
     }
-    if (!nonEmpty(block.id) || !BLOCK_ID_PATTERN.test(block.id)) issues.add('blocks', `invalid block id "${block.id}"`);
+    const blockIdProblem = idProblem(block.id);
+    if (blockIdProblem) issues.add(`blocks[${i}].id`, blockIdProblem);
+    else if (!BLOCK_ID_PATTERN.test(block.id)) issues.add(`blocks[${i}].id`, `invalid block id "${block.id}" (kebab-case: lowercase letters, digits and dashes, starting with a letter)`);
     if (ids.has(block.id)) issues.add('blocks', `duplicate block id "${block.id}"`);
     ids.add(block.id);
     checkBlock(issues, block, lesson, ctx);
@@ -322,7 +375,9 @@ export function validateLessonSource(lesson, ctx = {}) {
 
 export function validateGlossaryTerm(term) {
   const issues = new Issues(`glossary ${term?.id ?? '(no id)'}`);
-  if (!nonEmpty(term.id) || !TERM_ID_PATTERN.test(term.id)) issues.add('id', 'must be kebab-case English');
+  const termIdProblem = idProblem(term.id);
+  if (termIdProblem) issues.add('id', termIdProblem);
+  else if (!TERM_ID_PATTERN.test(term.id)) issues.add('id', 'must be kebab-case English');
   if (!nonEmpty(term.term)) issues.add('term', 'missing canonical English technical name');
   checkLocalized(issues, term.definition, 'definition');
   if (term.name !== undefined) checkLocalized(issues, term.name, 'name');

@@ -1,0 +1,434 @@
+id: no-14-04-gate-design-review
+unit: NO-14
+title:
+  uk: "Гейт: дизайн-рев’ю, компроміси, PR і runbook"
+  en: "Gate: design review, tradeoffs, PR and runbook"
+kind: assessment
+minutes: 40
+contentVersion: 1
+purpose:
+  uk: "Друга частина фінального гейту. Ти без підказок рецензуєш незнайомий PR, що додає офлайн-синхронізацію: знаходиш вимогу, яку він пропускає, і найризикованіший компроміс, доводиш головну проблему тестом, пишеш коментарі рев’ю, запис рішення про стратегію синхронізації й розділ runbook про її вимкнення — так, щоб колега міг за ними діяти. Потім проганяєш тести PR у своєму терміналі й зберігаєш рев’ю у Git."
+  en: "The second part of the final gate. Without hints you review an unseen PR that adds offline sync: you find the requirement it misses and its riskiest trade-off, prove the main problem with a test, write the review comments, a decision record for the sync strategy and the runbook section for switching it off — so that a teammate could act on them. Then you run the PR's tests in your terminal and keep the review in Git."
+objectives:
+  - uk: "Відрецензувати незнайомий дизайн і його PR, знайти пропущену вимогу й найризикованіший компроміс і запропонувати альтернативу з наслідками."
+    en: "Review an unseen design proposal and its PR, identify the requirement it misses and its riskiest trade-off, and propose an alternative with consequences."
+  - uk: "Написати коментарі рев’ю PR і розділ runbook для цієї зміни, за якими зможе діяти колега."
+    en: "Write PR review comments and a runbook section for the change that a teammate could follow."
+prerequisites: [no-14-03-gate-unseen-debug-test]
+subskills:
+  - { family: B-13, skill: "requirements/tradeoffs", depth: assess }
+  - { family: B-13, skill: "PR/review/docs/runbook", depth: assess }
+glossary: []
+selfCheck: [sync-review]
+
+blocks:
+  - id: the-pr
+    kind: explanation
+    title:
+      uk: "PR, який чекає на твоє рев’ю"
+      en: "A PR waiting for your review"
+    body:
+      uk: |
+        Колега відкрив PR для планувальника: поки застосунок офлайн, клієнт складає зміни справ у чергу, а коли мережа повертається, надсилає їх одним запитом `POST /sync`. Ти — рецензент. Підказок немає.
+
+        У вправі:
+
+        - `DESCRIPTION.md` — опис PR, `REQUIREMENTS.md` — вимоги, про які команда домовилася **до** PR;
+        - `sync.js`, `server.js`, `sync.test.js` — код і тести PR; `tasks-store.js`, `http-helpers.js`, `testing.js` — те, на чому він стоїть;
+        - `strategies.js` — стратегії синхронізації, які назвали в обговоренні.
+
+        У треді PR команда вже погодила одне: виправлена версія читатиме під час старту змінну середовища `SYNC_ENABLED`; коли вона `false`, `POST /sync` відповідає `503`, а клієнти тримають свої черги, нічого не втрачаючи.
+
+        Що здати: коментарі рев’ю, запис рішення, розділ runbook «Вимкнути офлайн-синхронізацію» (усе в `review.js`) і тест, що доводить головну проблему (`conflict.test.js`). Тести PR зелені — це не означає, що PR правильний.
+      en: |
+        A colleague opened a PR for the planner: while the app is offline, the client queues task changes, and when the network is back it sends them in one request, `POST /sync`. You are the reviewer. There are no hints.
+
+        In the exercise:
+
+        - `DESCRIPTION.md` is the PR description, `REQUIREMENTS.md` the requirements the team agreed on **before** the PR;
+        - `sync.js`, `server.js`, `sync.test.js` are the PR's code and tests; `tasks-store.js`, `http-helpers.js`, `testing.js` are what it stands on;
+        - `strategies.js` holds the sync strategies named in the discussion.
+
+        In the PR thread the team has already agreed on one thing: the fixed version will read the environment variable `SYNC_ENABLED` at startup; when it is `false`, `POST /sync` answers `503`, and the clients keep their queues, losing nothing.
+
+        What to hand in: the review comments, a decision record, the runbook section “Switch offline sync off” (all in `review.js`) and a test that proves the main problem (`conflict.test.js`). The PR's tests are green — that does not mean the PR is right.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Пригадай перед рев’ю"
+      en: "Recall before the review"
+    items:
+      - id: data-before-rollback
+        from: no-12-08-runbook-monitoring-rollback
+        prompt:
+          uk: "Запис runbook описує відкат сервера до попереднього релізу. Що він перевіряє **перед** тим, як зупинити поточну версію?"
+          en: "A runbook entry describes rolling a server back to the previous release. What does it check **before** stopping the current version?"
+        answer:
+          type: choice
+          options:
+            - id: data
+              text: { uk: "Дані: чи прочитає їх попередня версія — порівняти `schemaVersion` з тим, що вона читає", en: "The data: whether the previous version can read it — compare `schemaVersion` with what it reads" }
+            - id: nothing
+              text: { uk: "Нічого: відкат — це просто запустити старий артефакт", en: "Nothing: a rollback is just starting the old artifact" }
+              why:
+                uk: "Код відкотити легко, а дані — ні. Якщо новий реліз уже змінив дані, стара версія може не стартувати або прочитати їх хибно."
+                en: "Rolling back code is easy, data is not. If the new release already changed the data, the old version may not start or may read it wrongly."
+            - id: speed
+              text: { uk: "Швидкість відповіді: відкат має бути не повільнішим", en: "The response time: the rollback must not be slower" }
+              why:
+                uk: "Затримка — один із сигналів тривоги, але перед відкатом runbook дивиться на сумісність даних."
+                en: "Latency is one of the alert signals, but before a rollback the runbook looks at data compatibility."
+          correct: [data]
+        explanation:
+          uk: "Сигнал → перевірки → рішення → перевірка даних → кроки → підтвердження відновлення. Для синхронізації те саме: вимкнення не скасовує змін, які вже застосовано."
+          en: "Signal → checks → decision → data check → steps → confirmation of recovery. The same for sync: switching it off does not undo changes already applied."
+      - id: cache-not-truth
+        from: no-06-01-client-server-boundary
+        prompt:
+          uk: "Телефон був офлайн і тримає в черзі зміну справи, зроблену на основі старої копії. Що тут джерело істини, коли черга нарешті доходить до сервера?"
+          en: "The phone was offline and keeps a queued task change made on top of an old copy. What is the source of truth here when the queue finally reaches the server?"
+        answer:
+          type: choice
+          options:
+            - id: server
+              text: { uk: "Сервер: копія телефона — кеш, що міг застаріти, поки інший пристрій змінював справу", en: "The server: the phone's copy is a cache that may have gone stale while the other device changed the task" }
+            - id: newest-device
+              text: { uk: "Пристрій, у якого пізніший час на годиннику", en: "The device whose clock shows the later time" }
+              why:
+                uk: "Годинник пристрою — не джерело істини: він може поспішати чи відставати. Сервер знає, яку версію справи він зберіг останньою."
+                en: "A device clock is not a source of truth: it can run fast or slow. The server knows which version of the task it stored last."
+          correct: [server]
+        explanation:
+          uk: "Клієнт тримає кеш. Зміна із черги каже «я змінював версію N», а сервер знає, чи N досі поточна."
+          en: "The client keeps a cache. A queued change says “I changed version N”, and the server knows whether N is still current."
+
+  - id: sync-review
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: isolated-node
+    dir: sync-review
+    entry: index.js
+    editable: [review.js, conflict.test.js]
+    capabilities: { network: loopback, timeoutMs: 15000 }
+    strings:
+      onThePr: { uk: "на коді PR", en: "on the PR's code" }
+      reviewComments: { uk: "коментарів рев’ю", en: "review comments" }
+      decisionChoice: { uk: "обрана стратегія", en: "chosen strategy" }
+      runbookSteps: { uk: "кроки runbook", en: "runbook steps" }
+      cClock: { uk: "Останній запис перемагає за editedAt — годинником пристрою, а baseVersion ігнорується. Ноутбук, чий годинник поспішає, перезапише новішу зміну з телефона без жодного конфлікту — це порушує R1. Порівнюй baseVersion з task.version і повертай конфлікт.", en: "Last write wins by editedAt — the device clock — and baseVersion is ignored. A laptop whose clock runs fast overwrites a newer edit from the phone without any conflict — that breaks R1. Compare baseVersion with task.version and return a conflict." }
+      cLimit: { uk: "readJson(request) без обмеження розміру, і кількість змін теж не обмежено: один запит може бути будь-якого розміру й мати скільки завгодно змін (R2). Передай 64 КБ і відмовляй, якщо змін понад 100, — до того, як щось застосовано.", en: "readJson(request) with no limit and no cap on the number of changes: one request can be any size and carry any number of changes (R2). Pass 64 KB and refuse more than 100 changes — before anything is applied." }
+      cFields: { uk: "Object.assign копіює в справу будь-яке поле від клієнта — version, id, editedAt чи назву, якої не пропустила б валідація (R3). Дозволяй лише поля, які можна редагувати, і перевіряй злиту справу тією самою валідацією.", en: "Object.assign copies any field from the client into the task — version, id, editedAt or a title validation would refuse (R3). Allow only the editable fields and check the merged task with the same validation." }
+      cSwitch: { uk: "Маршрут увімкнено завжди, і ніщо не рахує застосовані, відхилені й конфліктні зміни (R4). Потрібні SYNC_ENABLED (з 503, коли вимкнено) і лічильники за статусом у лозі чи метриках.", en: "The route is always on, and nothing counts applied, refused and conflicting changes (R4). It needs SYNC_ENABLED (with 503 when off) and counters per status in the log or the metrics." }
+      cSeen: { uk: "seen живе в пам’яті: після перезапуску повторно надіслана зміна застосується вдруге. Зберігай changeId застосованих змін разом із даними, хоча б на обмежений час.", en: "seen lives in memory: after a restart a resent change is applied a second time. Keep the changeIds of applied changes with the data, at least for a limited time." }
+      dContext: { uk: "Одна людина працює з ноутбука й телефона, обидва бувають офлайн. R1: зміна з одного пристрою не перезаписує мовчки новішу зміну з іншого. Клієнт уже надсилає baseVersion.", en: "One person works from a laptop and a phone, both can be offline. R1: a change from one device never silently overwrites a newer change from the other. The client already sends baseVersion." }
+      dClientClock: { uk: "Просто, але залежить від годинника пристрою: поспішний годинник мовчки перезаписує новіші зміни, тобто R1 порушено.", en: "Simple, but depends on the device clock: a fast clock silently overwrites newer changes, so R1 is broken." }
+      dServerTime: { uk: "Не залежить від годинника, але перемагає той, хто синхронізувався пізніше, — стара черга перезапише новішу зміну без конфлікту.", en: "Independent of the clock, but whoever syncs later wins — an old queue overwrites a newer change without a conflict." }
+      dVersion: { uk: "Зміна застосовується лише до тієї версії, яку бачив пристрій; інакше — конфлікт, і людина обирає. Потрібен екран конфлікту.", en: "A change applies only to the version the device saw; otherwise it is a conflict, and the person chooses. A conflict screen is needed." }
+      dConsequences: { uk: "Жодна зміна не зникає мовчки; клієнт має показати конфлікт і дозволити обрати версію. baseVersion уже є в запиті, тож змінюється лише сервер і екран конфлікту.", en: "No change disappears silently; the client must show a conflict and let the person pick a version. baseVersion is already in the request, so only the server and the conflict screen change." }
+      rbSignal: { uk: "Скарги на зниклі зміни або частка конфліктів і відмов понад 5 % змін за 10 хвилин.", en: "Reports of lost edits, or the share of conflicts and refusals above 5 % of changes for 10 minutes." }
+      rbCheck: { uk: "/readyz і рядки логу POST /sync за request id: які статуси, з яких пристроїв, з якого релізу.", en: "/readyz and the POST /sync log lines by request id: which statuses, from which devices, since which release." }
+      rbData: { uk: "Вимкнення не скасовує вже застосованих змін: зроби копію даних і запиши, які справи змінено з початку релізу, — їх перевіряють окремо.", en: "Switching off does not undo changes already applied: back the data up and record which tasks changed since the release — they are checked separately." }
+      rbAction: { uk: "Постав SYNC_ENABLED=false у конфігурації сервера й перезапусти його.", en: "Set SYNC_ENABLED=false in the server's configuration and restart it." }
+      rbActionNoSwitch: { uk: "Відкоти сервер до попереднього релізу.", en: "Roll the server back to the previous release." }
+      rbConfirm: { uk: "POST /sync відповідає 503, GET /tasks — 200, а клієнти показують, що черга чекає; нових відмов у лозі немає.", en: "POST /sync answers 503, GET /tasks answers 200, and the clients show that the queue is waiting; no new refusals in the log." }
+      rbConfirmNo503: { uk: "Клієнти показують, що черга чекає, і нових відмов у лозі немає.", en: "The clients show that the queue is waiting, and there are no new refusals in the log." }
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rSameFields: { uk: "(вміст однаковий, але це два різні об’єкти)", en: "(same content, but two different objects)" }
+      rNeedsFunction: { uk: "toThrow чекає функцію: напиши expect(() => …)", en: "toThrow needs a function: write expect(() => …)" }
+      rDidNotThrow: { uk: "функція не кинула помилку", en: "the function did not throw" }
+      rOtherError: { uk: "очікувалася помилка", en: "expected an error of type" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…).", en: "No tests yet: add test(…)." }
+    title:
+      uk: "Рев’ю PR з офлайн-синхронізацією"
+      en: "Reviewing the offline sync PR"
+    instructions:
+      uk: |
+        Заповни `review.js` і `conflict.test.js`. **Запустити** проганяє тести PR і твій тест на коді PR і друкує твоє рев’ю.
+
+        **Коментарі** `comments` — `{ file, line, kind, severity, text }`: файл PR і рядок, що в ньому існує; `kind` — `correctness`, `security` чи `operability`; `severity` — `blocking` чи `suggestion`; `text` — щонайменше 40 символів: що не так, чим це загрожує, яка вимога, що зробити. Щонайменше чотири коментарі. Кожна вимога з `REQUIREMENTS.md`, яку порушує код, має блокувальний коментар на рядку, де це видно; мовчки втрачена зміна (R1) — це `correctness`; для R4 — коментар `operability` на рядку, де маршрут підключено (будь-якої серйозності).
+
+        **Рішення** `decision`: `context` (щонайменше 40 символів); `options` — щонайменше дві стратегії з `strategies.js`, серед них та, яку обрав PR, кожна з `consequences` (щонайменше 40 символів); `choice` — одна з `options`, що виконує R1; `consequences` обраного (щонайменше 40 символів).
+
+        **Runbook** `runbook` — розділ «Вимкнути офлайн-синхронізацію»: `signal` (щонайменше 20 символів) і `steps` — `{ kind, text }` з видами `check`, `data-check`, `action`, `confirm`. До першої дії — хоча б одна перевірка й одна перевірка даних; одна з дій вимикає синхронізацію через `SYNC_ENABLED=false`; останній крок — `confirm`, і в ньому названо `503`.
+
+        **Тест** `conflict.test.js` реєструє тест через `test(…)` з `./testing.js`, що доводить порушення R1: він падає на `sync.js` цього PR і проходить на `sync.js`, який R1 виконує. Перевірка підставляє такий `sync.js` сама; він має ті самі експорти, що й у PR.
+      en: |
+        Fill in `review.js` and `conflict.test.js`. **Run** runs the PR's tests and your test on the PR's code and prints your review.
+
+        **Comments** `comments` are `{ file, line, kind, severity, text }`: a PR file and a line that exists in it; `kind` is `correctness`, `security` or `operability`; `severity` is `blocking` or `suggestion`; `text` has at least 40 characters: what is wrong, what it risks, which requirement, what to do. At least four comments. Every requirement in `REQUIREMENTS.md` that the code breaks has a blocking comment on the line where that shows; a silently lost change (R1) is `correctness`; for R4 — an `operability` comment on the line where the route is wired (any severity).
+
+        **Decision** `decision`: `context` (at least 40 characters); `options` — at least two strategies from `strategies.js`, the one the PR chose among them, each with `consequences` (at least 40 characters); `choice` — one of the `options` that keeps R1; `consequences` of the choice (at least 40 characters).
+
+        **Runbook** `runbook` — the section “Switch offline sync off”: `signal` (at least 20 characters) and `steps` — `{ kind, text }` with the kinds `check`, `data-check`, `action`, `confirm`. Before the first action at least one check and one data check; one of the actions switches sync off with `SYNC_ENABLED=false`; the last step is `confirm`, and it names `503`.
+
+        **Test** `conflict.test.js` registers a test through `test(…)` from `./testing.js` that proves R1 is broken: it fails on this PR's `sync.js` and passes on a `sync.js` that keeps R1. The check puts in such a `sync.js` itself; it has the same exports as the PR's.
+    testTitles:
+      "every comment points at an existing line of a PR file and has a kind, a severity and a reason":
+        uk: "Кожен коментар указує на наявний рядок файла PR і має вид, серйозність і пояснення"
+        en: "Every comment points at an existing line of a PR file and has a kind, a severity and a reason"
+      "R1 has a blocking correctness comment where the code breaks it":
+        uk: "R1: блокувальний коментар `correctness` на рядку, де код її порушує"
+        en: "R1: a blocking `correctness` comment on the line where the code breaks it"
+      "R2 has a blocking comment where the code breaks it":
+        uk: "R2: блокувальний коментар на рядку, де код її порушує"
+        en: "R2: a blocking comment on the line where the code breaks it"
+      "R3 has a blocking comment where the code breaks it":
+        uk: "R3: блокувальний коментар на рядку, де код її порушує"
+        en: "R3: a blocking comment on the line where the code breaks it"
+      "R4 has an operability comment where the sync route is wired":
+        uk: "R4: коментар `operability` на рядку, де підключено маршрут синхронізації"
+        en: "R4: an `operability` comment on the line where the sync route is wired"
+      "the decision compares the PR strategy with another one and states consequences":
+        uk: "Рішення порівнює стратегію PR з іншою й називає наслідки"
+        en: "The decision compares the PR strategy with another one and states consequences"
+      "the decision chooses a strategy that keeps R1":
+        uk: "Рішення обирає стратегію, що виконує R1"
+        en: "The decision chooses a strategy that keeps R1"
+      "the runbook starts from a signal and checks, also the data, before it acts":
+        uk: "Runbook починається із сигналу й перевіряє — і дані теж — до дії"
+        en: "The runbook starts from a signal and checks — the data too — before it acts"
+      "an action of the runbook switches sync off with SYNC_ENABLED=false":
+        uk: "Одна з дій runbook вимикає синхронізацію через `SYNC_ENABLED=false`"
+        en: "An action of the runbook switches sync off with `SYNC_ENABLED=false`"
+      "the runbook ends with a confirmation that names 503":
+        uk: "Runbook закінчується підтвердженням, що називає `503`"
+        en: "The runbook ends with a confirmation that names `503`"
+      "your conflict test fails on the sync.js of the PR":
+        uk: "Твій тест конфлікту падає на `sync.js` цього PR"
+        en: "Your conflict test fails on the `sync.js` of the PR"
+      "your conflict test passes on a sync.js that keeps R1":
+        uk: "Твій тест конфлікту проходить на `sync.js`, що виконує R1"
+        en: "Your conflict test passes on a `sync.js` that keeps R1"
+    solutionNote:
+      uk: "Пропущена вимога — R1, а найризикованіший компроміс — «останній запис перемагає» за годинником пристрою: він простий, але мовчки губить новішу зміну, щойно годинник одного пристрою поспішає, і `baseVersion`, який клієнт уже надсилає, просто ігнорується. Тому тест створює саме цю умову — дві зміни на основі тієї самої версії, де старіша має пізніший `editedAt`, — і перевіряє, що лишилася новіша. Ще три блокувальні проблеми — запит без меж (R2), поля без валідації (R3) і маршрут, який не вимкнути й не видно в метриках (R4). `seen` у пам’яті — слушна порада, але не блокер. `server-time-last-write-wins` і `field-merge` теж мовчки перезаписують, тож R1 виконує лише перевірка версії — ціною екрана конфлікту. Runbook іде від сигналу через перевірки й перевірку даних до вимкнення й підтвердження: вимкнення не скасовує вже застосованих змін."
+      en: "The missed requirement is R1, and the riskiest trade-off is “last write wins” by the device clock: it is simple, but it silently loses the newer change as soon as one device's clock runs fast, and the `baseVersion` the client already sends is simply ignored. That is why the test creates exactly this condition — two changes on top of the same version, the older one with the later `editedAt` — and checks that the newer one stays. Three more blocking problems are the request without limits (R2), fields without validation (R3) and a route that cannot be switched off and is invisible in the metrics (R4). `seen` in memory is a fair suggestion, but not a blocker. `server-time-last-write-wins` and `field-merge` also overwrite silently, so only the version check keeps R1 — at the price of a conflict screen. The runbook goes from the signal through the checks and the data check to switching off and the confirmation: switching off does not undo changes already applied."
+    feedback:
+      - when: { test: "every comment points at an existing line of a PR file and has a kind, a severity and a reason" }
+        message:
+          uk: "Ця перевірка очікує щонайменше чотири коментарі; у кожного — `file` один із `sync.js`, `server.js`, `http-helpers.js`, `tasks-store.js`, `sync.test.js`, `line` — номер рядка, що в ньому існує, `kind` і `severity` зі списків завдання й `text` щонайменше на 40 символів. Якщо всі перевірки падають одночасно, спершу виправ першу помилку з виводу **Запустити**."
+          en: "This check expects at least four comments; each has `file` one of `sync.js`, `server.js`, `http-helpers.js`, `tasks-store.js`, `sync.test.js`, `line` a line number that exists in it, `kind` and `severity` from the task's lists and `text` of at least 40 characters. If every check fails at once, fix the first error in the **Run** output first."
+      - when: { test: "R1 has a blocking correctness comment where the code breaks it" }
+        message:
+          uk: "Ця перевірка шукає коментар `correctness` з `severity: \"blocking\"` на рядку коду PR, де порушено R1 (або за рядок від нього). Це гейт: перевірка не називає рядка."
+          en: "This check looks for a `correctness` comment with `severity: \"blocking\"` on the line of the PR's code where R1 is broken (or one line away). This is the gate: the check does not name the line."
+      - when: { test: "R2 has a blocking comment where the code breaks it" }
+        message:
+          uk: "Ця перевірка шукає блокувальний коментар `security` чи `operability` на рядку коду PR, де порушено R2 (або за рядок від нього)."
+          en: "This check looks for a blocking `security` or `operability` comment on the line of the PR's code where R2 is broken (or one line away)."
+      - when: { test: "R3 has a blocking comment where the code breaks it" }
+        message:
+          uk: "Ця перевірка шукає блокувальний коментар `security` чи `correctness` на рядку коду PR, де порушено R3 (або за рядок від нього)."
+          en: "This check looks for a blocking `security` or `correctness` comment on the line of the PR's code where R3 is broken (or one line away)."
+      - when: { test: "R4 has an operability comment where the sync route is wired" }
+        message:
+          uk: "Ця перевірка шукає коментар `operability` (будь-якої серйозності) на рядку, де PR підключає чи створює маршрут `POST /sync` (або за рядок від нього)."
+          en: "This check looks for an `operability` comment (any severity) on the line where the PR wires or creates the `POST /sync` route (or one line away)."
+      - when: { test: "the decision compares the PR strategy with another one and states consequences" }
+        message:
+          uk: "Ця перевірка очікує `context` щонайменше на 40 символів, щонайменше дві `options` з ідентифікаторами з `strategies.js`, серед них `client-clock-last-write-wins`, і в кожної `consequences` щонайменше на 40 символів."
+          en: "This check expects a `context` of at least 40 characters, at least two `options` with ids from `strategies.js`, `client-clock-last-write-wins` among them, and `consequences` of at least 40 characters on each."
+      - when: { test: "the decision chooses a strategy that keeps R1" }
+        message:
+          uk: "Ця перевірка очікує `choice` з-поміж `options` — стратегію, що виконує R1, — і `consequences` щонайменше на 40 символів."
+          en: "This check expects a `choice` among the `options` — a strategy that keeps R1 — and `consequences` of at least 40 characters."
+      - when: { test: "the runbook starts from a signal and checks, also the data, before it acts" }
+        message:
+          uk: "Ця перевірка очікує `signal` щонайменше на 20 символів і крок `action`, перед яким є хоча б один `check` і один `data-check`."
+          en: "This check expects a `signal` of at least 20 characters and an `action` step preceded by at least one `check` and one `data-check`."
+      - when: { test: "an action of the runbook switches sync off with SYNC_ENABLED=false" }
+        message:
+          uk: "Ця перевірка шукає крок `action`, текст якого містить `SYNC_ENABLED=false` — перемикач, про який домовилися в треді PR."
+          en: "This check looks for an `action` step whose text contains `SYNC_ENABLED=false` — the switch agreed on in the PR thread."
+      - when: { test: "the runbook ends with a confirmation that names 503" }
+        message:
+          uk: "Ця перевірка очікує, що останній крок — `confirm` і його текст містить `503`: так колега побачить, що синхронізацію справді вимкнено."
+          en: "This check expects the last step to be `confirm` with `503` in its text: that is how a teammate sees that sync really is off."
+      - when: { test: "your conflict test fails on the sync.js of the PR" }
+        message:
+          uk: "Ця перевірка запускає твій `conflict.test.js` поруч із `sync.js` цього PR і очікує щонайменше один тест і щонайменше один провал. Якщо тест проходить на PR, він не створює умови, за якої R1 порушено."
+          en: "This check runs your `conflict.test.js` next to this PR's `sync.js` and expects at least one test and at least one failure. If the test passes on the PR, it does not create the condition under which R1 breaks."
+      - when: { test: "your conflict test passes on a sync.js that keeps R1" }
+        message:
+          uk: "Ця перевірка запускає твій `conflict.test.js` поруч із `sync.js`, що виконує R1 (ті самі експорти, інша поведінка), і очікує, що всі тести проходять. Ця версія може повертати інші статуси, ніж PR."
+          en: "This check runs your `conflict.test.js` next to a `sync.js` that keeps R1 (the same exports, different behavior) and expects every test to pass. That version may return other statuses than the PR."
+
+  - id: review-lab
+    kind: example
+    runtime: isolated-node
+    dir: review-lab
+    entry: index.js
+    strings:
+      rExpected: { uk: "очікувалося", en: "expected" }
+      rGot: { uk: "отримано", en: "got" }
+      rSameFields: { uk: "(вміст однаковий, але це два різні об’єкти)", en: "(same content, but two different objects)" }
+      rNeedsFunction: { uk: "toThrow чекає функцію: напиши expect(() => …)", en: "toThrow needs a function: write expect(() => …)" }
+      rDidNotThrow: { uk: "функція не кинула помилку", en: "the function did not throw" }
+      rOtherError: { uk: "очікувалася помилка", en: "expected an error of type" }
+      rSummary: { uk: "Пройшли: {passed} · не пройшли: {failed}", en: "Passed: {passed} · failed: {failed}" }
+      rNoTests: { uk: "Тестів ще немає: додай test(…).", en: "No tests yet: add test(…)." }
+    title:
+      uk: "PR для твого терміналу"
+      en: "The PR for your terminal"
+    body:
+      uk: |
+        Файли PR для локального завдання — ті самі, що у вправі «Рев’ю PR з офлайн-синхронізацією», плюс:
+
+        - `run-tests.js` — запускає тести PR і, якщо він є в теці, твій `conflict.test.js`; код виходу `1`, коли тест падає, — так його зупинив би крок CI;
+        - `package.json` — ES-модулі й скрипт `npm test`.
+
+        **Запустити** проганяє тести PR на коді PR — вони зелені.
+      en: |
+        The PR's files for the local task — the same as in the exercise “Reviewing the offline sync PR”, plus:
+
+        - `run-tests.js` — runs the PR's tests and, when it is in the folder, your `conflict.test.js`; the exit code is `1` when a test fails — that is how a CI step would stop on it;
+        - `package.json` — ES modules and the `npm test` script.
+
+        **Run** runs the PR's tests on the PR's code — they are green.
+
+  - id: review-in-git
+    kind: local-task
+    runtime: local-node
+    title:
+      uk: "Прожени тести PR і збережи рев’ю у Git"
+      en: "Run the PR's tests and keep the review in Git"
+    intro:
+      uk: |
+        Справжнє рев’ю живе поруч із кодом: ти проганяєш тести PR у своєму терміналі, додаєш тест, що доводить проблему, і зберігаєш коментарі, рішення й runbook як файли в окремій гілці. Потрібні лише Node.js, npm і Git — жодних пакетів, облікових записів чи сервісу для PR.
+
+        Кроки виконано під час підготовки уроку на macOS з Node.js v25.2.1, npm 11.6.2 і Git 2.51.0; `node run-tests.js` (до й після `conflict.test.js`) повторено з Node.js v22.23.3 і v22.13.1 (мінімум курсу) — з тим самим результатом. У Linux і Windows не перевірялося.
+
+        **Крок 1 — файли.** Скопіюй у нову теку всі файли прикладу «PR для твого терміналу», крім `index.js`, з тими самими назвами.
+
+        **Крок 2 — `npm test` на PR (у нас):**
+
+        ```text
+        > test
+        > node run-tests.js
+
+        ✓ an edit is applied
+        ✓ an older edit loses
+        ✓ a resent change is skipped
+        ✓ an unknown task is reported
+        Пройшли: 4 · не пройшли: 0
+        ```
+
+        **Крок 3 — те саме з твоїм `conflict.test.js` (у нас, з еталонним тестом):**
+
+        ```text
+        ✗ an older edit from a device with a fast clock does not overwrite a newer edit — title after both devices synced: очікувалося "phone title", отримано "laptop title"
+        Пройшли: 4 · не пройшли: 1
+        ```
+
+        **Крок 4 — три файли рев’ю** (з того, що ти написав у `review.js`):
+
+        - `REVIEW.md` — кожен коментар окремим пунктом: `файл:рядок`, вид, серйозність, текст; угорі — вердикт «потрібні зміни» і чому;
+        - `DECISION.md` — контекст, варіанти з наслідками, вибір і його наслідки;
+        - `RUNBOOK.md` — розділ «Вимкнути офлайн-синхронізацію»: сигнал і пронумеровані кроки в тому самому порядку, що в `review.js`.
+
+        Перевір себе так: людина, яка не бачила вправи, має зрозуміти з `REVIEW.md`, чому PR не можна зливати, а з `RUNBOOK.md` — що робити о третій ночі.
+      en: |
+        A real review lives next to the code: you run the PR's tests in your terminal, add the test that proves the problem, and keep the comments, the decision and the runbook as files on a branch of their own. You need only Node.js, npm and Git — no packages, accounts or PR service.
+
+        The steps were run while preparing the lesson on macOS with Node.js v25.2.1, npm 11.6.2 and Git 2.51.0; `node run-tests.js` (before and after `conflict.test.js`) was repeated with Node.js v22.23.3 and v22.13.1 (the course minimum) — with the same result. Not checked on Linux or Windows.
+
+        **Step 1 — the files.** Copy all the files of the example “The PR for your terminal” except `index.js` into a new folder under the same names.
+
+        **Step 2 — `npm test` on the PR (ours):**
+
+        ```text
+        > test
+        > node run-tests.js
+
+        ✓ an edit is applied
+        ✓ an older edit loses
+        ✓ a resent change is skipped
+        ✓ an unknown task is reported
+        Passed: 4 · failed: 0
+        ```
+
+        **Step 3 — the same with your `conflict.test.js` (ours, with the reference test):**
+
+        ```text
+        ✗ an older edit from a device with a fast clock does not overwrite a newer edit — title after both devices synced: expected "phone title", got "laptop title"
+        Passed: 4 · failed: 1
+        ```
+
+        **Step 4 — three review files** (from what you wrote in `review.js`):
+
+        - `REVIEW.md` — each comment as its own item: `file:line`, kind, severity, text; at the top the verdict “changes requested” and why;
+        - `DECISION.md` — the context, the options with their consequences, the choice and its consequences;
+        - `RUNBOOK.md` — the section “Switch offline sync off”: the signal and numbered steps in the same order as in `review.js`.
+
+        Check yourself like this: a person who has not seen the exercise must understand from `REVIEW.md` why the PR cannot be merged, and from `RUNBOOK.md` what to do at three in the morning.
+    tools:
+      - name: "Node.js"
+        version: { uk: "22.13 або новіший", en: "22.13 or newer" }
+        note:
+          uk: "Під час підготовки — v25.2.1, v22.23.3 і v22.13.1."
+          en: "v25.2.1, v22.23.3 and v22.13.1 while preparing."
+      - name: "npm"
+        version: { uk: "та, що йде з Node.js", en: "the one that comes with Node.js" }
+        note:
+          uk: "Під час підготовки — 11.6.2."
+          en: "11.6.2 while preparing."
+      - name: "Git"
+        version: { uk: "будь-яка сучасна", en: "any current version" }
+        note:
+          uk: "Під час підготовки — 2.51.0."
+          en: "2.51.0 while preparing."
+    steps:
+      - text:
+          uk: "Створи теку, поклади в неї файли з кроку 1 вступу й зафіксуй PR у тому вигляді, у якому його запропонували."
+          en: "Create the folder, put the files from step 1 of the introduction into it and commit the PR as it was proposed."
+        command: "mkdir -p ~/js-course/no-14-sync-review\ncd ~/js-course/no-14-sync-review\ngit init\ngit add -A\ngit commit -m \"Add the offline sync PR as proposed\""
+        expect:
+          uk: "Рядок на кшталт `[master (root-commit) 9e34564] Add the offline sync PR as proposed` (назва гілки й id commit у тебе можуть бути інші)."
+          en: "A line like `[master (root-commit) 9e34564] Add the offline sync PR as proposed` (your branch name and commit id may differ)."
+      - text:
+          uk: "Прожени тести PR."
+          en: "Run the PR's tests."
+        command: "npm test"
+        expect:
+          uk: "Чотири рядки `✓` і `не пройшли: 0`, як у кроці 2 вступу."
+          en: "Four `✓` lines and `failed: 0`, as in step 2 of the introduction."
+      - text:
+          uk: "Створи гілку для рев’ю, поклади в теку свій `conflict.test.js` із вправи й прожени тести знову."
+          en: "Create a branch for the review, put your `conflict.test.js` from the exercise into the folder and run the tests again."
+        command: "git switch -c review/offline-sync\nnpm test"
+        expect:
+          uk: "`Switched to a new branch 'review/offline-sync'`, потім чотири `✓`, твій тест — `✗` і `не пройшли: 1`, як у кроці 3 вступу. Червоний тест — це і є доказ у рев’ю."
+          en: "`Switched to a new branch 'review/offline-sync'`, then four `✓`, your test `✗` and `failed: 1`, as in step 3 of the introduction. The red test is the evidence in the review."
+      - text:
+          uk: "Напиши `REVIEW.md`, `DECISION.md` і `RUNBOOK.md` (крок 4 вступу) і зафіксуй їх разом із тестом."
+          en: "Write `REVIEW.md`, `DECISION.md` and `RUNBOOK.md` (step 4 of the introduction) and commit them together with the test."
+        command: "git add conflict.test.js REVIEW.md DECISION.md RUNBOOK.md\ngit commit -m \"Review the offline sync PR\"\ngit diff --stat master..review/offline-sync"
+        expect:
+          uk: "Commit на гілці `review/offline-sync`; `git diff --stat` показує лише чотири нові файли — код PR рецензент не змінював."
+          en: "A commit on the branch `review/offline-sync`; `git diff --stat` shows only the four new files — the reviewer did not change the PR's code."
+    verify:
+      - id: pr-tests-green
+        text:
+          uk: "Тести PR пройшли в моєму терміналі, а мій тест конфлікту на тому самому коді впав."
+          en: "The PR's tests passed in my terminal, and my conflict test failed on the same code."
+      - id: review-files
+        text:
+          uk: "`REVIEW.md` має вердикт і кожен коментар із `файл:рядок`; `DECISION.md` — варіанти з наслідками й вибір; `RUNBOOK.md` — сигнал і кроки від перевірок до підтвердження."
+          en: "`REVIEW.md` has a verdict and every comment with `file:line`; `DECISION.md` the options with consequences and the choice; `RUNBOOK.md` the signal and the steps from the checks to the confirmation."
+      - id: committed
+        text:
+          uk: "Усе зафіксовано на гілці `review/offline-sync`, а код PR не змінено."
+          en: "Everything is committed on the branch `review/offline-sync`, and the PR's code is unchanged."
+    troubleshooting:
+      - problem:
+          uk: "`npm test` пише `npm error enoent Could not read package.json` — або запускає зовсім інші тести."
+          en: "`npm test` prints `npm error enoent Could not read package.json` — or runs some other tests altogether."
+        fix:
+          uk: "У теці немає `package.json` із прикладу (у нас перше повідомлення — npm 11.6.2). Якщо ж `package.json` є в теці вище, npm бере його й запускає його скрипт `test`. Скопіюй `package.json` у теку рев’ю й перевір `pwd`; без npm те саме робить `node run-tests.js`."
+          en: "The folder has no `package.json` from the example (the first message is ours, npm 11.6.2). If a folder higher up has a `package.json`, npm takes that one and runs its `test` script. Copy `package.json` into the review folder and check `pwd`; without npm, `node run-tests.js` does the same."
+    recovery:
+      uk: "Перший commit — PR як його запропонували: `git switch master` повертає його без твоїх файлів, а гілка рев’ю лишається."
+      en: "The first commit is the PR as proposed: `git switch master` brings it back without your files, and the review branch stays."

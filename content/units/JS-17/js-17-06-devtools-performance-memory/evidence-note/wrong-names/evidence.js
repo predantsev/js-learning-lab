@@ -1,0 +1,9 @@
+// Your evidence note: fill it in from your own recording of this page.
+export const evidence = {
+  interaction: "%%sampleInteraction%%", // what you did on the page while recording
+  habits: 200, // how many habits the page had
+  longTaskMs: 240, // the duration of the long task, from the Performance panel
+  topSelfTime: ["includes", "click", "map"], // guessed from reading the code
+  heapBeforeMB: 3.1, // the size of the first heap snapshot, in MB
+  heapAfterMB: 3.4, // the size of the second heap snapshot, in MB
+};

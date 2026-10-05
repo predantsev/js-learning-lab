@@ -1,0 +1,413 @@
+id: js-13-12-independent-lazy-cleanup
+unit: JS-13
+title:
+  uk: "Самостійно: лінивий обхід, прибирання та пояснення меж"
+  en: "Independent: lazy traversal, cleanup and boundary explanations"
+kind: assessment
+minutes: 30
+contentVersion: 1
+purpose:
+  uk: "Перевірка без підказок: чи вмієш ти сам поєднати лінивий генератор із прибиранням у `finally`, безпечне для кирилиці й емодзі перетворення в байти та ідемпотентний `teardown`, що не лишає жодного listener, — і чи можеш коротко пояснити межі спеціальних інструментів (`Proxy`, workers і `Atomics`, фіналізатори, `using`, застарілі патерни) та сказати, коли кожен потребує окремого спайку."
+  en: "A check without hints: can you combine a lazy generator with cleanup in `finally`, a byte conversion that is safe for Cyrillic and emoji, and an idempotent `teardown` that leaves no listener behind — and can you briefly explain the limits of the specialized tools (`Proxy`, workers and `Atomics`, finalizers, `using`, legacy patterns) and say when each needs a separate spike?"
+objectives:
+  - uk: "Самостійно реалізувати лінивий генератор записів із прибиранням при достроковому виході, безпечний експорт у байти та ідемпотентний `teardown`, що проходять приховані перевірки."
+    en: "Implement, without hints, a lazy generator over records with early-exit cleanup, a byte-safe export and an idempotent teardown, verified by hidden tests."
+  - uk: "Пояснити на рівні читання, одним-двома реченнями, пастку `Proxy`, сценарій із workers і `Atomics`, хибне припущення про фіналізатор, перевірку підтримки `using` і переписування застарілого коду, а також сказати, коли кожному потрібен окремий спайк."
+    en: "Explain at read depth, in one or two sentences each, a Proxy trap, a worker/Atomics scenario, a finalizer assumption, a using support check and a legacy-to-current rewrite, and say when each would need a separate spike."
+prerequisites: [js-13-11-debug-leaks-cycles]
+subskills:
+  - { family: J-12, skill: "iterable/iterator protocol", depth: assess }
+  - { family: J-12, skill: "generators and for-await awareness", depth: assess }
+  - { family: J-12, skill: "ArrayBuffer/typed arrays vs arrays", depth: assess }
+  - { family: J-12, skill: "allocation/retained references", depth: assess }
+  - { family: J-14, skill: "Proxy/Reflect/metaprogramming awareness", depth: assess }
+  - { family: J-14, skill: "shared memory/Atomics/workers concurrency concepts", depth: assess }
+  - { family: J-14, skill: "WeakRef/finalizers nondeterminism", depth: assess }
+  - { family: J-14, skill: "explicit resource-management syntax support", depth: assess }
+  - { family: J-14, skill: "legacy patterns vs current standards", depth: assess }
+glossary: []
+
+blocks:
+  - id: expense-pager
+    kind: exercise
+    mode: independent
+    assessment: true
+    runtime: browser-js
+    dir: expense-pager
+    entry: index.js
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      bulbs: { uk: "Лампочки", en: "Light bulbs" }
+      cinema: { uk: "Квитки в кіно", en: "Cinema tickets" }
+      more: { uk: "Показати ще", en: "Show more" }
+    title:
+      uk: "Посторінковий список витрат, що прибирає за собою"
+      en: "A paged list of expenses that cleans up after itself"
+    instructions:
+      uk: |
+        Напиши три функції. Підказок у цьому завданні немає.
+
+        **1. Генератор `pageThrough(records, size, handle)`**
+
+        - віддає записи сторінками — масивами щонайбільше з `size` записів, у тому самому порядку, без порожньої сторінки в кінці;
+        - лінивий: сторінку будує лише тоді, коли її просять (запис, доданий у масив після першої сторінки, потрапляє в наступні);
+        - коли обхід закінчується — дійшов до кінця **або** його зупинили достроково (`break`, `return()`), — викликає `handle.release()` **рівно один раз**; поки обхід на паузі, не викликає.
+
+        **2. `exportBytes(records)`** повертає `{ bytes, byteLength }`: `bytes` — `Uint8Array` з байтами UTF-8 тексту `JSON.stringify(records)`, `byteLength` — їхня кількість.
+
+        **3. `mount(root, records, size, handle)`** показує записи в `root` сторінками через `pageThrough` і повертає `teardown()`:
+
+        - у `root` з’являються список `<ul>` (кожен запис — `<li>` з `label`) і кнопка `<button>` з текстом «Показати ще»; одразу показано першу сторінку;
+        - клік на кнопці або клавіша `+` (подія `keydown` на `document`) показує наступну сторінку; коли запит наступної сторінки виявляє, що сторінок більше немає, кнопка стає `disabled`;
+        - `teardown()` знімає **всі** listeners, які додав `mount`, зупиняє обхід (тож `handle.release()` спрацьовує, навіть якщо гортали не до кінця) і спорожнює `root`;
+        - `teardown()` можна викликати двічі: другий виклик нічого не робить — навіть якщо в той самий `root` уже змонтовано новий список.
+
+        Перевірки рахують listeners, додані через `addEventListener` під час `mount`, і очікують 0 після `teardown` — також після 20 циклів. Унизу файла готовий код: він друкує `2`, `1` і кількість байтів першого запису.
+      en: |
+        Write three functions. There are no hints in this task.
+
+        **1. The generator `pageThrough(records, size, handle)`**
+
+        - gives the records in pages — arrays of at most `size` records, in the same order, with no empty page at the end;
+        - is lazy: it builds a page only when asked (a record added to the array after the first page gets into the following ones);
+        - when the traversal ends — it reached the end **or** was stopped early (`break`, `return()`) — it calls `handle.release()` **exactly once**; while the traversal is paused, it does not.
+
+        **2. `exportBytes(records)`** returns `{ bytes, byteLength }`: `bytes` is a `Uint8Array` with the UTF-8 bytes of the text `JSON.stringify(records)`, `byteLength` is how many there are.
+
+        **3. `mount(root, records, size, handle)`** shows the records in `root` page by page through `pageThrough` and returns `teardown()`:
+
+        - a list `<ul>` (each record a `<li>` with its `label`) and a `<button>` with the text “Show more” appear in `root`; the first page is shown right away;
+        - a click on the button or the `+` key (a `keydown` event on `document`) shows the next page; when a request for the next page finds there are no more pages, the button becomes `disabled`;
+        - `teardown()` removes **all** listeners `mount` added, stops the traversal (so `handle.release()` happens even if the pages were not read to the end) and empties `root`;
+        - `teardown()` can be called twice: the second call does nothing — even when a new list has already been mounted into the same `root`.
+
+        The checks count the listeners added with `addEventListener` during `mount` and expect 0 after `teardown` — also after 20 cycles. At the bottom of the file there is ready code: it prints `2`, `1` and the number of bytes of the first record.
+    testTitles:
+      "the program prints 2, 1 and the byte length of the first record":
+        uk: "Програма друкує 2, 1 і кількість байтів першого запису"
+        en: "The program prints 2, 1 and the byte length of the first record"
+      "pageThrough yields pages of at most size, without an empty page":
+        uk: "`pageThrough` віддає сторінки щонайбільше по `size`, без порожньої"
+        en: "`pageThrough` yields pages of at most `size`, without an empty page"
+      "pageThrough builds a page only when asked":
+        uk: "`pageThrough` будує сторінку лише на запит"
+        en: "`pageThrough` builds a page only when asked"
+      "pageThrough releases the handle once, only when the traversal ends":
+        uk: "`pageThrough` звільняє handle один раз і лише наприкінці обходу"
+        en: "`pageThrough` releases the handle once, only when the traversal ends"
+      "pageThrough releases the handle when a loop stops early":
+        uk: "`pageThrough` звільняє handle, коли цикл зупиняється достроково"
+        en: "`pageThrough` releases the handle when a loop stops early"
+      "exportBytes gives UTF-8 bytes of the JSON and their real length":
+        uk: "`exportBytes` дає байти UTF-8 від JSON і їхню справжню кількість"
+        en: "`exportBytes` gives UTF-8 bytes of the JSON and their real length"
+      "mount shows the first page and more on a click or the + key":
+        uk: "`mount` показує першу сторінку, а наступні — за кліком або клавішею +"
+        en: "`mount` shows the first page and more on a click or the + key"
+      "teardown leaves zero listeners, an empty root and a released handle":
+        uk: "Після `teardown` — 0 listeners, порожній `root` і звільнений handle"
+        en: "`teardown` leaves zero listeners, an empty `root` and a released handle"
+      "teardown is safe to call twice and the + key does nothing afterwards":
+        uk: "`teardown` безпечний удруге, а клавіша + потім нічого не робить"
+        en: "`teardown` is safe to call twice and the + key does nothing afterwards"
+      "twenty mount/teardown cycles leave nothing behind":
+        uk: "Двадцять циклів mount/teardown нічого не лишають"
+        en: "Twenty mount/teardown cycles leave nothing behind"
+      "a second teardown call does not touch a newer list":
+        uk: "Повторний `teardown` не чіпає новішого списку"
+        en: "A second `teardown` call does not touch a newer list"
+    solutionNote:
+      uk: "Цикл генератора стоїть у `try`, а `handle.release()` — у `finally`: його виконує і нормальне завершення, і `return()`, який викликають `break` чи `teardown`. `exportBytes` міряє довжину `Uint8Array`, а не тексту. `mount` зберігає функції listeners (або один `AbortController`), а `teardown` із прапорцем знімає їх, викликає `pages.return()` і спорожнює `root` лише один раз."
+      en: "The generator's loop sits in `try`, and `handle.release()` in `finally`: it is run both by normal completion and by `return()`, which `break` or `teardown` call. `exportBytes` measures the length of the `Uint8Array`, not of the text. `mount` keeps the listener functions (or one `AbortController`), and `teardown` with a flag removes them, calls `pages.return()` and empties `root` only once."
+    feedback:
+      - when: { test: "the program prints 2, 1 and the byte length of the first record" }
+        message:
+          uk: "Ця перевірка очікує три рядки: `2` (розмір першої сторінки), `1` (handle звільнено після `break`) і кількість байтів UTF-8 тексту `JSON.stringify` першого запису."
+          en: "This check expects three lines: `2` (the size of the first page), `1` (the handle was released after `break`) and the number of UTF-8 bytes of the `JSON.stringify` text of the first record."
+      - when: { test: "pageThrough yields pages of at most size, without an empty page" }
+        message:
+          uk: "Ця перевірка очікує для 5 записів по 2 сторінки `e-1,e-2`, `e-3,e-4`, `e-5`, для 4 — рівно дві, для порожнього масиву — жодної."
+          en: "This check expects pages `e-1,e-2`, `e-3,e-4`, `e-5` for 5 records with size 2, exactly two for 4, and none for an empty array."
+      - when: { test: "pageThrough builds a page only when asked" }
+        message:
+          uk: "Ця перевірка бере першу сторінку з 3 записів, додає четвертий і очікує, що решта — одна сторінка з 2 записів."
+          en: "This check takes the first page of 3 records, adds a fourth and expects the rest to be one page of 2 records."
+      - when: { test: "pageThrough releases the handle once, only when the traversal ends" }
+        message:
+          uk: "Ця перевірка очікує 0 звільнень, поки обхід на паузі, 1 — після того, як `next()` повідомив кінець, і досі 1 після ще одного `next()`."
+          en: "This check expects 0 releases while the traversal is paused, 1 after `next()` reported the end, and still 1 after one more `next()`."
+      - when: { test: "pageThrough releases the handle when a loop stops early" }
+        message:
+          uk: "Ця перевірка виходить із `for...of` через `break` на першій сторінці й очікує рівно одне звільнення handle."
+          en: "This check leaves a `for...of` with `break` on the first page and expects exactly one release of the handle."
+      - when: { test: "exportBytes gives UTF-8 bytes of the JSON and their real length" }
+        message:
+          uk: "Ця перевірка очікує `Uint8Array`, що декодується назад у `JSON.stringify(records)` (з кирилицею й емодзі), `byteLength`, рівний кількості байтів UTF-8, і 2 для порожнього масиву."
+          en: "This check expects a `Uint8Array` that decodes back to `JSON.stringify(records)` (with Cyrillic and an emoji), a `byteLength` equal to the number of UTF-8 bytes, and 2 for an empty array."
+      - when: { test: "mount shows the first page and more on a click or the + key" }
+        message:
+          uk: "Ця перевірка очікує після `mount` два `<li>`, кнопку з текстом «Показати ще», 4 елементи після кліку, 5 — після клавіші `+` і `disabled` після ще одного кліку, коли сторінок більше немає."
+          en: "This check expects two `<li>` after `mount`, a button with the text “Show more”, 4 items after a click, 5 after the `+` key, and `disabled` after one more click when there are no pages left."
+      - when: { test: "teardown leaves zero listeners, an empty root and a released handle" }
+        message:
+          uk: "Ця перевірка рахує listeners, додані через `addEventListener` під час `mount`, і після `teardown` посеред гортання очікує 0, порожній `root` і одне звільнення handle."
+          en: "This check counts the listeners added with `addEventListener` during `mount` and, after a `teardown` in the middle of paging, expects 0, an empty `root` and one release of the handle."
+      - when: { test: "teardown is safe to call twice and the + key does nothing afterwards" }
+        message:
+          uk: "Ця перевірка двічі викликає `teardown` (без помилки й з одним звільненням handle), а потім натискає `+` і очікує, що `root` лишається порожнім."
+          en: "This check calls `teardown` twice (without an error and with one release of the handle), then presses `+` and expects `root` to stay empty."
+      - when: { test: "twenty mount/teardown cycles leave nothing behind" }
+        message:
+          uk: "Ця перевірка робить 20 циклів `mount` + `teardown` і очікує 0 увімкнених listeners."
+          en: "This check runs 20 `mount` + `teardown` cycles and expects 0 listeners switched on."
+      - when: { test: "a second teardown call does not touch a newer list" }
+        message:
+          uk: "Ця перевірка монтує список, прибирає його, монтує новий у той самий `root` і ще раз викликає старий `teardown`. Очікується, що новий список лишився (`L1`, `L2`), а клавіша `+` його гортає: повторний виклик має нічого не робити."
+          en: "This check mounts a list, tears it down, mounts a new one into the same `root` and calls the old `teardown` again. It expects the new list to remain (`L1`, `L2`) and the `+` key to page it: a repeated call must do nothing."
+
+  - id: explain-proxy
+    kind: prediction
+    prompt:
+      uk: "Що надрукує цей код? (Проксі логує кожен запис.)"
+      en: "What does this code print? (The proxy logs every write.)"
+    code: |
+      const task = { id: "t-01", done: false };
+      const audited = new Proxy(task, {
+        set(target, key, value, receiver) {
+          console.log("set", String(key), value);
+          return Reflect.set(target, key, value, receiver);
+        },
+      });
+      audited.done = true;
+      task.title = "x";
+      console.log(audited.title, task.done);
+    verify:
+      logs: ["set done true", "x true"]
+    answer:
+      type: choice
+      options:
+        - id: one-set
+          code: "set done true\nx true"
+        - id: two-sets
+          code: "set done true\nset title x\nx true"
+          why:
+            uk: "Пастка спрацьовує лише для записів **через проксі**. `task.title = \"x\"` пише прямо в об’єкт — без логу, хоча результат видно крізь проксі."
+            en: "The trap fires only for writes **through the proxy**. `task.title = \"x\"` writes straight into the object — no log, although the result is visible through the proxy."
+        - id: copy
+          code: "set done true\nundefined false"
+          why:
+            uk: "Проксі — не копія: `Reflect.set` пише в той самий `task`, а читання крізь проксі бачить і `title`, записаний напряму."
+            en: "A proxy is not a copy: `Reflect.set` writes into the same `task`, and reading through the proxy sees `title` written directly too."
+      correct: [one-set]
+    explanation:
+      uk: "Пастки бачать лише те, що йде через проксі; сам об’єкт лишається один. Окремий спайк потрібен, коли проксі мав би стати основою власного коду (реактивність, валідація всіх записів): там важливі продуктивність і поведінка з класами та приватними полями, а їх треба виміряти."
+      en: "Traps see only what goes through the proxy; the object itself stays one. A separate spike is needed when a proxy would become the base of your own code (reactivity, validating every write): performance and behavior with classes and private fields matter there, and they must be measured."
+
+  - id: explain-atomics
+    kind: prediction
+    prompt:
+      uk: "Два workers збільшують лічильник у `SharedArrayBuffer` по 1000 разів звичайним `view[0] = view[0] + 1`. Що можна сказати про результат?"
+      en: "Two workers increase a counter in a `SharedArrayBuffer` 1000 times each with a plain `view[0] = view[0] + 1`. What can be said about the result?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: lost-updates
+          text:
+            uk: "Може бути менше за 2000: обидва потоки читають те саме значення й записують те саме «+1», тож збільшення губляться. `Atomics.add(view, 0, 1)` робить це однією неподільною дією."
+            en: "It may be less than 2000: both threads read the same value and write the same “+1”, so increments are lost. `Atomics.add(view, 0, 1)` does it as one indivisible step."
+        - id: always-2000
+          text:
+            uk: "Завжди рівно 2000: кожен рядок JavaScript виконується до кінця."
+            en: "Always exactly 2000: every line of JavaScript runs to the end."
+          why:
+            uk: "Неподільність одного рядка гарантовано лише в межах одного потоку. Зі спільною пам’яттю інший потік може записати між читанням і записом."
+            en: "A line is indivisible only within one thread. With shared memory, another thread can write between the read and the write."
+        - id: copies
+          text:
+            uk: "1000: кожен worker отримує свою копію буфера."
+            en: "1000: each worker gets its own copy of the buffer."
+          why:
+            uk: "Копіюється звичайний `ArrayBuffer`. `SharedArrayBuffer` якраз спільний — тому й потрібні `Atomics`."
+            en: "An ordinary `ArrayBuffer` is copied. A `SharedArrayBuffer` is exactly the shared one — that is why `Atomics` are needed."
+      correct: [lost-updates]
+    explanation:
+      uk: "Спільна пам’ять — єдине місце, де в JavaScript можлива справжня гонка даних. Спайк потрібен ще до першого рядка: чи дасть сервер заголовки cross-origin isolation, чи не зламають вони сторонній вміст, і чи не вистачить звичайних повідомлень-копій."
+      en: "Shared memory is the only place in JavaScript where a real data race is possible. A spike is needed before the first line: will the server send the cross-origin isolation headers, will they break third-party content, and would ordinary copied messages not be enough."
+
+  - id: explain-finalizer
+    kind: prediction
+    prompt:
+      uk: "Колега пропонує: «Збережемо незбережену чернетку в колбеку `FinalizationRegistry`, коли форму зберуть як сміття». Що відповісти?"
+      en: "A colleague suggests: “Let us save an unsaved draft in a `FinalizationRegistry` callback when the form is garbage collected.” What do you answer?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: not-guaranteed
+          text:
+            uk: "Не можна: колбек може виконатися будь-коли пізніше або ніколи (наприклад, якщо сторінку закрили). Зберігати треба явно — під час закриття форми, у `teardown`."
+            en: "We cannot: the callback may run any time later or never (for example, if the page was closed). Saving must be explicit — when the form closes, in `teardown`."
+        - id: works-later
+          text:
+            uk: "Можна, просто збереження станеться з невеликою затримкою."
+            en: "We can, the saving just happens with a small delay."
+          why:
+            uk: "Затримка невідома, і виклику взагалі не гарантовано. Дані, які «колись, можливо» збережуться, — втрачені дані."
+            en: "The delay is unknown, and the call is not guaranteed at all. Data that will be saved “maybe, some day” is lost data."
+        - id: weakmap
+          text:
+            uk: "Краще `WeakMap`: вона сама повідомить, коли форму зберуть."
+            en: "A `WeakMap` is better: it will tell us when the form is collected."
+          why:
+            uk: "`WeakMap` нічого не повідомляє й не дає перебрати записи — про збирання сміття програма дізнатися не може."
+            en: "A `WeakMap` reports nothing and cannot be walked — the program cannot learn about garbage collection."
+      correct: [not-guaranteed]
+    explanation:
+      uk: "Усе, що залежить від збирача сміття, — недетерміноване. `WeakRef`/фіналізатори беруть лише для необов’язкових оптимізацій (кеш, втрата якого нічого не ламає), і то після спайку з вимірами."
+      en: "Everything that depends on the garbage collector is nondeterministic. `WeakRef`/finalizers are taken only for optional optimizations (a cache whose loss breaks nothing), and even then after a spike with measurements."
+
+  - id: explain-using
+    kind: prediction
+    prompt:
+      uk: "Проєкт працює в браузері (Chrome 154) і в утиліті на Node.js 22.23.3, і обидва середовища завантажують той самий файл `report.js`. У нього хочуть додати `using file = openFile(path);`. Що станеться?"
+      en: "A project runs in the browser (Chrome 154) and in a tool on Node.js 22.23.3, and both load the same file `report.js`. Someone wants to add `using file = openFile(path);` to it. What will happen?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: node-breaks
+          text:
+            uk: "У Chrome 154 працюватиме, а в Node.js 22.23.3 весь `report.js` не завантажиться з `SyntaxError`. Поки підтримують Node.js 22 — писати `try/finally` з `file[Symbol.dispose]()`."
+            en: "In Chrome 154 it works, but in Node.js 22.23.3 the whole `report.js` fails to load with a `SyntaxError`. While Node.js 22 is supported — write `try/finally` with `file[Symbol.dispose]()`."
+        - id: symbol-check
+          text:
+            uk: "Працюватиме всюди, бо `typeof Symbol.dispose` в обох — `\"symbol\"`."
+            en: "It works everywhere, because `typeof Symbol.dispose` is `\"symbol\"` in both."
+          why:
+            uk: "Наявність символу не означає підтримки синтаксису: у Node.js 22.23.3 `Symbol.dispose` є, а `using` дає `SyntaxError: Unexpected identifier`."
+            en: "Having the symbol does not mean supporting the syntax: Node.js 22.23.3 has `Symbol.dispose`, but `using` gives `SyntaxError: Unexpected identifier`."
+        - id: line-skipped
+          text:
+            uk: "У Node.js 22 рядок із `using` просто пропуститься, решта файлу працюватиме."
+            en: "In Node.js 22 the line with `using` is simply skipped, and the rest of the file works."
+          why:
+            uk: "Синтаксична помилка зупиняє весь файл ще до запуску — жоден його рядок не виконується."
+            en: "A syntax error stops the whole file before it runs — not a single line of it executes."
+      correct: [node-breaks]
+    explanation:
+      uk: "Новий синтаксис перевіряють для **кожного** цільового середовища: таблиця сумісності, документація, власний запуск. Спайк потрібен, коли хочеш увести такий синтаксис у спільний код: перевірити всі середовища, збирач (bundler) і лінтер."
+      en: "New syntax is checked for **every** target runtime: a compatibility table, the documentation, your own run. A spike is needed when you want to bring such syntax into shared code: check every runtime, the bundler and the linter."
+
+  - id: explain-legacy
+    kind: prediction
+    prompt:
+      uk: "Який сучасний запис еквівалентний цьому застарілому коду, і для виклику `total(1, 2, 3)`, і для того, що бачать інші модулі?"
+      en: "Which current form is equivalent to this legacy code, both for the call `total(1, 2, 3)` and for what other modules see?"
+    code: |
+      var Totals = (function () {
+        function total() {
+          var sum = 0;
+          for (var i = 0; i < arguments.length; i++) sum += arguments[i];
+          return sum;
+        }
+        return { total: total };
+      })();
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: module-rest
+          code: "export function total(...amounts) {\n  let sum = 0;\n  for (const amount of amounts) sum += amount;\n  return sum;\n}"
+        - id: array-param
+          code: "export function total(amounts) {\n  return amounts.reduce((sum, a) => sum + a, 0);\n}"
+          why:
+            uk: "Це змінює інтерфейс: виклик `total(1, 2, 3)` тепер падає, бо `1.reduce` не існує. Rest-параметр зберігає виклик з окремими аргументами."
+            en: "That changes the interface: the call `total(1, 2, 3)` now fails, because `1.reduce` does not exist. A rest parameter keeps the call with separate arguments."
+        - id: arrow-arguments
+          code: "export const total = () => {\n  let sum = 0;\n  for (const amount of arguments) sum += amount;\n  return sum;\n};"
+          why:
+            uk: "Стрілкові функції не мають власного `arguments`: у модулі це `ReferenceError`. Потрібен rest-параметр."
+            en: "Arrow functions have no `arguments` of their own: in a module that is a `ReferenceError`. A rest parameter is needed."
+      correct: [module-rest]
+    explanation:
+      uk: "Переписування зберігає поведінку й інтерфейс: та сама функція, ті самі аргументи, лише сучасною мовою — модуль замість IIFE, `let`/`const` замість `var`, rest-параметр замість `arguments`. Спайк тут рідко потрібен; потрібні перевірки, що поведінку збережено."
+      en: "A rewrite keeps the behavior and the interface: the same function, the same arguments, only in the current language — a module instead of an IIFE, `let`/`const` instead of `var`, a rest parameter instead of `arguments`. A spike is rarely needed here; checks that the behavior was kept are."
+
+  - id: explain-generator
+    kind: prediction
+    prompt:
+      uk: "Список має 10 000 записів, а людина зазвичай гортає 2–3 сторінки по 20. Чому `pageThrough` тримає в пам’яті менше об’єктів одночасно, ніж функція, що одразу будує масив усіх сторінок?"
+      en: "A list has 10 000 records, and a person usually pages through 2–3 pages of 20. Why does `pageThrough` hold fewer objects in memory at once than a function that builds an array of every page right away?"
+    runnable: false
+    answer:
+      type: choice
+      options:
+        - id: lazy-pages
+          text:
+            uk: "Генератор створює лише ті сторінки, які попросили (2–3 масиви по 20), і після `return()` більше не тримає жодної; готовий масив — це одразу 500 нових масивів-сторінок, що живуть, доки живе він."
+            en: "The generator creates only the pages that were asked for (2–3 arrays of 20), and after `return()` holds none at all; a ready array means 500 new page arrays at once that live as long as it does."
+        - id: copies-records
+          text:
+            uk: "Тому що генератор не тримає самих записів, а масив сторінок копіює всі 10 000 об’єктів."
+            en: "Because the generator does not hold the records, while the array of pages copies all 10 000 objects."
+          why:
+            uk: "`slice` копіює лише посилання, а не самі записи — і генератор, і масив сторінок указують на ті самі 10 000 об’єктів. Різниця — у кількості масивів-сторінок, створених наперед."
+            en: "`slice` copies only references, not the records themselves — both the generator and the array of pages point to the same 10 000 objects. The difference is the number of page arrays created in advance."
+        - id: no-difference
+          text:
+            uk: "Різниці немає: збирач сміття однаково все прибере."
+            en: "There is no difference: the garbage collector will clean everything up anyway."
+          why:
+            uk: "Збирач звільняє лише недосяжне, а масив усіх сторінок досяжний, поки на нього є посилання. До того ж їх треба спершу створити — це теж робота."
+            en: "The collector frees only the unreachable, and the array of every page is reachable while something refers to it. Besides, they all have to be created first — that is work too."
+      correct: [lazy-pages]
+    explanation:
+      uk: "Лінивість економить і роботу, і пам’ять: непотрібні сторінки не створюються зовсім. Самі записи при цьому не копіюються — копіюються лише посилання на них у масиви-сторінки."
+      en: "Laziness saves both work and memory: pages nobody needs are never created. The records themselves are not copied either way — only references to them are put into the page arrays."
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: приватний стан класу"
+      en: "Recall: private state in a class"
+    items:
+      - id: private-hidden
+        from: js-11-05-classes-private-static
+        prompt:
+          uk: "Що виведе цей код?"
+          en: "What does this code print?"
+        code: |
+          class Pager {
+            #page = 0;
+            next() {
+              this.#page = this.#page + 1;
+              return this.#page;
+            }
+          }
+          const pager = new Pager();
+          pager.next();
+          console.log(pager.next(), Object.keys(pager).length, JSON.stringify(pager));
+        verify:
+          logs: ["2 0 {}"]
+        answer:
+          type: choice
+          options:
+            - id: hidden
+              code: "2 0 {}"
+            - id: visible
+              code: "2 1 {\"#page\":2}"
+              why:
+                uk: "Приватне поле — не властивість: його не видно ні в `Object.keys`, ні в JSON."
+                en: "A private field is not a property: it shows neither in `Object.keys` nor in JSON."
+            - id: reset
+              code: "1 0 {}"
+              why:
+                uk: "Кожен виклик `next` змінює те саме `#page` екземпляра, тож другий виклик дає 2."
+                en: "Every call of `next` changes the same `#page` of the instance, so the second call gives 2."
+          correct: [hidden]
+        explanation:
+          uk: "Як і генератор, клас може тримати стан обходу всередині. Але генератор ще й сам дає `finally` для прибирання при достроковому виході — у класі це довелося б писати окремим методом."
+          en: "Like a generator, a class can keep the state of a traversal inside. But a generator also gives `finally` for cleanup on an early exit by itself — in a class that would have to be a separate method."

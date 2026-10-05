@@ -1,0 +1,381 @@
+id: re-09-03-api-models-runtime-schemas
+unit: RE-09
+title:
+  uk: "API-моделі та runtime-схеми"
+  en: "API models and runtime schemas"
+kind: instructional
+minutes: 12
+contentVersion: 1
+objectives:
+  - uk: "Відокремити API-модель (те, що надсилає сервер) від доменної моделі й перетворювати одну на іншу в одному місці на межі."
+    en: "Separate the API model (what the server sends) from the domain model and convert between them at one boundary."
+  - uk: "Перевіряти невідому відповідь runtime-схемою й спрямовувати недійсні дані в стан помилки замість приведення типу."
+    en: "Validate an unknown response with a runtime schema and route invalid data to an error state instead of casting it."
+prerequisites: [re-09-02-typed-reducers-context, js-14-08-compile-time-vs-runtime]
+subskills:
+  - { family: P-05, skill: "API models and runtime schemas", depth: intro }
+glossary: [api-model, runtime-schema]
+selfCheck: [predict-text-amount, task-schema]
+
+blocks:
+  - id: two-models
+    kind: explanation
+    title:
+      uk: "Дві моделі й одна межа"
+      en: "Two models and one boundary"
+    body:
+      uk: |
+        Сервер витрат надсилає запис так:
+
+        ```json
+        { "id": "e-01", "label": "Продукти", "amount_minor": 84550, "spent_on": "2026-03-01", "category": "food" }
+        ```
+
+        Це [[api-model|API-модель]]: назви й формати сервера. Застосунок працює з доменною моделлю з розділу про JavaScript — `amountMinor`, `date`. Їх тримають окремо й перетворюють в **одному** місці — там, де відповідь входить у застосунок:
+
+        ```ts
+        function toExpense(api: ApiExpense): Expense {
+          return { id: api.id, label: api.label, amountMinor: api.amount_minor, date: api.spent_on, category: api.category };
+        }
+        ```
+
+        Перейменує сервер поле — зміниться `ApiExpense` і `toExpense`, а компоненти, reducer і підсумки не помітять нічого.
+
+        Але є пастка. `response.json()` повертає дані, яких `tsc` ніколи не бачив. Запис `body as ApiExpense[]` — лише твердження, як у JS-14: якщо сервер надішле щось інше, воно мовчки піде далі.
+      en: |
+        The expense server sends a record like this:
+
+        ```json
+        { "id": "e-01", "label": "Groceries", "amount_minor": 84550, "spent_on": "2026-03-01", "category": "food" }
+        ```
+
+        This is the [[api-model]]: the server's names and formats. The app works with the domain model from the JavaScript stage — `amountMinor`, `date`. They are kept apart and converted in **one** place — where the response enters the app:
+
+        ```ts
+        function toExpense(api: ApiExpense): Expense {
+          return { id: api.id, label: api.label, amountMinor: api.amount_minor, date: api.spent_on, category: api.category };
+        }
+        ```
+
+        If the server renames a field, `ApiExpense` and `toExpense` change, and the components, the reducer and the totals notice nothing.
+
+        But there is a trap. `response.json()` returns data that `tsc` has never seen. Writing `body as ApiExpense[]` is only a claim, as in JS-14: if the server sends something else, it silently goes on.
+
+  - id: predict-text-amount
+    kind: prediction
+    lang: tsx
+    runnable: false
+    prompt:
+      uk: "Сервер витрат надіслав три записи, але в третьому `\"amount_minor\": \"18000\"` — текст замість числа. Екран показує кожну витрату як `(amountMinor / 100).toFixed(2)` і внизу суму через `reduce`. Що буде на екрані в версії з `as` і в версії зі схемою?"
+      en: "The expense server sent three records, but the third has `\"amount_minor\": \"18000\"` — text instead of a number. The screen shows each expense as `(amountMinor / 100).toFixed(2)` and the total via `reduce` below. What is on the screen in the version with `as` and in the version with the schema?"
+    code: |
+      // amounts in the response: 84550, 52000, "18000"
+      async function loadExpenses() {
+        const body: unknown = await fetchExpenses();
+        if (USE_SCHEMA) return parseExpenseList(body);       // checks every field
+        return { ok: true, value: (body as ApiExpense[]).map(toExpense) };
+      }
+
+      const total = expenses.reduce((sum, expense) => sum + expense.amountMinor, 0);
+    answer:
+      type: choice
+      options:
+        - id: rows-ok-total-broken
+          text:
+            uk: "З `as`: три рядки виглядають правильно (`180.00` теж), а сума — `136550180.00`. Зі схемою: замість списку — повідомлення про помилку в записі з індексом 2 (третьому), поле `amount_minor`"
+            en: "With `as`: all three rows look right (`180.00` too), and the total is `136550180.00`. With the schema: an error message about the record with index 2 (the third one), field `amount_minor`, instead of the list"
+        - id: crash
+          text:
+            uk: "З `as`: сторінка падає з `TypeError`. Зі схемою: правильний список і сума `1545.50`"
+            en: "With `as`: the page crashes with a `TypeError`. With the schema: the correct list and the total `1545.50`"
+          why:
+            uk: "`\"18000\" / 100` — це `180`: ділення перетворює текст на число, тож рядок не падає. А схема не виправляє дані — вона лише каже, що вони неправильні."
+            en: "`\"18000\" / 100` is `180`: division turns text into a number, so the row does not crash. And a schema does not fix data — it only says the data is wrong."
+        - id: both-fine
+          text:
+            uk: "В обох версіях усе правильно: JavaScript сам перетворить `\"18000\"` на число"
+            en: "Both versions are fine: JavaScript turns `\"18000\"` into a number by itself"
+          why:
+            uk: "`+` з текстом не додає, а склеює: `136550 + \"18000\"` дає `\"13655018000\"`. Перетворення відбувається лише в діленні, тому рядки правильні, а сума — ні."
+            en: "`+` with text does not add, it concatenates: `136550 + \"18000\"` gives `\"13655018000\"`. Conversion happens only in the division, so the rows are right and the total is not."
+        - id: tsc-error
+          text:
+            uk: "Версію з `as` не пропустить `tsc`"
+            en: "`tsc` rejects the version with `as`"
+          why:
+            uk: "`as` — твердження, якому `tsc` вірить. Відповіді сервера він не бачить: її ще немає, коли йде перевірка."
+            en: "`as` is a claim that `tsc` believes. It never sees the server's response: it does not exist yet when the check runs."
+      correct: [rows-ok-total-broken]
+    explanation:
+      uk: "Перевірено в пісочниці на прикладі цього уроку. З `as` кожен рядок окремо виглядає бездоганно, і помилку видно лише в сумі — найгірший вид збою, бо його легко не помітити. Схема зупиняє третій запис (індекс 2) на межі, і екран чесно каже, що дані зіпсовано."
+      en: "Checked in the sandbox with this lesson's example. With `as` each row on its own looks flawless, and the mistake shows only in the total — the worst kind of failure, because it is easy to miss. The schema stops the third record (index 2) at the boundary, and the screen honestly says the data is damaged."
+
+  - id: parse-dont-cast
+    kind: explanation
+    title:
+      uk: "Розбирати, а не приводити"
+      en: "Parse, do not cast"
+    body:
+      uk: |
+        [[runtime-schema|Runtime-схема]] — опис очікуваної форми даних, який перевіряють **під час виконання**. Тут це функція `parseExpense(input: unknown)`, як валідатори домену: вона дивиться на кожне поле й повертає `{ ok: true, value }` з доменним записом або `{ ok: false, errors }` з ключами помилок. Бібліотеки на кшталт Zod роблять те саме коротшим записом; в уроці ти пишеш перевірку сам, щоб бачити кожен крок.
+
+        Три правила межі:
+
+        - **На вході `unknown`.** Тоді `tsc` не дозволить звернутися до `input.amount_minor`, поки ти не перевіриш, що це об’єкт.
+        - **Перетворення — після перевірки.** `toExpense` викликають лише для запису, у якого кожне поле вже перевірено.
+        - **Один поганий запис — помилка всього списку.** Мовчки викинути його означає показати неповні дані й неправильну суму. Краще стан помилки, який можна побачити й повідомити.
+
+        Чи дублює це TypeScript? Ні: `tsc` перевіряє, що **код** узгоджений, а схема — що **дані** відповідають типу.
+      en: |
+        A [[runtime-schema]] is a description of the expected data shape that is checked **at runtime**. Here it is the function `parseExpense(input: unknown)`, like the domain validators: it looks at every field and returns `{ ok: true, value }` with a domain record or `{ ok: false, errors }` with error keys. Libraries such as Zod do the same with a shorter notation; in this lesson you write the check yourself to see every step.
+
+        Three rules of the boundary:
+
+        - **`unknown` comes in.** Then `tsc` does not let you touch `input.amount_minor` until you have checked that it is an object.
+        - **Convert after checking.** `toExpense` is called only for a record whose every field has been checked.
+        - **One bad record is an error for the whole list.** Silently dropping it means showing incomplete data and a wrong total. An error state that can be seen and reported is better.
+
+        Does this duplicate TypeScript? No: `tsc` checks that the **code** is consistent, the schema that the **data** matches the type.
+
+  - id: boundary-flow
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Шлях відповіді через межу"
+      en: "The path of a response through the boundary"
+    textEquivalent:
+      uk: "Відповідь сервера після response.json() має тип unknown: tsc нічого не знає про її вміст. Далі два шляхи. Шлях з as ApiExpense[] нічого не перевіряє: зіпсований запис 2 із amount_minor = \"18000\" отримує тип Expense і доходить до рендеру, де сума склеюється як текст. Шлях через parseExpenseList перевіряє кожне поле: коректні записи стають Expense[], а запис 2 зупиняється на перевірці й перетворюється на помилку 2.amount_minor. Рендер отримує або список, у кожному полі якого впевнений, або стан помилки."
+      en: "After response.json() the server's response has the type unknown: tsc knows nothing about its contents. Then there are two paths. The path with as ApiExpense[] checks nothing: the damaged record 2 with amount_minor = \"18000\" gets the type Expense and reaches render, where the total is glued together as text. The path through parseExpenseList checks every field: valid records become Expense[], and record 2 stops at the check and turns into the error 2.amount_minor. Render gets either a list it can trust in every field, or an error state."
+    spec:
+      layout: grid
+      nodes:
+        - { id: json, col: 0, row: 0, label: "response.json()", shape: round, w: 150 }
+        - { id: unknown, col: 1, row: 0, label: "unknown", shape: pill, w: 110 }
+        - { id: cast, col: 0, row: 1, label: "as ApiExpense[]", w: 150 }
+        - { id: parse, col: 1, row: 1, label: "parseExpenseList", w: 160 }
+        - { id: render, col: 0, row: 2, label: { uk: "рендер", en: "render" }, shape: round, w: 150 }
+        - { id: errors, col: 1, row: 2, label: "{ ok: false, errors }", shape: note, w: 160 }
+      edges:
+        - { id: body, from: json, to: unknown }
+        - { id: claim, from: unknown, to: cast, label: { uk: "без перевірки", en: "unchecked" }, kind: dashed }
+        - { id: check, from: unknown, to: parse }
+        - { id: bad, from: cast, to: render, label: "\"18000\"" }
+        - { id: good, from: parse, to: render, label: "Expense[]" }
+        - { id: stop, from: parse, to: errors, label: "2.amount_minor" }
+      hidden: [errors, stop, good]
+      steps:
+        - caption:
+            uk: "`response.json()` дає `unknown`: `tsc` не знає, що всередині, бо відповіді ще немає, коли йде перевірка."
+            en: "`response.json()` gives `unknown`: `tsc` does not know what is inside, because the response does not exist yet when the check runs."
+          highlight: [json, body, unknown]
+          dim: [cast, parse, render]
+        - caption:
+            uk: "Шлях з `as`: запис 2 з `amount_minor: \"18000\"` отримує тип `Expense` без жодної перевірки й доходить до рендеру."
+            en: "The path with `as`: record 2 with `amount_minor: \"18000\"` gets the type `Expense` without any check and reaches render."
+          highlight: [unknown, claim, cast, bad, render]
+          dim: [parse]
+        - caption:
+            uk: "Шлях через схему: `parseExpenseList` перевіряє кожне поле кожного запису. Коректні записи стають `Expense[]`…"
+            en: "The path through the schema: `parseExpenseList` checks every field of every record. Valid records become `Expense[]`…"
+          show: [good]
+          highlight: [unknown, check, parse, good, render]
+          dim: [cast, bad, claim]
+        - caption:
+            uk: "…а запис 2 зупиняється тут і стає помилкою `2.amount_minor`. До рендеру доходить або список, у кожному полі якого можна бути певним, або стан помилки."
+            en: "…and record 2 stops here and becomes the error `2.amount_minor`. Render gets either a list it can trust in every field, or an error state."
+          show: [errors, stop]
+          highlight: [parse, stop, errors]
+          dim: [cast, bad, claim]
+
+  - id: expense-client
+    kind: example
+    runtime: browser-react
+    dir: expense-client
+    entry: main.tsx
+    strings:
+      groceries: { uk: "Продукти на тиждень", en: "Weekly groceries" }
+      transit: { uk: "Проїзний", en: "Transit pass" }
+      coffee: { uk: "Кава з друзями", en: "Coffee with friends" }
+      loading: { uk: "Завантаження…", en: "Loading…" }
+      total: { uk: "Разом:", en: "Total:" }
+      uah: { uk: "грн", en: "UAH" }
+      badResponse: { uk: "Сервер надіслав дані в неочікуваному форматі. Список не показано.", en: "The server sent data in an unexpected format. The list is not shown." }
+      positiveInteger: { uk: "має бути додатним цілим числом", en: "must be a positive whole number" }
+      badDate: { uk: "має бути датою у форматі РРРР-ММ-ДД", en: "must be a date in the format YYYY-MM-DD" }
+      required: { uk: "обов’язкове поле", en: "is required" }
+      notObject: { uk: "запис має бути об’єктом", en: "the record must be an object" }
+      notArray: { uk: "відповідь має бути списком", en: "the response must be a list" }
+    title:
+      uk: "Клієнт витрат: приведення проти схеми"
+      en: "An expense client: cast versus schema"
+    body:
+      uk: |
+        `fixtureApi.ts` — сервер-заглушка: через 50 мс він повертає три записи, і в третьому сума — текст. `expenseModel.ts` містить обидві моделі, `toExpense` і схему `parseExpense` / `parseExpenseList`. У `ExpenseList.tsx` прапорець `USE_SCHEMA` вибирає шлях. Натисни **Запустити**: рядки правильні, а сума — ні, і консоль показує `total: 13655018000`.
+      en: |
+        `fixtureApi.ts` is a stub server: after 50 ms it returns three records, and in the third the amount is text. `expenseModel.ts` has both models, `toExpense` and the schema `parseExpense` / `parseExpenseList`. In `ExpenseList.tsx` the flag `USE_SCHEMA` picks the path. Press **Run**: the rows are right and the total is not, and the console shows `total: 13655018000`.
+    tryIt:
+      uk: |
+        1. У `ExpenseList.tsx` заміни `const USE_SCHEMA = false;` на `true` і запусти: замість списку — повідомлення й рядок `2.amount_minor` (запис з індексом 2, тобто третій) з поясненням. У консолі — `errors:` з тим самим ключем.
+        2. Виправ сервер: у `fixtureApi.ts` заміни `"18000"` (з лапками) на `18000` і запусти. Тепер схема пропускає список, а сума — `1545.50`.
+        3. Зіпсуй сервер інакше: заміни `"spent_on": "2026-02-28"` на `"spent_on": "28.02.2026"`. Схема знову зупиняє список — тепер через `2.spent_on`.
+      en: |
+        1. In `ExpenseList.tsx` replace `const USE_SCHEMA = false;` with `true` and run: instead of the list there is a message and the line `2.amount_minor` (the record with index 2, that is the third one) with an explanation. The console shows `errors:` with the same key.
+        2. Fix the server: in `fixtureApi.ts` replace `"18000"` (with the quotes) with `18000` and run. Now the schema lets the list through, and the total is `1545.50`.
+        3. Break the server another way: replace `"spent_on": "2026-02-28"` with `"spent_on": "28.02.2026"`. The schema stops the list again — now because of `2.spent_on`.
+
+  - id: recall
+    kind: review
+    title:
+      uk: "Згадай: що робить приведення типу"
+      en: "Recall: what a type assertion does"
+    items:
+      - id: as-at-runtime
+        from: js-14-08-compile-time-vs-runtime
+        prompt:
+          uk: "Звичку зі сховища читають так: `const habit = JSON.parse(text) as Habit;`. Що робить `as Habit`, коли програма виконується?"
+          en: "A habit is read from storage like this: `const habit = JSON.parse(text) as Habit;`. What does `as Habit` do while the program runs?"
+        answer:
+          type: choice
+          options:
+            - id: nothing
+              text:
+                uk: "Нічого: після компіляції `as` зникає, і `habit` — те, що було в тексті"
+                en: "Nothing: after compiling `as` disappears, and `habit` is whatever was in the text"
+            - id: throws
+              text:
+                uk: "Кидає `TypeError`, якщо поля не збігаються з `Habit`"
+                en: "Throws a `TypeError` if the fields do not match `Habit`"
+              why:
+                uk: "Типи стираються до запуску. Кинути помилку може лише код перевірки, який ти написав сам."
+                en: "Types are erased before running. Only validation code you wrote yourself can throw."
+            - id: converts
+              text:
+                uk: "Перетворює поля до потрібних типів, наприклад `\"true\"` на `true`"
+                en: "Converts the fields to the needed types, for example `\"true\"` to `true`"
+              why:
+                uk: "`as` нічого не перетворює й не перевіряє — це лише твердження для `tsc`."
+                en: "`as` neither converts nor checks anything — it is only a claim for `tsc`."
+          correct: [nothing]
+        explanation:
+          uk: "`as` — домовленість із `tsc`, а не перевірка: після компіляції від неї нічого не лишається. Тому відповідь сервера, як і текст зі сховища, має пройти через схему, а не через `as`."
+          en: "`as` is an agreement with `tsc`, not a check: nothing of it is left after compiling. That is why a server response, like text from storage, must go through a schema, not through `as`."
+
+  - id: task-schema
+    kind: exercise
+    mode: guided
+    runtime: browser-react
+    dir: task-schema
+    entry: main.tsx
+    editable: [taskModel.ts, tasksApi.ts]
+    strings:
+      listHeading: { uk: "Усі справи", en: "All tasks" }
+      detailHeading: { uk: "Відкрита справа", en: "The open task" }
+      loading: { uk: "Завантаження…", en: "Loading…" }
+      noDate: { uk: "без терміну", en: "no due date" }
+      badResponse: { uk: "Сервер надіслав дані в неочікуваному форматі.", en: "The server sent data in an unexpected format." }
+      notObject: { uk: "запис має бути об’єктом", en: "the record must be an object" }
+      notArray: { uk: "відповідь має бути списком", en: "the response must be a list" }
+      required: { uk: "обов’язкове поле", en: "is required" }
+      invalidDate: { uk: "має бути датою РРРР-ММ-ДД або null", en: "must be a YYYY-MM-DD date or null" }
+      notBoolean: { uk: "має бути true або false", en: "must be true or false" }
+      unknownPriority: { uk: "має бути low, normal або high", en: "must be low, normal or high" }
+      plants: { uk: "Полити квіти", en: "Water the plants" }
+      library: { uk: "Здати книжки в бібліотеку", en: "Return library books" }
+      grandma: { uk: "Написати бабусі", en: "Write to grandma" }
+      internet: { uk: "Оплатити інтернет", en: "Pay the internet bill" }
+      dentist: { uk: "Записатися до стоматолога", en: "Book a dentist visit" }
+    title:
+      uk: "Схема для справ планувальника"
+      en: "A schema for planner tasks"
+    instructions:
+      uk: |
+        API планувальника надсилає `ApiTask` (`due_date`, `is_done`), а застосунок працює з `Task` (`dueDate`, `done`). Зараз `tasksApi.ts` приводить обидві відповіді через `as`, і справа з пріоритетом `"urgent"` потрапляє на екран.
+
+        1. У `taskModel.ts` напиши `parseTask(input: unknown)`. Правила й ключі помилок — у коментарі над функцією. Повертай **усі** помилки запису разом, а для коректного запису — доменний `Task` з обрізаним `title`.
+        2. У `tasksApi.ts` прибери обидва приведення: `loadTasks` розбирає список через `parseList` з `parsing.ts`, а `loadTask` — один запис через `parseTask`.
+
+        Натисни **Запустити**: з правильною схемою список замінить повідомлення про `2.priority`, а відкрита справа покажеться. Перевірки викликають `parseTask` з різними записами й підставляють інші відповіді сервера через `setAnswer`.
+      en: |
+        The planner API sends `ApiTask` (`due_date`, `is_done`), while the app works with `Task` (`dueDate`, `done`). Right now `tasksApi.ts` casts both responses with `as`, and a task with the priority `"urgent"` reaches the screen.
+
+        1. In `taskModel.ts` write `parseTask(input: unknown)`. The rules and error keys are in the comment above the function. Return **all** of a record's errors together, and for a valid record a domain `Task` with a trimmed `title`.
+        2. In `tasksApi.ts` remove both casts: `loadTasks` parses the list with `parseList` from `parsing.ts`, and `loadTask` parses one record with `parseTask`.
+
+        Press **Run**: with a correct schema the list is replaced by a message about `2.priority`, and the open task is shown. The checks call `parseTask` with different records and put other server answers in place through `setAnswer`.
+    testTitles:
+      "a valid API task becomes a domain Task":
+        uk: "Коректний `ApiTask` стає `Task` з `dueDate`, `done` і обрізаним `title`"
+        en: "A valid `ApiTask` becomes a `Task` with `dueDate`, `done` and a trimmed `title`"
+      "anything that is not an object gives record: notObject":
+        uk: "`null`, текст, число, масив і `undefined` дають рівно `{ record: \"notObject\" }`"
+        en: "`null`, text, a number, an array and `undefined` give exactly `{ record: \"notObject\" }`"
+      "an unknown priority gives priority: unknownPriority":
+        uk: "Невідомий або відсутній `priority` дає `priority: \"unknownPriority\"`"
+        en: "An unknown or missing `priority` gives `priority: \"unknownPriority\"`"
+      "due_date must be null or YYYY-MM-DD":
+        uk: "`due_date` не `null` і не `РРРР-ММ-ДД` дає `dueDate: \"invalidDate\"`"
+        en: "A `due_date` that is neither `null` nor `YYYY-MM-DD` gives `dueDate: \"invalidDate\"`"
+      "is_done must be a real boolean":
+        uk: "`is_done` як текст `\"false\"` чи число `0` дає `done: \"notBoolean\"`"
+        en: "`is_done` as the text `\"false\"` or the number `0` gives `done: \"notBoolean\"`"
+      "id and title must be non-empty text":
+        uk: "Порожній `id`, `title` з самих пробілів або не текст дають `\"required\"`"
+        en: "An empty `id`, a `title` of spaces or one that is not text give `\"required\"`"
+      "every bad field is reported, not only the first":
+        uk: "Запис із чотирма поганими полями дає всі чотири помилки"
+        en: "A record with four bad fields gives all four errors"
+      "loadTasks parses the list answer":
+        uk: "`loadTasks` розбирає відповідь-список: коректна дає `Task[]`, з невідомим пріоритетом — `{ \"0.priority\": … }`"
+        en: "`loadTasks` parses the list answer: a valid one gives `Task[]`, one with an unknown priority gives `{ \"0.priority\": … }`"
+      "loadTask parses the detail answer":
+        uk: "`loadTask` теж розбирає свою відповідь: `is_done: \"no\"` дає помилку"
+        en: "`loadTask` parses its answer too: `is_done: \"no\"` gives an error"
+      "the screen shows an alert instead of a bad list":
+        uk: "Зі зіпсованим списком екран показує `role=\"alert\"` з `0.priority`, а не список"
+        en: "With a damaged list the screen shows `role=\"alert\"` with `0.priority`, not the list"
+    hints:
+      nudge:
+        uk: "Почни з `isObject(input)`: доки це не перевірено, до полів звертатися не можна. Далі — по одному `if` на поле, кожен додає ключ у спільний об’єкт `errors`."
+        en: "Start with `isObject(input)`: until that is checked, the fields cannot be touched. Then one `if` per field, each adding a key to a shared `errors` object."
+      explanation:
+        uk: "`parseExpense` у прикладі — та сама схема для іншого запису: `typeof` для тексту й `true`/`false`, `Number.isInteger` для суми, регулярний вираз для дати. Для пріоритету перевір, що значення входить у список дозволених. Збирай помилки в об’єкт і лише наприкінці вирішуй: якщо в ньому є ключі — `{ ok: false, errors }`, інакше будуй `Task` з нових назв полів. У `tasksApi.ts` функція `parseList(body, parseTask)` сама пройде список."
+        en: "`parseExpense` in the example is the same schema for another record: `typeof` for text and `true`/`false`, `Number.isInteger` for the amount, a regular expression for the date. For the priority, check that the value is in the list of allowed ones. Collect the errors in an object and decide only at the end: if it has keys — `{ ok: false, errors }`, otherwise build the `Task` with the new field names. In `tasksApi.ts` the function `parseList(body, parseTask)` walks the list for you."
+    solutionNote:
+      uk: "Схема перевіряє кожне поле, збирає всі помилки й лише потім перетворює API-модель на доменну. `tasksApi.ts` — єдина межа: обидві відповіді проходять через `parseTask`, тож на екран не потрапить жоден неперевірений запис, а невідомий пріоритет стає станом помилки, який видно."
+      en: "The schema checks every field, collects every error and only then converts the API model into the domain one. `tasksApi.ts` is the single boundary: both answers go through `parseTask`, so no unchecked record reaches the screen, and an unknown priority becomes an error state that can be seen."
+    feedback:
+      - when: { test: "a valid API task becomes a domain Task" }
+        message:
+          uk: "Ця перевірка чекає `{ ok: true, value }`, де `value` має рівно поля `id`, `title` (без пробілів по краях), `dueDate`, `done`, `priority` — нові назви, а не `due_date` чи `is_done`. Якщо всі перевірки падають разом, спершу виправ першу помилку в консолі."
+          en: "This check expects `{ ok: true, value }` where `value` has exactly the fields `id`, `title` (without spaces at the ends), `dueDate`, `done`, `priority` — the new names, not `due_date` or `is_done`. If every check fails at once, fix the first console error first."
+      - when: { test: "anything that is not an object gives record: notObject" }
+        message:
+          uk: "Для `null`, тексту, числа, масиву й `undefined` перевірка чекає рівно `{ ok: false, errors: { record: \"notObject\" } }` — без помилок окремих полів. Масив теж не підходить: `isObject` з `parsing.ts` це враховує."
+          en: "For `null`, text, a number, an array and `undefined` the check expects exactly `{ ok: false, errors: { record: \"notObject\" } }` — without errors of single fields. An array does not count either: `isObject` from `parsing.ts` takes care of that."
+      - when: { test: "is_done must be a real boolean" }
+        message:
+          uk: "Текст `\"false\"` і число `0` — не `boolean`, навіть якщо `Boolean(...)` їх перетворить. Перевірка чекає `done: \"notBoolean\"` для обох."
+          en: "The text `\"false\"` and the number `0` are not a `boolean`, even if `Boolean(...)` converts them. The check expects `done: \"notBoolean\"` for both."
+      - when: { test: "every bad field is reported, not only the first" }
+        message:
+          uk: "Перевірка дає запис із чотирма поганими полями й чекає чотири ключі разом. Не повертай результат із першого `if` — додавай ключ в `errors` і вирішуй наприкінці."
+          en: "The check gives a record with four bad fields and expects four keys together. Do not return from the first `if` — add the key to `errors` and decide at the end."
+      - when: { test: "loadTasks parses the list answer" }
+        message:
+          uk: "Перевірка підставляє відповідь-список через `setAnswer(\"list\", …)` і чекає від `loadTasks` результат `parseList(body, parseTask)`: `Task[]` для коректного списку й `{ ok: false, errors: { \"0.priority\": \"unknownPriority\" } }` для поганого."
+          en: "The check puts a list answer in place with `setAnswer(\"list\", …)` and expects from `loadTasks` the result of `parseList(body, parseTask)`: `Task[]` for a valid list and `{ ok: false, errors: { \"0.priority\": \"unknownPriority\" } }` for a bad one."
+      - when: { test: "loadTask parses the detail answer" }
+        message:
+          uk: "Друга відповідь API теж має пройти схему: перевірка підставляє `is_done: \"no\"` через `setAnswer(\"detail\", …)` і чекає від `loadTask` `{ ok: false, errors: { done: \"notBoolean\" } }`."
+          en: "The API's second answer must pass the schema too: the check puts in `is_done: \"no\"` with `setAnswer(\"detail\", …)` and expects `{ ok: false, errors: { done: \"notBoolean\" } }` from `loadTask`."
+      - when: { test: "the screen shows an alert instead of a bad list" }
+        message:
+          uk: "З відповіддю, де `priority` — `\"urgent\"`, на сторінці не має бути списку `data-part=\"list\"`, а має бути `role=\"alert\"` з ключем `0.priority`. Це станеться, коли `loadTasks` поверне `ok: false`."
+          en: "With an answer whose `priority` is `\"urgent\"`, the page must have no `data-part=\"list\"` list but a `role=\"alert\"` with the key `0.priority`. That happens when `loadTasks` returns `ok: false`."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: RE-09
+    body:
+      uk: "У кроці проєкту кожна відповідь API-заглушки твого застосунку пройде через схему запису твого домену — наприклад, планувальник перетворить невідомий `priority` на стан помилки, а трекер витрат відхилить дробову суму."
+      en: "In the project step every answer of your app's fixture API goes through a schema for your domain's record — for example, the planner turns an unknown `priority` into an error state, and the expense tracker rejects a fractional amount."

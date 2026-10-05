@@ -1,0 +1,422 @@
+id: js-15-04-install-lockfile-semver
+unit: JS-15
+title:
+  uk: "Встановлення пакетів, lockfile і semver"
+  en: "Installing packages, lockfiles and semver"
+kind: local-task
+minutes: 15
+contentVersion: 1
+purpose:
+  uk: "Майже кожен проєкт JavaScript використовує чужі пакети. Треба розуміти, що саме завантажує й запускає `npm install`, як записуються версії і як відтворити рівно той самий набір на іншому комп’ютері. Ти встановиш один невеликий пакет і прочитаєш усе, що змінилося."
+  en: "Almost every JavaScript project uses other people’s packages. You need to know what `npm install` downloads and runs, how versions are recorded and how to reproduce exactly the same set on another computer. You will install one small package and read everything that changed."
+objectives:
+  - uk: "Встановити dev-залежність і прочитати, що змінилося в `package.json`, `package-lock.json` і `node_modules`."
+    en: "Install a dev dependency and read what changed in package.json, package-lock.json and node_modules."
+  - uk: "Передбачити, які версії дозволяє діапазон semver (`^1.4.2`, `~1.4.2`, `1.4.2`), перевстановити все точно з lockfile через `npm ci` і прочитати одне повідомлення audit, не застосовуючи виправлення наосліп."
+    en: "Predict which versions a semver range (^1.4.2, ~1.4.2, 1.4.2) allows, reinstall exactly from the lockfile with npm ci, and read one audit advisory without blindly applying a fix."
+prerequisites: [js-15-03-node-and-package-manifest]
+subskills:
+  - { family: P-01, skill: "package manager/lockfile", depth: intro }
+  - { family: P-01, skill: "dependency/semver/security basics", depth: intro }
+glossary: [package-manager, dependency, dev-dependency, lockfile, semver, security-advisory]
+
+blocks:
+  - id: what-install-does
+    kind: explanation
+    title:
+      uk: "Що робить npm install"
+      en: "What npm install does"
+    body:
+      uk: |
+        npm — [[package-manager|менеджер пакетів]]. Команда `npm install --save-dev semver` робить чотири речі:
+
+        1. Завантажує пакет `semver` з публічного реєстру registry.npmjs.org (потрібен інтернет, обліковий запис — ні).
+        2. Кладе його файли в теку `node_modules`, а також пакети, від яких він сам залежить.
+        3. Записує в `package.json` [[dependency|залежність]] з **діапазоном** версій. `--save-dev` робить його [[dev-dependency|dev-залежністю]] (`devDependencies`): пакет потрібен розробникам, а не готовій програмі.
+        4. Записує в [[lockfile]] `package-lock.json` **точну** версію кожного встановленого пакета, звідки його взято й контрольну суму вмісту.
+
+        Важливо чесно знати ще одне: пакет може мати **install scripts** (`preinstall`, `install`, `postinstall`). npm виконує їх під час встановлення — це код автора пакета, що працює на твоєму комп’ютері з твоїми правами. У `semver` таких немає, а в збирача з уроку про збірку є. Тому встановлюють лише пакети, яким довіряють, і з точно написаною назвою.
+      en: |
+        npm is a [[package-manager|package manager]]. The command `npm install --save-dev semver` does four things:
+
+        1. Downloads the package `semver` from the public registry registry.npmjs.org (internet needed, no account).
+        2. Puts its files into the folder `node_modules`, together with the packages it depends on itself.
+        3. Records a [[dependency]] with a **range** of versions in `package.json`. `--save-dev` makes it a [[dev-dependency|dev dependency]] (`devDependencies`): developers need the package, the finished program does not.
+        4. Records in the [[lockfile]] `package-lock.json` the **exact** version of every installed package, where it came from and a checksum of its contents.
+
+        You should also know one more thing honestly: a package can have **install scripts** (`preinstall`, `install`, `postinstall`). npm runs them during the install — it is the package author’s code running on your computer with your rights. `semver` has none; the bundler from the build lesson has one. So you install only packages you trust, with the name typed exactly.
+
+  - id: semver-ranges
+    kind: explanation
+    title:
+      uk: "Версії й діапазони"
+      en: "Versions and ranges"
+    body:
+      uk: |
+        За домовленістю [[semver]] версія — це три числа `MAJOR.MINOR.PATCH`:
+
+        - **PATCH** (`1.4.2 → 1.4.3`) — виправлення, нічого нового;
+        - **MINOR** (`1.4.2 → 1.5.0`) — нові можливості, старий код не ламається;
+        - **MAJOR** (`1.4.2 → 2.0.0`) — зміни, після яких твій код може перестати працювати.
+
+        У `package.json` пишуть діапазон — які версії згодяться:
+
+        | Діапазон | Дозволяє |
+        |---|---|
+        | `1.4.2` | лише 1.4.2 |
+        | `~1.4.2` | 1.4.2 і новіші PATCH: 1.4.x |
+        | `^1.4.2` | 1.4.2 і новіші MINOR і PATCH: 1.x.x |
+
+        npm за замовчуванням записує `^`. Для версій, що починаються з `0.`, `^` суворіший: `^0.4.2` дозволяє лише 0.4.x — до 1.0 автори часто ламають щось і в MINOR.
+      en: |
+        By the [[semver]] convention a version is three numbers `MAJOR.MINOR.PATCH`:
+
+        - **PATCH** (`1.4.2 → 1.4.3`) — a fix, nothing new;
+        - **MINOR** (`1.4.2 → 1.5.0`) — new features, old code keeps working;
+        - **MAJOR** (`1.4.2 → 2.0.0`) — changes after which your code may stop working.
+
+        `package.json` holds a range — which versions are acceptable:
+
+        | Range | Allows |
+        |---|---|
+        | `1.4.2` | only 1.4.2 |
+        | `~1.4.2` | 1.4.2 and newer PATCH versions: 1.4.x |
+        | `^1.4.2` | 1.4.2 and newer MINOR and PATCH versions: 1.x.x |
+
+        npm writes `^` by default. For versions starting with `0.`, `^` is stricter: `^0.4.2` allows only 0.4.x — before 1.0 authors often break things even in a MINOR release.
+
+  - id: predict-caret
+    kind: prediction
+    prompt:
+      uk: "Які з цих версій дозволяє діапазон `^1.4.2`? Обери всі."
+      en: "Which of these versions does the range `^1.4.2` allow? Pick all of them."
+    answer:
+      type: multi
+      options:
+        - id: v141
+          code: "1.4.1"
+          why:
+            uk: "Діапазон починається **з** 1.4.2: старіші версії не підходять."
+            en: "The range starts **at** 1.4.2: older versions do not fit."
+        - id: v142
+          code: "1.4.2"
+        - id: v149
+          code: "1.4.9"
+        - id: v150
+          code: "1.5.0"
+        - id: v200
+          code: "2.0.0"
+          why:
+            uk: "`^` ніколи не переходить на новий MAJOR: 2.0.0 може зламати твій код."
+            en: "`^` never moves to a new MAJOR: 2.0.0 may break your code."
+      correct: [v142, v149, v150]
+    explanation:
+      uk: "`^1.4.2` — це «від 1.4.2 і до, але не включно, 2.0.0». Тож 1.4.2, 1.4.9 і 1.5.0 підходять, а 1.4.1 (старіша) і 2.0.0 (новий MAJOR) — ні. У практичному завданні уроку про lockfile і semver ти перевіриш це справжнім пакетом `semver`."
+      en: "`^1.4.2` means “from 1.4.2 up to, but not including, 2.0.0”. So 1.4.2, 1.4.9 and 1.5.0 fit, while 1.4.1 (older) and 2.0.0 (a new MAJOR) do not. In the hands-on task of the lockfile and semver lesson you check this with the real `semver` package."
+
+  - id: predict-tilde
+    kind: prediction
+    prompt:
+      uk: "Які з версій 1.4.1, 1.4.2, 1.4.9, 1.5.0 і 2.0.0 дозволяє діапазон `~1.4.2`? Обери всі."
+      en: "Which of the versions 1.4.1, 1.4.2, 1.4.9, 1.5.0 and 2.0.0 does the range `~1.4.2` allow? Pick all of them."
+    answer:
+      type: multi
+      options:
+        - id: v141
+          code: "1.4.1"
+          why:
+            uk: "Як і з `^`, нижня межа — сама 1.4.2."
+            en: "As with `^`, the lower bound is 1.4.2 itself."
+        - id: v142
+          code: "1.4.2"
+        - id: v149
+          code: "1.4.9"
+        - id: v150
+          code: "1.5.0"
+          why:
+            uk: "`~` дозволяє лише нові PATCH: MINOR має лишитися 4."
+            en: "`~` allows only new PATCH versions: MINOR must stay 4."
+        - id: v200
+          code: "2.0.0"
+          why:
+            uk: "Новий MAJOR не дозволяє жоден із цих діапазонів."
+            en: "Neither of these ranges allows a new MAJOR."
+      correct: [v142, v149]
+    explanation:
+      uk: "`~1.4.2` — це «1.4.x, починаючи з 1.4.2». Тому 1.4.2 і 1.4.9 — так, 1.5.0 і 2.0.0 — ні."
+      en: "`~1.4.2` means “1.4.x, starting at 1.4.2”. So 1.4.2 and 1.4.9 — yes, 1.5.0 and 2.0.0 — no."
+
+  - id: range-lock-modules
+    kind: visual
+    visual: diagram
+    title:
+      uk: "Діапазон, lockfile і node_modules"
+      en: "Range, lockfile and node_modules"
+    textEquivalent:
+      uk: >-
+        Реєстр npm зберігає опубліковані версії пакета semver. Під час npm install --save-dev semver
+        npm записує в package.json діапазон ^7.8.5, у package-lock.json — точну версію 7.8.5, адресу
+        завантаження й контрольну суму, а файли пакета кладе в node_modules/semver. npm ci читає лише
+        lockfile, тому на будь-якому комп’ютері встановлює саме 7.8.5. Якби lockfile не було, той самий
+        діапазон ^7.8.5 дозволив би й новішу версію, наприклад 7.9.0, коли її опублікують, — і в різних
+        людей опинилися б різні версії.
+      en: >-
+        The npm registry stores the published versions of the semver package. During
+        npm install --save-dev semver, npm writes the range ^7.8.5 into package.json, writes the exact
+        version 7.8.5, its download address and a checksum into package-lock.json, and puts the package
+        files into node_modules/semver. npm ci reads only the lockfile, so on any computer it installs
+        exactly 7.8.5. Without a lockfile the same range ^7.8.5 would also allow a newer version, for
+        example 7.9.0 once it is published — and different people would end up with different versions.
+    spec:
+      layout: grid
+      nodes:
+        - { id: registry, label: "registry.npmjs.org", shape: cylinder, w: 170, col: 0, row: 0 }
+        - { id: future, label: "7.9.0 ?", shape: note, w: 96, col: 1, row: 0 }
+        - { id: manifest, label: "package.json: ^7.8.5", w: 190, col: 0, row: 1 }
+        - { id: lock, label: "package-lock.json: 7.8.5", w: 210, col: 0, row: 2 }
+        - { id: modules, label: "node_modules/semver", shape: round, w: 190, col: 0, row: 3 }
+      edges:
+        - { id: download, from: registry, to: manifest, label: { uk: "install", en: "install" } }
+        - { id: pin, from: manifest, to: lock, label: { uk: "точна версія", en: "exact version" } }
+        - { id: files, from: lock, to: modules, label: "npm ci" }
+        - { id: newer, from: future, to: manifest, kind: dashed, label: { uk: "теж у діапазоні", en: "also in range" } }
+      hidden: [future, newer]
+      steps:
+        - caption:
+            uk: "Три місця, де живе залежність: діапазон у `package.json`, точна версія в lockfile і самі файли в `node_modules`."
+            en: "Three places where a dependency lives: the range in `package.json`, the exact version in the lockfile and the files themselves in `node_modules`."
+        - highlight: [registry, manifest, download]
+          caption:
+            uk: "`npm install --save-dev semver` бере найновішу версію з реєстру й записує в `package.json` **діапазон** `^7.8.5`."
+            en: "`npm install --save-dev semver` takes the newest version from the registry and writes the **range** `^7.8.5` into `package.json`."
+        - highlight: [lock, pin]
+          caption:
+            uk: "У lockfile — **точна** версія `7.8.5`, адреса, звідки її взято, і контрольна сума `integrity`. Так само для кожної транзитивної залежності."
+            en: "The lockfile holds the **exact** version `7.8.5`, the address it came from and the `integrity` checksum. The same for every transitive dependency."
+        - highlight: [modules, files]
+          caption:
+            uk: "`node_modules` — лише копія файлів. Її не зберігають в історії проєкту й не редагують: `npm ci` видаляє її й збирає заново точно за lockfile."
+            en: "`node_modules` is only a copy of the files. It is not kept in the project history or edited: `npm ci` deletes it and rebuilds it exactly from the lockfile."
+        - show: [future, newer]
+          highlight: [future, newer, manifest]
+          dim: [lock, modules, files, pin]
+          caption:
+            uk: "Без lockfile діапазон `^7.8.5` прийняв би й 7.9.0, щойно її опублікують. Тоді в тебе й у колеги були б різні версії — lockfile цьому запобігає."
+            en: "Without a lockfile the range `^7.8.5` would also accept 7.9.0 as soon as it is published. Then you and a colleague would have different versions — the lockfile prevents that."
+
+  - id: install-and-reproduce
+    kind: local-task
+    runtime: local-web
+    title:
+      uk: "Встановити, прочитати, відтворити"
+      en: "Install, read, reproduce"
+    intro:
+      uk: |
+        Працюєш у `~/js-course/money-lab` з попереднього уроку. Потрібен інтернет: npm завантажує пакет `semver` з публічного реєстру. Обліковий запис і оплата не потрібні. Команди однакові на macOS, Linux і Windows PowerShell.
+
+        Номери версій у твоєму виводі можуть бути новішими, ніж тут, — нова версія могла вийти після написання уроку. Порівнюй будову виводу, а не точні цифри.
+      en: |
+        You work in `~/js-course/money-lab` from the previous lesson. You need internet access: npm downloads the package `semver` from the public registry. No account or payment is needed. The commands are the same on macOS, Linux and Windows PowerShell.
+
+        Version numbers in your output may be newer than here — a new version may have come out after this lesson was written. Compare the shape of the output, not the exact numbers.
+    tools:
+      - name: { uk: "Node.js і npm", en: "Node.js and npm" }
+        version: { uk: "Node.js 22.13 або новіша, npm 10 або новіша (перевірено з Node.js 25.2 і npm 11.6)", en: "Node.js 22.13 or newer, npm 10 or newer (checked with Node.js 25.2 and npm 11.6)" }
+      - name: { uk: "Доступ до інтернету", en: "Internet access" }
+        version: "registry.npmjs.org"
+        note:
+          uk: "лише для `npm install`; `npx semver` і перевірки працюють уже без мережі"
+          en: "only for `npm install`; `npx semver` and the checks work without the network afterwards"
+    steps:
+      - text:
+          uk: "Перейди в проєкт і встанови `semver` як dev-залежність:"
+          en: "Go to the project and install `semver` as a dev dependency:"
+        command: "cd ~/js-course/money-lab\nnpm install --save-dev semver"
+        expect:
+          uk: |
+            ```text
+            added 1 package, and audited 2 packages in 573ms
+
+            found 0 vulnerabilities
+            ```
+          en: |
+            ```text
+            added 1 package, and audited 2 packages in 573ms
+
+            found 0 vulnerabilities
+            ```
+      - text:
+          uk: "Подивись, що змінилося. Відкрий `package.json` і `package-lock.json` у редакторі або виведи їх у термінал:"
+          en: "Look at what changed. Open `package.json` and `package-lock.json` in the editor or print them in the terminal:"
+        command: "cat package.json\ncat package-lock.json\nls node_modules"
+        expect:
+          uk: |
+            У `package.json` з’явилося поле з **діапазоном**:
+
+            ```json
+            "devDependencies": {
+              "semver": "^7.8.5"
+            }
+            ```
+
+            У `package-lock.json` — **точна** версія, адреса й контрольна сума (рядок `integrity` довший, тут скорочено):
+
+            ```json
+            "node_modules/semver": {
+              "version": "7.8.5",
+              "resolved": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
+              "integrity": "sha512-Y7/KDsb8…",
+              "dev": true,
+            ```
+
+            `ls node_modules` друкує `semver`.
+          en: |
+            `package.json` got a field with a **range**:
+
+            ```json
+            "devDependencies": {
+              "semver": "^7.8.5"
+            }
+            ```
+
+            `package-lock.json` has the **exact** version, the address and a checksum (the `integrity` line is longer, shortened here):
+
+            ```json
+            "node_modules/semver": {
+              "version": "7.8.5",
+              "resolved": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
+              "integrity": "sha512-Y7/KDsb8…",
+              "dev": true,
+            ```
+
+            `ls node_modules` prints `semver`.
+      - text:
+          uk: |
+            Перевір свої передбачення справжнім пакетом. `npx semver` запускає програму з `node_modules` цього проєкту; `--range` залишає лише ті версії, що підходять. Лапки навколо діапазону обов’язкові.
+          en: |
+            Check your predictions with the real package. `npx semver` runs the program from this project’s `node_modules`; `--range` keeps only the versions that fit. The quotes around the range are required.
+        command: "npx semver --range \"^1.4.2\" 1.4.1 1.4.2 1.4.9 1.5.0 2.0.0\nnpx semver --range \"~1.4.2\" 1.4.1 1.4.2 1.4.9 1.5.0 2.0.0\nnpx semver --range \"^0.4.2\" 0.4.3 0.5.0 1.0.0"
+        expect:
+          uk: |
+            Перша команда друкує `1.4.2`, `1.4.9`, `1.5.0`; друга — `1.4.2`, `1.4.9`; третя — лише `0.4.3`. Кожна версія — окремим рядком.
+          en: |
+            The first command prints `1.4.2`, `1.4.9`, `1.5.0`; the second `1.4.2`, `1.4.9`; the third only `0.4.3`. Each version on its own line.
+      - text:
+          uk: |
+            Тепер відтвори встановлення точно з lockfile. `npm ci` сам видаляє наявну теку `node_modules` і встановлює рівно те, що записано в `package-lock.json`, нічого в ньому не змінюючи. Саме так проєкт встановлюють на новому комп’ютері.
+          en: |
+            Now reproduce the install exactly from the lockfile. `npm ci` itself removes the existing `node_modules` folder and installs exactly what `package-lock.json` lists, changing nothing in it. This is how a project is installed on a new computer.
+        command: "npm ci\nnpm test"
+        expect:
+          uk: "`added 1 package, and audited 2 packages in …` і `found 0 vulnerabilities`; потім `npm test` — знову `ℹ pass 3` і `ℹ fail 0`."
+          en: "`added 1 package, and audited 2 packages in …` and `found 0 vulnerabilities`; then `npm test` shows `ℹ pass 3` and `ℹ fail 0` again."
+      - text:
+          uk: |
+            **Необов’язково, потрібен інтернет:** прочитай справжнє повідомлення про вразливість. Встанови свідомо стару версію і запусти `npm audit`:
+          en: |
+            **Optional, needs internet:** read a real security advisory. Install a deliberately old version and run `npm audit`:
+        command: "npm install --save-dev semver@7.5.1\nnpm ls --all\nnpm audit"
+        expect:
+          uk: |
+            `npm install` сам попереджає `1 high severity vulnerability`. Стара версія тягне ще дві транзитивні залежності:
+
+            ```text
+            money-lab@1.0.0 …/money-lab
+            └─┬ semver@7.5.1
+              └─┬ lru-cache@6.0.0
+                └── yallist@4.0.0
+            ```
+
+            (Якщо термінал не показує такі символи, npm малює дерево простими `` `-- ``.)
+
+            А [[security-advisory|повідомлення]] audit виглядає так:
+
+            ```text
+            semver  7.0.0 - 7.5.1
+            Severity: high
+            semver vulnerable to Regular Expression Denial of Service - https://github.com/advisories/GHSA-c2qf-rxjj-qqgw
+            fix available via `npm audit fix`
+            node_modules/semver
+            ```
+
+            Прочитай його по рядках: **який** пакет і **які** версії вразливі, **наскільки** серйозно, **що** це за проблема (посилання веде на опис), **чи є** виправлення і **де** пакет лежить. Тут проблема — дуже повільна обробка спеціально підібраного тексту; пакет працює лише на твоєму комп’ютері з твоїми ж даними, тож ризик малий, але оновитися в межах того самого MAJOR нічого не коштує.
+          en: |
+            The install itself warns `1 high severity vulnerability`. The old version pulls in two more transitive dependencies:
+
+            ```text
+            money-lab@1.0.0 …/money-lab
+            └─┬ semver@7.5.1
+              └─┬ lru-cache@6.0.0
+                └── yallist@4.0.0
+            ```
+
+            (If your terminal cannot show these characters, npm draws the tree with plain `` `-- ``.)
+
+            And the audit [[security-advisory|advisory]] looks like this:
+
+            ```text
+            semver  7.0.0 - 7.5.1
+            Severity: high
+            semver vulnerable to Regular Expression Denial of Service - https://github.com/advisories/GHSA-c2qf-rxjj-qqgw
+            fix available via `npm audit fix`
+            node_modules/semver
+            ```
+
+            Read it line by line: **which** package and **which** versions are vulnerable, **how** severe, **what** the problem is (the link leads to a description), **whether** a fix exists and **where** the package lives. Here the problem is very slow processing of specially crafted text; the package runs only on your computer with your own data, so the risk is small, but upgrading within the same MAJOR costs nothing.
+      - text:
+          uk: |
+            **Необов’язково, продовження:** онови свідомо, а не через `npm audit fix --force` (з `--force` npm може перескочити на новий MAJOR і зламати проєкт):
+          en: |
+            **Optional, continued:** upgrade deliberately, not through `npm audit fix --force` (with `--force` npm may jump to a new MAJOR and break the project):
+        command: "npm install --save-dev semver@latest\nnpm audit"
+        expect:
+          uk: "`removed 2 packages, changed 1 package, …` — транзитивні залежності зникли — і `found 0 vulnerabilities`. У `package.json` знову діапазон `^7.8.5` (або новіший)."
+          en: "`removed 2 packages, changed 1 package, …` — the transitive dependencies are gone — and `found 0 vulnerabilities`. `package.json` has the range `^7.8.5` (or newer) again."
+    verify:
+      - id: range-and-exact
+        text:
+          uk: "Я знайшов діапазон `^…` у `package.json` і точну версію з `resolved` та `integrity` у `package-lock.json`."
+          en: "I found the `^…` range in `package.json` and the exact version with `resolved` and `integrity` in `package-lock.json`."
+      - id: semver-checked
+        text:
+          uk: "`npx semver --range` надрукував для `^1.4.2` і `~1.4.2` ті самі версії, що я обрав у передбаченнях (або я знайшов, де помилився)."
+          en: "`npx semver --range` printed the same versions for `^1.4.2` and `~1.4.2` that I picked in the predictions (or I found where I was wrong)."
+      - id: ci-reproduced
+        text:
+          uk: "`npm ci` встановив пакети з lockfile, і після нього `npm test` показав `ℹ fail 0`."
+          en: "`npm ci` installed the packages from the lockfile, and after it `npm test` showed `ℹ fail 0`."
+    troubleshooting:
+      - problem:
+          uk: "`npm error code ENOTFOUND` / `ETIMEDOUT` / `getaddrinfo … registry.npmjs.org`"
+          en: "`npm error code ENOTFOUND` / `ETIMEDOUT` / `getaddrinfo … registry.npmjs.org`"
+        fix:
+          uk: "npm не дістався до реєстру. Перевір інтернет; у навчальній чи робочій мережі реєстр може блокувати proxy — тоді спробуй з іншої мережі. Нічого не зіпсовано: просто повтори команду."
+          en: "npm could not reach the registry. Check the internet connection; on a school or office network a proxy may block the registry — then try another network. Nothing is broken: just repeat the command."
+      - problem:
+          uk: "`npx` питає `Need to install the following packages: … Ok to proceed? (y)` або пише `npm warn exec The following package was not found and will be installed`"
+          en: "`npx` asks `Need to install the following packages: … Ok to proceed? (y)` or prints `npm warn exec The following package was not found and will be installed`"
+        fix:
+          uk: "npx не знайшов `semver` у цьому проєкті й хоче завантажити тимчасову копію. Якщо питає — відповідай `n`. Найімовірніше, ти не в `money-lab` (`pwd`) або крок встановлення не завершився: перейди в проєкт і повтори крок 1."
+          en: "npx did not find `semver` in this project and wants to download a temporary copy. If it asks, answer `n`. Most likely you are not in `money-lab` (`pwd`) or the install step did not finish: go to the project and repeat step 1."
+      - problem:
+          uk: "`npm error code EUSAGE` … `can only install with an existing package-lock.json`"
+          en: "`npm error code EUSAGE` … `can only install with an existing package-lock.json`"
+        fix:
+          uk: "У робочій теці немає lockfile: ти не в теці проєкту або крок 1 не виконано. Не створюй lockfile руками — його пише `npm install`."
+          en: "There is no lockfile in the working directory: you are not in the project folder or step 1 was not done. Do not write a lockfile by hand — `npm install` writes it."
+      - problem:
+          uk: "Windows: `npm.ps1 cannot be loaded because running scripts is disabled on this system`"
+          en: "Windows: `npm.ps1 cannot be loaded because running scripts is disabled on this system`"
+        fix:
+          uk: "Пиши `npm.cmd` і `npx.cmd` замість `npm` і `npx` — це ті самі програми."
+          en: "Write `npm.cmd` and `npx.cmd` instead of `npm` and `npx` — they are the same programs."
+    recovery:
+      uk: "`node_modules` завжди можна відтворити: `npm ci` збирає його заново з lockfile. Якщо `package.json` і lockfile заплуталися після експериментів з версіями, виконай `npm install --save-dev semver@latest` — він приведе обидва файли до узгодженого стану з актуальною версією."
+      en: "`node_modules` can always be rebuilt: `npm ci` recreates it from the lockfile. If `package.json` and the lockfile got tangled after experimenting with versions, run `npm install --save-dev semver@latest` — it brings both files to a consistent state with the current version."
+
+  - id: to-project
+    kind: transfer
+    capstoneStep: JS-15
+    body:
+      uk: "Коли твій проєкт отримає свій `package.json` і lockfile (у JS-10), ти встановлюватимеш його через `npm ci` і читатимеш кожну зміну lockfile, перш ніж її зберегти, — так само, як сьогодні."
+      en: "When your project gets its own `package.json` and lockfile (in JS-10), you will install it with `npm ci` and read every lockfile change before you keep it — just like today."
