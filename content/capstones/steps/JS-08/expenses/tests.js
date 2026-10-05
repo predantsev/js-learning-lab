@@ -202,6 +202,18 @@ test('loadFixtures returns the checked expenses of the file', async () => {
       await server.finish();
     }
   }
+  const server = serve({ status: 404, body: 'Not found' });
+  try {
+    let status = 'no rejection';
+    try {
+      await loadFixtures(new AbortController().signal);
+    } catch (error) {
+      status = error?.status;
+    }
+    expect(status, `the status property of the Error loadFixtures rejects with when ${FILE} answers 404`).toBe(404);
+  } finally {
+    await server.finish();
+  }
 });
 
 test('while the starting expenses load the page says so', async () => {
@@ -310,6 +322,9 @@ test('an empty starting list says so, but only once it has arrived', async () =>
   } finally {
     await server.finish();
   }
+  await startPage(saved([]));
+  await sleep(60);
+  expect(shows(L.emptyMessage), `"${L.emptyMessage}" after a start with an empty saved list`).toBe(true);
 });
 
 test('the form saves only when the list is ready', async () => {
