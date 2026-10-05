@@ -1,6 +1,6 @@
 // Start the platform: build what is missing or outdated, then serve on loopback.
 //   npm start            → http://js-learning-lab.localhost:7300 (fallback http://localhost:7300)
-//   JSLL_PORT=7310 npm start
+//   JSLL_PORT=7301 npm start
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ROOT, loadConfig } from '../server/config.mjs';

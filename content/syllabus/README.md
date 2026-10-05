@@ -108,10 +108,13 @@ and a bilingual `capstoneStepReason` (learner-facing: the learner sees why a uni
    → focused practice (`write`/`debug`/`independent`/`local-task`); the capstone transfer is declared at unit level.
 10. Difficult-concept lessons have both a visual and an analogy; every analogy states a limitation as `(limit: …)`;
     each of the seven mandatory difficult concepts appears at least once.
-11. Runtime honesty per stage: JS units use `browser-js`/`local-web`; RE units `browser-react`/`browser-js`/`local-web`;
-    RN units `concept-preview` for in-course UI, `browser-js` for pure shared code, and at least one `local-native`
-    task per unit; NO units `isolated-node`/`local-node` (at least one per unit), `browser-react` for the client side
-    and `local-native` only for the optional native-companion checks in NO-06.
+11. Runtime honesty per stage — one table for both validators, `STAGE_RUNTIMES` in `shared/content-schema.js`
+    (content/README.md, "Runtimes per stage"): JS units `browser-js`, `local-web`, `concept-preview`; RE units
+    `browser-react`, `browser-js`, `local-web`, `concept-preview`; RN units `concept-preview` for in-course UI,
+    `browser-js` for pure shared code, `local-native` (at least one task per unit), `local-web`, and `isolated-node` /
+    `local-node` for computer-side Node.js work such as the mock service of rn-06-01 — never native evidence; NO units
+    every runtime, with at least one `isolated-node` or `local-node` entry per unit, `browser-react` for the client
+    side and `local-native` only for the optional native-companion checks in NO-06.
     `browser-react` is not allowed in RN units: a React Native preview is never native verification.
 13. A `capstone-step` lesson in a `mode: local` unit carries a `local-*` practice entry; in an `in-platform` unit it
     carries a `browser-*` entry; a unit with `capstoneStep: null` has no capstone-step lesson.
