@@ -16,6 +16,7 @@ export const NODE_STOP_PATH = '/api/node/stop';
 export function nodeRunRequest(block, files, { mode = 'run', lang = 'uk' } = {}) {
   const caps = block.capabilities ?? {};
   const capabilities = { network: caps.network ?? 'none', workers: caps.workers ?? false };
+  if (caps.packages !== undefined) capabilities.packages = caps.packages;
   const body = { files, entry: block.entry, mode, capabilities };
   if (caps.timeoutMs !== undefined) body.timeoutMs = caps.timeoutMs;
   if (mode === 'test') {

@@ -296,7 +296,7 @@ Commands in `local-task` blocks must be commands you actually ran; record the to
 | `browser-js` | Real browser JavaScript as native ES modules, with a real DOM | Imports need the file extension (`./util.js`), as in the browser. A project `.json` file imports as its data: `import items from "./items.json" with { type: "json" }` (also `import()` with `{ with: { type: "json" } }`); the platform also accepts it without `with`, which a browser refuses, so examples write `with { type: "json" }`. Other import attributes (`type: "css"`) are refused before running. `.ts` files run after type removal. `localStorage` is an isolated per-exercise store. `fetch("./data/items.json")` reads project files; `fetch("/lab/…")` reaches the lab HTTP fixtures when `capabilities.network: lab`. `alert` shows in the console; `confirm`/`prompt` are unavailable (build the UI in the page). `console.trace()` shows in the console with the stack of the call. Stack traces (`error.stack`, the error card) name project files (`index.js:3:7`) and leave out the platform's own frames. A loop running longer than 2 s is stopped. |
 | `browser-react` | Real React 19 (`react`, `react-dom/client`) | JSX only in `.jsx`/`.tsx`. Imports resolve like Vite (`./App`). Default page has `<div id="root">`. |
 | `concept-preview` | React Native components through `react-native-web` | Always add `limits`: no native rendering, device APIs or performance. `global` (React Native's name of the global object) is not defined for learner code, as in any browser: write `globalThis`. The preview's own libraries get `global` replaced at build time, so stopping or unmounting an `Animated` animation works. Known preview limit, measured: the headless runner that the validator and the checks use never fires `ResizeObserver`, so a `FlatList` there renders only its first `initialNumToRender` rows (10 by default) and never measures more; checks must not expect rows beyond that, and a claim about how many rows a device keeps mounted is a device check for a local task. |
-| `isolated-node` | Real Node.js in an isolated child process on the learner's computer | For Node-stage practice: real `node:http` on loopback, `node:fs` in the exercise folder, `node:sqlite`, streams. No page, no npm packages. See [isolated-node](#isolated-node-real-nodejs). |
+| `isolated-node` | Real Node.js in an isolated child process on the learner's computer | For Node-stage practice: real `node:http` on loopback, `node:fs` in the exercise folder, `node:sqlite`, streams. No page; no npm packages except `react` and `react-dom` (server rendering) when the block asks for them (`capabilities.packages`). See [isolated-node](#isolated-node-real-nodejs). |
 
 ### Runtimes per stage
 
@@ -372,7 +372,7 @@ Write failure-proof tests: check observable behavior, cover the boundary cases t
 <exercise-dir>/tests.js                       checks, run by the Node harness
 ```
 
-- Every `.js` file is an ES module: the platform writes `package.json` `{ "type": "module" }` unless the starter has its own. Import exercise files by relative path **with the extension** (`./app.js`) and built-in modules with `node:` (`node:fs`, `node:http`). There are **no npm packages**: a bare `import express from "express"` fails with an explanation. `.ts` files run through Node's type stripping where the installed Node supports it (`.tsx` never).
+- Every `.js` file is an ES module: the platform writes `package.json` `{ "type": "module" }` unless the starter has its own. Import exercise files by relative path **with the extension** (`./app.js`) and built-in modules with `node:` (`node:fs`, `node:http`). There are **no npm packages** (only `react` and `react-dom` with `capabilities.packages`): a bare `import express from "express"` fails with an explanation. `.ts` files run through Node's type stripping where the installed Node supports it (`.tsx` never).
 - `tests.js` imports learner modules like any module: `import { createApp } from './app.js';`. Its path in the run is `__tests__.js`, next to the learner files.
 
 ### Capabilities
@@ -383,9 +383,10 @@ capabilities:
   workers: true        # worker threads (default false)
   timeoutMs: 5000      # wall clock of the whole run or check, 100–60000 (default 10000)
   testTimeoutMs: 3000  # each check, 50–30000 (default 4000)
+  packages: [react-dom] # npm packages the platform provides: react, react-dom (react-dom brings react)
 ```
 
-They are sent to the executor as they are; the validator rejects other keys and values. With `network: loopback` a server must listen on an explicit loopback address (`server.listen(3000, '127.0.0.1')`); `listen(3000)` is refused with that advice, because it would accept connections from the local network.
+They are sent to the executor as they are; the validator rejects other keys and values. `packages` gives the run real React (the version the platform ships, `features.isolatedNode.packages`): the platform copies the Node files of `react` and `react-dom` (`react-dom/server`, `react-dom/static`, `react/jsx-runtime`; not `react-dom/client`) into `node_modules/` of the run folder, so `import { renderToString } from 'react-dom/server'` works as in a project with those packages installed, and the learner sees `node_modules/` in `process.cwd()`. The copies belong to the run: changing them never touches the platform. Node runs no JSX: write `createElement` (or `jsx` from `react/jsx-runtime`). Teaching stand-ins written before this existed (the `mini-react.js` of NO-13) stay as they are. With `network: loopback` a server must listen on an explicit loopback address (`server.listen(3000, '127.0.0.1')`); `listen(3000)` is refused with that advice, because it would accept connections from the local network.
 
 ### Check helpers (Node harness)
 

@@ -55,6 +55,8 @@ test('a question can run in isolated-node where the stage allows it, with its ow
   assert.match(issues('no-01-09-sample', question({ capabilities: { network: 'loopback' } })).join('\n'), /capabilities belong to a question with runtime: isolated-node/);
   assert.match(issues('no-01-09-sample', question({ runtime: 'isolated-node', capabilities: { network: 'internet' } })).join('\n'), /must be "none" \(default\) or "loopback"/);
   assert.match(issues('no-01-09-sample', question({ runtime: 'isolated-node', code: undefined, verify: undefined })).join('\n'), /runs its own "code" field/);
+  assert.deepEqual(issues('no-01-09-sample', question({ runtime: 'isolated-node', capabilities: { packages: ['react-dom'] } })), []);
+  assert.match(issues('no-01-09-sample', question({ runtime: 'isolated-node', capabilities: { packages: ['express'] } })).join('\n'), /packages: must list npm packages the platform provides: react, react-dom/);
 });
 
 test('%%key%% placeholders are resolved in every text of a local task: confirmed items and commands too', async () => {

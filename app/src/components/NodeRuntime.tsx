@@ -19,7 +19,7 @@ export function NodeLimitsList({ capabilities }: { capabilities?: Capabilities |
     t('ws.node.limit.output', { kb: Math.round((limits.outputBytes ?? 200 * 1024) / 1024) }),
     t('ws.node.limit.memory', { mb: limits.heapMb ?? 256 }),
     t(network === 'loopback' ? 'ws.node.limit.networkLoopback' : network === 'default' ? 'ws.node.limit.networkDefault' : 'ws.node.limit.networkNone'),
-    t('ws.node.limit.processes'),
+    capabilities?.packages && capabilities.packages.length > 0 ? t('ws.node.limit.packages', { list: capabilities.packages.join(', ') }) : t('ws.node.limit.processes'),
     t(capabilities?.workers ? 'ws.node.limit.workersOn' : 'ws.node.limit.workersOff'),
     `${t('ws.node.limit.honesty')} ${t(f.osSandbox?.active ? 'ws.node.limit.osOn' : 'ws.node.limit.osOff')}`,
   ];

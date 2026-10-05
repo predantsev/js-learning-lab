@@ -231,6 +231,7 @@ export const en: Dict = {
   'ws.node.limit.networkLoopback': 'Network: this computer only (127.0.0.1, ::1, localhost). A server must listen on an explicit address, for example server.listen(3000, "127.0.0.1").',
   'ws.node.limit.networkDefault': 'Network: off unless the exercise allows this computer only (127.0.0.1).',
   'ws.node.limit.processes': 'No child processes and no npm packages: only built-in node: modules and the exercise files.',
+  'ws.node.limit.packages': 'No child processes. npm packages: only {list}, which the platform copies into the exercise folder (node_modules); otherwise built-in node: modules and the exercise files.',
   'ws.node.limit.workersOn': 'Worker threads are allowed.',
   'ws.node.limit.workersOff': 'Worker threads are off.',
   'ws.node.limit.honesty': 'Isolation: the Node.js permission model is a “seat belt” for honest code, not a sandbox against malicious code.',

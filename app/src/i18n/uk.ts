@@ -230,6 +230,7 @@ export const uk = {
   'ws.node.limit.networkLoopback': 'Мережа: лише цей комп’ютер (127.0.0.1, ::1, localhost). Сервер має слухати явну адресу, наприклад server.listen(3000, "127.0.0.1").',
   'ws.node.limit.networkDefault': 'Мережа: вимкнена, якщо вправа не дозволяє лише цей комп’ютер (127.0.0.1).',
   'ws.node.limit.processes': 'Без дочірніх процесів і без npm-пакетів: лише вбудовані модулі node: і файли вправи.',
+  'ws.node.limit.packages': 'Без дочірніх процесів. npm-пакети: лише {list}, які платформа копіює в теку вправи (node_modules); решта — вбудовані модулі node: і файли вправи.',
   'ws.node.limit.workersOn': 'Worker threads дозволені.',
   'ws.node.limit.workersOff': 'Worker threads вимкнені.',
   'ws.node.limit.honesty': 'Ізоляція: модель дозволів Node.js — це «пасок безпеки» для чесного коду, а не пісочниця проти шкідливого.',

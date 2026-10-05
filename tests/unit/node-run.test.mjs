@@ -213,6 +213,36 @@ describe('limits and interruption', () => {
     assert.equal((await runNode(ctx, { entry: 'missing.js', files: { 'a.js': '' } })).status, 400);
     assert.equal((await run({ files: { 'index.js': '' }, timeoutMs: 60001 })).status, 400);
     assert.equal((await run({ files: { 'index.js': '' }, capabilities: { network: 'internet' } })).status, 400);
+    assert.equal((await run({ files: { 'index.js': '' }, capabilities: { packages: ['express'] } })).status, 400);
+    assert.equal((await run({ files: { 'index.js': '', 'node_modules/react/index.js': '' }, capabilities: { packages: ['react'] } })).status, 400);
+  });
+
+  test('capabilities.packages: real react-dom/server from copies in the run folder, nothing linked out', async () => {
+    const f = ctx.server.api.features.isolatedNode;
+    const { NODE_PACKAGES } = await import('../../shared/content-schema.js');
+    const { PACKAGE_FILES } = await import('../../server/api/lib/node-runner.mjs');
+    assert.deepEqual(Object.keys(PACKAGE_FILES), NODE_PACKAGES, 'the validator and the executor offer the same packages');
+    const version = JSON.parse(await fs.readFile(path.join(ROOT, 'node_modules', 'react-dom', 'package.json'), 'utf8')).version;
+    assert.deepEqual(f.packages, { react: version, 'react-dom': version });
+    const platformCopy = path.join(ROOT, 'node_modules', 'react', 'index.js');
+    const before = await fs.readFile(platformCopy, 'utf8');
+    const r = await run({
+      capabilities: { packages: ['react-dom'] },
+      files: { 'index.js': `import { createElement } from 'react';
+import { renderToString } from 'react-dom/server';
+import fs from 'node:fs';
+console.log(renderToString(createElement('p', null, 'Лампа')));
+console.log(fs.lstatSync('node_modules/react').isSymbolicLink(), fs.readdirSync('node_modules').join(','));
+// The copies belong to this run: changing one does not touch the platform's own package.
+fs.writeFileSync('node_modules/react/index.js', 'module.exports = {};');
+` },
+    });
+    assert.equal(r.exit.code, 0, r.stderr);
+    assert.equal(r.stdout, '<p>Лампа</p>\nfalse react,react-dom\n');
+    assert.equal(await fs.readFile(platformCopy, 'utf8'), before);
+    // Without the capability a bare import is still refused with the course's explanation.
+    const bare = await run({ files: { 'index.js': "import { renderToString } from 'react-dom/server';\n" } });
+    assert.match(bare.stderr, /ERR_MODULE_NOT_FOUND|Cannot find package 'react-dom'/);
   });
 });
 

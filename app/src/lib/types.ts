@@ -35,7 +35,7 @@ export interface VisualBlock extends BlockBase { kind: 'visual'; visual: string;
 export interface PredictionBlock extends BlockBase, Omit<Question, 'id'> { kind: 'prediction' }
 export interface ReviewBlock extends BlockBase { kind: 'review'; title: L10n; items: (Question & { id: string; from: string })[] }
 /** Browser runtimes: network none | lab, loopBudgetMs, settleTimeoutMs. isolated-node: network none | loopback, workers, timeoutMs. Both: testTimeoutMs. */
-export interface Capabilities { network?: 'none' | 'lab' | 'loopback'; loopBudgetMs?: number; testTimeoutMs?: number; settleTimeoutMs?: number; workers?: boolean; timeoutMs?: number }
+export interface Capabilities { network?: 'none' | 'lab' | 'loopback'; loopBudgetMs?: number; testTimeoutMs?: number; settleTimeoutMs?: number; workers?: boolean; timeoutMs?: number; packages?: string[] }
 export interface ExampleBlock extends BlockBase { kind: 'example'; title: L10n; body: L10n; tryIt?: L10n; runtime: RuntimeKind; entry: string; files: Record<string, string>; strings?: Record<string, L10n>; limits?: L10n; capabilities?: Capabilities; expectError?: boolean; preview?: boolean }
 export interface FeedbackRule { when: { test?: string; error?: string }; message: L10n }
 export interface ExerciseBlock extends BlockBase {

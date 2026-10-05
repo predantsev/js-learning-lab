@@ -170,6 +170,9 @@ function checkStrings(issues, block, p) {
   }
 }
 
+/** npm packages an isolated-node block may ask for (`capabilities.packages`; server/api/lib/node-runner.mjs PACKAGE_FILES). */
+export const NODE_PACKAGES = ['react', 'react-dom'];
+
 /** isolated-node capabilities map one to one to the executor request (docs/platform/SERVER-API.md). */
 function checkNodeCapabilities(issues, caps, p) {
   if (caps === undefined) return;
@@ -177,12 +180,13 @@ function checkNodeCapabilities(issues, caps, p) {
     issues.add(p, 'must be a mapping');
     return;
   }
-  const allowed = ['network', 'workers', 'timeoutMs', 'testTimeoutMs'];
+  const allowed = ['network', 'workers', 'timeoutMs', 'testTimeoutMs', 'packages'];
   for (const key of Object.keys(caps)) if (!allowed.includes(key)) issues.add(`${p}.${key}`, `unknown capability for isolated-node (allowed: ${allowed.join(', ')})`);
   if (caps.network !== undefined && caps.network !== 'none' && caps.network !== 'loopback') issues.add(`${p}.network`, 'must be "none" (default) or "loopback" for isolated-node');
   if (caps.workers !== undefined && typeof caps.workers !== 'boolean') issues.add(`${p}.workers`, 'must be true or false');
   if (caps.timeoutMs !== undefined && !(Number.isInteger(caps.timeoutMs) && caps.timeoutMs >= 100 && caps.timeoutMs <= 60000)) issues.add(`${p}.timeoutMs`, 'must be a whole number of milliseconds between 100 and 60000');
   if (caps.testTimeoutMs !== undefined && !(Number.isInteger(caps.testTimeoutMs) && caps.testTimeoutMs >= 50 && caps.testTimeoutMs <= 30000)) issues.add(`${p}.testTimeoutMs`, 'must be a whole number of milliseconds between 50 and 30000');
+  if (caps.packages !== undefined && (!Array.isArray(caps.packages) || caps.packages.length === 0 || caps.packages.some((name) => !NODE_PACKAGES.includes(name)))) issues.add(`${p}.packages`, `must list npm packages the platform provides: ${NODE_PACKAGES.join(', ')} (content/README.md, "isolated-node")`);
 }
 
 function checkBlock(issues, block, lesson, ctx) {

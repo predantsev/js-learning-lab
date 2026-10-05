@@ -70,7 +70,13 @@ Request:
 - `args` — up to 64 strings → `process.argv.slice(2)`.
 - `timeoutMs` — wall-clock limit, default 10 000, 100…60 000.
 - `capabilities.network` — `"none"` (default) or `"loopback"`. `capabilities.workers` — default
-  `false`.
+  `false`. `capabilities.packages` — npm packages the platform itself depends on and offers:
+  `["react"]`, `["react-dom"]` (adds `react`). Copies of their Node files (`PACKAGE_FILES` in
+  `server/api/lib/node-runner.mjs`) are written into `<workspace>/node_modules/` before the run —
+  copies, not links, so nothing in the workspace leads outside it and learner code that changes them
+  changes only the copy. Files of the request may not use `node_modules/` then (`400`); a package
+  missing from this installation answers `501 package-unavailable`. `features.isolatedNode.packages`
+  lists the installed versions (`{ "react": "19.3.0", "react-dom": "19.3.0" }`).
 - `strings` — the block's localized example text in the learner's language (`{ key: text }`, keys
   `[a-zA-Z][a-zA-Z0-9_]*`, at most 500 keys and 32 KB, else `400`/`413`). Test mode exposes it to
   the checks as `L`, as the browser runner does; a run in `run` mode ignores it (the learner files
