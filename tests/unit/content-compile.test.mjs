@@ -46,6 +46,28 @@ test('%%key%% placeholders are resolved in every prose field of an exercise, per
   assert.equal(b.files['index.js'], 'console.log("%%lamp%%");\n');
 });
 
+test('%%key%% placeholders are resolved in every text of a local task: confirmed items and commands too', async () => {
+  const task = {
+    id: 'run-it', kind: 'local-task', runtime: 'local-node',
+    strings: { port: pair('7301'), lamp: pair('Лампа', 'Lamp') },
+    title: pair('T %%lamp%%'), intro: pair('I %%lamp%%'),
+    tools: [{ name: 'Node.js', version: '22.13', note: pair('N %%lamp%%') }],
+    steps: [{ text: pair('S %%lamp%%'), command: 'curl -d \'{"name":"%%lamp%%"}\' http://127.0.0.1:%%port%%/', expect: pair('E %%lamp%%') }, { text: pair('Plain'), command: 'npm test' }],
+    verify: [{ id: 'seen', text: pair('Бачу %%lamp%%', 'I see %%lamp%%') }],
+    troubleshooting: [{ problem: pair('P %%lamp%%'), fix: pair('F %%lamp%%') }],
+    recovery: pair('R %%lamp%%'),
+  };
+  const b = await compiledBlock(task);
+  assert.deepEqual(b.verify[0].text, { uk: 'Бачу Лампа', en: 'I see Lamp' });
+  assert.deepEqual(b.steps[0].command, { uk: 'curl -d \'{"name":"Лампа"}\' http://127.0.0.1:7301/', en: 'curl -d \'{"name":"Lamp"}\' http://127.0.0.1:7301/' });
+  assert.equal(b.steps[1].command, 'npm test', 'a command without placeholders stays one text, unrendered');
+  const { strings: _s, ...prose } = b;
+  assert.doesNotMatch(JSON.stringify(prose), /%%(port|lamp)%%/);
+  // A placeholder only in a confirmed item or a command still needs its strings entry.
+  const missing = placeholderIssues(lessonWith([{ ...task, strings: { lamp: pair('Лампа', 'Lamp') }, verify: [{ id: 'seen', text: pair('%%only%%') }] }]));
+  assert.deepEqual(missing.sort(), ['placeholder %%only%% has no entry in strings', 'placeholder %%port%% has no entry in strings']);
+});
+
 test('%%key%% placeholders are resolved in a prediction prompt, its options and explanation, and in example prose', async () => {
   const prediction = await compiledBlock({
     id: 'guess',

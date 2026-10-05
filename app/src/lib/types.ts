@@ -66,7 +66,8 @@ export interface LocalTaskBlock extends BlockBase {
   intro: L10n;
   runtime: RuntimeKind;
   tools: { name: string | L10n; version?: string | L10n; note?: L10n }[];
-  steps: { text: L10n; command?: string; expect?: L10n }[];
+  /** A command is one text for both languages, or { uk, en } when it holds localized sample data. */
+  steps: { text: L10n; command?: string | L10n; expect?: L10n }[];
   verify: { id: string; text: L10n }[];
   troubleshooting: { problem: L10n; fix: L10n }[];
   recovery: L10n;

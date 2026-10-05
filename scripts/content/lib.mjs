@@ -19,7 +19,7 @@ export const CONTENT_DIR = process.env.JSLL_CONTENT_ROOT ? path.resolve(process.
 // headings). Everything else is block Markdown. `testTitles` values are compiled as inline text.
 const INLINE_KEYS = new Set(['title', 'text', 'why', 'label', 'name', 'problem', 'note', 'objectives']);
 const PLAIN_KEYS = new Set(['title', 'name', 'placeholder', 'version']);
-const RAW_KEYS = new Set(['strings', 'spec']);
+const RAW_KEYS = new Set(['strings', 'spec', 'command']);
 const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.xml', '.env', '.gitignore', '']);
 
 const exists = (p) => fs.access(p).then(() => true, () => false);
@@ -146,14 +146,16 @@ export function createMarkdown(glossary) {
 
 // Fields of a block that are not learner-facing prose: the strings table itself, a visual's spec
 // (compiled per language by shared/visuals) and code, accepted answers and verification data, which
-// are resolved per language where they are used.
+// are resolved per language where they are used. A local task's `verify` is a list of items the
+// learner confirms — prose — while a question's `verify` ({ logs, error }) is data.
 const NON_PROSE_KEYS = new Set(['strings', 'spec', 'code', 'accept', 'verify']);
+const isNonProse = (key, value) => NON_PROSE_KEYS.has(key) && !(key === 'verify' && Array.isArray(value));
 
 /** Every bilingual { uk, en } text of a block outside NON_PROSE_KEYS, with its field path. */
 function prosePairs(value, at = '', out = []) {
   if (isLocalized(value)) out.push([at, value]);
   else if (Array.isArray(value)) value.forEach((v, i) => prosePairs(v, `${at}[${i}]`, out));
-  else if (value !== null && typeof value === 'object') for (const [k, v] of Object.entries(value)) if (!NON_PROSE_KEYS.has(k)) prosePairs(v, at ? `${at}.${k}` : k, out);
+  else if (value !== null && typeof value === 'object') for (const [k, v] of Object.entries(value)) if (!isNonProse(k, v)) prosePairs(v, at ? `${at}.${k}` : k, out);
   return out;
 }
 
@@ -166,9 +168,20 @@ function localizeProse(value, block) {
   if (!block.strings) return value;
   if (isLocalized(value)) return localizePair(value, block);
   if (Array.isArray(value)) return value.map((v) => localizeProse(v, block));
-  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, NON_PROSE_KEYS.has(k) ? v : localizeProse(v, block)]));
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, isNonProse(k, v) ? v : localizeProse(v, block)]));
   return value;
 }
+
+/**
+ * A local task's commands are one text for both languages; a command with %%key%% placeholders
+ * (sample data the learner sends, for example) becomes { uk, en }, each from its own strings.
+ */
+function localizeCommands(block) {
+  if (block.kind !== 'local-task' || !Array.isArray(block.steps) || !block.strings) return block;
+  const steps = block.steps.map((step) => (typeof step?.command === 'string' && STRING_PLACEHOLDER_TEST.test(step.command) ? { ...step, command: Object.fromEntries(LANGS.map((l) => [l, localizeText(step.command, block, l)])) } : step));
+  return { ...block, steps };
+}
+const STRING_PLACEHOLDER_TEST = new RegExp(STRING_PLACEHOLDER.source);
 
 /** Convert every bilingual markdown string inside a value to HTML ({uk, en} → {uk, en}). */
 function renderLocalized(value, md, key = '') {
@@ -337,7 +350,8 @@ export function staticIssuesForLesson(lesson, ctx) {
     // and the files it reads are checked when it compiles: shared/visuals/index.js compileVisual.)
     const files = block.kind === 'example' ? Object.values(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.values(a.starter), ...Object.values(a.solution), a.tests ?? '', ...Object.values(a.variants).flatMap((v) => Object.values(v))] : [];
     const questionCode = block.kind === 'prediction' || block.kind === 'review' ? [block, ...(block.items ?? [])].flatMap((q) => [q.code, ...(q.answer?.options ?? q.answer?.items ?? []).map((o) => o.code), ...(q.answer?.accept ?? []), ...(q.verify?.logs ?? [])]) : [];
-    const texts = [...files, ...questionCode.filter((t) => t !== undefined && t !== null), ...prosePairs(block).flatMap(([, pair]) => LANGS.map((l) => pair[l]))];
+    const commands = block.kind === 'local-task' ? (block.steps ?? []).map((s) => s?.command).filter((c) => typeof c === 'string') : [];
+    const texts = [...files, ...questionCode.filter((t) => t !== undefined && t !== null), ...commands, ...prosePairs(block).flatMap(([, pair]) => LANGS.map((l) => pair[l]))];
     const missing = new Set();
     for (const text of texts) for (const m of String(text).matchAll(STRING_PLACEHOLDER)) if (!(block.strings && m[1] in block.strings)) missing.add(m[1]);
     for (const key of missing) add(`block "${block.id}"`, `placeholder %%${key}%% has no entry in strings${block.kind === 'review' ? ' (the review block\'s strings: its questions share one table)' : ''}`);
@@ -435,7 +449,7 @@ export async function compileLesson(lesson, ctx) {
           compiled.spec = null;
         }
       } else compiled.spec = spec;
-    } else compiled = renderLocalized(localizeProse(rest, block), md);
+    } else compiled = renderLocalized(localizeProse(localizeCommands(rest), block), md);
     if (block.kind === 'prediction' || block.kind === 'review') {
       // Code shown in questions is resolved per language (authored UI text follows the lesson language).
       const perLang = (text) => Object.fromEntries(LANGS.map((l) => [l, localizeText(String(text), block, l)]));

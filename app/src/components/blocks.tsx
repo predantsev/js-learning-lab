@@ -393,7 +393,7 @@ function LocalTaskView({ lesson, block }: { lesson: Lesson; block: LocalTaskBloc
         {block.steps.map((step, i) => (
           <li key={i}>
             <Html html={step.text[lang]} lang={lang} className="prose" />
-            {step.command && <div className="command"><pre lang="en"><code>{step.command}</code></pre><CopyButton text={step.command} /></div>}
+            {step.command && (() => { const command = typeof step.command === 'string' ? step.command : step.command[lang]; return <div className="command"><pre lang="en"><code>{command}</code></pre><CopyButton text={command} /></div>; })()}
             {step.expect && <div className="expect"><span className="label">{t('local.expect')}</span><Html html={step.expect[lang]} lang={lang} className="prose" /></div>}
           </li>
         ))}
