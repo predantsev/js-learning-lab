@@ -92,6 +92,12 @@ export function createRecordsServer(repository: WishRepository, log: Log = write
     try {
       const url = new URL(req.url ?? "/", "http://localhost");
       const { pathname } = url;
+      // The browser asks for /favicon.ico by itself; an empty 204 keeps a 404 line out of the Console,
+      // which this page is read in for its hydration report.
+      if (pathname === "/favicon.ico" && req.method === "GET") {
+        res.writeHead(204);
+        return res.end();
+      }
       if (pathname === "/" || pathname === "/list-data" || pathname === "/client.js") {
         if (req.method !== "GET") {
           res.setHeader("allow", "GET");
