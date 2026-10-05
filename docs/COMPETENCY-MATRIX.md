@@ -18,7 +18,7 @@ Stage entry follows JS → React → RN → Node. Native practical passes are no
 
 ## Current state and evidence closure
 
-Every family below is now explicitly specified; `baseline_spec` describes only baseline-3 wording (explicit/partial/missing), not taught knowledge. All are **not-authored / not-implemented / not-verified**. Lesson/assessment/evidence arrays are empty deliberately. Future release requires existing bilingual lesson IDs and per-subskill practice/oracles, independently inspected runnable artifacts and observed evidence, including delayed retrieval, debugging and transfer. Family/count/checkpoint presence cannot pass that gate. Any newly discovered core gap expands this scope.
+Every family below is now explicitly specified; `baseline_spec` describes only baseline-3 wording (explicit/partial/missing), not taught knowledge. Since 2026-10-05 all 60 are **authored / implemented / not-verified**: every subskill is assessed in validated, independently reviewed lessons of all mapped units, and [competencies.json](competencies.json) lists those `lesson_ids` and `assessment_ids`. Evidence arrays stay empty and no family is verified until the V-18 review. Future release requires existing bilingual lesson IDs and per-subskill practice/oracles, independently inspected runnable artifacts and observed evidence, including delayed retrieval, debugging and transfer. Family/count/checkpoint presence cannot pass that gate. Any newly discovered core gap expands this scope.
 
 Practice applies the explanation → prediction → run/change → independent task → transfer/retrieval contract, with meaningful code-linked visuals/text equivalents and bounded analogies where useful. Native/server APIs use actual local tasks; concept previews are labeled. Each focused lab uses synthetic data and complements the chosen capstone when the domain feature would be unnatural. All four capstones retain equivalent objectives and original export/workspace continuity.
 
@@ -38,7 +38,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js).
 
@@ -56,7 +56,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js).
 
@@ -74,7 +74,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-LOOPS](#source-mdn-loops).
 
@@ -92,7 +92,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js), [MDN-CLASS](#source-mdn-class).
 
@@ -110,7 +110,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js).
 
@@ -128,7 +128,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-CLASS](#source-mdn-class).
 
@@ -146,7 +146,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js).
 
@@ -164,7 +164,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js).
 
@@ -182,7 +182,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js).
 
@@ -200,7 +200,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js), [NODE-API](#source-node-api).
 
@@ -218,7 +218,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js), [MDN-FETCH](#source-mdn-fetch).
 
@@ -236,7 +236,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js), [NODE-STREAM](#source-node-stream).
 
@@ -254,7 +254,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js), [NODE-STREAM](#source-node-stream).
 
@@ -272,7 +272,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Specialized mechanisms need recognition and safe boundaries, not mastery of every niche API. Workers/Atomics and using syntax depend on runtime support; never a default without verification. Runtime: browser-js.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-JS](#source-mdn-js).
 
@@ -290,7 +290,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-WEB](#source-mdn-web).
 
@@ -308,7 +308,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-WEB](#source-mdn-web).
 
@@ -326,7 +326,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-WEB](#source-mdn-web), [OWASP-XSS](#source-owasp-xss).
 
@@ -344,7 +344,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-FETCH](#source-mdn-fetch), [MDN-CORS](#source-mdn-cors).
 
@@ -362,7 +362,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-WEB](#source-mdn-web), [OWASP-XSS](#source-owasp-xss).
 
@@ -380,7 +380,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-web.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-WEB](#source-mdn-web), [NODE-LEARN](#source-node-learn).
 
@@ -398,7 +398,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-web.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [GIT](#source-git).
 
@@ -416,7 +416,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-web.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [TS](#source-ts), [TS-NARROW](#source-ts-narrow), [TS-GENERIC](#source-ts-generic).
 
@@ -434,7 +434,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-js.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [MDN-WEB](#source-mdn-web), [NODE-TEST](#source-node-test).
 
@@ -454,7 +454,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-react.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [TS](#source-ts), [TS-NARROW](#source-ts-narrow), [REACT-LEARN](#source-react-learn).
 
@@ -472,7 +472,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-web.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [CI](#source-ci), [MDN-WEB](#source-mdn-web), [NODE-PROD](#source-node-prod).
 
@@ -490,7 +490,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-react.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-LEARN](#source-react-learn).
 
@@ -508,7 +508,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-react.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-LEARN](#source-react-learn).
 
@@ -526,7 +526,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-react.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-LEARN](#source-react-learn).
 
@@ -544,7 +544,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-react.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-EFFECT](#source-react-effect).
 
@@ -562,7 +562,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-react.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-LEARN](#source-react-learn), [REACT-API](#source-react-api).
 
@@ -580,7 +580,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-react.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-EFFECT](#source-react-effect), [REACT-API](#source-react-api).
 
@@ -598,7 +598,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-react.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-API](#source-react-api), [MDN-WEB](#source-mdn-web).
 
@@ -616,7 +616,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: browser-react.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-API](#source-react-api).
 
@@ -634,7 +634,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** React stage assesses boundary literacy; actual Node-backed SSR/hydration practice is required in B-11 after server foundations. RSC implementation is ecosystem-specific awareness, not a forced Next.js architecture. Runtime: concept-preview.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-HYDRATE](#source-react-hydrate), [REACT-RSC](#source-react-rsc).
 
@@ -652,7 +652,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-web.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-LEARN](#source-react-learn), [REACT-API](#source-react-api), [CI](#source-ci).
 
@@ -672,7 +672,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-INTRO](#source-rn-intro), [TS](#source-ts), [RN-CORE](#source-rn-core).
 
@@ -690,7 +690,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-INTRO](#source-rn-intro), [RN-CORE](#source-rn-core).
 
@@ -708,7 +708,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-INTRO](#source-rn-intro), [RN-SEC](#source-rn-sec), [RN-CORE](#source-rn-core).
 
@@ -726,7 +726,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-PERF](#source-rn-perf).
 
@@ -744,7 +744,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-SEC](#source-rn-sec), [RN-INTRO](#source-rn-intro).
 
@@ -762,7 +762,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-INTRO](#source-rn-intro), [RN-SEC](#source-rn-sec).
 
@@ -780,7 +780,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-SEC](#source-rn-sec), [RN-PERM](#source-rn-perm).
 
@@ -798,7 +798,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-INTRO](#source-rn-intro), [RN-PERF](#source-rn-perf), [RN-ANIM](#source-rn-anim).
 
@@ -816,7 +816,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Writing custom native modules is a specialized extension; recognition and safe integration boundaries are required before shipping native dependencies. Runtime: concept-preview.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-INTRO](#source-rn-intro), [RN-ARCH](#source-rn-arch).
 
@@ -834,7 +834,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-TEST](#source-rn-test).
 
@@ -852,7 +852,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-IOS](#source-rn-ios), [RN-ANDROID](#source-rn-android), [RN-SEC](#source-rn-sec).
 
@@ -870,7 +870,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-native.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [RN-TEST](#source-rn-test), [RN-PERF](#source-rn-perf).
 
@@ -890,7 +890,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [NODE-LEARN](#source-node-learn), [NODE-API](#source-node-api).
 
@@ -908,7 +908,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [NODE-API](#source-node-api), [NODE-SEC](#source-node-sec).
 
@@ -926,7 +926,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [NODE-LEARN](#source-node-learn), [NODE-API](#source-node-api).
 
@@ -944,7 +944,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [SQLITE](#source-sqlite), [PG](#source-pg), [OWASP-SQL](#source-owasp-sql).
 
@@ -962,7 +962,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [NODE-API](#source-node-api), [SQLITE](#source-sqlite), [PG](#source-pg).
 
@@ -980,7 +980,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [OWASP-AUTH](#source-owasp-auth), [OWASP-PASS](#source-owasp-pass), [OWASP-SESSION](#source-owasp-session).
 
@@ -998,7 +998,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [NODE-SEC](#source-node-sec), [OWASP-SQL](#source-owasp-sql), [OWASP-SESSION](#source-owasp-session).
 
@@ -1016,7 +1016,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [NODE-STREAM](#source-node-stream), [NODE-API](#source-node-api).
 
@@ -1034,7 +1034,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [NODE-TEST](#source-node-test), [NODE-SEC](#source-node-sec), [NODE-API](#source-node-api).
 
@@ -1052,7 +1052,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [NODE-PROD](#source-node-prod), [NODE-SEC](#source-node-sec), [CI](#source-ci).
 
@@ -1070,7 +1070,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** missing; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [REACT-HYDRATE](#source-react-hydrate), [REACT-RSC](#source-react-rsc), [NODE-API](#source-node-api).
 
@@ -1088,7 +1088,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [NODE-API](#source-node-api), [MDN-CORS](#source-mdn-cors), [RN-SEC](#source-rn-sec).
 
@@ -1106,7 +1106,7 @@ Practice applies the explanation → prediction → run/change → independent t
 
 **Boundary/rationale:** Required for independent application work in the selected stack. Runtime: local-node.
 
-**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: not-authored / not-implemented / not-verified.
+**Baseline coverage:** partial; now explicitly specified. Authored / implemented / verified: authored / implemented / not-verified.
 
 **Sources:** [NODE-TEST](#source-node-test), [GIT](#source-git), [CI](#source-ci).
 
