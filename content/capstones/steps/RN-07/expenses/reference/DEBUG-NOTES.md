@@ -9,7 +9,13 @@ First decisive line of `npx expo install --check`:
     react-native-gesture-handler@2.30.0 - expected version: ~2.32.0
 
 Part that broke: the dependencies (a version pin), not the code: `npx tsc --noEmit` and `npm test`
-still passed, and `npx expo export --platform android` still bundled.
+still passed. The bundle did not: `npx expo export --platform android` (and `--platform ios`) stopped with
+
+    Error: Unable to resolve module react-native/Libraries/Renderer/shims/ReactNative from node_modules/react-native-gesture-handler/src/RNRenderer.ts
+
+The older package asks for a file that this version of React Native does not have (measured with Node.js
+25.2.1 and Expo SDK 57). Metro bundles the app for the target with the same resolver, so the target is
+expected to show the same error at start; that was not checked on a device.
 
 ## The repair (the documented way)
 
