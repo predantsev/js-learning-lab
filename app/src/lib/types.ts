@@ -121,7 +121,7 @@ export interface LessonProgress {
   localTasks: Record<string, LocalTaskProgress>;
   seenBlocks: string[];
   /** Capstone-step lessons only: the step state of the active project, mirrored by components/project. */
-  project?: { workspaceId: string | null; state: 'done' | 'skipped' | 'pending'; at: string };
+  project?: { workspaceId: string | null; state: 'done' | 'confirmed' | 'skipped' | 'not-performed' | 'pending'; at: string };
 }
 export interface ProgressDoc { lessons: Record<string, LessonProgress> }
 // `files` is present once the learner edited code (it then keeps `lang`); an entry may hold only the

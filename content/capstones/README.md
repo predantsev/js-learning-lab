@@ -87,6 +87,12 @@ capabilities: {}               # optional, as for lesson exercises (network: lab
   `{ state: 'skipped', source: 'starter' }` — never done. The workspace remembers the supplied
   base; a later pass of a step whose work came from that base is reported but not counted. After
   restoring a snapshot with the learner's own files, their own pass counts again.
+- A local step (`mode: local`: VS Code, a terminal, a device) is never checked by the platform. Its
+  page shows the step's intro and task; the learner confirms it ("I have done this step" →
+  `{ state: 'done', source: 'learner-confirmed', confirmedAt }`, self-reported like a lesson's local
+  task, never "checked by the platform"). A step of the React Native stage also offers "I have no
+  emulator or device" → `{ state: 'skipped', source: 'no-native-tooling', skippedAt }`: not
+  performed, never done, later steps stay open, and "Return to the task" withdraws either mark.
 - Changing the capstone creates a separate workspace; old ones keep their files, snapshots and steps.
 
 Rules shared by the app, compiler and tests: `shared/capstone.js`.
@@ -98,8 +104,9 @@ When `content/syllabus/<UNIT>.yaml` names a lesson of `kind: capstone-step` that
 `purpose` and `objectives` from the step, then two blocks — the step `intro` (explanation) and a
 `transfer` block that opens `#/project/<UNIT>`. Unit authors do not write these lessons. The lesson
 counts as authored (course map, validation, `--release`). Its completion follows the step in the
-**active** project: completed only after a real platform check there; a supplied starter shows the
-lesson as skipped. Glossary terms these lessons introduce live in `content/glossary/capstone-steps.yaml`.
+**active** project: completed only after a real platform check there (a local step: after the
+learner's confirmation); a supplied starter and a native step "not performed" show the lesson as
+skipped. Glossary terms these lessons introduce live in `content/glossary/capstone-steps.yaml`.
 
 ## Commands
 

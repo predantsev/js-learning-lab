@@ -12,7 +12,7 @@ import { compileCapstones } from '../../scripts/content/capstones.mjs';
 import { createMarkdown } from '../../scripts/content/lib.mjs';
 import { pathProblem as serverPathProblem } from '../../server/api/lib/project-files.mjs';
 import {
-  START_BASE, changedPaths, coveredByBase, currentStep, filesProblem, missingBefore, newFileProblem, passCounts, pathProblem, starterChanges, starterCovers, startingReference, unifiedDiff,
+  START_BASE, changedPaths, coveredByBase, currentStep, filesProblem, isStepConfirmed, isStepDone, isStepNotPerformed, isStepSkipped, missingBefore, newFileProblem, nextOpenStep, passCounts, pathProblem, starterChanges, starterCovers, startingReference, stepNeedsDevice, unifiedDiff,
 } from '../../shared/capstone.js';
 import { MANIFEST_PATH, buildProjectExport, placeGenerated, relativeUrl, sha256Hex } from '../../shared/project-export.js';
 import { api, rawRequest, startTestServer } from './helpers.mjs';
@@ -60,6 +60,25 @@ test('missing prior work and the starting reference of a step', () => {
   assert.equal(startingReference(steps, 'JS-01'), null, 'CP-START');
   assert.equal(startingReference(steps, 'JS-03'), 'JS-02', 'the previous in-platform step');
   assert.equal(currentStep(steps, { 'JS-01': { state: 'done', source: 'platform-check' } }), 'JS-02');
+});
+
+test('local steps: confirmed by the learner or not performed, never "checked", and the next open step', () => {
+  const confirmed = { state: 'done', source: 'learner-confirmed', confirmedAt: '2026-10-05T10:00:00.000Z' };
+  const notPerformed = { state: 'skipped', source: 'no-native-tooling', skippedAt: '2026-10-05T10:00:00.000Z' };
+  assert.equal(isStepConfirmed(confirmed), true);
+  assert.equal(isStepDone(confirmed), false, 'a confirmation is not a platform check');
+  assert.equal(isStepNotPerformed(notPerformed), true);
+  assert.equal(isStepNotPerformed({ state: 'skipped', source: 'starter' }), false, 'a supplied reference is not "not performed"');
+  assert.equal(isStepSkipped(notPerformed), true);
+  assert.equal(stepNeedsDevice({ unit: 'RN-03', mode: 'local' }), true);
+  assert.equal(stepNeedsDevice({ unit: 'NO-04', mode: 'local' }), false);
+  assert.equal(stepNeedsDevice({ unit: 'JS-01', mode: 'in-platform' }), false);
+  assert.equal(nextOpenStep(steps, {}), 'JS-01');
+  const records = { 'JS-01': { state: 'done', source: 'platform-check' }, 'JS-02': { state: 'skipped', source: 'starter' } };
+  assert.equal(nextOpenStep(steps, records), 'JS-15', 'a local step is a step to work on too');
+  assert.equal(currentStep(steps, records), 'JS-03', 'the current in-platform step is unchanged');
+  assert.equal(nextOpenStep(steps, { ...records, 'JS-15': confirmed }), 'JS-03');
+  assert.equal(nextOpenStep(steps, { ...records, 'JS-15': confirmed, 'JS-03': { state: 'done', source: 'platform-check' } }), null);
 });
 
 test('a starter covers the undone steps up to its reference and never their real evidence', () => {
