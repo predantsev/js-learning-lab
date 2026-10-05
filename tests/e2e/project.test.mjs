@@ -718,6 +718,9 @@ test('local steps are listed by stage with their task; the learner confirms them
   assert.doesNotMatch(await detail.innerText(), /ще не опубліковано/);
   assert.ok((await detail.locator('.step-task .prose').innerText()).length > 200, 'the instructions are shown');
   assert.equal(await page.locator('.ws-actions .btn-check').count(), 0, 'a local step has no platform check');
+  // Run still runs the platform copy of the project from its own entry, not the App.tsx of the native app.
+  await runPreview(page);
+  assert.equal(await page.locator('.project-result').getAttribute('data-status'), 'done');
   // Native step without an emulator or device: not performed, never done; the lesson shows as skipped.
   await detail.getByRole('button', { name: 'У мене немає емулятора чи пристрою' }).click();
   assert.equal(await detail.locator('.step-badge').getAttribute('data-status'), 'not-performed');

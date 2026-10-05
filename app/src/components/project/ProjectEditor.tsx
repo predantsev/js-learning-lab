@@ -82,7 +82,10 @@ export function ProjectEditor({ doc, capstone, step }: { doc: Doc<WorkspaceDoc>;
   const frameHost = useRef<HTMLDivElement>(null);
   const hiddenHost = useRef<HTMLDivElement>(null);
   const checkable = step !== null && step.mode === 'in-platform' && Boolean(step.tests);
-  const runBlock: RunnableBlock = useMemo(() => ({ entry: step?.entry ?? capstone.entry, runtime: 'browser-js', tests: step?.tests ?? '', strings: step?.strings ?? allStrings(capstone), capabilities: step?.capabilities ?? {} }), [step, capstone]);
+  // A local step (VS Code, a device) runs nothing here: its entry can name another project (App.tsx
+  // of the React Native app), so the platform copy keeps running from the capstone's own entry.
+  const runStep = step !== null && step.mode === 'in-platform' ? step : null;
+  const runBlock: RunnableBlock = useMemo(() => ({ entry: runStep?.entry ?? capstone.entry, runtime: 'browser-js', tests: runStep?.tests ?? '', strings: runStep?.strings ?? allStrings(capstone), capabilities: runStep?.capabilities ?? {} }), [runStep, capstone]);
   const closeDialog = useCallback(() => setDialog(null), []);
 
   // A different step or workspace means earlier results no longer describe these files.
