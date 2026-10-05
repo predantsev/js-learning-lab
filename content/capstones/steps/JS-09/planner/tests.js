@@ -30,6 +30,8 @@ const BROKEN = {
   laterCounted: broken(".localeCompare(day) <= 0).length", ".localeCompare(day) >= 0).length"),
   filterIgnoresStatus: broken("  return list.filter((task) => task.done === done);", "  return [...list];"),
   noDueDateFirst: broken("    if (a.dueDate === null) {\n      return 1;\n    }\n    if (b.dueDate === null) {\n      return -1;\n    }", "    if (a.dueDate === null) {\n      return -1;\n    }\n    if (b.dueDate === null) {\n      return 1;\n    }"),
+  laterFirst: broken("    return a.dueDate.localeCompare(b.dueDate);", "    return b.dueDate.localeCompare(a.dueDate);"),
+  doneGivesPending: broken("  const done = status === \"done\";", "  const done = false;"),
 };
 
 // ---------- running the learner's suite with swapped modules ----------
@@ -144,6 +146,14 @@ test('your tests catch a filter that ignores the status', async () => {
 
 test('your tests catch a sort that puts tasks without a due date first', async () => {
   await expectCatches(BROKEN.noDueDateFirst, "has a sort that puts tasks without a due date first");
+});
+
+test('your tests catch a sort that puts later due dates first', async () => {
+  await expectCatches(BROKEN.laterFirst, "has a sort that puts later due dates first");
+});
+
+test('your tests catch a filter whose done status keeps the pending tasks', async () => {
+  await expectCatches(BROKEN.doneGivesPending, "has a filter whose \"done\" keeps the pending tasks");
 });
 
 test('the tests need no page', async () => {

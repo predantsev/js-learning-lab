@@ -30,6 +30,9 @@ const BROKEN = {
   emptyListThrows: broken("    wantedTotal: priced.reduce((sum, item) => sum + item.price, 0),", "    wantedTotal: priced.map((item) => item.price).reduce((sum, price) => sum + price),"),
   filterIgnoresStatus: broken("  return list.filter((item) => item.acquired === acquired);", "  return [...list];"),
   noPriceFirst: broken("  if (a.price === null) {\n    return 1;\n  }\n  if (b.price === null) {\n    return -1;\n  }", "  if (a.price === null) {\n    return -1;\n  }\n  if (b.price === null) {\n    return 1;\n  }"),
+  nullPriceRejected: broken("if (price !== null && (typeof price !== \"number\" || Number.isNaN(price))) {", "if (typeof price !== \"number\" || Number.isNaN(price)) {"),
+  expensiveFirst: broken("  return a.price - b.price;", "  return b.price - a.price;"),
+  acquiredGivesWanted: broken("  const acquired = status === \"acquired\";", "  const acquired = false;"),
 };
 
 // ---------- running the learner's suite with swapped modules ----------
@@ -144,6 +147,18 @@ test('your tests catch a filter that ignores the status', async () => {
 
 test('your tests catch a sort that puts wishes without a price first', async () => {
   await expectCatches(BROKEN.noPriceFirst, "has a sort that puts wishes without a price first");
+});
+
+test('your tests catch a missing price rejected as not a number', async () => {
+  await expectCatches(BROKEN.nullPriceRejected, "has a missing price (null) rejected as not a number");
+});
+
+test('your tests catch a sort that puts expensive wishes first', async () => {
+  await expectCatches(BROKEN.expensiveFirst, "has a sort that puts expensive wishes first");
+});
+
+test('your tests catch a filter whose acquired status keeps the wanted wishes', async () => {
+  await expectCatches(BROKEN.acquiredGivesWanted, "has a filter whose \"acquired\" keeps the wanted wishes");
 });
 
 test('the tests need no page', async () => {

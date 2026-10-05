@@ -30,6 +30,7 @@ const BROKEN = {
   rateInPercent: broken("  return { count: count, rate: days.length === 0 ? 0 : count / days.length };", "  return { count: count, rate: days.length === 0 ? 0 : (count / days.length) * 100 };"),
   filterIgnoresStatus: broken("  return list.filter((habit) => habit.active === active);", "  return [...list];"),
   reversedSort: broken("  return a.name.localeCompare(b.name);", "  return b.name.localeCompare(a.name);"),
+  pausedGivesActive: broken("  const active = status === \"active\";", "  const active = true;"),
 };
 
 // ---------- running the learner's suite with swapped modules ----------
@@ -144,6 +145,10 @@ test('your tests catch a filter that ignores the status', async () => {
 
 test('your tests catch a sort in reverse alphabetical order', async () => {
   await expectCatches(BROKEN.reversedSort, "has a sort in reverse alphabetical order");
+});
+
+test('your tests catch a filter whose paused status keeps the active habits', async () => {
+  await expectCatches(BROKEN.pausedGivesActive, "has a filter whose \"paused\" keeps the active habits");
 });
 
 test('the tests need no page', async () => {
