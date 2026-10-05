@@ -9,6 +9,7 @@ test("the memory storage gives back what was set and forgets what was removed", 
   expect(await storage.getItem("k"), "nothing saved yet").toBe(null);
   await storage.setItem("k", "text");
   expect(await storage.getItem("k"), "after setItem").toBe("text");
+  expect(await createMemoryStorage().getItem("k"), "a second storage keeps its own data").toBe(null);
   await storage.removeItem("k");
   expect(await storage.getItem("k"), "after removeItem").toBe(null);
 });
