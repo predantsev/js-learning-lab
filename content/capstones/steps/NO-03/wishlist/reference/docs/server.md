@@ -32,7 +32,6 @@ Node.js v25.2.1 (macOS). The data file `server/data/` is not in Git (`.gitignore
 flushed, before the rename. `npm run check` repeats these checks in `server/.check/`.
 
 ```text
-rehearse:export: bad option: -n
 $ npm run summary
 Created the data file with the starting wishes: ~/js-course/wishlist/server/data/wishlist.json
 Wishes: 6
