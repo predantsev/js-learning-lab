@@ -86,7 +86,7 @@ export type DiagramSpec = {
 };
 
 export type SequenceSpec = {
-  kind: 'sequence'; actors: { id: string; label: Localized }[];
+  kind: 'sequence'; layout?: { width: number }; actors: { id: string; label: Localized }[];
   messages: { id: string; from: string; to: string; label: Localized; kind: 'sync' | 'async' | 'return' | 'note'; note: Localized | null }[];
   steps: (StepBase & { message: number })[];
 };

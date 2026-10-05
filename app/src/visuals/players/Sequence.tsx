@@ -1,46 +1,23 @@
 import { useMemo } from 'react';
+import { ACTOR_GAP, actorLayout, sequenceWidth, wrap } from '@shared/visuals/kinds/sequence-geometry.js';
 import { svgStyle, type PlayerProps } from '../VisualPlayer';
 import type { SequenceSpec } from '../types';
 
 
-/** Greedy word wrap by character budget (SVG has no automatic wrapping). */
-export function wrap(text: string, maxChars: number): string[] {
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines: string[] = [];
-  let line = '';
-  for (const word of words) {
-    if (line && (line + ' ' + word).length > maxChars) { lines.push(line); line = word; }
-    else line = line ? `${line} ${word}` : word;
-    while (line.length > maxChars) { lines.push(line.slice(0, maxChars)); line = line.slice(maxChars); }
-  }
-  if (line) lines.push(line);
-  return lines.length ? lines : [''];
-}
-
 const ACTOR_H = 40;
-const GAP = 40;
+const GAP = ACTOR_GAP;
 const LINE_H = 15;
 const ROW_PAD = 14;
-/**
- * Actor boxes: labels wrap to at most two lines, preferably of 14 characters (20 when a label needs
- * more room), and the box is as wide as the longest line of any actor in either language
- * (96–150 px). Three actors with short labels stay within ~450 px; see content/VISUALS.md.
- */
-export function actorLayout(spec: SequenceSpec): { width: number; chars: number } {
-  const labels = spec.actors.flatMap((a) => Object.values(a.label));
-  const chars = labels.every((l) => wrap(l, 14).length <= 2) ? 14 : 20;
-  const longest = Math.max(4, ...labels.flatMap((l) => wrap(l, chars).map((line) => line.length)));
-  return { width: Math.min(150, Math.max(96, Math.ceil(longest * 6.6) + 22)), chars };
-}
 
 export function Sequence({ spec, index, tick, labels, lang }: PlayerProps<SequenceSpec>) {
   const step = spec.steps[index];
   const visibleCount = step.message + 1;
   const previousVisible = index > 0 ? spec.steps[index - 1].message + 1 : 0;
   const text = (loc: Record<string, string> | null) => (loc ? loc[lang] : '');
-  const { width: ACTOR_W, chars: ACTOR_LINE } = useMemo(() => actorLayout(spec), [spec]);
+  // Box size and picture width: shared/visuals/kinds/sequence-geometry.js (the compiler records the same width).
+  const { width: ACTOR_W, chars: ACTOR_LINE } = useMemo(() => actorLayout(spec.actors), [spec]);
   const actorX = new Map(spec.actors.map((a, i) => [a.id, 20 + i * (ACTOR_W + GAP) + ACTOR_W / 2]));
-  const width = 40 + spec.actors.length * ACTOR_W + (spec.actors.length - 1) * GAP;
+  const width = sequenceWidth(spec.actors);
 
   // Row layout: every message reserves its height so the picture never jumps while stepping.
   type Row = { y: number; h: number; lines: string[]; note: string[] };

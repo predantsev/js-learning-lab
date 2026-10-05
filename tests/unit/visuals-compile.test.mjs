@@ -421,6 +421,16 @@ test('diagram size: annotations under the bottom row and labels wider than the p
   assert.deepEqual(plain.spec.layout, { width: plain.spec.nodes[0].x + plain.spec.nodes[0].w + 10, height: plain.spec.nodes[0].y + 46 + 10 });
 });
 
+test('sequence width: recorded at compile time with the formula of the player; wide ones are a lesson warning', async () => {
+  const { sequenceWidth } = await import('../../shared/visuals/kinds/sequence-geometry.js');
+  const spec = (labels) => ({ actors: labels.map((label, i) => ({ id: `a${i}`, label })), messages: [{ from: 'a0', to: 'a1', label: 'GET', caption: text('one') }] });
+  const short = await compileVisual('sequence', spec(['Page', 'Browser', 'Server']), ctx());
+  assert.equal(short.spec.layout.width, 40 + 3 * 96 + 2 * 40);
+  const long = await compileVisual('sequence', spec([{ uk: 'Код сторінки', en: 'Page code' }, 'api.example server', 'Database', 'Cache']), ctx());
+  assert.equal(long.spec.layout.width, sequenceWidth(long.spec.actors));
+  assert.ok(long.spec.layout.width > 450);
+});
+
 test('sequence and render-timeline compile to one step per message / per phase', async () => {
   const seq = await compileVisual('sequence', { actors: [{ id: 'a', label: 'A' }, { id: 'b', label: text('B') }], intro: text('i'), messages: [{ from: 'a', to: 'b', label: 'hi', caption: text('m1') }, { from: 'b', to: 'a', label: 'ok', kind: 'return', caption: text('m2') }] }, ctx());
   assert.deepEqual(seq.issues, []);

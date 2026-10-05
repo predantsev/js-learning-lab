@@ -547,8 +547,11 @@ to the message name. A `note` kind message must have `to` equal to `from`.
 
 Width (section 6): actor labels wrap to two lines of about 14 characters (20 when a label needs
 it), and every actor column is as wide as the longest of those lines in either language (96–150 px)
-plus 40 px between actors. Three actors with short labels (`Browser`, `api.example server`) stay
-within ~450 px; a fourth actor or long actor labels make the picture wider than the lesson column.
+plus 40 px between actors: 40 + n × (actor width) + (n − 1) × 40 px. Three actors fit 450 px only
+while every wrapped actor line has at most 13 characters (actor width ≤ 110 px); a 15-character line
+makes three actors 465 px, a fourth actor or long actor labels make it wider still. The compiled
+spec records `layout.width` and the content validator warns above 450 px (a warning also with
+`--release`, for now).
 
 ### 4.7 `git-graph` — commits, branches, HEAD and the working tree
 
@@ -679,8 +682,9 @@ windows, and below 1100 px the lesson column takes the whole width). Keep the **
   the learner then sees part of the picture at a time.
 - Natural widths: `diagram` — `compile-visual-samples.mjs` prints it and warns above 450 px, and the
   content validator warns about every lesson diagram whose compiled `layout.width` is above 450 px
-  (an error with `--release`); the compiled spec has `layout.width` (section 4.5 has the rules of thumb). `sequence` — about
-  40 + n × (actor width) + (n − 1) × 40 px, actor width 96–150 px (section 4.6). `memory-graph` —
+  (an error with `--release`); the compiled spec has `layout.width` (section 4.5 has the rules of thumb). `sequence` —
+  40 + n × (actor width) + (n − 1) × 40 px, actor width 96–150 px (section 4.6); the compiled spec has `layout.width`
+  and the validator warns above 450 px. `memory-graph` —
   the columns follow their texts and never get wider than the panel allows at 75 % (section 4.2).
 - Code panels (in every kind) need no width planning: they shrink the font and wrap long lines.
 - Check the result in the demo page at `?width=420`; the end-to-end test

@@ -364,7 +364,7 @@ export function staticIssuesForLesson(lesson, ctx) {
   return issues;
 }
 
-/** Natural width limit of a compiled `diagram` (content/VISUALS.md, section 6). */
+/** Natural width limit of a compiled `diagram` or `sequence` (content/VISUALS.md, section 6). */
 export const DIAGRAM_MAX_WIDTH = 450;
 
 // Names the repository's .gitignore drops (used when the content root is not inside a git work tree).
@@ -440,8 +440,11 @@ export async function compileLesson(lesson, ctx) {
           // The lesson column leaves a diagram about 450 px (content/VISUALS.md, section 6): wider ones
           // make the panel scroll. A warning while authoring, an error for a release.
           for (const [lang, variant] of out.spec?.byLang ? Object.entries(out.spec.byLang) : [[null, out.spec]]) {
-            const width = variant?.kind === 'diagram' ? variant.layout?.width : undefined;
-            if (width > DIAGRAM_MAX_WIDTH) issues.push({ path: `lesson ${source.id} › block "${block.id}".spec${lang ? ` (${lang})` : ''}`, message: `the diagram is ${width} px wide; the lesson column fits ${DIAGRAM_MAX_WIDTH} px (content/VISUALS.md, section 6: narrower nodes, fewer columns or shorter labels)`, ...(ctx.release ? {} : { level: 'warning' }) });
+            const width = variant?.kind === 'diagram' || variant?.kind === 'sequence' ? variant.layout?.width : undefined;
+            const advice = variant?.kind === 'sequence' ? 'fewer actors or shorter actor labels' : 'narrower nodes, fewer columns or shorter labels';
+            // A wide sequence is a warning also with --release: the check is new and 15 reviewed
+            // three-actor sequences are 465 px; narrowing them is a content change.
+            if (width > DIAGRAM_MAX_WIDTH) issues.push({ path: `lesson ${source.id} › block "${block.id}".spec${lang ? ` (${lang})` : ''}`, message: `the ${variant.kind} is ${width} px wide; the lesson column fits ${DIAGRAM_MAX_WIDTH} px (content/VISUALS.md, section 6: ${advice})`, ...(ctx.release && variant.kind === 'diagram' ? {} : { level: 'warning' }) });
           }
         } catch (error) {
           issues.push({ path: `lesson ${source.id} › block "${block.id}".spec`, message: `visual failed to compile: ${error.message}` });
