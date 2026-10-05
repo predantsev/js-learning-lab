@@ -200,7 +200,7 @@ export const uk = {
   'ws.runtime.isolated-node': 'Справжній Node.js в ізольованому процесі на твоєму комп’ютері',
   'ws.runtime.local-web': 'Локальне завдання: термінал, VS Code і браузер на твоєму комп’ютері',
   'ws.runtime.local-native': 'Локальне завдання: емулятор або пристрій',
-  'ws.runtime.local-node': 'Локальне завдання: справжній процес Node.js у твоєму терміналі',
+  'ws.runtime.local-node': 'Локальне завдання: термінал, VS Code і Node.js на твоєму комп’ютері',
   'ws.limits': 'Межі цього перегляду',
   'ws.pageShown': 'Сторінка {file}',
   'ws.pageBack': 'Назад до {file}',

@@ -201,7 +201,7 @@ export const en: Dict = {
   'ws.runtime.isolated-node': 'Real Node.js in an isolated process on your computer',
   'ws.runtime.local-web': 'Local task: terminal, VS Code and browser on your computer',
   'ws.runtime.local-native': 'Local task: emulator or device',
-  'ws.runtime.local-node': 'Local task: a real Node.js process in your terminal',
+  'ws.runtime.local-node': 'Local task: terminal, VS Code and Node.js on your computer',
   'ws.limits': 'Limits of this preview',
   'ws.pageShown': 'Page {file}',
   'ws.pageBack': 'Back to {file}',
