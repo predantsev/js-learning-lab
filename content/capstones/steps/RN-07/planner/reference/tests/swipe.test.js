@@ -13,6 +13,8 @@ test("a swipe is to the left and either far enough or fast enough", () => {
   expect(isSwipe({ translationX: -100, velocityX: -300 }), "short and slow").toBe(false);
   expect(isSwipe({ translationX: 150, velocityX: 900 }), "to the right").toBe(false);
   expect(isSwipe({ translationX: 5, velocityX: -900 }), "fast to the left but moved right").toBe(false);
+  expect(isSwipe({ translationX: -40, velocityX: 900 }), "moved left, but the fling is to the right").toBe(false);
+  expect(isSwipe({ translationX: -120, velocityX: 0 }), "exactly 120 points to the left").toBe(true);
 });
 
 test("undo saves the list as it was before the swipe", async () => {

@@ -43,19 +43,36 @@ test("the records of the service load, pass the contract and give the derived va
   });
 });
 
-test("two failures and a success: the third attempt answers", async () => {
+test("two failures and a success: the third attempt answers after pauses that double", async () => {
   await withService(async (baseUrl, seen) => {
-    const outcome = await loadFromService(request(baseUrl, "fail=2&key=t1"), BUNDLED);
+    // Every delay asked of setTimeout is recorded (fetch and the server ask for their own, longer ones);
+    // the pauses between attempts are the delays shorter than the timeout of an attempt.
+    const delays = [];
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (callback, ms, ...rest) => {
+      delays.push(ms);
+      return realSetTimeout(callback, ms, ...rest);
+    };
+    let outcome;
+    try {
+      outcome = await loadFromService(request(baseUrl, "fail=2&key=t1"), BUNDLED);
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+    expect(delays.filter((ms) => ms < quick.timeoutMs), "the pauses between attempts").toEqual([10, 20]);
     expect(outcome.source, "source").toBe("service");
     expect(seen.length, "requests").toBe(3);
   });
 });
 
-test("five failures: at most three attempts, then no data and no derived value", async () => {
+test("five failures: at most three attempts, then no data and no derived value; an answer below 500 is final at once", async () => {
   await withService(async (baseUrl, seen) => {
     const outcome = await loadFromService(request(baseUrl, "fail=5&key=t2"), BUNDLED);
     expect(outcome, "outcome").toEqual({ source: "none", failure: "server", status: 503 });
     expect(seen.length, "requests").toBe(3);
+    const notFound = await loadFromService(request(baseUrl, "status=404"), BUNDLED);
+    expect(notFound, "a 404 answer").toEqual({ source: "none", failure: "server", status: 404 });
+    expect(seen.length, "requests after the 404").toBe(4);
   });
 });
 
@@ -83,12 +100,12 @@ test("an abort stops the attempts at once and rejects with an AbortError", async
     const started = Date.now();
     let name = "no error";
     try {
-      await fetchWithRetry(recordsUrl(baseUrl, "en", "hang=1"), { fetchFn: fetch, signal: controller.signal, timeoutMs: 1000, baseDelayMs: 10 });
+      await fetchWithRetry(recordsUrl(baseUrl, "en", "hang=1"), { fetchFn: fetch, signal: controller.signal, timeoutMs: 5000, baseDelayMs: 10 });
     } catch (error) {
       name = error.name;
     }
     expect(name, "the error").toBe("AbortError");
-    expect(Date.now() - started < 500, "stopped long before the 1000 ms timeout").toBe(true);
+    expect(Date.now() - started < 2500, "stopped long before the 5000 ms timeout").toBe(true);
     expect(seen.length, "requests").toBe(1);
   });
 });

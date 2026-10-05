@@ -37,7 +37,7 @@ test("loadSnapshot saves a migrated snapshot again in the current version", asyn
   expect(JSON.parse(await storage.getItem(KEY)).schemaVersion, "the saved version").toBe(CURRENT_VERSION);
 });
 
-test("a damaged snapshot goes under the backup key unchanged, the starting list replaces it, and the notice comes once", async () => {
+test("a damaged or newer snapshot goes under the backup key unchanged before the main key is touched, the starting list replaces it, and the notice comes once", async () => {
   const storage = createMemoryStorage();
   const damaged = '{"schemaVersion":1,"records":[{"id"';
   await storage.setItem(KEY, damaged);
@@ -47,6 +47,22 @@ test("a damaged snapshot goes under the backup key unchanged, the starting list 
   expect(first.records.length, "the starting list").toBe(1);
   expect(await storage.getItem(BACKUP_KEY), "the backup").toBe(damaged);
   expect((await repository.readAll()).recovered, "second read").toBe(false);
+  // The copy is the first write: nothing touches the main key before the old text is safe.
+  const writes = [];
+  const watched = {
+    getItem: (key) => storage.getItem(key),
+    setItem: (key, value) => { writes.push("set " + key); return storage.setItem(key, value); },
+    removeItem: (key) => { writes.push("remove " + key); return storage.removeItem(key); },
+  };
+  await storage.setItem(KEY, damaged);
+  await createRepository(watched, []).readAll();
+  expect(writes[0], "the first write").toBe("set " + BACKUP_KEY);
+  // A snapshot of a newer version is set aside the same way, never overwritten silently.
+  const newerStorage = createMemoryStorage();
+  const newer = JSON.stringify({ schemaVersion: CURRENT_VERSION + 1, records: [] });
+  await newerStorage.setItem(KEY, newer);
+  expect((await createRepository(newerStorage, []).readAll()).recovered, "a newer version").toBe(true);
+  expect(await newerStorage.getItem(BACKUP_KEY), "the newer snapshot's backup").toBe(newer);
 });
 
 test("a current snapshot survives a new repository, as after a restart", async () => {
