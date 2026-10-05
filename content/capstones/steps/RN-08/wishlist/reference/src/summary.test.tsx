@@ -16,6 +16,11 @@ test('the groups are in alphabetical order with the group without a category las
   const groups = categoryGroups(wishes, '%%formatLocale%%');
   const named = ['%%techCategory%%', '%%homeCategory%%'].sort((a, b) => a.localeCompare(b, '%%formatLocale%%'));
   expect(groups.map((group) => group.category)).toEqual([...named, null]);
+  // The alphabet of the language, not the order of character codes: І comes after Д in Ukrainian, and
+  // "apple" before "Banana" in English, although a plain sort() puts them the other way round.
+  const named2 = (categories: string[], locale: string) => categoryGroups(categories.map((category, index) => ({ ...wishes[0], id: 'w-9' + index, category: category })), locale).map((group) => group.category);
+  expect(named2(['Іграшки', 'Дім'], 'uk-UA')).toEqual(['Дім', 'Іграшки']);
+  expect(named2(['Banana', 'apple'], 'en-US')).toEqual(['apple', 'Banana']);
   expect(groups.find((group) => group.category === '%%homeCategory%%')).toMatchObject({ count: 2, wantedTotal: 45, wantedWithoutPrice: 0 });
   expect(groups.at(-1)).toMatchObject({ count: 1, wantedTotal: 0, wantedWithoutPrice: 1 });
 });

@@ -12,6 +12,8 @@ test("every one of the six checks has a record on the declared target", () => {
 
 test("no record is rejected, and no skip claims a result", () => {
   for (const record of records) {
-    expect(judge(record, { declaredTarget: declaredTarget, build: build }).status, record.check + " on " + record.target.kind).toBe("skipped");
+    // A real result is "passed", "assisted" or "failed", a skip "skipped": only "rejected" breaks the rubric.
+    const verdict = judge(record, { declaredTarget: declaredTarget, build: build });
+    expect(verdict.status === "rejected", record.check + " on " + record.target.kind + ": " + (verdict.reason ?? verdict.status)).toBe(false);
   }
 });
