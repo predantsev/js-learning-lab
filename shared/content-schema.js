@@ -249,7 +249,9 @@ function checkBlock(issues, block, lesson, ctx) {
         if (!EXERCISE_MODES.includes(block.mode)) issues.add(`${p}.mode`, `must be one of ${EXERCISE_MODES.join(', ')}`);
         if (block.mode === 'independent') {
           if (block.hints !== undefined) issues.add(`${p}.hints`, 'independent exercises have no hints');
-        } else {
+        } else if (!(block.mode === 'debug' && block.hints === undefined && (block.assessment === true || lesson.kind === 'assessment'))) {
+          // A debug exercise of a gate (assessment: true, or an assessment lesson) may come without
+          // hints: the learner finds the defect alone and the pass is not marked "assisted".
           checkLocalized(issues, block.hints?.nudge, `${p}.hints.nudge`);
           checkLocalized(issues, block.hints?.explanation, `${p}.hints.explanation`);
         }
