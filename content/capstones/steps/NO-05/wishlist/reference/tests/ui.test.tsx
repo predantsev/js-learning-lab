@@ -191,6 +191,7 @@ test("the categories route groups the wishes and totals only the wanted prices",
   await waitFor(() => screen.queryByRole("heading", { name: "%%categoriesTitle%%" }) !== null);
   const groups = screen.queryAllByRole("heading").filter((heading) => heading.tagName === "H3").map((heading) => heading.textContent);
   expect(groups.at(-1), "the wishes without a category come last").toBe("%%noCategoryLabel%%");
+  expect(groups.slice(0, -1), "the categories in alphabetical order").toEqual(["%%homeCategory%%", "%%techCategory%%"]);
   // The page text as the queries see it: every run of spaces (the no-break space of a price too) is one space.
   const wantedLine = (price: number) => ("%%summaryWantedTotal%%: " + formatPrice(price, LOCALE)).replace(/\s+/g, " ");
   const tech = screen.getByRole("heading", { name: "%%techCategory%%" }).closest("section") as HTMLElement;

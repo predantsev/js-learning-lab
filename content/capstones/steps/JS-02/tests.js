@@ -50,6 +50,10 @@ test('the script writes the new lines', () => {
   // The page as index.html describes it, before app.js runs.
   const typed = new DOMParser().parseFromString(files['index.html'] ?? '', 'text/html').querySelector('main');
   const typedText = norm(typed?.textContent);
+  // The first label: index.html may already hold its parts (for example a table from step JS-01), so
+  // app.js must add a line of its own.
+  const firstLines = (root) => linesWith(root, L.nameValue, L.firstCheck).length;
+  expect(firstLines(screen.$('main')) > firstLines(typed), `a line with "${L.nameValue}" and "${L.firstCheck}" that app.js wrote (not one typed into index.html)`).toBe(true);
   expect(linesWith(typed, L.secondName, L.secondCheck).length, 'lines of index.html that already hold the second label').toBe(0);
   expect(typedText.includes(norm(L.requiredMessage)), `index.html already contains "${L.requiredMessage}"`).toBe(false);
   expect(typedText.includes(norm(L.invalidMessage)), `index.html already contains "${L.invalidMessage}"`).toBe(false);

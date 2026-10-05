@@ -8,15 +8,17 @@ import path from "node:path";
 const SERVER = path.resolve(import.meta.dirname, "..");
 // Node 22.13–22.17 runs .ts files only with this flag; newer Node needs none (process.features.typescript).
 const strip = process.features.typescript ? [] : ["--experimental-strip-types"];
+// [name, command, args, shell]. The typecheck is one command line for a shell, which finds npx (npx.cmd on
+// Windows); a shell gets no separate args, because Node 24 and newer warn about those (DEP0190).
 const STAGES = [
-  ["typecheck", "npx", ["tsc", "-p", "."]],
-  ["test", process.execPath, [...strip, "--test", "tests/*.test.ts"]],
-  ["artifact", process.execPath, [path.join("scripts", "pack.mjs")]],
+  ["typecheck", "npx tsc -p .", [], true],
+  ["test", process.execPath, [...strip, "--test", "tests/*.test.ts"], false],
+  ["artifact", process.execPath, [path.join("scripts", "pack.mjs")], false],
 ];
 
-for (const [name, command, args] of STAGES) {
-  console.log(`\n▶ ${name}: ${[path.basename(command), ...args].join(" ")}`);
-  const result = spawnSync(command, args, { cwd: SERVER, stdio: "inherit", shell: command === "npx", env: { ...process.env, CI_PASSED: "1" } });
+for (const [name, command, args, shell] of STAGES) {
+  console.log(`\n▶ ${name}: ${[shell ? command : path.basename(command), ...args].join(" ")}`);
+  const result = spawnSync(command, args, { cwd: SERVER, stdio: "inherit", shell: shell, env: { ...process.env, CI_PASSED: "1" } });
   if (result.status !== 0) {
     console.error(`\n✖ CI stopped at "${name}" (exit code ${result.status}). No artifact was produced.`);
     process.exit(1);

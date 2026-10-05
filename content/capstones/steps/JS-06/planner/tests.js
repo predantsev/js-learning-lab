@@ -113,6 +113,17 @@ test('a task without a due date shows the no-due-date text, and a title with mar
   expect(list().querySelector('b'), 'a <b> element made from the title').toBeNull();
 });
 
+test('a new task keeps the done box', async () => {
+  const before = cards().length;
+  await setValue(field(L.nameLabel), 'Sort the mail');
+  await user.check(field(L.doneFieldLabel), true);
+  await user.submit(form());
+  expect(cards().length, 'the number of cards after adding a task with the done box ticked').toBe(before + 1);
+  const added = cards().find((node) => inOrder(node.textContent, 'Sort the mail'));
+  expect(added, 'a card with "Sort the mail"').toBeTruthy();
+  expect(inOrder(added.textContent, L.doneMark), `the mark "${L.doneMark}" in that card`).toBe(true);
+});
+
 test('Edit fills the form and saving changes only that task', async () => {
   const before = cards().length;
   await user.click(buttonIn(card('t-02'), L.editLabel));

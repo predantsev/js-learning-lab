@@ -283,16 +283,19 @@ test('the main action is announced in a status region', async () => {
 test('a field with an error is marked invalid and linked to its message', async () => {
   await startPage(null);
   await setValue(field(L.nameLabel), '   ');
-  await setValue(field(L.valueLabel), '45');
+  await setValue(field(L.valueLabel), '0');
   await setValue(field(L.dateFieldLabel), '2026-03-02');
   await user.select(field(L.categoryFieldLabel), 'food');
   await user.submit(form());
   const input = field(L.nameLabel);
   expect(input?.getAttribute('aria-invalid'), `aria-invalid of the field "${L.nameLabel}" after an empty draft`).toBe('true');
+  expect(field(L.valueLabel)?.getAttribute('aria-invalid'), `aria-invalid of the field "${L.valueLabel}" after the amount 0`).toBe('true');
   expect(inOrder(describedBy(input), L.labelRequiredMessage), `the message "${L.labelRequiredMessage}" in the text that aria-describedby of the field names`).toBe(true);
   await setValue(field(L.nameLabel), L.newName);
+  await setValue(field(L.valueLabel), '45');
   await user.submit(form());
   expect(await until(() => input.getAttribute('aria-invalid') !== 'true'), `aria-invalid of the field "${L.nameLabel}" after a valid draft (absent or "false")`).toBe(true);
+  expect(field(L.valueLabel)?.getAttribute('aria-invalid') !== 'true', `aria-invalid of the field "${L.valueLabel}" after a valid draft is not "true"`).toBe(true);
 });
 
 // ---------- checks: the learner's tests ----------

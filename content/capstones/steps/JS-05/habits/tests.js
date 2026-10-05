@@ -41,7 +41,7 @@ const habit = (id, name, active, completions) => ({ id, name, frequency: 'daily'
 const sample = () => [
   habit('s-1', 'yoga', true, ['2026-03-01', '2026-03-03']),
   habit('s-2', 'Stretching', false, []),
-  habit('s-3', 'Morning yoga', true, ['2026-03-02']),
+  habit('s-3', 'Morning Yoga', true, ['2026-03-02']),
   habit('s-4', 'meditation', true, ['2026-03-01', '2026-03-02', '2026-03-03']),
   habit('s-5', 'Stretching', true, ['2026-02-28']),
 ];
@@ -102,7 +102,7 @@ test('filterHabits keeps the active or the paused habits', () => {
 test('sortHabitsByName orders a copy alphabetically', () => {
   const list = sample();
   const result = scope.sortHabitsByName(list);
-  expect(ids(result), 'sortHabitsByName(list) — names "yoga", "Stretching", "Morning yoga", "meditation", "Stretching"').toEqual(['s-4', 's-3', 's-2', 's-5', 's-1']);
+  expect(ids(result), 'sortHabitsByName(list) — names "yoga", "Stretching", "Morning Yoga", "meditation", "Stretching"').toEqual(['s-4', 's-3', 's-2', 's-5', 's-1']);
   expect(result !== list, 'sortHabitsByName returns a new array').toBe(true);
   expect(ids(list), 'the order of the list sortHabitsByName received').toEqual(ids(sample()));
   expect(scope.sortHabitsByName([]), 'sortHabitsByName([])').toEqual([]);

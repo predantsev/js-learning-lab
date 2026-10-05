@@ -217,6 +217,7 @@ test('validateItem accepts only whole prices', async () => {
   const { validateItem } = await moduleWith('./' + DOMAIN, ['validateItem']);
   expect(validateItem({ name: L.fixture1Name, price: 12.5 }), 'validateItem with the price 12.5').toEqual({ ok: false, errors: { price: 'not-whole' } });
   expect(validateItem({ name: L.fixture1Name, price: 0.1 + 0.2 }), 'validateItem with the price 0.1 + 0.2').toEqual({ ok: false, errors: { price: 'not-whole' } });
+  expect(validateItem({ name: L.fixture1Name, price: -0.5 }), 'validateItem with the price -0.5 (the check for a negative price comes first)').toEqual({ ok: false, errors: { price: 'negative' } });
   expect(validateItem({ name: L.fixture1Name, price: 12 }), 'validateItem with the price 12').toEqual({ ok: true, value: { name: L.fixture1Name, price: 12 } });
   expect(validateItem({ name: L.fixture1Name, price: null }).ok, 'validateItem with the price null').toBe(true);
   expect(validateItem({ name: L.fixture1Name, price: 0 }).ok, 'validateItem with the price 0').toBe(true);

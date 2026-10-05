@@ -28,7 +28,7 @@ const task = (id, title, dueDate, done, priority) => ({ id, title, dueDate, done
 const sample = () => [
   task('s-1', 'Buy bread', '2026-03-05', false, 'normal'),
   task('s-2', 'Call the bank', null, false, 'low'),
-  task('s-3', 'Bake bread', '2026-03-01', true, 'low'),
+  task('s-3', 'Bake Bread', '2026-03-01', true, 'low'),
   task('s-4', 'Pay rent', '2026-03-05', false, 'high'),
   task('s-5', 'Water plants', '2026-03-05', false, 'normal'),
   task('s-6', 'Read a book', null, false, 'high'),

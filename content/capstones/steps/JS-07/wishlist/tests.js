@@ -82,6 +82,11 @@ const INVALID_RECORD = [
   saved([...savedSample(), { id: 'w-09', price: 10, acquired: false, category: null }]),
   saved([{ id: 'w-10', name: L.fixture1Name, price: '80', acquired: false, category: null }]),
   saved([{ id: 'w-11', name: L.fixture1Name, price: 80, acquired: 'no', category: null }]),
+  // Every damage the task names: a record that is not an object, an id that is not text, and the
+  // type rule of the variant's own field.
+  saved([...savedSample(), null]),
+  saved([{ ...savedSample()[1], id: 12 }]),
+  saved([{ ...savedSample()[1], category: 5 }]),
 ];
 const short = (text) => (text.length > 60 ? text.slice(0, 57) + '…' : text);
 
@@ -159,6 +164,14 @@ test('a change on the page is saved with schemaVersion 1', async () => {
   const afterDelete = savedValue();
   expect(afterDelete?.records?.map((record) => record.id).includes('w-03'), 'w-03 among the saved records after its confirmed delete').toBe(false);
   expect(afterDelete?.records?.length, 'the number of saved records after the delete').toBe(6);
+});
+
+test('an edit on the page is saved', async () => {
+  await user.click(buttonIn(card('w-02'), L.editLabel));
+  await setValue(field(L.nameLabel), 'Edited on the page');
+  await user.submit(form());
+  const record = savedValue()?.records?.find((one) => one.id === 'w-02');
+  expect(record?.name, `the saved name of w-02 after editing it on the page`).toBe('Edited on the page');
 });
 
 test('loadItems reads valid saved wishes', async () => {
@@ -240,6 +253,9 @@ test('a wish added after a restart gets an id no other wish has', async () => {
   expect(ids.length, 'the number of saved records after adding a wish to w-02, w-7 and w-8').toBe(4);
   expect(new Set(ids).size, `different ids among the saved ids ${JSON.stringify(ids)}`).toBe(ids.length);
   expect(cards().length, 'the number of cards after that').toBe(4);
+  const nameField = field(L.nameLabel);
+  const message = (nameField?.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean).map((id) => document.getElementById(id)?.textContent ?? '').join(' ').trim();
+  expect(message, 'the message next to the name field after a valid add (a second submit handler, added by a second start, sees the cleared form)').toBe('');
 });
 
 test('items stays the starting list', async () => {

@@ -71,6 +71,8 @@ $ npm run check
 
 ## NO-03 — the records server
 
+Measured on a fresh `server/data/` (the first start created it); in the course chain the step changes another record, because step NO-02 already changed this one.
+
 Node.js v25.2.1, curl 8.7.1 (macOS). `npm start` in one terminal, the requests in another; Ctrl+C
 sends SIGINT. A change made while the server is stopped is there after the restart.
 
@@ -176,6 +178,8 @@ $ npm test
 ```
 
 ## NO-05 — a durable store
+
+Measured on the data file of a fresh NO-04 run; in the course chain the numbers differ by the records earlier steps changed.
 
 A JSON file, not SQLite: the store is small and written by one server process, and Node.js 22.13 (the
 course minimum) has no `sqlite.backup()` (it arrived in 22.16). Node.js v25.2.1 (macOS); the same
@@ -570,6 +574,8 @@ $ npm test        (server/)
 ```
 
 ## NO-13 — the list page rendered on the server and hydrated
+
+Measured on a fresh `server/data/`; in the course chain step NO-06 already changed a record, so the step text quotes other numbers and another record.
 
 Node.js v25.2.1 and v22.13.1 (`--experimental-strip-types`), react and react-dom 19.3.0 (the web project's
 dependencies), esbuild 0.28.2, the Ukrainian workspace. `npm run build:client` in `server/` built the client entry

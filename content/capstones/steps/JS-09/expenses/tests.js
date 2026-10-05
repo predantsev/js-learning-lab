@@ -30,6 +30,8 @@ const BROKEN = {
   funCopiesHome: broken("      fun: totalOf(filterExpenses(list, \"fun\")),", "      fun: totalOf(filterExpenses(list, \"home\")),"),
   filterIgnoresCategory: broken("  return list.filter((expense) => expense.category === category);", "  return [...list];"),
   dateSortByAmount: broken("(field === \"amountMinor\" ? a.amountMinor - b.amountMinor : a.date.localeCompare(b.date))", "(a.amountMinor - b.amountMinor)"),
+  oneRejected: broken("amount <= 0 ||", "amount <= 1 ||"),
+  amountSortReversed: broken("(field === \"amountMinor\" ? a.amountMinor - b.amountMinor :", "(field === \"amountMinor\" ? b.amountMinor - a.amountMinor :"),
 };
 
 // ---------- running the learner's suite with swapped modules ----------
@@ -144,6 +146,14 @@ test('your tests catch a filter that ignores the category', async () => {
 
 test('your tests catch a sort by date that sorts by amount', async () => {
   await expectCatches(BROKEN.dateSortByAmount, "has a sort by date that sorts by amount");
+});
+
+test('your tests catch an amount of 1 rejected', async () => {
+  await expectCatches(BROKEN.oneRejected, "has an amount of 1 rejected");
+});
+
+test('your tests catch a sort by amount that puts larger amounts first', async () => {
+  await expectCatches(BROKEN.amountSortReversed, "has a sort by amount that puts larger amounts first");
 });
 
 test('the tests need no page', async () => {

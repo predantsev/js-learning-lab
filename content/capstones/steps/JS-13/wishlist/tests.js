@@ -429,6 +429,23 @@ test('teardown is safe to call twice and the page starts again', async () => {
   expect(savedRecords()?.length, `the number of saved wishes after one submit (two would mean doubled listeners)`).toBe(7);
 });
 
+test('teardown stops a load that is still on its way', async () => {
+  const page = await moduleWith(PAGE, ['start', 'teardown']);
+  page.teardown();
+  storage.clear();
+  const mock = mockFetch(() => ({ status: 200, body: { schemaVersion: 1, records: fixtures() }, delay: 300 }));
+  try {
+    page.start(storage);
+    await sleep(50);
+    page.teardown();
+    await sleep(450);
+    await settle();
+    expect(cards().length, 'cards once the answer would have arrived, after teardown() during the load').toBe(0);
+  } finally {
+    mock.restore();
+  }
+});
+
 // ---------- checks: the learner's tests ----------
 
 test('your domain tests pass with a correct domain module', async () => {

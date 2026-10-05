@@ -31,7 +31,7 @@ const server = http.createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", "http://127.0.0.1");
   const name = url.pathname === "/" ? "index.html" : decodeURIComponent(url.pathname.slice(1));
   const file = path.resolve(root, name);
-  if (request.method !== "GET" || !file.startsWith(root + path.sep)) {
+  if ((request.method !== "GET" && request.method !== "HEAD") || !file.startsWith(root + path.sep)) {
     response.writeHead(404).end();
     return;
   }
@@ -42,9 +42,11 @@ const server = http.createServer(async (request, response) => {
       "content-type": TYPES[path.extname(file)] ?? "application/octet-stream",
       "cache-control": hashed ? "public, max-age=31536000, immutable" : "no-cache",
     });
-    response.end(body);
+    response.end(request.method === "HEAD" ? undefined : body);
   } catch {
-    response.writeHead(404).end();
+    // The browser asks for /favicon.ico by itself; without one it gets an empty answer, not a 404 in
+    // the Console that the project never caused.
+    response.writeHead(name === "favicon.ico" ? 204 : 404).end();
   }
 });
 server.listen(port, "127.0.0.1", () => console.log(`release ${version}: http://127.0.0.1:${port}/`));

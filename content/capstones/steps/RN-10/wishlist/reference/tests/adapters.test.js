@@ -9,6 +9,7 @@ test("the memory storage gives back what was set and forgets what was removed", 
   expect(await storage.getItem("k"), "nothing saved yet").toBe(null);
   await storage.setItem("k", "text");
   expect(await storage.getItem("k"), "after setItem").toBe("text");
+  expect(await createMemoryStorage().getItem("k"), "a second storage keeps its own data").toBe(null);
   await storage.removeItem("k");
   expect(await storage.getItem("k"), "after removeItem").toBe(null);
 });
@@ -26,5 +27,6 @@ test("the price format gives the no-price label for null and money text with the
   expect(format.price(null), "no price").toBe("%%noPrice%%");
   expect(format.price(80).includes("80"), "80 → " + format.price(80)).toBe(true);
   expect(format.price(1250).includes("250"), "1250 → " + format.price(1250)).toBe(true);
+  expect(/[.,]\d\d\D*$/.test(format.price(80)), "whole hryvnias, no kopiykas: " + format.price(80)).toBe(false);
   expect(format.price(0) === "%%noPrice%%", "a price of 0 is a price").toBe(false);
 });

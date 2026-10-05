@@ -313,16 +313,29 @@ test('viewAddress writes the view and keeps the rest of the address', async () =
 test('the search and the filter go into the page address', async () => {
   await withAddress('', async (original) => {
     await startPage(null);
-    await withFakeClock(async (clock) => {
-      typeSearch(L.fixture5Name);
-      clock.runAll();
-    });
-    expect(await until(() => queryParam('q') === L.fixture5Name), `the parameter q of the page address after a search for "${L.fixture5Name}" (now: ${location.search})`).toBe(true);
-    await user.select(filterField(), 'fun');
-    expect(await until(() => queryParam('show') === 'fun'), `the parameter show after the filter "fun" (now: ${location.search})`).toBe(true);
-    expect(new URL(location.href).searchParams.get('id'), 'the parameter id of the platform in the page address').toBe(new URL(original).searchParams.get('id'));
+    // A new history entry per search would make Back step through searches: count pushState calls.
+    const pushState = history.pushState;
+    let pushes = 0;
+    history.pushState = function (...args) {
+      pushes += 1;
+      return pushState.apply(this, args);
+    };
+    try {
+      await withFakeClock(async (clock) => {
+        typeSearch(L.fixture5Name);
+        clock.runAll();
+      });
+      expect(await until(() => queryParam('q') === L.fixture5Name), `the parameter q of the page address after a search for "${L.fixture5Name}" (now: ${location.search})`).toBe(true);
+      await user.select(filterField(), 'fun');
+      expect(await until(() => queryParam('show') === 'fun'), `the parameter show after the filter "fun" (now: ${location.search})`).toBe(true);
+      expect(new URL(location.href).searchParams.get('id'), 'the parameter id of the platform in the page address').toBe(new URL(original).searchParams.get('id'));
+      expect(pushes, 'history.pushState calls for the search and the filter (replaceState adds no history entry)').toBe(0);
+    } finally {
+      history.pushState = pushState;
+    }
   });
 });
+
 
 test('a restart shows the view written in the address', async () => {
   await withAddress('', async (original) => {
