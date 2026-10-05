@@ -93,7 +93,7 @@ The validator runs every example, every exercise fixture and every verifiable pr
 22. **A crash while the program loads empties `scope`:** every check then fails with "… is not a function" and all feedback shows together. Each feedback must stay true in that case, the `TypeError` rule must cover that message, and a check such as `expect(() => scope.fn(x)).toThrow(TypeError)` must first assert that `scope.fn` is a function, or it passes by mistake.
 23. **Describe Run, Stop and console behaviour only after a timed run in the app.** In a stuck loop the console stays empty until the `LoopBudgetError` card appears (about 2 s), and Stop discards output printed before it.
 24. **An "alternative run" state in an authored visual needs an explicit `changed` list;** otherwise the default diff against the previous state marks it as a change.
-25. **Multi-file predictions cannot be verified by the validator** (`verify` runs one `index.js`). Run them in the sandbox yourself and say so in your hand-back.
+25. **Multi-file predictions cannot be verified by the validator** (`verify` runs one `index.js`). Run them in the sandbox yourself and say so in your hand-back. A Node.js prediction (`node:sqlite`, streams, `process.nextTick`) is verified with `runtime: isolated-node`: `verify.logs` is then compared with what the process printed on stdout and stderr, without Node's report of an uncaught error, and `verify.error` with that error's name. Keep a verified Node prediction on one stream (`console.log`): the order between stdout and stderr lines is the order in which they reach the platform, which is not guaranteed. Measured on 25.2.1 and 22.13.1: in an ES module a promise callback runs before a `process.nextTick` callback queued in the same top-level code (the module itself runs inside a microtask) — the fixture `node-order` proves it.
 26. **Check `code-trace` captions against the compiled trace** (`dist/content/lessons/<id>.json`): a caption must not describe panel state the trace does not show (an "empty" stack that still holds the file's frame, a variable that is no longer in scope). Likewise check every `line:` value of a `render-timeline` against the real line count of the file it points into.
 27. **Hints and feedback name exactly what the test asserts, identically in both languages** (id vs name, row vs column). Read the Ukrainian and the English side by side against the test. A check with several assertions gets feedback that names each of them — the status and the body, not the status alone (no-04-03, no-04-04).
 28. **Quote an earlier lesson's code verbatim from its file**, never from memory. Retrieval items and "as in unit X" claims drafted from a syllabus entry are re-read against the authored lesson before hand-back: same terms, same example, same rule. A transfer block in a unit that has no project step yet says so, and its claims about the checkpoint stay conditional (rule 42). Until the step exists, the standard opening is “The project step of this unit is not written yet. According to the course plan, …” (NO-04 review). Once `content/capstones/steps/<UNIT>/` is merged, rewrite every transfer of the unit to the real step — its file names, functions and commands — and turn what the step does not do into optional or later work (no-04-05: the step changes no client; no-03-04: no per-request `AbortController`). The syllabus `capstoneStep.variants` text is shown on every transfer page, so it follows the authored steps too (`/v1/records`, no-06).
@@ -201,6 +201,9 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are
   lang: js                        # optional highlighting of `code`: js (default), html, css, json, ts…
   runnable: false                 # optional: hide "Run and check" after answering (code that is not
                                   #   JavaScript, e.g. lang: html, or that is not meant to run)
+  runtime: isolated-node          # optional (RN and NO stages): run `code` as index.js in real Node.js —
+                                  #   "Run and check" and the validator use the local executor; optional
+                                  #   capabilities: { network: loopback, timeoutMs, … } as for exercises
   verify: { logs: ["2"] }         # exact console lines (and `error: TypeError` when it throws);
                                   #   code that does not compile: verify: { logs: [], error: SyntaxError }
   answer:
@@ -259,7 +262,7 @@ Every block has a unique `id` (kebab-case) inside the lesson. `title` fields are
       prompt: { uk, en }
       code: |                     # optional, as in a prediction (also `lang`, `runnable`)
         { let n = 1; } console.log(typeof n);
-      verify: { logs: ["undefined"] }   # as in a prediction: runs this question's own `code`, so
+      verify: { logs: ["undefined"] }   # as in a prediction (also `runtime: isolated-node`): runs this question's own `code`, so
                                   #   verify needs `code` on the same question (never inside `answer`)
       answer: { … }               # same shapes as prediction
       explanation: { uk, en }

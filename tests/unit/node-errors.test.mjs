@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { isLearnerSyntaxError, isModuleLinkMessage, nodeRunRequest, parseUncaughtError, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
+import { isLearnerSyntaxError, isModuleLinkMessage, nodeOutputLines, nodeRunRequest, parseUncaughtError, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
 
 let dir;
 before(() => {
@@ -101,4 +101,20 @@ test('a block becomes the executor request: capabilities one to one, checks with
   assert.deepEqual(nodeRunRequest(block, { 'index.js': '' }, { mode: 'run', lang: 'en' }), { files: { 'index.js': '' }, entry: 'index.js', mode: 'run', capabilities: { network: 'loopback', workers: false }, timeoutMs: 5000 });
   assert.deepEqual(nodeRunRequest(block, { 'index.js': '' }, { mode: 'test', lang: 'en' }), { files: { 'index.js': '' }, entry: 'index.js', mode: 'test', capabilities: { network: 'loopback', workers: false }, timeoutMs: 5000, tests: { path: '__tests__.js', source: 'test("x", () => {});', timeoutMs: 3000 }, strings: { lamp: 'Lamp' } });
   assert.deepEqual(nodeRunRequest({ entry: 'a.js' }, {}, {}).capabilities, { network: 'none', workers: false });
+});
+
+test('the output of a run without Node\'s report of the uncaught error: what a Node prediction is checked against', () => {
+  const lines = (name, source) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, source);
+    const r = spawnSync(process.execPath, [file], { cwd: dir, encoding: 'utf8', env: { NO_COLOR: '1' } });
+    const out = nodeOutputLines([{ stream: 'stdout', data: r.stdout }, { stream: 'stderr', data: r.stderr }], dir);
+    return [out.lines, out.error && out.error.name];
+  };
+  assert.deepEqual(lines('ok.js', 'console.log("a"); console.log("b");\n'), [['a', 'b'], null]);
+  assert.deepEqual(lines('top.js', 'console.log("a");\nconsole.error("warned");\nthrow new TypeError("bad");\n'), [['a', 'warned'], 'TypeError']);
+  assert.deepEqual(lines('later.js', 'console.log("a");\nsetTimeout(() => { null.x; }, 1);\n'), [['a'], 'TypeError']);
+  assert.deepEqual(lines('syn.js', 'console.log("a")\nconst = 1;\n'), [[], 'SyntaxError']);
+  assert.deepEqual(lines('rej.js', 'console.log("a");\nawait Promise.reject(new RangeError("no"));\n'), [['a'], 'RangeError']);
+  assert.deepEqual(lines('text.js', 'console.error("Error: only text");\n'), [['Error: only text'], null], 'an error-looking line is output, not a report');
 });

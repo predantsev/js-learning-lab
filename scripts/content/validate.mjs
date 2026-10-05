@@ -28,7 +28,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { ROOT } from '../../server/config.mjs';
 import { consoleLines, localizeFiles, localizeText, runInputForBlock } from '../../shared/exercise.js';
-import { NODE_RUN_PATH, isLearnerSyntaxError, isModuleLinkMessage, nodeRunRequest, parseUncaughtError, readNdjson, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
+import { NODE_RUN_PATH, isLearnerSyntaxError, isModuleLinkMessage, nodeOutputLines, nodeQuestionRequest, nodeRunRequest, parseUncaughtError, readNdjson, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
 import { unitOfLesson } from '../../shared/content-schema.js';
 import { localeArg, localeOptions } from './browser-locale.mjs';
 import { CONTENT_DIR, buildContent, exerciseFileSets } from './lib.mjs';
@@ -162,11 +162,11 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
       const data = await response.json().catch(() => ({}));
       return { failure: `the executor refused the run: HTTP ${response.status} ${data.error ?? ''} ${data.message ?? ''}`.trim() };
     }
-    const r = { start: null, stdout: '', stderr: '', tests: null, exit: null };
+    const r = { start: null, stdout: '', stderr: '', chunks: [], tests: null, exit: null };
     await readNdjson(response.body, (event) => {
       if (event.type === 'start') r.start = event;
-      else if (event.type === 'stdout') r.stdout += event.data;
-      else if (event.type === 'stderr') r.stderr += event.data;
+      else if (event.type === 'stdout') { r.stdout += event.data; r.chunks.push({ stream: 'stdout', data: event.data }); }
+      else if (event.type === 'stderr') { r.stderr += event.data; r.chunks.push({ stream: 'stderr', data: event.data }); }
       else if (event.type === 'tests') r.tests = event;
       else if (event.type === 'exit') r.exit = event;
     });
@@ -261,8 +261,27 @@ if (!flag('--static') && (lessons.length > 0 || capstoneSteps.length > 0)) {
         for (const item of items) {
           if (!item.verify || typeof item.code !== 'string') continue;
           for (const lang of block.strings ? ['uk', 'en'] : ['uk']) {
-            executed.predictions += 1;
             const expected = item.verify.logs.map((l) => localizeText(String(l), block, lang));
+            const label = `prediction "${item.id ?? block.id}" (${lang}${item.runtime === 'isolated-node' ? ', isolated-node' : ''})`;
+            if (item.runtime === 'isolated-node') {
+              // Real Node.js through the executor: the lines printed (stdout and stderr in order,
+              // without Node's report of an uncaught error) and the name of that error.
+              if (!nodeFeature.available) { nodeUnverified(item === block ? where : `${where} › ${item.id}`); continue; }
+              executed.predictions += 1;
+              const r = await runNode(nodeQuestionRequest(item, localizeText(item.code, block, lang)));
+              if (r.failure) {
+                trace(where, `✖ ${label}: ${r.failure}`);
+                error(where, `${label}: ${r.failure}`);
+                continue;
+              }
+              const { lines, error: thrown } = nodeOutputLines(r.chunks, r.start?.cwd);
+              const ok = JSON.stringify(lines) === JSON.stringify(expected) && (item.verify.error ?? null) === (thrown?.name ?? null);
+              trace(where, `${ok ? '✔' : '✖'} ${label}: prints ${oneLine(JSON.stringify(lines))}${thrown ? `, throws ${thrown.name}` : ''}`);
+              if (JSON.stringify(lines) !== JSON.stringify(expected)) error(where, `${label}: real output ${JSON.stringify(lines)} differs from verify.logs ${JSON.stringify(expected)}`);
+              if ((item.verify.error ?? null) !== (thrown?.name ?? null)) error(where, `${label}: ${thrown ? `code throws ${thrown.name}` : 'code does not throw'} but verify.error is ${JSON.stringify(item.verify.error ?? null)}`);
+              continue;
+            }
+            executed.predictions += 1;
             const r = await run({ files: { 'index.js': localizeText(item.code, block, lang) }, entry: 'index.js', runtime: 'browser-js', options: {} });
             const failure = describeFailure(r);
             const expectErrors = item.verify.error ?? null;

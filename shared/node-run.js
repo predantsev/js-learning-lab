@@ -27,6 +27,49 @@ export function nodeRunRequest(block, files, { mode = 'run', lang = 'uk' } = {})
   return body;
 }
 
+/**
+ * Request body for a prediction or review question with `runtime: isolated-node`: its `code` (already
+ * in the lesson language) runs as `index.js` in run mode, with the question's capabilities.
+ */
+export function nodeQuestionRequest(question, code) {
+  return nodeRunRequest({ entry: 'index.js', capabilities: question.capabilities }, { 'index.js': code }, { mode: 'run' });
+}
+
+/**
+ * What a run printed, as console lines in the order they were printed (stdout and stderr together),
+ * without Node's report of an uncaught error at the end, plus that error (parseUncaughtError) or
+ * null. `chunks`: [{ stream: 'stdout' | 'stderr', data }] in event order. This is what a Node
+ * prediction's `verify: { logs, error }` is compared with.
+ */
+export function nodeOutputLines(chunks, cwd) {
+  const stderr = chunks.filter((c) => c.stream === 'stderr').map((c) => c.data).join('');
+  const error = parseUncaughtError(stderr, cwd);
+  // Node writes the report last; it starts at the location block when there is one, else at the
+  // "Name: message" line (the first line of error.stack).
+  let reportAt = stderr.length;
+  if (error) {
+    const header = String(stderr.slice(0, TRAILER.exec(stderr).index)).lastIndexOf(`\n${error.name}`) + 1;
+    let start = header;
+    const before = stderr.slice(0, Math.max(0, header - 1)).split('\n');
+    // "<file>:<line>" / source line / caret / blank line above the header.
+    if (before.length >= 4 && before[before.length - 1].trim() === '' && CARET_LINE.test(before[before.length - 2]) && LOCATION_LINE.test(before[before.length - 4])) start = before.slice(0, -4).join('\n').length + (before.length > 4 ? 1 : 0);
+    else if (header === 0 || stderr.startsWith(error.name)) start = header;
+    reportAt = Math.max(0, start);
+  }
+  let text = '';
+  let seenErr = 0;
+  for (const c of chunks) {
+    if (c.stream === 'stderr') {
+      const keep = Math.max(0, Math.min(c.data.length, reportAt - seenErr));
+      text += c.data.slice(0, keep);
+      seenErr += c.data.length;
+    } else text += c.data;
+  }
+  const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  return { lines, error };
+}
+
 /** Read an NDJSON body (a WHATWG ReadableStream of bytes, in browsers and in Node) event by event. */
 export async function readNdjson(body, onEvent) {
   const reader = body.getReader();

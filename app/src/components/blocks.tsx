@@ -11,6 +11,7 @@ import { useStore } from '../lib/store';
 import type { AnalogyBlock, Block, ConsoleEntry, ExampleBlock, ExerciseBlock, ExplanationBlock, Lang, Lesson, LocalTaskBlock, Question, ReviewBlock, TransferBlock, VisualBlock } from '../lib/types';
 import { app, blockLang, toggleBlockLang, useActiveCapstone, useLang, useT } from '../state/app';
 import { CodeEditor } from './CodeEditor';
+import { runNodeQuestion } from './useNodeRunner';
 import { Dialog, Html, Icon, announce } from './ui';
 
 // The visual player is developed as its own module; the lesson still works (with the full
@@ -157,7 +158,14 @@ export function QuestionView({ question, lang, answered, onAnswer, idPrefix }: Q
     announce(t(correct ? 'q.correct' : 'q.incorrect'));
   };
   const runCode = async () => {
-    if (!question.code || !hiddenHost.current) return;
+    if (!question.code) return;
+    if (question.runtime === 'isolated-node') {
+      // Real Node.js on this computer, through the local executor (useNodeRunner.ts).
+      const r = await runNodeQuestion(question, question.code[lang]);
+      setOutput('failure' in r ? { lines: [], error: t(r.failure.key, r.failure.params) } : { lines: r.lines, error: r.error === 'timeout' ? t('ws.node.timeout', { s: Math.round(Number(question.capabilities?.timeoutMs ?? 10_000) / 1000) }) : r.error });
+      return;
+    }
+    if (!hiddenHost.current) return;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const sandboxOrigin = sandboxOriginFor(boot.port);
       const prepared = prepareRun({ files: { 'index.js': question.code[lang] }, entry: 'index.js', runtime: 'browser-js', sandboxOrigin, lang });

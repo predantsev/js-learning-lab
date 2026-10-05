@@ -26,7 +26,7 @@ export type Answer =
   | { type: 'choice' | 'multi'; options: AnswerOption[]; correct: string[] }
   | { type: 'text'; accept: Record<Lang, string[]>; caseSensitive?: boolean; placeholder?: L10n }
   | { type: 'order'; items: AnswerOption[] };
-export interface Question { id?: string; prompt: L10n; code?: L10n; codeHtml?: L10n; answer: Answer; explanation: L10n; from?: string; runnable?: boolean }
+export interface Question { id?: string; prompt: L10n; code?: L10n; codeHtml?: L10n; answer: Answer; explanation: L10n; from?: string; runnable?: boolean; runtime?: 'browser-js' | 'isolated-node'; capabilities?: Record<string, unknown> }
 
 interface BlockBase { id: string; kind: BlockKind; title?: L10n }
 export interface ExplanationBlock extends BlockBase { kind: 'explanation'; title: L10n; body: L10n }

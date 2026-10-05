@@ -215,6 +215,7 @@ export const en: Dict = {
   'ws.node.workspaceLimit': 'The program wrote too much into the exercise folder, so the process was stopped. Your code is unchanged.',
   'ws.node.crashed': 'Node.js ended the program abnormally ({signal}) — most often it ran out of memory. Your code is unchanged.',
   'ws.node.spawnFailed': 'Node.js could not be started: {detail}. Your code is saved.',
+  'ws.node.unavailableShort': 'Real Node.js is not available on this computer, so this code cannot run here.',
   'ws.node.busy': 'Two Node.js programs are already running (perhaps in another tab). Stop one of them or wait, then run again. Your code is unchanged.',
   'ws.node.disconnected': 'The connection to the local server was lost, so the program was stopped. Check that the platform is running and run again. Your code is saved.',
   'ws.node.unreachable': 'The local server does not answer, so the program did not start. Check that the platform is running and try again. Your code is saved.',

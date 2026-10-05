@@ -105,8 +105,20 @@ export function glossaryRefs(value) {
   return refs;
 }
 
-function checkPredictionItem(issues, item, path) {
+/** Runtimes a prediction or review question can run its `code` in ("Run and check", validator). */
+export const QUESTION_RUNTIMES = ['browser-js', 'isolated-node'];
+
+function checkPredictionItem(issues, item, path, stage = null) {
   checkLocalized(issues, item.prompt, `${path}.prompt`);
+  if (item.runtime !== undefined) {
+    if (!QUESTION_RUNTIMES.includes(item.runtime)) issues.add(`${path}.runtime`, `must be one of ${QUESTION_RUNTIMES.join(', ')} (the default is browser-js)`);
+    else if (stage && STAGE_RUNTIMES[stage] && !STAGE_RUNTIMES[stage].includes(item.runtime)) issues.add(`${path}.runtime`, `runtime ${item.runtime} is not honest for stage ${stage} (allowed: ${STAGE_RUNTIMES[stage].join(', ')}; content/README.md, "Runtimes")`);
+    if (item.runtime === 'isolated-node' && !nonEmpty(item.code)) issues.add(`${path}.runtime`, 'a question runs its own "code" field: add the code, or remove runtime');
+  }
+  if (item.capabilities !== undefined) {
+    if (item.runtime !== 'isolated-node') issues.add(`${path}.capabilities`, 'capabilities belong to a question with runtime: isolated-node');
+    else checkNodeCapabilities(issues, item.capabilities, `${path}.capabilities`);
+  }
   checkLocalized(issues, item.explanation, `${path}.explanation`);
   if (item.code !== undefined && !nonEmpty(item.code)) issues.add(`${path}.code`, 'must be a non-empty string when present');
   const answer = item.answer;
@@ -201,13 +213,13 @@ function checkBlock(issues, block, lesson, ctx) {
       if (!isPlainObject(block.spec)) issues.add(`${p}.spec`, 'missing visual spec');
       break;
     case 'prediction':
-      checkPredictionItem(issues, block, p);
+      checkPredictionItem(issues, block, p, stage);
       break;
     case 'review':
       checkLocalized(issues, block.title, `${p}.title`);
       if (!Array.isArray(block.items) || block.items.length === 0) issues.add(`${p}.items`, 'a review block needs at least one question');
       for (const [i, item] of (block.items ?? []).entries()) {
-        checkPredictionItem(issues, item, `${p}.items[${i}]`);
+        checkPredictionItem(issues, item, `${p}.items[${i}]`, stage);
         if (item.strings !== undefined) issues.add(`${p}.items[${i}].strings`, 'put strings on the review block: its questions share one table');
         const itemIdProblem = idProblem(item.id);
         if (itemIdProblem) issues.add(`${p}.items[${i}].id`, itemIdProblem);

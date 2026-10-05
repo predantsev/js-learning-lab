@@ -301,6 +301,24 @@ test('a program that throws while loading: one error card and one line instead o
   }
 });
 
+test('a Node prediction: "Run and check" runs its code in real Node.js and shows the real order', async () => {
+  const lab = await Lab.start({ distDir });
+  try {
+    const { page, problems, context } = await openNode(lab, 1);
+    const block = page.locator('#block-node-order');
+    await block.waitFor();
+    await block.getByRole('button', { name: t('uk', 'q.submit') }).click();
+    await block.getByRole('button', { name: t('uk', 'q.run') }).click();
+    const output = block.locator('.real-output pre');
+    await output.waitFor({ timeout: 20_000 });
+    assert.equal(await output.innerText(), 'sync\npromise\nnextTick\ntimeout');
+    assert.deepEqual(problems, []);
+    await context.close();
+  } finally {
+    await lab.dispose();
+  }
+});
+
 test('checks that cannot start show the error with its authored feedback, once (Node)', async () => {
   const lab = await Lab.start({ distDir });
   try {
@@ -472,12 +490,13 @@ function validate(args, env = {}) {
 test('the content validator executes the Node fixtures for real, and reports them UNVERIFIED (an error with --release) when the executor is unavailable', async () => {
   const real = await validate(['--lesson', NODE_LESSON]);
   assert.equal(real.code, 0, real.output);
-  // example ×2 languages + (starter, solution, alt, wrong, wrong-no-type) ×2 languages
-  assert.match(real.output, /CONTENT VALID: 1 lesson\(s\), 0 example run\(s\), 0 exercise fixture run\(s\), 0 verified prediction\(s\), 12 isolated-node run\(s\),/);
+  // example ×2 languages + (starter, solution, alt, wrong, wrong-no-type) ×2 languages + the Node prediction
+  assert.match(real.output, /CONTENT VALID: 1 lesson\(s\), 0 example run\(s\), 0 exercise fixture run\(s\), 1 verified prediction\(s\), 13 isolated-node run\(s\),/);
 
   const off = await validate(['--lesson', NODE_LESSON], { JSLL_NODE_RUNNER: 'off' });
   assert.equal(off.code, 0, off.output);
-  assert.match(off.output, /CONTENT UNVERIFIED: .*0 isolated-node run\(s\) \(2 isolated-node block\(s\) UNVERIFIED: executor unavailable\)/);
+  assert.match(off.output, /CONTENT UNVERIFIED: .*0 isolated-node run\(s\) \(3 isolated-node block\(s\) UNVERIFIED: executor unavailable\)/);
+  assert.match(off.output, /· no-01-01-fixture-node › node-order — UNVERIFIED/);
   assert.match(off.output, /· no-01-01-fixture-node › node-notes — UNVERIFIED: the isolated Node executor is not available/);
   assert.doesNotMatch(off.output, /CONTENT VALID/);
 

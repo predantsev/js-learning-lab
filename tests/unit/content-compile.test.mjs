@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import path from 'node:path';
 import * as visuals from '../../shared/visuals/index.js';
-import { STAGE_REQUIRED_RUNTIMES, STAGE_RUNTIMES } from '../../shared/content-schema.js';
+import { STAGE_REQUIRED_RUNTIMES, STAGE_RUNTIMES, validateLessonSource } from '../../shared/content-schema.js';
 import { CONTENT_DIR, compileLesson, createMarkdown, gitIgnoredLessonFiles, glossaryLinkProblems, staticIssuesForLesson } from '../../scripts/content/lib.mjs';
 
 const md = createMarkdown(new Map([['closure', { id: 'closure', term: 'closure' }]]));
@@ -44,6 +44,17 @@ test('%%key%% placeholders are resolved in every prose field of an exercise, per
   assert.doesNotMatch(JSON.stringify(prose), /%%(total|lamp)%%/);
   // The code files keep their placeholders: they are localized when the learner's language is known.
   assert.equal(b.files['index.js'], 'console.log("%%lamp%%");\n');
+});
+
+test('a question can run in isolated-node where the stage allows it, with its own capabilities', () => {
+  const question = (extra) => ({ id: 'order', kind: 'prediction', prompt: pair('П'), code: 'console.log(1);', verify: { logs: ['1'] }, answer: { type: 'text', accept: ['1'] }, explanation: pair('Е'), ...extra });
+  const issues = (id, block) => validateLessonSource({ ...lessonWith([block]).source, id, unit: id.slice(0, 5).toUpperCase() }).list.map((i) => `${i.path}: ${i.message}`);
+  assert.deepEqual(issues('no-01-09-sample', question({ runtime: 'isolated-node', capabilities: { network: 'loopback' } })), []);
+  assert.match(issues('js-01-09-sample', question({ runtime: 'isolated-node' })).join('\n'), /runtime isolated-node is not honest for stage JS/);
+  assert.match(issues('no-01-09-sample', question({ runtime: 'node' })).join('\n'), /runtime: must be one of browser-js, isolated-node/);
+  assert.match(issues('no-01-09-sample', question({ capabilities: { network: 'loopback' } })).join('\n'), /capabilities belong to a question with runtime: isolated-node/);
+  assert.match(issues('no-01-09-sample', question({ runtime: 'isolated-node', capabilities: { network: 'internet' } })).join('\n'), /must be "none" \(default\) or "loopback"/);
+  assert.match(issues('no-01-09-sample', question({ runtime: 'isolated-node', code: undefined, verify: undefined })).join('\n'), /runs its own "code" field/);
 });
 
 test('%%key%% placeholders are resolved in every text of a local task: confirmed items and commands too', async () => {

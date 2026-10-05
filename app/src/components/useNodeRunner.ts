@@ -4,7 +4,7 @@
 // tests.js through the server harness. Every outcome keeps the learner's code and says plainly what
 // happened: time limit, output limit, busy, lost connection, unavailable (REQ-022, REQ-023, REQ-032).
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { NODE_RUN_PATH, NODE_STOP_PATH, isLearnerSyntaxError, isModuleLinkMessage, nodeRunRequest, parseUncaughtError, testsOutcome, workspaceShortener } from '@shared/node-run.js';
+import { NODE_RUN_PATH, NODE_STOP_PATH, isLearnerSyntaxError, isModuleLinkMessage, nodeOutputLines, nodeQuestionRequest, nodeRunRequest, parseUncaughtError, testsOutcome, workspaceShortener } from '@shared/node-run.js';
 import { api, boot } from '../lib/api';
 import type { Key } from '../lib/i18n';
 import type { ConsoleEntry, RunError, TestResult } from '../lib/types';
@@ -93,6 +93,29 @@ function streamRun(body: unknown, onEvent: (event: { type: string; [k: string]: 
     xhr.onabort = settle;
     xhr.send(JSON.stringify(body));
   });
+}
+
+/**
+ * "Run and check" of a prediction or review question with `runtime: isolated-node`: its code runs as
+ * index.js in real Node.js; the lines it printed (without Node's report of an uncaught error) and
+ * that error, or a sentence that says why nothing ran. The same rule the validator checks with.
+ */
+export async function runNodeQuestion(question: { capabilities?: unknown }, code: string): Promise<{ lines: string[]; error: string | null } | { failure: NodeNotice }> {
+  if (!nodeFeature().available) return { failure: { key: 'ws.node.unavailableShort' } };
+  const chunks: { stream: 'stdout' | 'stderr'; data: string }[] = [];
+  let cwd = '';
+  let exit: { reason?: string } | null = null;
+  const response = await streamRun(nodeQuestionRequest(question, code), (event) => {
+    if (event.type === 'start') cwd = String(event.cwd ?? '');
+    else if (event.type === 'stdout' || event.type === 'stderr') chunks.push({ stream: event.type, data: String(event.data ?? '') });
+    else if (event.type === 'exit') exit = event as { reason?: string };
+  });
+  if (response.kind === 'refused') return { failure: response.status === 0 ? { key: 'ws.node.unreachable' } : response.status === 429 ? { key: 'ws.node.busy' } : { key: 'ws.node.serverError', params: { detail: `HTTP ${response.status}` } } };
+  const ended = exit as { reason?: string } | null;
+  if (!ended) return { failure: { key: 'ws.node.disconnected' } };
+  const { lines, error } = nodeOutputLines(chunks, cwd) as { lines: string[]; error: { name: string; message: string } | null };
+  if (ended.reason === 'timeout') return { lines, error: 'timeout' };
+  return { lines, error: error ? `${error.name}: ${error.message}` : null };
 }
 
 const initial: NodeRunState = { status: 'idle', mode: null, console: [], errors: [], compileErrors: [], tests: null, harnessError: null, unresponsive: false, failure: null, runCount: 0, live: false, trace: null, notice: null };
