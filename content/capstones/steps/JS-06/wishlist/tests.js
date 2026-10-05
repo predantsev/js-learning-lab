@@ -108,6 +108,20 @@ test('a wish without a price shows the no-price text, and a name with markup sta
   expect(list().querySelector('b'), 'a <b> element made from the name').toBeNull();
 });
 
+test('a new wish keeps its category and the acquired box', async () => {
+  const before = cards().length;
+  await setValue(field(L.nameLabel), 'Garden chair');
+  await setValue(field(L.valueLabel), '60');
+  await setValue(field(L.categoryFieldLabel), 'Outdoor');
+  await user.check(field(L.acquiredFieldLabel), true);
+  await user.submit(form());
+  expect(cards().length, 'the number of cards after adding a wish with a category and the acquired box ticked').toBe(before + 1);
+  const added = cards().find((node) => inOrder(node.textContent, 'Garden chair'));
+  expect(added, 'a card with "Garden chair"').toBeTruthy();
+  expect(inOrder(added.textContent, 'Outdoor'), 'the category "Outdoor" in that card').toBe(true);
+  expect(inOrder(added.textContent, L.acquiredMark), `the mark "${L.acquiredMark}" in that card`).toBe(true);
+});
+
 test('Edit fills the form and saving changes only that wish', async () => {
   const before = cards().length;
   await user.click(buttonIn(card('w-02'), L.editLabel));
