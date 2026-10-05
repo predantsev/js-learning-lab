@@ -84,6 +84,11 @@ const INVALID_RECORD = [
   saved([...savedSample(), { id: 'e-09', amountMinor: 500, date: '2026-03-01', category: 'food' }]),
   saved([{ id: 'e-10', label: L.fixture1Name, amountMinor: 845.5, date: '2026-03-01', category: 'food' }]),
   saved([{ id: 'e-11', label: L.fixture1Name, amountMinor: 84550, date: '2026-03-01', category: 'travel' }]),
+  // Every damage the task names: a record that is not an object, an id that is not text, and the
+  // type rule of the variant's own field.
+  saved([...savedSample(), null]),
+  saved([{ ...savedSample()[1], id: 12 }]),
+  saved([{ ...savedSample()[1], date: 20260301 }]),
 ];
 const short = (text) => (text.length > 60 ? text.slice(0, 57) + '…' : text);
 
@@ -161,6 +166,14 @@ test('a change on the page is saved with schemaVersion 1', async () => {
   const afterDelete = savedValue();
   expect(afterDelete?.records?.map((record) => record.id).includes('e-03'), 'e-03 among the saved records after its confirmed delete').toBe(false);
   expect(afterDelete?.records?.length, 'the number of saved records after the delete').toBe(6);
+});
+
+test('an edit on the page is saved', async () => {
+  await user.click(buttonIn(card('e-02'), L.editLabel));
+  await setValue(field(L.nameLabel), 'Edited on the page');
+  await user.submit(form());
+  const record = savedValue()?.records?.find((one) => one.id === 'e-02');
+  expect(record?.label, `the saved label of e-02 after editing it on the page`).toBe('Edited on the page');
 });
 
 test('loadExpenses reads valid saved expenses', async () => {
@@ -242,6 +255,9 @@ test('an expense added after a restart gets an id no other expense has', async (
   expect(ids.length, 'the number of saved records after adding an expense to e-02, e-7 and e-8').toBe(4);
   expect(new Set(ids).size, `different ids among the saved ids ${JSON.stringify(ids)}`).toBe(ids.length);
   expect(cards().length, 'the number of cards after that').toBe(4);
+  const nameField = field(L.nameLabel);
+  const message = (nameField?.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean).map((id) => document.getElementById(id)?.textContent ?? '').join(' ').trim();
+  expect(message, 'the message next to the name field after a valid add (a second submit handler, added by a second start, sees the cleared form)').toBe('');
 });
 
 test('expenses stays the starting list', async () => {
