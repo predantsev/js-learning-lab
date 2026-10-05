@@ -69,6 +69,11 @@ test('.resolves and .rejects await the promise', async () => {
   await expect(Promise.resolve(3)).resolves.toBe(3);
   await expect(Promise.reject(new TypeError('no'))).rejects.toBeInstanceOf(TypeError);
   await assert.rejects(expect(Promise.resolve(1)).rejects.toBe(1), /expected the promise to reject, but it resolved/);
+  // .rejects.toThrow checks the rejection reason as a thrown error, as in Jest.
+  await expect(Promise.reject(new TypeError('no item'))).rejects.toThrow(TypeError);
+  await expect(Promise.reject(new Error('no item here'))).rejects.toThrow('no item');
+  await expect(Promise.reject(new Error('no item'))).rejects.toThrow(/^no/);
+  await assert.rejects(expect(Promise.reject(new Error('other'))).rejects.toThrow('no item'), AssertionError);
 });
 
 test('spies record calls and results; waitFor polls until true', async () => {

@@ -247,7 +247,7 @@ test('behavior tests see top-level bindings, console output, DOM events and asyn
       expect(screen.$('#name')).toHaveValue('');
     });
     test('fails with a readable message', () => { expect(scope.items).toHaveLength(5); });
-    test('async assertions', async () => { await sleep(20); await expect(Promise.resolve(3)).resolves.toBe(3); });
+    test('async assertions', async () => { await sleep(20); await expect(Promise.resolve(3)).resolves.toBe(3); await expect(Promise.reject(new TypeError('no item'))).rejects.toThrow(TypeError); await expect(Promise.reject(new Error('no item'))).rejects.toThrow('no item'); });
     test('times out', async () => { await sleep(100000); });
   `;
   const r = await run({ entry: 'index.html', files, tests: { path: '__tests__.js', source: tests }, options: { testTimeoutMs: 400 } });
