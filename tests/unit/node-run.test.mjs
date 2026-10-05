@@ -549,6 +549,62 @@ test("tmp() is inside the exercise", async () => { expect(tmp("data/a.json").sta
     assert.deepEqual(r.tests.results.map((x) => [x.name, x.status, x.message]), [['baseline is empty', 'pass', undefined], ['an open server is visible', 'pass', undefined], ['tmp() is inside the exercise', 'pass', undefined]]);
   });
 
+  test('openHandles() lists the FileHandles learner code keeps open, also ones opened while the entry loads', async () => {
+    const r = await testRun({
+      entry: 'index.js',
+      files: {
+        // A FileHandle leaked while the program loads, kept by nobody: it stays open and listed.
+        'index.js': 'import { open } from "node:fs/promises";\nawait open("./data.txt", "w");\n',
+        'reader.js': 'import fs from "node:fs/promises";\nexport async function readFirst() { const h = await fs.open("./data.txt"); const { bytesRead } = await h.read(Buffer.alloc(4), 0, 4, 0); return { h, bytesRead }; }\n',
+      },
+      tests: {
+        path: 'handles.test.js',
+        source: `import { readFirst } from "./reader.js";
+test("the loading leak is listed", () => { expect(openHandles()).toEqual([{ type: "FileHandle", fd: openHandles()[0].fd, path: "data.txt", flags: "w" }]); });
+test("a handle a check opens is listed until it is closed", async () => {
+  const { h } = await readFirst();
+  expect(openHandles().map((x) => x.flags)).toEqual(["w", "r"]);
+  await h.close();
+  expect(openHandles().map((x) => x.flags)).toEqual(["w"]);
+});
+test("activeResources() still does not show FileHandles", async () => { await waitFor(() => activeResources().length === 0); expect(openHandles()).toHaveLength(1); });`,
+      },
+    });
+    assert.deepEqual(r.tests.results.map((x) => [x.name, x.status, x.message]), [['the loading leak is listed', 'pass', undefined], ['a handle a check opens is listed until it is closed', 'pass', undefined], ['activeResources() still does not show FileHandles', 'pass', undefined]], JSON.stringify(r.tests));
+  });
+
+  test('request(): its own timeout; listen() on ::1 too, so checks see two client addresses', async () => {
+    const r = await testRun({
+      capabilities: { network: 'loopback' },
+      files: { 'x.js': 'export {};' },
+      tests: {
+        path: 'request.test.js',
+        source: `import http from "node:http";
+const app = () => http.createServer((req, res) => { if (req.url === "/slow") return; res.end(req.socket.remoteAddress); });
+test("an answer that never comes fails after timeoutMs", async () => {
+  const base = await listen(app());
+  const started = Date.now();
+  await expect(request(base + "/slow", { timeoutMs: 200 })).rejects.toThrow("no complete answer from " + base + "/slow within 200 ms");
+  await expect(request(base + "/slow", { timeoutMs: 50 })).rejects.toHaveProperty("name", "TimeoutError");
+  expect(Date.now() - started).toBeLessThan(2000);
+});
+test("a bad timeoutMs is refused", async () => { await expect(request("http://127.0.0.1:1/", { timeoutMs: 0 })).rejects.toBeInstanceOf(TypeError); });
+test("one server, two loopback addresses, two client addresses", async () => {
+  const server = app();
+  const v4 = await listen(server);
+  const v6 = await listen(server, "::1");
+  expect(v6.startsWith("http://[::1]:")).toBe(true);
+  expect(await listen(server, "::1")).toBe(v6);
+  expect((await request(v4 + "/")).text).toBe("127.0.0.1");
+  expect((await request(v6 + "/")).text).toBe("::1");
+  expect((await request(v4 + "/", { localAddress: "127.0.0.1" })).text).toBe("127.0.0.1");
+});`,
+      },
+    });
+    assert.deepEqual(r.tests.results.map((x) => [x.name, x.status, x.message]), [['an answer that never comes fails after timeoutMs', 'pass', undefined], ['a bad timeoutMs is refused', 'pass', undefined], ['one server, two loopback addresses, two client addresses', 'pass', undefined]], JSON.stringify(r.tests));
+    assert.equal(r.exit.code, 0, 'every server (and the extra address) is closed after the last test');
+  });
+
   test('an error thrown by a request handler fails the running test at once; errors while loading are marked "load"', async () => {
     const r = await testRun({
       capabilities: { network: 'loopback' },

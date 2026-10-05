@@ -9,6 +9,8 @@
 // result is self-assessment, not a security decision.
 import fs from 'node:fs';
 import http from 'node:http';
+import nodeModule from 'node:module';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { AssertionError, expect, show, sleep, spy, waitFor } from './expect.mjs';
@@ -153,26 +155,54 @@ function activeResources() {
   return out;
 }
 
+const urlOf = (address) => `http://${address.family === 'IPv6' || address.family === 6 ? `[${address.address}]` : address.address}:${address.port}`;
+const listenOn = (server, host) => new Promise((resolve, reject) => {
+  const onError = (error) => reject(error);
+  server.once('error', onError);
+  server.listen(0, host, () => {
+    server.off('error', onError);
+    resolve();
+  });
+});
+// Extra addresses of a server that already listens: host → the forwarding net.Server.
+const extraAddresses = new WeakMap();
+
+/**
+ * Start `server` on a free port of `host` and return its URL. Called again for the same server with
+ * another loopback host (`'::1'`), it opens that address too, for the same server: requests to the
+ * two URLs arrive from different client addresses (127.0.0.1 and ::1), which is how a check tells a
+ * per-address limit from a per-account one.
+ */
 async function listen(server, host = '127.0.0.1') {
   if (!server || typeof server.listen !== 'function' || typeof server.address !== 'function') throw new TypeError('listen(server) expects an http.Server or net.Server');
-  if (!server.listening) {
-    await new Promise((resolve, reject) => {
-      const onError = (error) => reject(error);
-      server.once('error', onError);
-      server.listen(0, host, () => {
-        server.off('error', onError);
-        resolve();
-      });
-    });
-  }
   listened.add(server);
-  const address = server.address();
-  const shownHost = address.family === 'IPv6' || address.family === 6 ? `[${address.address}]` : address.address;
-  return `http://${shownHost}:${address.port}`;
+  if (!server.listening) {
+    await listenOn(server, host);
+    return urlOf(server.address());
+  }
+  const own = server.address();
+  if (own.address === host || host === 'localhost') return urlOf(own);
+  const extra = extraAddresses.get(server) ?? new Map();
+  extraAddresses.set(server, extra);
+  if (!extra.has(host)) {
+    // A connection accepted on the other address is handed to the same server.
+    const door = net.createServer((socket) => server.emit('connection', socket));
+    await listenOn(door, host);
+    extra.set(host, door);
+    listened.add(door);
+  }
+  return urlOf(extra.get(host).address());
 }
 
-/** HTTP request without connection pooling (so it never leaves sockets behind for leak checks). */
+/**
+ * HTTP request without connection pooling (so it never leaves sockets behind for leak checks).
+ * `timeoutMs`: give up when no complete answer arrived in time (a TimeoutError naming the URL),
+ * instead of waiting for the check's own limit. `localAddress`: the client address to send from;
+ * only addresses this computer has (on macOS only 127.0.0.1 and ::1; see listen() for ::1).
+ */
 function request(url, init = {}) {
+  const ms = init.timeoutMs === undefined ? null : Number(init.timeoutMs);
+  if (ms !== null && !(ms > 0)) return Promise.reject(new TypeError(`request(): timeoutMs must be a positive number of milliseconds, got ${show(init.timeoutMs)}`));
   return new Promise((resolve, reject) => {
     const headers = { ...(init.headers ?? {}) };
     let body = init.body;
@@ -180,10 +210,17 @@ function request(url, init = {}) {
       body = stringify(body);
       if (!Object.keys(headers).some((h) => h.toLowerCase() === 'content-type')) headers['content-type'] = 'application/json';
     }
-    const req = http.request(url, { method: init.method ?? 'GET', headers, agent: false }, (res) => {
+    const options = { method: init.method ?? 'GET', headers, agent: false };
+    if (init.localAddress !== undefined) options.localAddress = String(init.localAddress);
+    let timer = null;
+    const finish = (settle, value) => {
+      nativeClearTimeout(timer);
+      settle(value);
+    };
+    const req = http.request(url, options, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
-      res.on('error', reject);
+      res.on('error', (error) => finish(reject, error));
       res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
         let json;
@@ -192,13 +229,43 @@ function request(url, init = {}) {
         } catch {
           json = undefined;
         }
-        resolve({ status: res.statusCode, statusText: res.statusMessage, headers: { ...res.headers }, text, json });
+        finish(resolve, { status: res.statusCode, statusText: res.statusMessage, headers: { ...res.headers }, text, json });
       });
     });
-    req.on('error', reject);
+    req.on('error', (error) => finish(reject, error));
+    if (ms !== null) {
+      timer = nativeSetTimeout(() => req.destroy(Object.assign(new Error(`request(): no complete answer from ${url} within ${ms} ms`), { name: 'TimeoutError' })), ms);
+    }
     if (init.signal) init.signal.addEventListener('abort', () => req.destroy(init.signal.reason ?? new Error('aborted')), { once: true });
     req.end(body === undefined || body === null ? undefined : body);
   });
+}
+
+// ---------- FileHandles opened by learner code (openHandles) ----------
+// process.getActiveResourcesInfo() never lists FileHandles, and a FileHandle that nobody references
+// is closed by garbage collection — on Node 25 with an uncaught ERR_INVALID_STATE inside whatever
+// check runs then. Every FileHandle that fs.promises.open returns is kept here until it is closed:
+// it stays open (and visible to openHandles()) until the learner closes it or the process ends.
+const fileHandles = new Set();
+const nativeOpen = fs.promises.open;
+fs.promises.open = async function open(...args) {
+  const handle = await nativeOpen.apply(this, args);
+  const entry = { handle, path: String(args[0] instanceof URL ? fileURLToPath(args[0]) : args[0]), flags: args[1] ?? 'r' };
+  fileHandles.add(entry);
+  handle.once('close', () => fileHandles.delete(entry));
+  return handle;
+};
+nodeModule.syncBuiltinESMExports();
+
+/** FileHandles from fs.promises.open that are still open: [{ type: 'FileHandle', fd, path, flags }]. */
+function openHandles() {
+  const out = [];
+  for (const { handle, path: file, flags } of fileHandles) {
+    if (handle.fd === -1) continue;
+    const absolute = path.resolve(workspace, file);
+    out.push({ type: 'FileHandle', fd: handle.fd, path: absolute.startsWith(workspace + path.sep) ? path.relative(workspace, absolute).split(path.sep).join('/') : file, flags: String(flags) });
+  }
+  return out;
 }
 
 function tmp(name = '') {
@@ -229,6 +296,7 @@ const api = {
   listen,
   request,
   activeResources,
+  openHandles,
   tmp,
   loadError: () => loadFailure,
   L: strings,
