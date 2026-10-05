@@ -118,6 +118,7 @@ previous reference) fails at least one check; every test has a bilingual title; 
 ## Export
 
 "Export project" produces the learner's current files plus `jsll-manifest.json` (per-file SHA-256),
-a README in the workspace language, a zero-dependency `serve.mjs` with `package.json` (`npm start`),
+a README in the workspace language, a zero-dependency `serve.mjs` with `package.json` (`npm start`; it
+serves `.ts` files with their types removed by Node's `module.stripTypeScriptTypes`, as the platform runs them),
 `data/exported-storage.json` and `tools/restore-data.html`. Generated files never overwrite a learner
 file with the same name. Builder: `shared/project-export.js`.

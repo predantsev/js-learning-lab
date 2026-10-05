@@ -73,6 +73,7 @@ const TEXT = {
     filesTitle: 'Що в цій теці',
     filesLearner: 'Твої файли: {list}.',
     fileServe: '`{path}` — маленький локальний сервер без залежностей; працює лише на 127.0.0.1.',
+    fileServeTs: 'Браузер не виконує TypeScript, тож `{path}` віддає файли `.ts` без типів (їх прибирає сам Node.js, як і платформа). Коли браузер уперше попросить файл `.ts`, Node.js один раз виведе попередження `ExperimentalWarning`: так і має бути.',
     filePkg: '`{path}` — команда `npm start`.',
     fileManifest: '`{path}` — опис експорту: проєкт, мова, версія вмісту курсу і SHA-256 кожного файла.',
     fileData: '`{storage}` і `{restore}` — дані сховища та сторінка, що відновлює їх у браузері.',
@@ -94,6 +95,8 @@ const TEXT = {
     serveStop: 'Зупинити: Ctrl+C',
     servePortBusy: 'Порт {port} уже зайнятий. Зупини іншу програму або обери інший порт: npm start -- --port {next}',
     serveBadPort: 'Неправильний порт «{port}». Вкажи ціле число від 1 до 65535, наприклад: npm start -- --port 4301',
+    serveTsFailed: 'Не вдалося прибрати типи з {file}: {error}',
+    serveTsUnsupported: 'Цей Node.js не вміє прибирати типи TypeScript, тож {file} не можна віддати браузеру. Потрібен Node.js 22.13 або новіший.',
     restoreTitle: 'Відновлення збережених даних',
     restoreIntro: 'Ця сторінка переносить дані сховища (localStorage), збережені в платформі, у браузер для цієї адреси. Твоїх файлів вона не змінює.',
     restoreOrigin: 'Дані буде записано для адреси {origin}. Відкривай проєкт на тій самій адресі й порту, інакше браузер їх не побачить.',
@@ -136,6 +139,7 @@ const TEXT = {
     filesTitle: 'What is in this folder',
     filesLearner: 'Your files: {list}.',
     fileServe: '`{path}` — a tiny local server with no dependencies; it listens on 127.0.0.1 only.',
+    fileServeTs: 'Browsers do not run TypeScript, so `{path}` serves `.ts` files with their types removed (by Node.js itself, as in the platform). The first time the browser asks for a `.ts` file, Node.js prints an `ExperimentalWarning` once: that is expected.',
     filePkg: '`{path}` — the `npm start` command.',
     fileManifest: '`{path}` — what was exported: the project, language, course content version and the SHA-256 of every file.',
     fileData: '`{storage}` and `{restore}` — the saved storage data and the page that restores it in the browser.',
@@ -157,6 +161,8 @@ const TEXT = {
     serveStop: 'Stop with Ctrl+C',
     servePortBusy: 'Port {port} is already in use. Stop the other program or choose another port: npm start -- --port {next}',
     serveBadPort: 'Invalid port "{port}". Use a whole number from 1 to 65535, for example: npm start -- --port 4301',
+    serveTsFailed: 'Could not remove the types from {file}: {error}',
+    serveTsUnsupported: 'This Node.js cannot remove TypeScript types, so {file} cannot be served to the browser. Node.js 22.13 or newer is needed.',
     restoreTitle: 'Restore saved data',
     restoreIntro: 'This page copies the storage data (localStorage) saved in the platform into this browser for this address. It does not change your files.',
     restoreOrigin: 'The data will be written for {origin}. Open the project at the same address and port, otherwise the browser will not see it.',
@@ -199,6 +205,7 @@ export function serveScript(lang, { restorePath, port = DEFAULT_LOCAL_PORT }) {
 //   npm start -- --port 4301     (or set the PORT environment variable)
 import fs from 'node:fs/promises';
 import http from 'node:http';
+import nodeModule from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -253,8 +260,30 @@ const server = http.createServer(async (req, res) => {
       res.end('Not found');
       return;
     }
-    const body = await fs.readFile(file);
-    res.writeHead(200, { 'content-type': TYPES[path.extname(file).toLowerCase()] ?? 'application/octet-stream', 'cache-control': 'no-store' });
+    const ext = path.extname(file).toLowerCase();
+    let body = await fs.readFile(file);
+    let type = TYPES[ext] ?? 'application/octet-stream';
+    // Browsers do not run TypeScript: as in the platform, a .ts file is served with its types removed
+    // (Node.js 22.13 or newer; it prints an ExperimentalWarning once).
+    if (ext === '.ts' || ext === '.mts') {
+      const shown = path.relative(ROOT, file).split(path.sep).join('/');
+      if (typeof nodeModule.stripTypeScriptTypes !== 'function') {
+        console.error(text(${msg('serveTsUnsupported')}, { file: shown }));
+        res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end(text(${msg('serveTsUnsupported')}, { file: shown }));
+        return;
+      }
+      try {
+        body = nodeModule.stripTypeScriptTypes(body.toString('utf8'));
+      } catch (error) {
+        console.error(text(${msg('serveTsFailed')}, { file: shown, error: error.message }));
+        res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end(text(${msg('serveTsFailed')}, { file: shown, error: error.message }));
+        return;
+      }
+      type = 'text/javascript; charset=utf-8';
+    }
+    res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' });
     res.end(req.method === 'HEAD' ? undefined : body);
   } catch (error) {
     const missing = ['ENOENT', 'EISDIR', 'ENOTDIR'].includes(error.code);
@@ -424,6 +453,7 @@ ${fill(T.dataRestore, { restoreUrl: `${url}${paths.restore}`, url })}
 ${bullets([
     fill(T.filesLearner, { list: learnerFiles.map((f) => `\`${f}\``).join(', ') }),
     fill(T.fileServe, { path: paths.serve }),
+    ...(learnerFiles.some((f) => /\.m?ts$/i.test(f)) ? [fill(T.fileServeTs, { path: paths.serve })] : []),
     fill(T.filePkg, { path: paths.pkg }),
     fill(T.fileManifest, { path: MANIFEST_PATH }),
     fill(T.fileData, { storage: paths.storage, restore: paths.restore }),
