@@ -397,6 +397,30 @@ test('diagram layout: groups stacked in rows (tb, or a grid) get room for both f
   assert.equal(b.y - a.y, 46 + 22, 'nodes of one group column keep the normal row gap');
 });
 
+test('diagram size: annotations under the bottom row and labels wider than the picture fit inside it', async () => {
+  const { edgeLabelBox, edgeLine, insideWidth, nodeNoteBox } = await import('../../shared/visuals/kinds/diagram-geometry.js');
+  const long = 'a note that is much longer than the two narrow boxes are wide together';
+  const r = await compileVisual('diagram', {
+    layout: 'tb',
+    nodes: [{ id: 'top', label: 'Top' }, { id: 'low', label: 'Low' }],
+    edges: [{ from: 'top', to: 'low', label: { uk: 'короткий', en: 'a much longer English edge label' } }],
+    steps: [{ caption: text('one') }, { caption: text('two'), annotate: [{ id: 'low', text: { uk: 'під нижнім рядом', en: long } }] }],
+  }, ctx());
+  assert.deepEqual(r.issues, [], messages(r.issues));
+  const { width, height } = r.spec.layout;
+  const n = Object.fromEntries(r.spec.nodes.map((x) => [x.id, x]));
+  for (const lang of ['uk', 'en']) {
+    const note = insideWidth(nodeNoteBox(n.low, r.spec.steps[1].annotate[0].text[lang]), width);
+    assert.ok(note.y + note.h <= height, `${lang}: the annotation under the bottom row is inside the picture (${note.y + note.h} ≤ ${height})`);
+    assert.ok(note.x >= 0 && note.x + note.w <= width, `${lang}: and inside its width`);
+    const label = insideWidth(edgeLabelBox(edgeLine(n.top, n.low), r.spec.edges[0].label[lang]), width);
+    assert.ok(label.x >= 0 && label.x + label.w <= width, `${lang}: the edge label is inside the width`);
+  }
+  // A picture without annotations or labels keeps the size of its boxes.
+  const plain = await compileVisual('diagram', { nodes: [{ id: 'a', label: 'A' }], steps: [{ caption: text('one') }] }, ctx());
+  assert.deepEqual(plain.spec.layout, { width: plain.spec.nodes[0].x + plain.spec.nodes[0].w + 10, height: plain.spec.nodes[0].y + 46 + 10 });
+});
+
 test('sequence and render-timeline compile to one step per message / per phase', async () => {
   const seq = await compileVisual('sequence', { actors: [{ id: 'a', label: 'A' }, { id: 'b', label: text('B') }], intro: text('i'), messages: [{ from: 'a', to: 'b', label: 'hi', caption: text('m1') }, { from: 'b', to: 'a', label: 'ok', kind: 'return', caption: text('m2') }] }, ctx());
   assert.deepEqual(seq.issues, []);

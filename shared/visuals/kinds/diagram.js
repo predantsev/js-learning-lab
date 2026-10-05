@@ -1,6 +1,7 @@
 // diagram: generic boxes (optionally grouped) with labeled edges; each step highlights, dims,
 // reveals or annotates. Layout is computed here so the player only draws.
 import { IssueList, checkArray, checkEnum, checkId, checkLabel, checkText, isPlainObject, nonEmpty, renderText, toText } from '../common.js';
+import { TEXT_MARGIN, edgeLabelBox, edgeLine, edgeNoteBox, nodeNoteBox } from './diagram-geometry.js';
 
 export const SHAPES = ['box', 'round', 'pill', 'cylinder', 'note'];
 export const EDGE_KINDS = ['arrow', 'both', 'line', 'dashed'];
@@ -207,10 +208,50 @@ export function layout(spec) {
   return { nodes, edges, groups: groupBoxes, width: Math.round(width), height: Math.round(height) };
 }
 
+/**
+ * Make room for what is drawn outside the boxes: edge labels and every step's annotations, in both
+ * languages (diagram-geometry.js has the player's positions). The player moves a label sideways to
+ * keep it inside the picture, so the picture only gets wider for a label wider than itself; an
+ * annotation under the bottom row makes it taller. Both used to be clipped by the picture's frame.
+ */
+function fitLabels(laid, steps) {
+  const byId = new Map(laid.nodes.map((n) => [n.id, n]));
+  const lineOf = (e) => (byId.has(e.from) && byId.has(e.to) ? edgeLine(byId.get(e.from), byId.get(e.to)) : null);
+  const boxes = [];
+  for (const e of laid.edges) {
+    const line = lineOf(e);
+    if (line && e.label) for (const text of Object.values(e.label)) boxes.push(edgeLabelBox(line, text));
+  }
+  for (const step of steps) {
+    for (const a of step.annotate) {
+      if (step.hidden.includes(a.id)) continue;
+      const node = byId.get(a.id);
+      const edge = node ? null : laid.edges.find((e) => e.id === a.id);
+      const line = edge ? lineOf(edge) : null;
+      for (const text of Object.values(a.text)) {
+        if (node) boxes.push(nodeNoteBox(node, text));
+        else if (line) boxes.push(edgeNoteBox(line, text));
+      }
+    }
+  }
+  if (boxes.length === 0) return laid;
+  const dy = Math.max(0, Math.ceil(TEXT_MARGIN - Math.min(...boxes.map((b) => b.y))));
+  const widest = Math.max(...boxes.map((b) => b.w)) + 2 * TEXT_MARGIN;
+  const bottom = Math.max(...boxes.map((b) => b.y + b.h)) + dy + TEXT_MARGIN;
+  const shift = (item) => (dy === 0 ? item : { ...item, y: item.y + dy });
+  return {
+    ...laid,
+    nodes: laid.nodes.map(shift),
+    groups: laid.groups.map((g) => (g.w > 0 ? shift(g) : g)),
+    width: Math.round(Math.max(laid.width, widest)),
+    height: Math.round(Math.max(laid.height + dy, bottom)),
+  };
+}
+
 export async function compile(spec, ctx, issues = new IssueList()) {
   validate(spec, issues);
   if (!issues.ok) return { spec: null, issues };
-  const laid = layout(spec);
+  const boxes = layout(spec);
   const hidden = new Set(spec.hidden ?? []);
   const visibleSoFar = new Set();
   // Node, edge, group and annotation labels are drawn as SVG text: plain text, no Markdown.
@@ -225,6 +266,7 @@ export async function compile(spec, ctx, issues = new IssueList()) {
       annotate: (s.annotate ?? []).map((a) => ({ id: a.id, text: toText(a.text) })),
     };
   });
+  const laid = fitLabels(boxes, steps);
   return {
     spec: {
       kind: 'diagram',

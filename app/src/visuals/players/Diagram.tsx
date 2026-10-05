@@ -1,19 +1,9 @@
+import { edgeLabelBox, edgeLine, edgeNoteBox, insideWidth, nodeNoteBox } from '@shared/visuals/kinds/diagram-geometry.js';
 import { svgStyle, type PlayerProps } from '../VisualPlayer';
 import type { DiagramNode, DiagramSpec } from '../types';
 
-
-/** Point where the segment from the node center towards (tx, ty) leaves the node rectangle. */
-function border(node: DiagramNode, tx: number, ty: number): [number, number] {
-  const cx = node.x + node.w / 2;
-  const cy = node.y + node.h / 2;
-  const dx = tx - cx;
-  const dy = ty - cy;
-  if (dx === 0 && dy === 0) return [cx, cy];
-  const sx = dx !== 0 ? node.w / 2 / Math.abs(dx) : Infinity;
-  const sy = dy !== 0 ? node.h / 2 / Math.abs(dy) : Infinity;
-  const s = Math.min(sx, sy);
-  return [cx + dx * s, cy + dy * s];
-}
+// Positions of edges, labels and annotations come from shared/visuals/kinds/diagram-geometry.js, which
+// the compiler also uses to size the picture so that none of them is clipped.
 
 function Shape({ node }: { node: DiagramNode }) {
   const { x, y, w, h, shape } = node;
@@ -64,11 +54,8 @@ export function Diagram({ spec, index, tick, labels, lang }: PlayerProps<Diagram
             const a = nodeById.get(e.from);
             const b = nodeById.get(e.to);
             if (!a || !b) return null;
-            const [x1, y1] = border(a, b.x + b.w / 2, b.y + b.h / 2);
-            const [x2, y2] = border(b, a.x + a.w / 2, a.y + a.h / 2);
-            const mx = (x1 + x2) / 2;
-            const my = (y1 + y2) / 2;
-            const vertical = Math.abs(y2 - y1) > Math.abs(x2 - x1);
+            const line = edgeLine(a, b);
+            const { x1, y1, x2, y2, vertical } = line;
             const st = state(e.id);
             const marker = st === 'highlight' ? 'url(#viz-d-arrow-accent)' : 'url(#viz-d-arrow)';
             const label = text(e.label);
@@ -77,28 +64,28 @@ export function Diagram({ spec, index, tick, labels, lang }: PlayerProps<Diagram
             return (
               <g key={flash ? `${e.id}-${tick}` : e.id} className={`viz-edge viz-state-${st}${flash ? ' viz-changed' : ''}`}>
                 <line x1={x1} y1={y1} x2={x2} y2={y2} className={`viz-edge-line${e.kind === 'dashed' ? ' viz-edge-dashed' : ''}`} markerEnd={e.kind === 'line' ? undefined : marker} markerStart={e.kind === 'both' ? marker : undefined} />
-                {label ? (vertical ? (
-                  <g>
-                    <rect x={mx + 6} y={my - 9} width={label.length * 6.8 + 10} height="16" rx="4" className="viz-edge-label-bg" />
-                    <text x={mx + 11} y={my + 3} className="viz-svg-small viz-edge-label">{label}</text>
-                  </g>
-                ) : (
-                  <g>
-                    <rect x={mx - label.length * 3.4 - 5} y={my - 18} width={label.length * 6.8 + 10} height="16" rx="4" className="viz-edge-label-bg" />
-                    <text x={mx} y={my - 6} textAnchor="middle" className="viz-svg-small viz-edge-label">{label}</text>
-                  </g>
-                )) : null}
-                {note ? (vertical ? (
-                  <g className="viz-annotation">
-                    <rect x={mx + 6} y={my + 10} width={note.length * 6.8 + 12} height="18" rx="4" className="viz-annotation-bg" />
-                    <text x={mx + 12} y={my + 23} className="viz-svg-small viz-annotation-text">{note}</text>
-                  </g>
-                ) : (
-                  <g className="viz-annotation">
-                    <rect x={mx - note.length * 3.4 - 6} y={my + 6} width={note.length * 6.8 + 12} height="18" rx="4" className="viz-annotation-bg" />
-                    <text x={mx} y={my + 19} textAnchor="middle" className="viz-svg-small viz-annotation-text">{note}</text>
-                  </g>
-                )) : null}
+                {label ? (() => {
+                  const box = insideWidth(edgeLabelBox(line, label), width);
+                  return (
+                    <g>
+                      <rect x={box.x} y={box.y} width={box.w} height={box.h} rx="4" className="viz-edge-label-bg" />
+                      {vertical
+                        ? <text x={box.x + 5} y={box.y + 12} className="viz-svg-small viz-edge-label">{label}</text>
+                        : <text x={box.x + box.w / 2} y={box.y + 12} textAnchor="middle" className="viz-svg-small viz-edge-label">{label}</text>}
+                    </g>
+                  );
+                })() : null}
+                {note ? (() => {
+                  const box = insideWidth(edgeNoteBox(line, note), width);
+                  return (
+                    <g className="viz-annotation">
+                      <rect x={box.x} y={box.y} width={box.w} height={box.h} rx="4" className="viz-annotation-bg" />
+                      {vertical
+                        ? <text x={box.x + 6} y={box.y + 13} className="viz-svg-small viz-annotation-text">{note}</text>
+                        : <text x={box.x + box.w / 2} y={box.y + 13} textAnchor="middle" className="viz-svg-small viz-annotation-text">{note}</text>}
+                    </g>
+                  );
+                })() : null}
               </g>
             );
           })}
@@ -111,12 +98,15 @@ export function Diagram({ spec, index, tick, labels, lang }: PlayerProps<Diagram
                 <Shape node={n} />
                 <text x={n.x + n.w / 2} y={n.y + n.h / 2 + 5} textAnchor="middle" className="viz-node-label">{text(n.label)}</text>
                 {st === 'highlight' ? <text x={n.x + 6} y={n.y + 13} className="viz-svg-small viz-node-mark" aria-hidden="true">●</text> : null}
-                {note ? (
-                  <g className="viz-annotation">
-                    <rect x={n.x + n.w / 2 - note.length * 3.4 - 6} y={n.y + n.h + 6} width={note.length * 6.8 + 12} height="18" rx="4" className="viz-annotation-bg" />
-                    <text x={n.x + n.w / 2} y={n.y + n.h + 19} textAnchor="middle" className="viz-svg-small viz-annotation-text">{note}</text>
-                  </g>
-                ) : null}
+                {note ? (() => {
+                  const box = insideWidth(nodeNoteBox(n, note), width);
+                  return (
+                    <g className="viz-annotation">
+                      <rect x={box.x} y={box.y} width={box.w} height={box.h} rx="4" className="viz-annotation-bg" />
+                      <text x={box.x + box.w / 2} y={box.y + 13} textAnchor="middle" className="viz-svg-small viz-annotation-text">{note}</text>
+                    </g>
+                  );
+                })() : null}
               </g>
             );
           })}

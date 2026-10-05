@@ -505,7 +505,10 @@ spec:
 
 Layout is computed at build time: ungrouped nodes are layered by their edges, grouped nodes sit in
 their group's column, nodes in one column stack in order. Give long labels a `w` or shorten them;
-labels are single-line plain text. Groups stacked on top of each other (`layout: tb`, or a `grid`
+labels are single-line plain text. Edge labels and every step's annotations (in both languages)
+are kept inside the picture: an annotation under the bottom row makes it taller, a label that would
+cross the left or right edge is moved inward, and only a label wider than the whole picture makes
+it wider (`shared/visuals/kinds/diagram-geometry.js`). Groups stacked on top of each other (`layout: tb`, or a `grid`
 that puts groups in rows) get room for both frames and the lower group's heading.
 
 Width (section 6): every column costs its widest node (96–240 px, about 8 px per label character)
