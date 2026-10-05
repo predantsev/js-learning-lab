@@ -29,6 +29,7 @@ const BROKEN = {
   classToggleOnlySets: broken('    this.update(id, { acquired: !item.acquired });', '    this.update(id, { acquired: true });'),
   classToggleNotSaved: broken('    this.update(id, { acquired: !item.acquired });', '    this.#items = updateItem(this.#items, id, { acquired: !item.acquired });'),
   factoryTotalWithAcquired: broken('      return summarizeItems(items).wantedTotal;', '      return items.filter((item) => item.price !== null).reduce((sum, item) => sum + item.price, 0);'),
+  classAddSkipsCheck: broken('    const next = addItem(this.#items, id, input);', '    const next = [...this.#items, { id: id, ...input }];'),
 };
 
 const fixtures = () => [
@@ -342,6 +343,10 @@ test('the form and the delete button still change and save the list', async () =
 
 test('your repository tests pass with a correct repository', async () => {
   await expectPassesOnCorrect();
+});
+
+test('your tests catch a class that adds an invalid draft', async () => {
+  await expectCatches(BROKEN.classAddSkipsCheck, 'has a class whose add skips validateItem');
 });
 
 test('your tests catch a class whose toggle only ever sets acquired', async () => {

@@ -29,6 +29,7 @@ const BROKEN = {
   classMarkTwice: broken('    this.#habits = completeHabit(this.#habits, id, day);', '    this.#habits = this.#habits.map((habit) => (habit.id === id ? { ...habit, completions: [...habit.completions, day] } : habit));'),
   classMarkNotSaved: broken('    this.#habits = completeHabit(this.#habits, id, day);\n    saveHabits(this.#storage, this.#habits);', '    this.#habits = completeHabit(this.#habits, id, day);'),
   factoryRateAllDates: broken('      return habit === undefined ? 0 : summarizeHabit(habit, days).rate;', '      return habit === undefined || days.length === 0 ? 0 : habit.completions.length / days.length;'),
+  classAddSkipsCheck: broken('    const next = addHabit(this.#habits, id, input);', '    const next = [...this.#habits, { id: id, ...input }];'),
 };
 
 const fixtures = () => [
@@ -343,6 +344,10 @@ test('the form and the delete button still change and save the list', async () =
 
 test('your repository tests pass with a correct repository', async () => {
   await expectPassesOnCorrect();
+});
+
+test('your tests catch a class that adds an invalid draft', async () => {
+  await expectCatches(BROKEN.classAddSkipsCheck, 'has a class whose add skips validateHabit');
 });
 
 test('your tests catch a class that marks the same day twice', async () => {

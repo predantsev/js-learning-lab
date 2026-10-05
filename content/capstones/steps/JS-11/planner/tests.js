@@ -29,6 +29,7 @@ const BROKEN = {
   classToggleOnlySets: broken('    this.update(id, { done: !task.done });', '    this.update(id, { done: true });'),
   classToggleNotSaved: broken('    this.update(id, { done: !task.done });', '    this.#tasks = updateTask(this.#tasks, id, { done: !task.done });'),
   factoryCountWithDone: broken('      return countDueTasks(tasks, day);', '      return tasks.filter((task) => task.dueDate !== null && task.dueDate <= day).length;'),
+  classAddSkipsCheck: broken('    const next = addTask(this.#tasks, id, input);', '    const next = [...this.#tasks, { id: id, ...input }];'),
 };
 
 const fixtures = () => [
@@ -343,6 +344,10 @@ test('the form and the delete button still change and save the list', async () =
 
 test('your repository tests pass with a correct repository', async () => {
   await expectPassesOnCorrect();
+});
+
+test('your tests catch a class that adds an invalid draft', async () => {
+  await expectCatches(BROKEN.classAddSkipsCheck, 'has a class whose add skips validateTask');
 });
 
 test('your tests catch a class whose toggle only ever sets done', async () => {
