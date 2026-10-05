@@ -301,6 +301,42 @@ test('a program that throws while loading: one error card and one line instead o
   }
 });
 
+test('checks that cannot start show the error with its authored feedback, once (Node)', async () => {
+  const lab = await Lab.start({ distDir });
+  try {
+    // A draft in which the read-only entry does not import app.js (as in a driver that only prints):
+    // the checks' own import of app.js is the first place the learner's ReferenceError appears.
+    const broken = "export function createApp() { return null; }\nmissingName;\n";
+    await lab.seed(`drafts/${NODE_LESSON}`, { blocks: { 'node-items-server': { files: { 'index.js': "console.log('driver');\n", 'app.js': broken, 'items.js': "export const items = [];\n" }, lang: 'uk', updatedAt: PROFILE.createdAt } } });
+    const { page, problems, context } = await openNode(lab, 2);
+    await checkButton(page).click();
+    await page.locator('.ws-result .ws-note').filter({ hasText: t('uk', 'ws.harnessError') }).waitFor({ timeout: 20_000 });
+    const cards = page.locator('.ws-result .error-card');
+    assert.equal(await cards.count(), 1);
+    assert.match(await cards.locator('.error-original pre').innerText(), /^ReferenceError: missingName is not defined/);
+    assert.match(await cards.locator('.test-feedback').innerText(), /Програма звертається до назви, якої немає/);
+
+    // The real entry imports app.js too: the same error is the program's load error first. One card
+    // (with the feedback), not a second copy from the checks.
+    assert.deepEqual(problems, []);
+    await context.close();
+    await lab.seed(`drafts/${NODE_LESSON}`, { blocks: {} });
+    const second = await openNode(lab, 2);
+    await replaceEditor(second.page, broken);
+    await checkButton(second.page).click();
+    // Nothing was checked, so the workspace shows the console with the error; the checks tab has it too.
+    await second.page.locator('.ws-result .console-wrap .error-card').waitFor({ timeout: 20_000 });
+    await second.page.locator('.result-tabs [role="tab"]', { hasText: t('uk', 'ws.tests') }).click();
+    await second.page.locator('.ws-result .ws-note').filter({ hasText: t('uk', 'ws.harnessError') }).waitFor();
+    assert.equal(await second.page.locator('.ws-result .error-card').count(), 1, 'one card for one error');
+    assert.equal(await second.page.locator('.ws-result .error-card .test-feedback').count(), 1);
+    assert.deepEqual(second.problems, []);
+    await second.context.close();
+  } finally {
+    await lab.dispose();
+  }
+});
+
 test('busy: when two Node runs are already active, Run explains it and keeps the code; afterwards runs work', async () => {
   const lab = await Lab.start({ distDir });
   const holders = [];
