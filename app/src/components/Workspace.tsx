@@ -124,15 +124,21 @@ export function ErrorCard({ error, title, feedback = null, lang = 'uk' }: { erro
   );
 }
 
+/** The same error reported twice (the entry's load error, then the checks' import of that module). */
+const sameError = (a: RunError | null, b: RunError | null): boolean => Boolean(a && b && a.name === b.name && a.message === b.message);
+
 /**
  * `quiet`: the program failed while loading, so the checks could not test it meaningfully — the
  * rows stay listed, their authored feedback is not shown. `note` replaces the empty-state text when
- * a run ended without results (for example at the Node time limit).
+ * a run ended without results (for example at the Node time limit). `shownError`: the error card
+ * already shown above the checks; a harness error that repeats it gets no second card.
  */
-function TestsView({ block, state, lang, quiet = false, note = null }: { block: ExerciseBlock; state: RunState; lang: Lang; quiet?: boolean; note?: string | null }) {
+function TestsView({ block, state, lang, quiet = false, note = null, shownError = null }: { block: ExerciseBlock; state: RunState; lang: Lang; quiet?: boolean; note?: string | null; shownError?: RunError | null }) {
   const t = useT();
   if (state.status === 'compile-error') return <>{state.compileErrors.slice(0, 1).map((e, i) => <ErrorCard key={i} error={e} title={t('ws.compileError')} feedback={feedbackForError(block, e)} lang={lang} />)}<p className="ws-empty">{t('ws.notRunByError')}</p></>;
-  if (state.harnessError) return <><p className="ws-note">{t('ws.harnessError')}</p><ErrorCard error={state.harnessError} title={t('ws.runtimeError')} /></>;
+  // The checks could not start (their file failed to import a learner module, for example): the
+  // error is the learner's, so it carries the block's `when: { error }` feedback like any other card.
+  if (state.harnessError) return <><p className="ws-note">{t('ws.harnessError')}</p>{!sameError(state.harnessError, shownError) && <ErrorCard error={state.harnessError} title={t('ws.runtimeError')} feedback={feedbackForError(block, state.harnessError)} lang={lang} />}</>;
   if (!state.tests) return <p className="ws-empty">{state.status === 'checking' ? t('ws.checking') : note ?? t('ws.previewEmpty')}</p>;
   const passed = state.tests.filter((x) => x.status === 'pass').length;
   const all = passed === state.tests.length && state.tests.length > 0;
@@ -371,7 +377,7 @@ export function Workspace({ lesson, block, drafts, lang, onChecked, recordProgre
             <>
               {checkError && <ErrorCard error={checkError} title={t('ws.runtimeError')} feedback={feedbackForError(block, checkError)} lang={lang} />}
               {loadError && s.tests && <p className="ws-note ws-load-error">{t('ws.loadErrorFirst')}</p>}
-              <TestsView block={block} state={s} lang={lang} quiet={loadError !== null} note={s.notice ? statusText : null} />
+              <TestsView block={block} state={s} lang={lang} quiet={loadError !== null} note={s.notice ? statusText : null} shownError={checkError} />
             </>
           )}
           {tab === 'steps' && (

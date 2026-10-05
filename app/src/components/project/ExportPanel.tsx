@@ -2,7 +2,7 @@
 // local files are authoritative; references are separate downloads with readable diffs and
 // manual backup/merge guidance. Nothing is ever synced to or written over the learner's folder.
 import { useMemo, useState } from 'react';
-import { changedPaths } from '@shared/capstone.js';
+import { changedPaths, previousReferenceIndex } from '@shared/capstone.js';
 import { MANIFEST_PATH, buildProjectExport, buildReferenceArchive, zipProject } from '@shared/project-export.js';
 import { ApiError, api } from '../../lib/api';
 import { pick } from '../../lib/i18n';
@@ -93,7 +93,12 @@ export function AfterExportPanel({ doc, capstone }: { doc: Doc<WorkspaceDoc>; ca
   const wsLang = workspaceLang(ws);
   const refs = useMemo(() => referenceList(capstone), [capstone]);
   const name = (unit: string | null) => unit ?? 'CP-START';
-  const [pair, setPair] = useState(Math.max(1, refs.length - 1));
+  // Each reference is compared with the previous one of the same project; a reference that starts a
+  // project (the React Native app, a new folder) has nothing to be compared with.
+  const previousOf = useMemo(() => refs.map((_, i) => previousReferenceIndex(refs, i)), [refs]);
+  const pairs = refs.map((_, i) => i).filter((i) => previousOf[i] >= 0);
+  const starts = refs.map((_, i) => i).filter((i) => i > 0 && previousOf[i] < 0);
+  const [pair, setPair] = useState(pairs[pairs.length - 1] ?? 0);
   const [error, setError] = useState<string | null>(null);
   if (!ws.exportedAt) return null;
 
@@ -101,7 +106,8 @@ export function AfterExportPanel({ doc, capstone }: { doc: Doc<WorkspaceDoc>; ca
     setError(null);
     try {
       const { unit, step } = refs[index];
-      const previous = index > 0 ? { name: name(refs[index - 1].unit), files: referenceFiles(capstone, refs[index - 1].unit, wsLang) } : null;
+      const from = previousOf[index];
+      const previous = from >= 0 ? { name: name(refs[from].unit), files: referenceFiles(capstone, refs[from].unit, wsLang) } : null;
       const archive = await buildReferenceArchive({
         capstoneId: capstone.id,
         projectTitle: pick(capstone.title, wsLang),
@@ -110,6 +116,7 @@ export function AfterExportPanel({ doc, capstone }: { doc: Doc<WorkspaceDoc>; ca
         instructionsMd: step?.instructionsMd ? resolveText(step.instructionsMd[wsLang], step.strings, wsLang) : null,
         files: referenceFiles(capstone, unit, wsLang),
         previous,
+        startsProject: index > 0 && from < 0 ? refs[index].entry : null,
         lang: wsLang,
         contentVersion: app().index.contentVersion,
       });
@@ -119,8 +126,8 @@ export function AfterExportPanel({ doc, capstone }: { doc: Doc<WorkspaceDoc>; ca
     }
   };
 
-  const from = refs[pair - 1];
-  const to = refs[pair];
+  const from = pairs.includes(pair) ? refs[previousOf[pair]] : undefined;
+  const to = pairs.includes(pair) ? refs[pair] : undefined;
   const before = from ? referenceFiles(capstone, from.unit, wsLang) : {};
   const after = to ? referenceFiles(capstone, to.unit, wsLang) : {};
   const changes = changedPaths(before, after) as { added: string[]; removed: string[]; modified: string[] };
@@ -140,15 +147,16 @@ export function AfterExportPanel({ doc, capstone }: { doc: Doc<WorkspaceDoc>; ca
         ))}
       </ul>
       {error && <p className="form-error" role="alert">{error}</p>}
-      {refs.length > 1 && (
+      {pairs.length > 0 && (
         <>
           <h3>{t('project.after.diffTitle')}</h3>
           <div className="diff-pairs" role="group" aria-label={t('project.after.diffPair')}>
-            {refs.slice(1).map((r, i) => (
-              <button key={name(r.unit)} type="button" className={pair === i + 1 ? 'segment active' : 'segment'} aria-pressed={pair === i + 1} onClick={() => setPair(i + 1)}>{name(refs[i].unit)} → {name(r.unit)}</button>
+            {pairs.map((i) => (
+              <button key={name(refs[i].unit)} type="button" className={pair === i ? 'segment active' : 'segment'} aria-pressed={pair === i} onClick={() => setPair(i)}>{name(refs[previousOf[i]].unit)} → {name(refs[i].unit)}</button>
             ))}
           </div>
           <p className="ws-note">{t('project.after.diffNote')}</p>
+          {starts.map((i) => <p key={name(refs[i].unit)} className="ws-note diff-new-project">{t('project.after.diffNewProject', { name: name(refs[i].unit), entry: refs[i].entry })}</p>)}
           {changed.length === 0 ? <p className="ws-empty">{t('project.after.diffNone')}</p> : changed.map((p) => (
             <details key={p} className="reference-diff" open={changes.modified.includes(p) && changed.length <= 3}>
               <summary><code>{p}</code></summary>

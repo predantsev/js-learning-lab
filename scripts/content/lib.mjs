@@ -10,7 +10,7 @@ import YAML from 'yaml';
 import { ROOT } from '../../server/config.mjs';
 import { CAPSTONES, GLOSSARY_LINK, Issues, LANGS, STAGES, paginate, unitOfLesson, validateGlossaryTerm, validateLessonSource } from '../../shared/content-schema.js';
 import { STRING_PLACEHOLDER, localizePair, localizeText } from '../../shared/exercise.js';
-import { CAPSTONES_DIR, compileCapstones, loadCapstoneSources, synthesizeStepLessons, writeCapstones } from './capstones.mjs';
+import { CAPSTONES_DIR, TEXT_EXT, compileCapstones, loadCapstoneSources, synthesizeStepLessons, writeCapstones } from './capstones.mjs';
 
 // JSLL_CONTENT_ROOT points the compiler/validator at another content tree with the same layout
 // (the end-to-end suite uses tests/fixtures/content). Read once, when this module is imported.
@@ -19,8 +19,7 @@ export const CONTENT_DIR = process.env.JSLL_CONTENT_ROOT ? path.resolve(process.
 // headings). Everything else is block Markdown. `testTitles` values are compiled as inline text.
 const INLINE_KEYS = new Set(['title', 'text', 'why', 'label', 'name', 'problem', 'note', 'objectives']);
 const PLAIN_KEYS = new Set(['title', 'name', 'placeholder', 'version']);
-const RAW_KEYS = new Set(['strings', 'spec']);
-const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.xml', '.env', '.gitignore', '']);
+const RAW_KEYS = new Set(['strings', 'spec', 'command']);
 
 const exists = (p) => fs.access(p).then(() => true, () => false);
 const readYaml = async (file) => YAML.parse(await fs.readFile(file, 'utf8'));
@@ -66,6 +65,12 @@ export function glossaryLinkProblems(source) {
     if (!text.startsWith('[[', i)) continue;
     const attempt = /^\[\[([a-z0-9-]+)\\?\|/.exec(text.slice(i));
     if (!attempt) continue;
+    // In a table row the cells are split at every unescaped "|" before links are read, so
+    // [[id|text]] there breaks the row (marked then shows the whole table as text).
+    const lineStart = text.lastIndexOf('\n', i) + 1;
+    if (/^\s*\|/.test(text.slice(lineStart, i + 1)) && !attempt[0].endsWith('\\|')) {
+      problems.push(`the glossary link "${text.slice(i, i + 50).split('\n')[0].replace(/\]\].*$/, ']]')}" sits in a table row with an unescaped "|": the table splits its cells there and is shown as plain text. Escape the bar: [[${attempt[1]}\\|…]] (content/README.md, "Language rules")`);
+    }
     const link = GLOSSARY_TOKEN.exec(text.slice(i));
     const excerpt = text.slice(i, i + 50).split('\n')[0];
     if (!link) problems.push(`the glossary link "${excerpt}…" does not close: its shown text ends at the first "]" (a code span such as \`items[0]\` included), so the learner sees the raw [[…]] text. Rephrase the shown text without "]" (content/README.md, rule 46)`);
@@ -74,6 +79,36 @@ export function glossaryLinkProblems(source) {
   }
   return problems;
 }
+
+/** Raw U+2028 / U+2029 characters in a text: [{ char: 'U+2028', line }]. */
+export function rawLineSeparators(text) {
+  const out = [];
+  const source = String(text);
+  for (let i = source.search(/[\u2028\u2029]/); i !== -1; i = source.slice(i + 1).search(/[\u2028\u2029]/) === -1 ? -1 : i + 1 + source.slice(i + 1).search(/[\u2028\u2029]/)) {
+    out.push({ char: source[i] === '\u2028' ? 'U+2028' : 'U+2029', line: source.slice(0, i).split('\n').length });
+  }
+  return out;
+}
+const separatorMessage = (where, hits) => `raw ${[...new Set(hits.map((h) => h.char))].join(' and ')} in ${where} (line ${hits.map((h) => h.line).join(', ')}): an invisible line separator — in code it ends a regular expression or a comment, in text it is not what the author typed. Write the escape (\\u2028 in code, "\\u2028" in a YAML double-quoted string) or the character meant (content/README.md, rule 75)`;
+
+const CODE_FILE = /\.(m|c)?[jt]sx?$/;
+/**
+ * `%%key%%` inside a single- or double-quoted string of a code file whose text in some language
+ * contains that quote: that language's run gets a broken string (rule 74). [{ key, lang, quote }].
+ */
+export function quotedPlaceholderProblems(code, strings) {
+  const out = [];
+  for (const m of String(code).matchAll(/(['"])((?:\\.|(?!\1)[^\\\n])*)\1/g)) {
+    for (const p of m[2].matchAll(/%%([a-zA-Z][a-zA-Z0-9_]*)%%/g)) {
+      for (const lang of LANGS) {
+        const value = strings?.[p[1]]?.[lang];
+        if (typeof value === 'string' && value.includes(m[1]) && !out.some((o) => o.key === p[1] && o.lang === lang)) out.push({ key: p[1], lang, quote: m[1] });
+      }
+    }
+  }
+  return out;
+}
+const quotedPlaceholderMessage = (file, { key, lang, quote }) => `%%${key}%% sits inside a ${quote === "'" ? 'single' : 'double'}-quoted string in ${file}, and its ${lang} text contains ${quote}: the ${lang} run gets a broken string (a SyntaxError). Put it in a template literal (\`…%%${key}%%…\`) or quote it with the other mark (content/README.md, rule 74)`;
 
 /** Markdown renderer with glossary links, callouts and build-time syntax highlighting. */
 export function createMarkdown(glossary) {
@@ -146,14 +181,16 @@ export function createMarkdown(glossary) {
 
 // Fields of a block that are not learner-facing prose: the strings table itself, a visual's spec
 // (compiled per language by shared/visuals) and code, accepted answers and verification data, which
-// are resolved per language where they are used.
+// are resolved per language where they are used. A local task's `verify` is a list of items the
+// learner confirms — prose — while a question's `verify` ({ logs, error }) is data.
 const NON_PROSE_KEYS = new Set(['strings', 'spec', 'code', 'accept', 'verify']);
+const isNonProse = (key, value) => NON_PROSE_KEYS.has(key) && !(key === 'verify' && Array.isArray(value));
 
 /** Every bilingual { uk, en } text of a block outside NON_PROSE_KEYS, with its field path. */
 function prosePairs(value, at = '', out = []) {
   if (isLocalized(value)) out.push([at, value]);
   else if (Array.isArray(value)) value.forEach((v, i) => prosePairs(v, `${at}[${i}]`, out));
-  else if (value !== null && typeof value === 'object') for (const [k, v] of Object.entries(value)) if (!NON_PROSE_KEYS.has(k)) prosePairs(v, at ? `${at}.${k}` : k, out);
+  else if (value !== null && typeof value === 'object') for (const [k, v] of Object.entries(value)) if (!isNonProse(k, v)) prosePairs(v, at ? `${at}.${k}` : k, out);
   return out;
 }
 
@@ -166,9 +203,20 @@ function localizeProse(value, block) {
   if (!block.strings) return value;
   if (isLocalized(value)) return localizePair(value, block);
   if (Array.isArray(value)) return value.map((v) => localizeProse(v, block));
-  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, NON_PROSE_KEYS.has(k) ? v : localizeProse(v, block)]));
+  if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, isNonProse(k, v) ? v : localizeProse(v, block)]));
   return value;
 }
+
+/**
+ * A local task's commands are one text for both languages; a command with %%key%% placeholders
+ * (sample data the learner sends, for example) becomes { uk, en }, each from its own strings.
+ */
+function localizeCommands(block) {
+  if (block.kind !== 'local-task' || !Array.isArray(block.steps) || !block.strings) return block;
+  const steps = block.steps.map((step) => (typeof step?.command === 'string' && STRING_PLACEHOLDER_TEST.test(step.command) ? { ...step, command: Object.fromEntries(LANGS.map((l) => [l, localizeText(step.command, block, l)])) } : step));
+  return { ...block, steps };
+}
+const STRING_PLACEHOLDER_TEST = new RegExp(STRING_PLACEHOLDER.source);
 
 /** Convert every bilingual markdown string inside a value to HTML ({uk, en} → {uk, en}). */
 function renderLocalized(value, md, key = '') {
@@ -337,10 +385,34 @@ export function staticIssuesForLesson(lesson, ctx) {
     // and the files it reads are checked when it compiles: shared/visuals/index.js compileVisual.)
     const files = block.kind === 'example' ? Object.values(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.values(a.starter), ...Object.values(a.solution), a.tests ?? '', ...Object.values(a.variants).flatMap((v) => Object.values(v))] : [];
     const questionCode = block.kind === 'prediction' || block.kind === 'review' ? [block, ...(block.items ?? [])].flatMap((q) => [q.code, ...(q.answer?.options ?? q.answer?.items ?? []).map((o) => o.code), ...(q.answer?.accept ?? []), ...(q.verify?.logs ?? [])]) : [];
-    const texts = [...files, ...questionCode.filter((t) => t !== undefined && t !== null), ...prosePairs(block).flatMap(([, pair]) => LANGS.map((l) => pair[l]))];
+    const commands = block.kind === 'local-task' ? (block.steps ?? []).map((s) => s?.command).filter((c) => typeof c === 'string') : [];
+    const texts = [...files, ...questionCode.filter((t) => t !== undefined && t !== null), ...commands, ...prosePairs(block).flatMap(([, pair]) => LANGS.map((l) => pair[l]))];
     const missing = new Set();
     for (const text of texts) for (const m of String(text).matchAll(STRING_PLACEHOLDER)) if (!(block.strings && m[1] in block.strings)) missing.add(m[1]);
     for (const key of missing) add(`block "${block.id}"`, `placeholder %%${key}%% has no entry in strings${block.kind === 'review' ? ' (the review block\'s strings: its questions share one table)' : ''}`);
+    // Code files and question code with %%key%% in a quoted string whose value holds that quote.
+    const namedFiles = block.kind === 'example' ? Object.entries(a?.files ?? {}) : block.kind === 'exercise' && a ? [...Object.entries(a.starter), ...Object.entries(a.solution).map(([f, t]) => [`solution/${f}`, t]), ['tests.js', a.tests ?? ''], ...Object.entries(a.variants).flatMap(([v, fs]) => Object.entries(fs).map(([f, t]) => [`${v}/${f}`, t]))] : [];
+    // Fixtures that may fail on purpose (starter, wrong*), an example that shows an error and a question
+    // whose point is the SyntaxError are left out: a broken string can be what they teach.
+    const failsOnPurpose = (f) => /^(wrong[^/]*|starter)\//.test(f) || (block.kind === 'exercise' && !f.includes('/') && f !== 'tests.js');
+    const exerciseStarter = block.kind === 'exercise' && a ? Object.keys(a.starter) : [];
+    const questions = block.kind === 'prediction' || block.kind === 'review' ? [block, ...(block.items ?? [])].filter((q) => q.verify?.error !== 'SyntaxError') : [];
+    // Answer options are not run (a wrong option may be broken on purpose): only the question's code.
+    const questionTexts = questions.map((q) => q.code).filter((t) => typeof t === 'string');
+    const codeTexts = [...namedFiles.filter(([f]) => CODE_FILE.test(f) && !(block.kind === 'example' && block.expectError === true) && !(block.kind === 'exercise' && (failsOnPurpose(f) || exerciseStarter.includes(f) && !f.includes('/')))), ...questionTexts.map((t) => ['the question code', t])];
+    if (block.strings) for (const [file, code] of codeTexts) for (const problem of quotedPlaceholderProblems(code, block.strings)) warn(`block "${block.id}"`, quotedPlaceholderMessage(file, problem));
+    // Raw line separators anywhere in the block: its text fields and every file it reads.
+    for (const [file, text] of namedFiles) { const hits = rawLineSeparators(text); if (hits.length > 0) warn(`block "${block.id}"`, separatorMessage(`${block.dir ?? block.id}/${file}`, hits)); }
+    const blockHits = rawLineSeparators(JSON.stringify(block));
+    if (blockHits.length > 0) warn(`block "${block.id}"`, separatorMessage(lesson.synthesized ? 'step.yaml' : 'lesson.yaml', blockHits).replace(/ \(line [^)]*\)/, ''));
+  }
+  // References to lessons that are planned but not written yet: the learner would be sent to an empty
+  // page (prerequisites) or asked about a lesson that does not exist (review "from").
+  if (ctx.order) {
+    const unauthored = new Set(ctx.order.filter((o) => !o.authored).map((o) => o.id));
+    const flag = (at, message) => (ctx.release ? add : warn)(at, message);
+    for (const pre of source?.prerequisites ?? []) if (unauthored.has(pre)) flag('prerequisites', `"${pre}" is planned in the syllabus but not authored yet (an error with --release)`);
+    for (const block of source?.blocks ?? []) for (const [i, item] of (block?.items ?? []).entries()) if (unauthored.has(item?.from)) flag(`block "${block.id}".items[${i}].from`, `"${item.from}" is planned in the syllabus but not authored yet: the question retrieves a lesson the learner cannot read (an error with --release)`);
   }
   // Glossary links that would stay raw text (rule 46) — also in fields the smoke test never shows
   // (hints, feedback, review questions, solution notes).
@@ -351,7 +423,7 @@ export function staticIssuesForLesson(lesson, ctx) {
   return issues;
 }
 
-/** Natural width limit of a compiled `diagram` (content/VISUALS.md, section 6). */
+/** Natural width limit of a compiled `diagram` or `sequence` (content/VISUALS.md, section 6). */
 export const DIAGRAM_MAX_WIDTH = 450;
 
 // Names the repository's .gitignore drops (used when the content root is not inside a git work tree).
@@ -427,15 +499,18 @@ export async function compileLesson(lesson, ctx) {
           // The lesson column leaves a diagram about 450 px (content/VISUALS.md, section 6): wider ones
           // make the panel scroll. A warning while authoring, an error for a release.
           for (const [lang, variant] of out.spec?.byLang ? Object.entries(out.spec.byLang) : [[null, out.spec]]) {
-            const width = variant?.kind === 'diagram' ? variant.layout?.width : undefined;
-            if (width > DIAGRAM_MAX_WIDTH) issues.push({ path: `lesson ${source.id} › block "${block.id}".spec${lang ? ` (${lang})` : ''}`, message: `the diagram is ${width} px wide; the lesson column fits ${DIAGRAM_MAX_WIDTH} px (content/VISUALS.md, section 6: narrower nodes, fewer columns or shorter labels)`, ...(ctx.release ? {} : { level: 'warning' }) });
+            const width = variant?.kind === 'diagram' || variant?.kind === 'sequence' ? variant.layout?.width : undefined;
+            const advice = variant?.kind === 'sequence' ? 'fewer actors or shorter actor labels' : 'narrower nodes, fewer columns or shorter labels';
+            // A wide sequence is a warning also with --release: the check is new and 15 reviewed
+            // three-actor sequences are 465 px; narrowing them is a content change.
+            if (width > DIAGRAM_MAX_WIDTH) issues.push({ path: `lesson ${source.id} › block "${block.id}".spec${lang ? ` (${lang})` : ''}`, message: `the ${variant.kind} is ${width} px wide; the lesson column fits ${DIAGRAM_MAX_WIDTH} px (content/VISUALS.md, section 6: ${advice})`, ...(ctx.release && variant.kind === 'diagram' ? {} : { level: 'warning' }) });
           }
         } catch (error) {
           issues.push({ path: `lesson ${source.id} › block "${block.id}".spec`, message: `visual failed to compile: ${error.message}` });
           compiled.spec = null;
         }
       } else compiled.spec = spec;
-    } else compiled = renderLocalized(localizeProse(rest, block), md);
+    } else compiled = renderLocalized(localizeProse(localizeCommands(rest), block), md);
     if (block.kind === 'prediction' || block.kind === 'review') {
       // Code shown in questions is resolved per language (authored UI text follows the lesson language).
       const perLang = (text) => Object.fromEntries(LANGS.map((l) => [l, localizeText(String(text), block, l)]));
@@ -542,8 +617,8 @@ export async function buildContent({ outDir = path.join(ROOT, 'dist', 'content')
   await fs.writeFile(path.join(outDir, 'glossary.json'), glossaryText);
   await fs.writeFile(path.join(outDir, 'capstones', 'domains.json'), JSON.stringify(all.domains));
   // Capstone projects (CP-START + steps): content/capstones/README.md, scripts/content/capstones.mjs.
-  const capstoneBuild = compileCapstones(all.capstones, { md, domains: all.domains, syllabus: all.syllabus });
-  issues.push(...capstoneBuild.issues);
+  const capstoneBuild = compileCapstones(all.capstones, { md, domains: all.domains, syllabus: all.syllabus, checks: { quotedPlaceholderProblems, quotedPlaceholderMessage, rawLineSeparators, separatorMessage, CODE_FILE } });
+  for (const i of capstoneBuild.issues) (i.level === 'warning' ? warnings : issues).push(i);
   for (const text of Object.values(await writeCapstones(path.join(outDir, 'capstones'), capstoneBuild.capstones))) hash.update(text);
   all.capstoneBuild = capstoneBuild;
   let redirects = {};

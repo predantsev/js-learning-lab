@@ -66,3 +66,51 @@ test('folder names are safe and keep non-Latin letters', () => {
   assert.equal(safeName('NUL'), 'project');
   assert.equal(safeName('a'.repeat(100)).length, 60);
 });
+
+test('the exported server serves TypeScript files with their types removed, as the platform runs them', async () => {
+  const { spawn } = await import('node:child_process');
+  const net = await import('node:net');
+  const os = await import('node:os');
+  const { buildProjectExport } = await import('../../shared/project-export.js');
+  const project = {
+    'index.html': '<!doctype html><script type="module" src="app.js"></script>\n',
+    'app.js': "import { total } from './domain/prices.ts';\nconsole.log(total([1, 2]));\n",
+    'domain/prices.ts': 'export type Price = number;\nexport const total = (prices: Price[]): number => prices.reduce((a, b) => a + b, 0);\n',
+    'domain/bad.ts': 'export enum Kind { A, B }\n',
+  };
+  const out = await buildProjectExport({ workspace: { id: 'w1', capstoneId: 'expenses', files: project, lang: 'en' }, title: 'Expenses', contentVersion: 'test' });
+  assert.match(out.files['README.md'], /serves `\.ts` files with their types removed/);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'jsll-export-ts-'));
+  try {
+    for (const [p, text] of Object.entries(out.files)) {
+      await fs.mkdir(path.dirname(path.join(dir, p)), { recursive: true });
+      await fs.writeFile(path.join(dir, p), text);
+    }
+    const port = await new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const { port: p } = s.address(); s.close(() => resolve(p)); }); });
+    const child = spawn(process.execPath, ['serve.mjs', '--port', String(port)], { cwd: dir });
+    let output = '';
+    child.stdout.on('data', (d) => { output += d; });
+    child.stderr.on('data', (d) => { output += d; });
+    try {
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`serve.mjs did not start: ${output}`)), 10_000);
+        const poll = setInterval(() => { if (output.includes(`127.0.0.1:${port}/`)) { clearInterval(poll); clearTimeout(timer); resolve(); } }, 20);
+      });
+      const ts = await fetch(`http://127.0.0.1:${port}/domain/prices.ts`);
+      assert.equal(ts.headers.get('content-type'), 'text/javascript; charset=utf-8');
+      const body = await ts.text();
+      assert.doesNotMatch(body, /: number|type Price/, 'types are removed');
+      assert.match(body, /export const total = \(prices\s*\)\s*=> prices\.reduce/);
+      const js = await fetch(`http://127.0.0.1:${port}/app.js`);
+      assert.equal(await js.text(), project['app.js'], 'JavaScript files are served as they are');
+      // Syntax that type removal cannot erase (an enum) is a clear error, not a broken script.
+      const bad = await fetch(`http://127.0.0.1:${port}/domain/bad.ts`);
+      assert.equal(bad.status, 500);
+      assert.match(await bad.text(), /^Could not remove the types from domain\/bad\.ts: /);
+    } finally {
+      child.kill();
+    }
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});

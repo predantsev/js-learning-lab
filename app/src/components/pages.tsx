@@ -27,6 +27,8 @@ function EvidenceBadges({ lesson }: { lesson: IndexLesson }) {
       {e.solutionViewed && <span className="badge">{t('evidence.solution')}</span>}
       {e.localTotal > 0 && e.localConfirmed > 0 && <span className="badge">{t('evidence.local', { done: e.localConfirmed, total: e.localTotal })}</span>}
       {e.localUnperformed > 0 && <span className="badge badge-warn">{t('evidence.localUnperformed')}</span>}
+      {e.stepConfirmed && <span className="badge">{t('evidence.stepConfirmed')}</span>}
+      {e.stepNotPerformed && <span className="badge badge-warn">{t('evidence.stepNotPerformed')}</span>}
     </span>
   );
 }

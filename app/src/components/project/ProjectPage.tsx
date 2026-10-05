@@ -1,7 +1,7 @@
 // "My project": the selected capstone workspace (REQ-009–REQ-013). Steps with provenance on the
 // left, files and their real result on the right; snapshots, export and other projects around them.
 import { useCallback, useEffect, useState } from 'react';
-import { currentStep } from '@shared/capstone.js';
+import { currentStep, nextOpenStep } from '@shared/capstone.js';
 import { ContentError } from '../../lib/content';
 import { formatDate, pick } from '../../lib/i18n';
 import type { Doc } from '../../lib/persist';
@@ -118,7 +118,9 @@ function ProjectWorkspace({ doc, capstone, unit }: { doc: Doc<WorkspaceDoc>; cap
   const ws = useStore(doc.store);
   const rows = stepRows(capstone);
   const current = currentStep(capstone.steps, ws.steps) as string | null;
-  const [selected, setSelected] = useState<string | null>(unit ?? current ?? rows[0]?.unit ?? null);
+  // Without a step in the address: the current in-platform step, else the first step still open
+  // (local ones included), else the first one.
+  const [selected, setSelected] = useState<string | null>(unit ?? current ?? (nextOpenStep(capstone.steps, ws.steps) as string | null) ?? rows[0]?.unit ?? null);
   const [starter, setStarter] = useState<{ through: string | null } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);

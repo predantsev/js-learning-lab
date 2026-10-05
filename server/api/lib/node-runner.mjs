@@ -5,7 +5,8 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
@@ -205,7 +206,8 @@ export function validateRunRequest(body, limits = LIMITS) {
   if (network !== 'none' && network !== 'loopback') throw new HttpError(400, 'bad-request', '"capabilities.network" must be "none" or "loopback".');
   const workers = caps.workers ?? false;
   if (typeof workers !== 'boolean') throw new HttpError(400, 'bad-request', '"capabilities.workers" must be a boolean.');
-  return { mode, files, entry, tests, stdin, args, timeoutMs, network, workers, strings: validateStrings(body.strings, limits) };
+  const packages = validatePackages(caps.packages, files);
+  return { mode, files, entry, tests, stdin, args, timeoutMs, network, workers, packages, strings: validateStrings(body.strings, limits) };
 }
 
 /** Localized example strings (`{ key: text }`) that test mode exposes to checks as `L`. */
@@ -221,6 +223,44 @@ function validateStrings(value, limits) {
   }
   if (bytes > limits.stringsBytes) throw new HttpError(413, 'too-large', `"strings" total ${bytes} bytes; the limit is ${limits.stringsBytes}.`);
   return Object.fromEntries(entries);
+}
+
+// ---------- npm packages a block may ask for (capabilities.packages) ----------
+// The platform's own runtime dependencies (package.json "dependencies"), offered so that Node-stage
+// lessons can use the real server renderer of React. A run that asks for them gets *copies* of the
+// files Node needs in <workspace>/node_modules: no link leads out of the workspace, so the learner's
+// code can change or delete them without touching the platform. Files of other environments
+// (browser, edge, bun, profiling builds, react-dom/client) are left out.
+export const PACKAGE_FILES = {
+  react: ['package.json', 'LICENSE', 'index.js', 'jsx-runtime.js', 'jsx-dev-runtime.js', 'cjs/react.development.js', 'cjs/react.production.js', 'cjs/react-jsx-runtime.development.js', 'cjs/react-jsx-runtime.production.js', 'cjs/react-jsx-dev-runtime.development.js', 'cjs/react-jsx-dev-runtime.production.js'],
+  'react-dom': ['package.json', 'LICENSE', 'index.js', 'server.js', 'server.node.js', 'static.js', 'static.node.js', 'cjs/react-dom.development.js', 'cjs/react-dom.production.js', 'cjs/react-dom-server.node.development.js', 'cjs/react-dom-server.node.production.js', 'cjs/react-dom-server-legacy.node.development.js', 'cjs/react-dom-server-legacy.node.production.js'],
+};
+/** Packages a package needs at run time (react-dom requires react). */
+const PACKAGE_NEEDS = { 'react-dom': ['react'] };
+const requireHere = createRequire(import.meta.url);
+
+/** The offered packages that are installed here: { name: { dir, version } }. */
+function installedPackages() {
+  const out = {};
+  for (const name of Object.keys(PACKAGE_FILES)) {
+    try {
+      const manifest = requireHere.resolve(`${name}/package.json`);
+      const dir = path.dirname(manifest);
+      if (PACKAGE_FILES[name].every((f) => existsSync(path.join(dir, f)))) out[name] = { dir, version: JSON.parse(readFileSync(manifest, 'utf8')).version };
+    } catch {
+      /* not installed: not offered */
+    }
+  }
+  return out;
+}
+
+/** Validated `capabilities.packages`: the names asked for plus what they need, in a stable order. */
+function validatePackages(value, files) {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((p) => typeof p !== 'string' || !(p in PACKAGE_FILES))) throw new HttpError(400, 'bad-request', `"capabilities.packages" lists npm packages the platform can provide: ${Object.keys(PACKAGE_FILES).join(', ')}.`);
+  if (files.some((f) => f.path.split('/')[0] === 'node_modules')) throw new HttpError(400, 'bad-request', 'With "capabilities.packages" the platform writes node_modules/ itself; the files may not contain it.');
+  const wanted = new Set(value.flatMap((p) => [p, ...(PACKAGE_NEEDS[p] ?? [])]));
+  return Object.keys(PACKAGE_FILES).filter((p) => wanted.has(p));
 }
 
 /**
@@ -325,7 +365,8 @@ export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits 
     console.log(JSON.stringify(r));`;
 
   // ---- availability: prove isolation on this machine instead of trusting flag names ----
-  const feature = { available: false, node: process.version, flags: [], typescript: support.typescript, osSandbox: { kind: null, active: false }, limits: { ...limits } };
+  const packages = installedPackages();
+  const feature = { available: false, node: process.version, flags: [], typescript: support.typescript, osSandbox: { kind: null, active: false }, limits: { ...limits }, packages: Object.fromEntries(Object.entries(packages).map(([name, p]) => [name, p.version])) };
   if (disabled) {
     feature.reason = String(disabled);
   } else if (!support.permissionFlag || !support.fsFlags) {
@@ -388,6 +429,15 @@ export async function createNodeRunner({ runtimeDir, osSandbox = 'auto', limits 
       if (!entries.some((f) => f.path === 'package.json')) entries.push({ path: 'package.json', text: '{ "type": "module" }\n' });
       if (spec.tests) entries.push({ path: spec.tests.path, text: spec.tests.source });
       await writeFiles(workspace, entries);
+      for (const name of spec.packages ?? []) {
+        const pkg = packages[name];
+        if (!pkg) throw new HttpError(501, 'package-unavailable', `The npm package ${name} is not installed with this platform, so it cannot be provided (run "npm install" in the platform folder).`);
+        for (const file of PACKAGE_FILES[name]) {
+          const target = path.join(workspace, 'node_modules', name, file);
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.copyFile(path.join(pkg.dir, file), target);
+        }
+      }
     } catch (error) {
       runs.delete(runId);
       await fs.rm(workspace, { recursive: true, force: true });

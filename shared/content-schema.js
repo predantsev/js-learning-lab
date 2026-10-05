@@ -105,8 +105,20 @@ export function glossaryRefs(value) {
   return refs;
 }
 
-function checkPredictionItem(issues, item, path) {
+/** Runtimes a prediction or review question can run its `code` in ("Run and check", validator). */
+export const QUESTION_RUNTIMES = ['browser-js', 'isolated-node'];
+
+function checkPredictionItem(issues, item, path, stage = null) {
   checkLocalized(issues, item.prompt, `${path}.prompt`);
+  if (item.runtime !== undefined) {
+    if (!QUESTION_RUNTIMES.includes(item.runtime)) issues.add(`${path}.runtime`, `must be one of ${QUESTION_RUNTIMES.join(', ')} (the default is browser-js)`);
+    else if (stage && STAGE_RUNTIMES[stage] && !STAGE_RUNTIMES[stage].includes(item.runtime)) issues.add(`${path}.runtime`, `runtime ${item.runtime} is not honest for stage ${stage} (allowed: ${STAGE_RUNTIMES[stage].join(', ')}; content/README.md, "Runtimes")`);
+    if (item.runtime === 'isolated-node' && !nonEmpty(item.code)) issues.add(`${path}.runtime`, 'a question runs its own "code" field: add the code, or remove runtime');
+  }
+  if (item.capabilities !== undefined) {
+    if (item.runtime !== 'isolated-node') issues.add(`${path}.capabilities`, 'capabilities belong to a question with runtime: isolated-node');
+    else checkNodeCapabilities(issues, item.capabilities, `${path}.capabilities`);
+  }
   checkLocalized(issues, item.explanation, `${path}.explanation`);
   if (item.code !== undefined && !nonEmpty(item.code)) issues.add(`${path}.code`, 'must be a non-empty string when present');
   const answer = item.answer;
@@ -158,6 +170,9 @@ function checkStrings(issues, block, p) {
   }
 }
 
+/** npm packages an isolated-node block may ask for (`capabilities.packages`; server/api/lib/node-runner.mjs PACKAGE_FILES). */
+export const NODE_PACKAGES = ['react', 'react-dom'];
+
 /** isolated-node capabilities map one to one to the executor request (docs/platform/SERVER-API.md). */
 function checkNodeCapabilities(issues, caps, p) {
   if (caps === undefined) return;
@@ -165,12 +180,13 @@ function checkNodeCapabilities(issues, caps, p) {
     issues.add(p, 'must be a mapping');
     return;
   }
-  const allowed = ['network', 'workers', 'timeoutMs', 'testTimeoutMs'];
+  const allowed = ['network', 'workers', 'timeoutMs', 'testTimeoutMs', 'packages'];
   for (const key of Object.keys(caps)) if (!allowed.includes(key)) issues.add(`${p}.${key}`, `unknown capability for isolated-node (allowed: ${allowed.join(', ')})`);
   if (caps.network !== undefined && caps.network !== 'none' && caps.network !== 'loopback') issues.add(`${p}.network`, 'must be "none" (default) or "loopback" for isolated-node');
   if (caps.workers !== undefined && typeof caps.workers !== 'boolean') issues.add(`${p}.workers`, 'must be true or false');
   if (caps.timeoutMs !== undefined && !(Number.isInteger(caps.timeoutMs) && caps.timeoutMs >= 100 && caps.timeoutMs <= 60000)) issues.add(`${p}.timeoutMs`, 'must be a whole number of milliseconds between 100 and 60000');
   if (caps.testTimeoutMs !== undefined && !(Number.isInteger(caps.testTimeoutMs) && caps.testTimeoutMs >= 50 && caps.testTimeoutMs <= 30000)) issues.add(`${p}.testTimeoutMs`, 'must be a whole number of milliseconds between 50 and 30000');
+  if (caps.packages !== undefined && (!Array.isArray(caps.packages) || caps.packages.length === 0 || caps.packages.some((name) => !NODE_PACKAGES.includes(name)))) issues.add(`${p}.packages`, `must list npm packages the platform provides: ${NODE_PACKAGES.join(', ')} (content/README.md, "isolated-node")`);
 }
 
 function checkBlock(issues, block, lesson, ctx) {
@@ -201,13 +217,13 @@ function checkBlock(issues, block, lesson, ctx) {
       if (!isPlainObject(block.spec)) issues.add(`${p}.spec`, 'missing visual spec');
       break;
     case 'prediction':
-      checkPredictionItem(issues, block, p);
+      checkPredictionItem(issues, block, p, stage);
       break;
     case 'review':
       checkLocalized(issues, block.title, `${p}.title`);
       if (!Array.isArray(block.items) || block.items.length === 0) issues.add(`${p}.items`, 'a review block needs at least one question');
       for (const [i, item] of (block.items ?? []).entries()) {
-        checkPredictionItem(issues, item, `${p}.items[${i}]`);
+        checkPredictionItem(issues, item, `${p}.items[${i}]`, stage);
         if (item.strings !== undefined) issues.add(`${p}.items[${i}].strings`, 'put strings on the review block: its questions share one table');
         const itemIdProblem = idProblem(item.id);
         if (itemIdProblem) issues.add(`${p}.items[${i}].id`, itemIdProblem);
@@ -233,7 +249,9 @@ function checkBlock(issues, block, lesson, ctx) {
         if (!EXERCISE_MODES.includes(block.mode)) issues.add(`${p}.mode`, `must be one of ${EXERCISE_MODES.join(', ')}`);
         if (block.mode === 'independent') {
           if (block.hints !== undefined) issues.add(`${p}.hints`, 'independent exercises have no hints');
-        } else {
+        } else if (!(block.mode === 'debug' && block.hints === undefined && (block.assessment === true || lesson.kind === 'assessment'))) {
+          // A debug exercise of a gate (assessment: true, or an assessment lesson) may come without
+          // hints: the learner finds the defect alone and the pass is not marked "assisted".
           checkLocalized(issues, block.hints?.nudge, `${p}.hints.nudge`);
           checkLocalized(issues, block.hints?.explanation, `${p}.hints.explanation`);
         }

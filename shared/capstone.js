@@ -92,6 +92,11 @@ export function sortPaths(paths, entry = 'index.html') {
 // A step record lives in the workspace document under steps[<UNIT>]:
 //   { state: 'done', source: 'platform-check', checkedAt }  — a real check passed on the learner's files
 //   { state: 'skipped', source: 'starter', skippedAt }      — the reference state was supplied instead
+//   { state: 'done', source: 'learner-confirmed', confirmedAt }   — a local step (VS Code, terminal,
+//                                                             device) the learner says they carried out;
+//                                                             the platform saw nothing (never "checked")
+//   { state: 'skipped', source: 'no-native-tooling', skippedAt }  — a native local step not performed:
+//                                                             no emulator or device (revisitable)
 //   { state: 'pending' } or no record                         — not done yet
 // The workspace "base" records what the platform last put into the files: CP-START at creation
 // ({ kind: 'start', unit: null }) or the reference after a step ({ kind: 'starter', unit }).
@@ -101,6 +106,21 @@ export const START_BASE = Object.freeze({ kind: 'start', unit: null });
 export const stepIndex = (steps, unit) => steps.findIndex((s) => s.unit === unit);
 export const isStepDone = (record) => record?.state === 'done' && record.source === 'platform-check';
 export const isStepSkipped = (record) => record?.state === 'skipped';
+/** A local step the learner confirmed (self-reported, like a lesson's local task). */
+export const isStepConfirmed = (record) => record?.state === 'done' && record.source === 'learner-confirmed';
+/** A native local step marked "not performed" for lack of an emulator or a device. */
+export const isStepNotPerformed = (record) => record?.state === 'skipped' && record.source === 'no-native-tooling';
+
+/** Local steps of the React Native stage are carried out on an emulator or a device. */
+export const stepNeedsDevice = (step) => step?.mode === 'local' && String(step.unit ?? '').startsWith('RN-');
+
+/**
+ * The step to show first: the first step, local ones included, that has no final record yet
+ * (checked, reference applied, confirmed or not performed), or null when every step has one.
+ */
+export function nextOpenStep(steps, records) {
+  return steps.find((s) => !isStepDone(records[s.unit]) && !isStepSkipped(records[s.unit]) && !isStepConfirmed(records[s.unit]))?.unit ?? null;
+}
 
 /** True when the base files already contain the work of `unit` (supplied by a starter, not authored). */
 export function coveredByBase(steps, base, unit) {
@@ -184,6 +204,18 @@ export function unifiedDiff(before, after, { fromLabel = 'a', toLabel = 'b' } = 
     parts.push(createTwoFilesPatch(a === undefined ? '/dev/null' : `${fromLabel}/${path}`, b === undefined ? '/dev/null' : `${toLabel}/${path}`, a ?? '', b ?? '', '', '', { context: 3 }).replace(/^=+\n/m, ''));
   }
   return parts.join('\n');
+}
+
+/**
+ * The reference a reference is compared with: the latest earlier one of the same project, which is
+ * the one with the same entry file (the web project starts from index.html, the React Native project
+ * from App.tsx). -1 when the reference starts a project (CP-START, the first React Native step):
+ * comparing it with another project would show that project as removed.
+ * @param {{ entry: string }[]} refs references in course order (CP-START first)
+ */
+export function previousReferenceIndex(refs, index) {
+  for (let j = index - 1; j >= 0; j -= 1) if (refs[j].entry === refs[index].entry) return j;
+  return -1;
 }
 
 /** Which files differ between two file sets: { added, removed, modified } path lists. */

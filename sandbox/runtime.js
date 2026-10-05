@@ -570,11 +570,12 @@
   function expect(actual, hint) {
     const base = makeExpect(actual, false, hint);
     base.not = makeExpect(actual, true, hint);
-    const asyncMatchers = (settle) => new Proxy({}, {
-      get: (_, name) => async (...args) => { const value = await settle(); const e = makeExpect(value, false, hint); return e[name](...args); },
+    // `.rejects.toThrow(x)` checks the rejection reason as if it were thrown (as in Jest).
+    const asyncMatchers = (settle, rejected = false) => new Proxy({}, {
+      get: (_, name) => async (...args) => { const value = await settle(); if (rejected && name === 'toThrow') return makeExpect(() => { throw value; }, false, hint).toThrow(...args); const e = makeExpect(value, false, hint); return e[name](...args); },
     });
     base.resolves = asyncMatchers(() => actual);
-    base.rejects = asyncMatchers(async () => { try { await actual; } catch (e) { return e; } throw new AssertionError('expected the promise to reject, but it resolved', {}); });
+    base.rejects = asyncMatchers(async () => { try { await actual; } catch (e) { return e; } throw new AssertionError('expected the promise to reject, but it resolved', {}); }, true);
     return base;
   }
   function spy(impl) {

@@ -1,5 +1,6 @@
 // sequence: actors with lifelines and messages over time; steps reveal one message at a time.
 import { IssueList, checkArray, checkEnum, checkId, checkLabel, checkText, isPlainObject, renderText, toText } from '../common.js';
+import { sequenceWidth } from './sequence-geometry.js';
 
 export const MESSAGE_KINDS = ['sync', 'async', 'return', 'note'];
 
@@ -49,5 +50,7 @@ export async function compile(spec, ctx, issues = new IssueList()) {
   const steps = [];
   if (spec.intro) steps.push({ caption: renderText(ctx, spec.intro), message: -1 });
   messages.forEach((m, i) => steps.push({ caption: renderText(ctx, spec.messages[i].caption), message: i }));
-  return { spec: { kind: 'sequence', actors: spec.actors.map((a) => ({ id: a.id, label: toText(a.label) })), messages, steps }, issues };
+  const actors = spec.actors.map((a) => ({ id: a.id, label: toText(a.label) }));
+  // The natural width the player draws (content/VISUALS.md, section 6): checked like a diagram's.
+  return { spec: { kind: 'sequence', layout: { width: sequenceWidth(actors) }, actors, messages, steps }, issues };
 }

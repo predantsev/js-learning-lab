@@ -60,3 +60,19 @@ Ordering increments this way is proposed, not an approved time estimate. Archite
 Run `python3 scripts/validate_competencies.py` for structural specification checks; it does not pass product/content/learner gates. Run `python3 scripts/validate_competencies.py --release` to check evidence closure. At this documentation baseline the latter must fail because course content and verified evidence do not exist. Future implementation must validate real lesson/assessment manifests, artifact contents, prerequisite integrity and observed outputs rather than merely insert paths or set status flags. V-18/V-19 and M6 require semantic independent review of every subskill, not just JSON success.
 
 Full product release and learner completion are different: the product needs supported native workflow evidence even when an individual learner skips native tools; that learner retains incomplete native competency. An honest web-only Node result is not proof of complete four-stage native ability. All supported-platform and current-version claims need fresh validation.
+
+## Running the suites next to other work
+
+The suites read files of the checkout while they run: the content build reads
+`docs/competencies.json` and `content/`, the end-to-end suite serves a snapshot of `dist/app` and
+`dist/sandbox` taken when each test file starts (`tests/e2e/helpers.mjs`), and several tests read
+`dist/content` directly. A writer in the same checkout during a run — a build (`npm run build`,
+`npm start` rebuilding stale output, another `npm run test:e2e`), a `git merge` or checkout, the
+competency sync — can make a test fail without any defect. Measured on 2026-10-05: a plain
+truncate-and-write of `docs/competencies.json` gave `Unexpected end of JSON input` in 84 of 13 096
+concurrent reads (0 with a rename), and a rebuild loop of `dist/app` made `app-layout` fail with
+"The application is not built yet" while the suite linked `dist/` instead of copying it. Since then
+`scripts/sync_competency_lessons.py` writes the inventory atomically and the end-to-end suite
+snapshots the build (it waits up to 30 s for a build in progress); `app-layout` and `app-hosts`
+then passed 3 of 3 runs under a constant rebuild loop. `git` itself still writes files in place: do
+not merge or check out in a checkout whose suites are running.

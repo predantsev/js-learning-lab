@@ -16,6 +16,7 @@ export const NODE_STOP_PATH = '/api/node/stop';
 export function nodeRunRequest(block, files, { mode = 'run', lang = 'uk' } = {}) {
   const caps = block.capabilities ?? {};
   const capabilities = { network: caps.network ?? 'none', workers: caps.workers ?? false };
+  if (caps.packages !== undefined) capabilities.packages = caps.packages;
   const body = { files, entry: block.entry, mode, capabilities };
   if (caps.timeoutMs !== undefined) body.timeoutMs = caps.timeoutMs;
   if (mode === 'test') {
@@ -25,6 +26,49 @@ export function nodeRunRequest(block, files, { mode = 'run', lang = 'uk' } = {})
     body.strings = stringsFor(block, lang);
   }
   return body;
+}
+
+/**
+ * Request body for a prediction or review question with `runtime: isolated-node`: its `code` (already
+ * in the lesson language) runs as `index.js` in run mode, with the question's capabilities.
+ */
+export function nodeQuestionRequest(question, code) {
+  return nodeRunRequest({ entry: 'index.js', capabilities: question.capabilities }, { 'index.js': code }, { mode: 'run' });
+}
+
+/**
+ * What a run printed, as console lines in the order they were printed (stdout and stderr together),
+ * without Node's report of an uncaught error at the end, plus that error (parseUncaughtError) or
+ * null. `chunks`: [{ stream: 'stdout' | 'stderr', data }] in event order. This is what a Node
+ * prediction's `verify: { logs, error }` is compared with.
+ */
+export function nodeOutputLines(chunks, cwd) {
+  const stderr = chunks.filter((c) => c.stream === 'stderr').map((c) => c.data).join('');
+  const error = parseUncaughtError(stderr, cwd);
+  // Node writes the report last; it starts at the location block when there is one, else at the
+  // "Name: message" line (the first line of error.stack).
+  let reportAt = stderr.length;
+  if (error) {
+    const header = String(stderr.slice(0, TRAILER.exec(stderr).index)).lastIndexOf(`\n${error.name}`) + 1;
+    let start = header;
+    const before = stderr.slice(0, Math.max(0, header - 1)).split('\n');
+    // "<file>:<line>" / source line / caret / blank line above the header.
+    if (before.length >= 4 && before[before.length - 1].trim() === '' && CARET_LINE.test(before[before.length - 2]) && LOCATION_LINE.test(before[before.length - 4])) start = before.slice(0, -4).join('\n').length + (before.length > 4 ? 1 : 0);
+    else if (header === 0 || stderr.startsWith(error.name)) start = header;
+    reportAt = Math.max(0, start);
+  }
+  let text = '';
+  let seenErr = 0;
+  for (const c of chunks) {
+    if (c.stream === 'stderr') {
+      const keep = Math.max(0, Math.min(c.data.length, reportAt - seenErr));
+      text += c.data.slice(0, keep);
+      seenErr += c.data.length;
+    } else text += c.data;
+  }
+  const lines = text.split('\n');
+  if (lines[lines.length - 1] === '') lines.pop();
+  return { lines, error };
 }
 
 /** Read an NDJSON body (a WHATWG ReadableStream of bytes, in browsers and in Node) event by event. */
@@ -173,7 +217,7 @@ export function parseUncaughtError(stderr, cwd) {
       frame = `${lines[caret - 1]}\n${lines[caret]}`;
     }
   }
-  const kind = name === 'SyntaxError' && where === null && atBlock !== null && !/does not provide an export named/.test(message) ? 'syntax' : undefined;
+  const kind = name === 'SyntaxError' && where === null && atBlock !== null && !isModuleLinkMessage(message) ? 'syntax' : undefined;
   where = where ?? atBlock;
   if (frame === undefined && propLines.length > 0) frame = shorten(propLines.map((l) => l.replace(/,$/, '')).join('\n'));
   return {
@@ -201,12 +245,23 @@ export function harnessErrorView(error, shorten = (t) => t, phase = 'load') {
 }
 
 /**
+ * The message of a module-linking SyntaxError: an import names an export the module does not have.
+ * Node words it in two ways (measured on 22.13.1, 22.23.3 and 25.2.1): "The requested module './x.js'
+ * does not provide an export named 'y'" for an ES module, and "Named export 'y' not found. The
+ * requested module './x.cjs' is a CommonJS module, …" for a CommonJS module — on Node 22 always, on
+ * Node 25 when the import sits in the entry file (an imported module gets the first wording there).
+ */
+export function isModuleLinkMessage(message) {
+  return /does not provide an export named|^Named export '[^']*' not found\. The requested module /.test(String(message ?? ''));
+}
+
+/**
  * A parse error in a learner file (not in the checks): the code could not start, which the browser
  * runner reports before running ("compile error"). A missing export is a link problem, not a parse
  * error, and stays a load error.
  */
 export function isLearnerSyntaxError(error) {
-  return Boolean(error) && error.name === 'SyntaxError' && typeof error.file === 'string' && error.file !== TESTS_PATH && !/does not provide an export named/.test(error.message ?? '');
+  return Boolean(error) && error.name === 'SyntaxError' && typeof error.file === 'string' && error.file !== TESTS_PATH && !isModuleLinkMessage(error.message);
 }
 
 /**

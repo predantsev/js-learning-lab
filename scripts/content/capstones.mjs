@@ -13,7 +13,12 @@ import { pathProblem } from '../../shared/capstone.js';
 
 export const CAPSTONES_DIR = path.join(ROOT, 'content', 'capstones');
 export const STEP_MODES = ['in-platform', 'local'];
-const TEXT_EXT = new Set(['.js', '.mjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.svg', '.csv', '.xml', '.gitignore']);
+/**
+ * Files the content loaders read (lesson block folders and capstone references alike): text by
+ * extension, plus files without one (a shell script, LICENSE). Anything else — binary images, lock
+ * files with other extensions — is skipped. content/README.md, "Layout".
+ */
+export const TEXT_EXT = new Set(['.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.css', '.md', '.txt', '.sql', '.yaml', '.yml', '.svg', '.csv', '.xml', '.env', '.gitignore', '']);
 const KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9]*$/;
 const L_REFERENCE = /\bL\.([a-zA-Z_$][\w$]*)|\bL\[\s*(['"])([^'"]+)\2\s*\]/g;
 const TEST_NAME = /\btest\(\s*(['"`])((?:\\.|(?!\1).)+)\1/g;
@@ -36,7 +41,7 @@ async function readTree(dir, base = dir) {
     if (entry.name === '.DS_Store') continue;
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) Object.assign(out, await readTree(full, base));
-    else if (TEXT_EXT.has(path.extname(entry.name).toLowerCase()) || TEXT_EXT.has(entry.name)) out[path.relative(base, full).split(path.sep).join('/')] = await fs.readFile(full, 'utf8');
+    else if (TEXT_EXT.has(path.extname(entry.name).toLowerCase())) out[path.relative(base, full).split(path.sep).join('/')] = await fs.readFile(full, 'utf8');
   }
   return out;
 }
@@ -148,7 +153,7 @@ export const stepLessonId = (syllabus, unit) => (syllabus.get(unit)?.lessons ?? 
  * Static checks and compilation. Returns { capstones: Record<id, json>, issues }.
  * `md` is the markdown renderer of lib.mjs (block / inline / plain).
  */
-export function compileCapstones(sources, { md, domains, syllabus }) {
+export function compileCapstones(sources, { md, domains, syllabus, checks = null }) {
   const issues = [];
   const add = (where, message, file) => issues.push({ path: where, message, ...(file ? { file: rel(file) } : {}) });
   const capstones = {};
@@ -203,6 +208,12 @@ export function compileCapstones(sources, { md, domains, syllabus }) {
       const inPlatform = s.mode === 'in-platform';
       const entry = s.entry ?? 'index.html';
       const testNames = v.tests ? [...v.tests.matchAll(TEST_NAME)].map((m) => m[2]) : [];
+      // A local step's reference is optional, but when it is there its entry names the project it
+      // belongs to (the after-export diff compares references of one project), so it must exist.
+      if (!inPlatform && Object.keys(v.reference).length > 0) {
+        if (!(entry in v.reference)) add(at, `reference/ has no entry file "${entry}" (set entry: in step.yaml to the file the project starts from, for example App.tsx)`, v.dir);
+        for (const p of Object.keys(v.reference)) if (pathProblem(p)) add(at, `unsafe file path "${p}" in reference/`, v.dir);
+      }
       if (inPlatform) {
         if (Object.keys(v.reference).length === 0) add(at, 'missing reference/ files (the complete project after the step)', v.dir);
         else if (!(entry in v.reference)) add(at, `reference/ has no entry file "${entry}"`, v.dir);
@@ -226,6 +237,19 @@ export function compileCapstones(sources, { md, domains, syllabus }) {
       }
       const texts = [...Object.values(v.reference), ...localizedTexts([task.instructions, task.nudge, task.testTitles, (task.feedback ?? []).map((f) => f?.message)])];
       for (const text of texts) for (const key of placeholders(text)) if (!(key in strings)) add(at, `placeholder %%${key}%% is not defined in the strings up to this step`, v.dir);
+      // Warnings shared with the lesson checks (scripts/content/lib.mjs): a %%key%% whose text breaks
+      // the quotes around it — a local step's reference never runs, so nothing else would notice —
+      // and raw line separators in the step's texts and files.
+      if (checks) {
+        const warn = (message) => issues.push({ path: at, message, file: rel(v.dir), level: 'warning' });
+        for (const [file, text] of Object.entries(v.reference)) {
+          if (checks.CODE_FILE.test(file)) for (const problem of checks.quotedPlaceholderProblems(text, strings)) warn(checks.quotedPlaceholderMessage(`reference/${file}`, problem));
+          const hits = checks.rawLineSeparators(text);
+          if (hits.length > 0) warn(checks.separatorMessage(`reference/${file}`, hits));
+        }
+        const taskHits = checks.rawLineSeparators(JSON.stringify(task));
+        if (taskHits.length > 0) warn(checks.separatorMessage('task.yaml', taskHits).replace(/ \(line [^)]*\)/, ''));
+      }
 
       const render = (value, kind) => (isLocalized(value) ? Object.fromEntries(LANGS.map((l) => [l, md[kind](value[l])])) : null);
       steps.push({

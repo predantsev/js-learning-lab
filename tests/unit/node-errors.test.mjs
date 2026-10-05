@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { isLearnerSyntaxError, nodeRunRequest, parseUncaughtError, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
+import { isLearnerSyntaxError, isModuleLinkMessage, nodeOutputLines, nodeRunRequest, parseUncaughtError, testsOutcome, workspaceShortener } from '../../shared/node-run.js';
 
 let dir;
 before(() => {
@@ -47,6 +47,21 @@ test('parse errors of the code are "syntax" with the location of the bad token, 
   // A missing export is a link problem: no "syntax" kind, so it is not shown as unreadable code.
   const link = crash('link.js', 'import { nope } from "./other.js";\n', { 'other.js': 'export const a = 1;\n' }).error;
   assert.deepEqual(pick(link), { name: 'SyntaxError', message: "The requested module './other.js' does not provide an export named 'nope'", file: 'link.js', line: 1 });
+  // A named import of a CommonJS module that Node cannot detect: also a link problem. Node 22 prints
+  // "Named export … not found" wherever the import sits; Node 25 only for an import in the entry file.
+  const cjs = crash('cjs-entry.js', 'import { hidden } from "./lib.cjs";\n', { 'lib.cjs': 'module.exports = {}; Object.assign(module.exports, { hidden: 4 });\n' }).error;
+  assert.equal(cjs.name, 'SyntaxError');
+  assert.match(cjs.message, /^Named export 'hidden' not found\. The requested module '\.\/lib\.cjs' is a CommonJS module/);
+  assert.equal(cjs.kind, undefined, 'a CommonJS named import is not unreadable code');
+});
+
+test('module-link messages in both of Node\'s wordings (22.13.1, 22.23.3, 25.2.1)', () => {
+  assert.equal(isModuleLinkMessage("The requested module './a.js' does not provide an export named 'b'"), true);
+  assert.equal(isModuleLinkMessage("Named export 'b' not found. The requested module './a.cjs' is a CommonJS module, which may not support all module.exports as named exports.\nCommonJS modules can always be imported via the default export, for example using:"), true);
+  assert.equal(isModuleLinkMessage("Unexpected token ';'"), false);
+  assert.equal(isModuleLinkMessage(undefined), false);
+  const named = "Named export 'hidden' not found. The requested module './lib.cjs' is a CommonJS module, which may not support all module.exports as named exports.";
+  assert.equal(isLearnerSyntaxError({ name: 'SyntaxError', message: named, file: 'index.js' }), false, 'the code could start: an import asks for a name');
 });
 
 test('errors with a code keep it, and paths inside the exercise are shown relative to it', () => {
@@ -86,4 +101,20 @@ test('a block becomes the executor request: capabilities one to one, checks with
   assert.deepEqual(nodeRunRequest(block, { 'index.js': '' }, { mode: 'run', lang: 'en' }), { files: { 'index.js': '' }, entry: 'index.js', mode: 'run', capabilities: { network: 'loopback', workers: false }, timeoutMs: 5000 });
   assert.deepEqual(nodeRunRequest(block, { 'index.js': '' }, { mode: 'test', lang: 'en' }), { files: { 'index.js': '' }, entry: 'index.js', mode: 'test', capabilities: { network: 'loopback', workers: false }, timeoutMs: 5000, tests: { path: '__tests__.js', source: 'test("x", () => {});', timeoutMs: 3000 }, strings: { lamp: 'Lamp' } });
   assert.deepEqual(nodeRunRequest({ entry: 'a.js' }, {}, {}).capabilities, { network: 'none', workers: false });
+});
+
+test('the output of a run without Node\'s report of the uncaught error: what a Node prediction is checked against', () => {
+  const lines = (name, source) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, source);
+    const r = spawnSync(process.execPath, [file], { cwd: dir, encoding: 'utf8', env: { NO_COLOR: '1' } });
+    const out = nodeOutputLines([{ stream: 'stdout', data: r.stdout }, { stream: 'stderr', data: r.stderr }], dir);
+    return [out.lines, out.error && out.error.name];
+  };
+  assert.deepEqual(lines('ok.js', 'console.log("a"); console.log("b");\n'), [['a', 'b'], null]);
+  assert.deepEqual(lines('top.js', 'console.log("a");\nconsole.error("warned");\nthrow new TypeError("bad");\n'), [['a', 'warned'], 'TypeError']);
+  assert.deepEqual(lines('later.js', 'console.log("a");\nsetTimeout(() => { null.x; }, 1);\n'), [['a'], 'TypeError']);
+  assert.deepEqual(lines('syn.js', 'console.log("a")\nconst = 1;\n'), [[], 'SyntaxError']);
+  assert.deepEqual(lines('rej.js', 'console.log("a");\nawait Promise.reject(new RangeError("no"));\n'), [['a'], 'RangeError']);
+  assert.deepEqual(lines('text.js', 'console.error("Error: only text");\n'), [['Error: only text'], null], 'an error-looking line is output, not a report');
 });

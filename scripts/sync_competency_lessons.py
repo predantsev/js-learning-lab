@@ -15,6 +15,7 @@ verified only after the V-18 review; both are decisions, not something to derive
 """
 import argparse
 import json
+import os
 import pathlib
 import sys
 
@@ -85,7 +86,12 @@ def main():
     if args.check:
         print('check only: nothing written.')
         return
-    INVENTORY.write_text(json.dumps(inventory, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    # Written to a temporary file and renamed over the inventory: a reader (the content build, the
+    # test suites) never sees a half-written file. A plain write_text truncates first, and a
+    # concurrent JSON.parse then fails with "Unexpected end of JSON input".
+    temporary = INVENTORY.with_name(f'{INVENTORY.name}.{os.getpid()}.tmp')
+    temporary.write_text(json.dumps(inventory, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+    os.replace(temporary, INVENTORY)
     print(f'written: {INVENTORY.relative_to(ROOT)}')
 
 

@@ -28,7 +28,9 @@ Steps are ordered by the course teaching order (`docs/competencies.json` → `un
 ```yaml
 unit: JS-01                    # = folder name
 mode: in-platform              # in-platform (checked in the platform) | local (VS Code; checked statically)
-entry: index.html              # page the project starts from (default index.html)
+entry: index.html              # file the project starts from (default index.html; the React Native
+                               #   project: App.tsx). Local steps too: the reference must contain it, and
+                               #   references are compared with the earlier ones of the same entry
 title: { uk, en }              # step name
 intro: { uk, en }              # Markdown: what this step is about (shown in the project and in the lesson)
 purpose: { uk, en }            # why the step-lesson exists (see "Capstone-step lesson")
@@ -69,7 +71,13 @@ capabilities: {}               # optional, as for lesson exercises (network: lab
 
 - `reference/` is the whole project after the step (every file, unchanged ones included). It is the
   starting state of the next in-platform step, the "skip this step" offer and the post-export
-  download of that checkpoint.
+  download of that checkpoint. It is read like a lesson block folder: text files by extension plus
+  files without one (a shell script, `LICENSE`), with their line endings kept; binary files (images,
+  `.png` assets of a native template) are skipped (content/README.md, "Layout").
+- After the export, each reference is compared with the latest earlier reference of the **same
+  project** — the one with the same `entry` — in the downloads (`JSLL-REFERENCE.md`) and on the
+  project page: NO-01 with RE-12, not with the React Native app; RN-01 starts a project of its own and
+  is compared with nothing.
 - The starter for step N is the reference of the previous **in-platform** step (CP-START for the first).
 - `tests.js` uses the lesson test API (`content/README.md` → tests.js): `screen`, `user`, `expect`,
   `waitFor`, `logs()`, `storage`, `L`, … Test names are stable ids; the learner sees `testTitles`.
@@ -87,6 +95,12 @@ capabilities: {}               # optional, as for lesson exercises (network: lab
   `{ state: 'skipped', source: 'starter' }` — never done. The workspace remembers the supplied
   base; a later pass of a step whose work came from that base is reported but not counted. After
   restoring a snapshot with the learner's own files, their own pass counts again.
+- A local step (`mode: local`: VS Code, a terminal, a device) is never checked by the platform. Its
+  page shows the step's intro and task; the learner confirms it ("I have done this step" →
+  `{ state: 'done', source: 'learner-confirmed', confirmedAt }`, self-reported like a lesson's local
+  task, never "checked by the platform"). A step of the React Native stage also offers "I have no
+  emulator or device" → `{ state: 'skipped', source: 'no-native-tooling', skippedAt }`: not
+  performed, never done, later steps stay open, and "Return to the task" withdraws either mark.
 - Changing the capstone creates a separate workspace; old ones keep their files, snapshots and steps.
 
 Rules shared by the app, compiler and tests: `shared/capstone.js`.
@@ -98,8 +112,9 @@ When `content/syllabus/<UNIT>.yaml` names a lesson of `kind: capstone-step` that
 `purpose` and `objectives` from the step, then two blocks — the step `intro` (explanation) and a
 `transfer` block that opens `#/project/<UNIT>`. Unit authors do not write these lessons. The lesson
 counts as authored (course map, validation, `--release`). Its completion follows the step in the
-**active** project: completed only after a real platform check there; a supplied starter shows the
-lesson as skipped. Glossary terms these lessons introduce live in `content/glossary/capstone-steps.yaml`.
+**active** project: completed only after a real platform check there (a local step: after the
+learner's confirmation); a supplied starter and a native step "not performed" show the lesson as
+skipped. Glossary terms these lessons introduce live in `content/glossary/capstone-steps.yaml`.
 
 ## Commands
 
@@ -118,6 +133,7 @@ previous reference) fails at least one check; every test has a bilingual title; 
 ## Export
 
 "Export project" produces the learner's current files plus `jsll-manifest.json` (per-file SHA-256),
-a README in the workspace language, a zero-dependency `serve.mjs` with `package.json` (`npm start`),
+a README in the workspace language, a zero-dependency `serve.mjs` with `package.json` (`npm start`; it
+serves `.ts` files with their types removed by Node's `module.stripTypeScriptTypes`, as the platform runs them),
 `data/exported-storage.json` and `tools/restore-data.html`. Generated files never overwrite a learner
 file with the same name. Builder: `shared/project-export.js`.

@@ -26,7 +26,7 @@ export type Answer =
   | { type: 'choice' | 'multi'; options: AnswerOption[]; correct: string[] }
   | { type: 'text'; accept: Record<Lang, string[]>; caseSensitive?: boolean; placeholder?: L10n }
   | { type: 'order'; items: AnswerOption[] };
-export interface Question { id?: string; prompt: L10n; code?: L10n; codeHtml?: L10n; answer: Answer; explanation: L10n; from?: string; runnable?: boolean }
+export interface Question { id?: string; prompt: L10n; code?: L10n; codeHtml?: L10n; answer: Answer; explanation: L10n; from?: string; runnable?: boolean; runtime?: 'browser-js' | 'isolated-node'; capabilities?: Record<string, unknown> }
 
 interface BlockBase { id: string; kind: BlockKind; title?: L10n }
 export interface ExplanationBlock extends BlockBase { kind: 'explanation'; title: L10n; body: L10n }
@@ -35,7 +35,7 @@ export interface VisualBlock extends BlockBase { kind: 'visual'; visual: string;
 export interface PredictionBlock extends BlockBase, Omit<Question, 'id'> { kind: 'prediction' }
 export interface ReviewBlock extends BlockBase { kind: 'review'; title: L10n; items: (Question & { id: string; from: string })[] }
 /** Browser runtimes: network none | lab, loopBudgetMs, settleTimeoutMs. isolated-node: network none | loopback, workers, timeoutMs. Both: testTimeoutMs. */
-export interface Capabilities { network?: 'none' | 'lab' | 'loopback'; loopBudgetMs?: number; testTimeoutMs?: number; settleTimeoutMs?: number; workers?: boolean; timeoutMs?: number }
+export interface Capabilities { network?: 'none' | 'lab' | 'loopback'; loopBudgetMs?: number; testTimeoutMs?: number; settleTimeoutMs?: number; workers?: boolean; timeoutMs?: number; packages?: string[] }
 export interface ExampleBlock extends BlockBase { kind: 'example'; title: L10n; body: L10n; tryIt?: L10n; runtime: RuntimeKind; entry: string; files: Record<string, string>; strings?: Record<string, L10n>; limits?: L10n; capabilities?: Capabilities; expectError?: boolean; preview?: boolean }
 export interface FeedbackRule { when: { test?: string; error?: string }; message: L10n }
 export interface ExerciseBlock extends BlockBase {
@@ -66,7 +66,8 @@ export interface LocalTaskBlock extends BlockBase {
   intro: L10n;
   runtime: RuntimeKind;
   tools: { name: string | L10n; version?: string | L10n; note?: L10n }[];
-  steps: { text: L10n; command?: string; expect?: L10n }[];
+  /** A command is one text for both languages, or { uk, en } when it holds localized sample data. */
+  steps: { text: L10n; command?: string | L10n; expect?: L10n }[];
   verify: { id: string; text: L10n }[];
   troubleshooting: { problem: L10n; fix: L10n }[];
   recovery: L10n;
@@ -120,7 +121,7 @@ export interface LessonProgress {
   localTasks: Record<string, LocalTaskProgress>;
   seenBlocks: string[];
   /** Capstone-step lessons only: the step state of the active project, mirrored by components/project. */
-  project?: { workspaceId: string | null; state: 'done' | 'skipped' | 'pending'; at: string };
+  project?: { workspaceId: string | null; state: 'done' | 'confirmed' | 'skipped' | 'not-performed' | 'pending'; at: string };
 }
 export interface ProgressDoc { lessons: Record<string, LessonProgress> }
 // `files` is present once the learner edited code (it then keeps `lang`); an entry may hold only the

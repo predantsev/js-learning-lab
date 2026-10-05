@@ -17,8 +17,11 @@ export const DEFAULT_STYLE: StyleId = 'calm-studio';
  */
 export interface WorkspaceStep {
   state: 'done' | 'pending' | 'skipped';
-  source?: 'platform-check' | 'learner-confirmed' | 'starter';
+  /** shared/capstone.js lists the records: a platform check, a supplied reference, a local step the
+   * learner confirmed, a native local step not performed for lack of an emulator or a device. */
+  source?: 'platform-check' | 'learner-confirmed' | 'starter' | 'no-native-tooling';
   checkedAt?: string;
+  confirmedAt?: string;
   skippedAt?: string;
   attempts?: number;
   lastCheck?: { at: string; passed: number; total: number; counted: boolean };

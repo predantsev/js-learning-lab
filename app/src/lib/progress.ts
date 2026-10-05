@@ -29,8 +29,9 @@ export function requiredItems(lesson: Lesson): { questions: string[]; exercises:
 
 export function isLessonComplete(lesson: Lesson, p: LessonProgress): boolean {
   // A capstone-step lesson completes only through a real platform check of the step in the active
-  // project (mirrored into p.project); reading the lesson or a supplied starter never completes it.
-  if (lesson.kind === 'capstone-step') return p.project?.state === 'done';
+  // project, or — for a local step — the learner's confirmation (mirrored into p.project); reading
+  // the lesson, a supplied starter or a native step "not performed" never completes it.
+  if (lesson.kind === 'capstone-step') return p.project?.state === 'done' || p.project?.state === 'confirmed';
   const req = requiredItems(lesson);
   const seenAll = lesson.blocks.every((b) => p.seenBlocks.includes(b.id));
   return (
@@ -142,6 +143,9 @@ export interface LessonEvidence {
   localConfirmed: number;
   localTotal: number;
   localUnperformed: number;
+  /** Capstone-step lessons: a local step confirmed by the learner, or not performed. */
+  stepConfirmed: boolean;
+  stepNotPerformed: boolean;
 }
 
 export function lessonEvidence(lesson: IndexLesson, p: LessonProgress | undefined): LessonEvidence {
@@ -158,6 +162,8 @@ export function lessonEvidence(lesson: IndexLesson, p: LessonProgress | undefine
     localConfirmed: locals.filter((b) => p?.localTasks[b.id]?.confirmedAt).length,
     localTotal: locals.length,
     localUnperformed: locals.filter((b) => p?.localTasks[b.id]?.skipped && !p?.localTasks[b.id]?.confirmedAt).length,
+    stepConfirmed: p?.project?.state === 'confirmed',
+    stepNotPerformed: p?.project?.state === 'not-performed',
   };
 }
 

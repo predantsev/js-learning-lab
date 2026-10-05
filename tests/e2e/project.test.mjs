@@ -107,6 +107,15 @@ async function downloadFrom(p, click) {
   return { name: download.suggestedFilename(), bytes: await fs.readFile(await download.path()) };
 }
 const unzip = (bytes) => Object.fromEntries(Object.entries(unzipSync(new Uint8Array(bytes))).filter(([name]) => !name.endsWith('/')).map(([name, data]) => [name, strFromU8(data)]));
+async function waitFor(fn, { timeout = 10000 } = {}) {
+  const until = Date.now() + timeout;
+  for (;;) {
+    const value = await fn();
+    if (value) return value;
+    if (Date.now() > until) throw new Error('waitFor: the condition stayed false');
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
 const freePort = () => new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
 const rawStatus = (port, rawPath) => new Promise((resolve, reject) => {
   http.get({ host: '127.0.0.1', port, path: rawPath }, (res) => { res.resume(); resolve(res.statusCode); }).on('error', reject);
@@ -539,6 +548,22 @@ test('after export the project explains local authority and offers reference dow
   await panel.locator('.diff-pairs .segment', { hasText: 'CP-START → JS-01' }).click();
   assert.match(await panel.locator('.reference-diff', { hasText: 'index.html' }).innerText(), /index\.html/);
   assert.ok((await panel.locator('.reference-diff .diff-add').count()) > 0);
+  // At the stage boundaries a reference is compared with the earlier one of the same project: the
+  // React Native app starts a project of its own, and NO-01 continues the web project of RE-12.
+  const pairs = await panel.locator('.diff-pairs .segment').allInnerTexts();
+  assert.ok(pairs.includes('RE-12 → NO-01'), pairs.join(', '));
+  assert.ok(pairs.includes('RN-01 → RN-02'));
+  assert.ok(!pairs.some((p) => p.endsWith('→ RN-01') || /^RN-\d+ → (?!RN-)/.test(p)), `no pair across the two projects: ${pairs.join(', ')}`);
+  assert.match(await panel.locator('.diff-new-project').innerText(), /^RN-01 починає окремий проєкт \(вхідний файл App\.tsx\)/);
+  await panel.locator('.diff-pairs .segment', { hasText: 'RE-12 → NO-01' }).click();
+  assert.ok(await panel.locator('.reference-diff', { hasText: 'server/' }).count() > 0, 'the diff shows the new server files');
+  assert.equal(await panel.locator('.reference-diff .diff-del', { hasText: 'App.tsx' }).count(), 0);
+  const rn = unzip((await downloadFrom(page, () => panel.locator('.reference-list button', { hasText: 'RN-01' }).click())).bytes);
+  const rnRoot = 'js-learning-lab-planner-reference-rn-01/';
+  assert.equal(JSON.parse(rn[`${rnRoot}jsll-reference.json`]).previous, null);
+  assert.match(rn[`${rnRoot}JSLL-REFERENCE.md`], /починає окремий проєкт \(його вхідний файл — `App\.tsx`\)/);
+  const no = unzip((await downloadFrom(page, () => panel.locator('.reference-list button', { hasText: 'NO-01' }).click())).bytes);
+  assert.equal(JSON.parse(no['js-learning-lab-planner-reference-no-01/jsll-reference.json']).previous, 'RE-12');
 });
 
 /**
@@ -676,4 +701,55 @@ test('the project screen shows the authored feedback of the step for an error, i
   // In English the feedback follows the interface language.
   await p.locator('.lang-option[lang="en"]').click();
   await p.locator('.project-result .console-wrap .error-card .test-feedback', { hasText: 'Synthetic ReferenceError feedback: Synthetic footer' }).waitFor();
+});
+
+test('local steps are listed by stage with their task; the learner confirms them, or marks a native one not performed', async () => {
+  const ws = await activeWorkspace(page);
+  const capstone = compiled[ws.capstoneId];
+  await page.goto(`${server.url}#/project/RN-03`);
+  const detail = page.locator('.project-step-detail[data-step="RN-03"]');
+  await detail.waitFor();
+  // Every published step of every stage is listed, in four stage groups.
+  assert.deepEqual(await page.locator('.project-stage').evaluateAll((els) => els.map((e) => e.dataset.stage)), ['JS', 'RE', 'RN', 'NO']);
+  assert.equal(await page.locator('.project-step-button').count(), capstone.steps.length);
+  // The task of a local step is shown, not "planned, not published".
+  const step = capstone.steps.find((s) => s.unit === 'RN-03');
+  assert.equal(await detail.locator('#project-step-title').innerText(), step.title.uk);
+  assert.doesNotMatch(await detail.innerText(), /ще не опубліковано/);
+  assert.ok((await detail.locator('.step-task .prose').innerText()).length > 200, 'the instructions are shown');
+  assert.equal(await page.locator('.ws-actions .btn-check').count(), 0, 'a local step has no platform check');
+  // Run still runs the platform copy of the project from its own entry, not the App.tsx of the native app.
+  await runPreview(page);
+  assert.equal(await page.locator('.project-result').getAttribute('data-status'), 'done');
+  // Native step without an emulator or device: not performed, never done; the lesson shows as skipped.
+  await detail.getByRole('button', { name: 'У мене немає емулятора чи пристрою' }).click();
+  assert.equal(await detail.locator('.step-badge').getAttribute('data-status'), 'not-performed');
+  await settled(page);
+  let doc = await activeWorkspace(page);
+  assert.equal(doc.steps['RN-03'].state, 'skipped');
+  assert.equal(doc.steps['RN-03'].source, 'no-native-tooling');
+  let lesson = await waitFor(async () => { const l = (await storeDoc(page, 'progress')).data.lessons['rn-03-08-capstone-native-crud']; return l?.project?.state === 'not-performed' ? l : null; });
+  assert.equal(lesson.state, 'skipped');
+  // Revisitable: back to the task.
+  await detail.getByRole('button', { name: 'Повернутися до завдання' }).click();
+  assert.equal(await detail.locator('.step-badge').getAttribute('data-status'), 'pending');
+  await settled(page);
+  assert.equal((await activeWorkspace(page)).steps['RN-03'].state, 'pending');
+  lesson = await waitFor(async () => { const l = (await storeDoc(page, 'progress')).data.lessons['rn-03-08-capstone-native-crud']; return l?.project?.state === 'pending' ? l : null; });
+  assert.equal(lesson.state, 'in-progress');
+  // A Node.js step is confirmed by the learner (no device question); its lesson completes.
+  // Only the stage of the selected step is open: the learner opens the Node.js group first.
+  assert.equal(await page.locator('.project-stage[data-stage="NO"]').getAttribute('open'), null);
+  await page.locator('.project-stage[data-stage="NO"] > summary').click();
+  await page.locator('.project-step-button[data-unit="NO-04"]').click();
+  const no04 = page.locator('.project-step-detail[data-step="NO-04"]');
+  await no04.waitFor();
+  assert.equal(await no04.getByRole('button', { name: 'У мене немає емулятора чи пристрою' }).count(), 0);
+  await no04.getByRole('button', { name: 'Цей крок виконано' }).click();
+  assert.equal(await no04.locator('.step-badge').getAttribute('data-status'), 'confirmed');
+  await settled(page);
+  doc = await activeWorkspace(page);
+  assert.equal(doc.steps['NO-04'].source, 'learner-confirmed');
+  lesson = await waitFor(async () => { const l = (await storeDoc(page, 'progress')).data.lessons['no-04-09-capstone-crud-api']; return l?.project?.state === 'confirmed' ? l : null; });
+  assert.equal(lesson.state, 'completed');
 });
