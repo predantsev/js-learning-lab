@@ -58,6 +58,8 @@ $ npm run check
 
 ## NO-03 — the records server
 
+Measured on a fresh `server/data/` (the first start created it); in the course chain the step changes another record, because step NO-02 already changed this one.
+
 Node.js v25.2.1, curl 8.7.1 (macOS). `npm start` in one terminal, the requests in another; Ctrl+C
 sends SIGINT. A change made while the server is stopped is there after the restart.
 
