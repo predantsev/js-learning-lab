@@ -56,7 +56,9 @@ test('validateItem accepts a valid wish and trims its name', () => {
   expect(result?.ok, `validateItem({ name: "  Desk lamp  ", price: 45 }).ok`).toBe(true);
   expect(result.value?.name, 'value.name').toBe('Desk lamp');
   expect(result.value?.price, 'value.price').toBe(45);
-  expect(scope.validateItem({ name: 'Gift card', price: 0 })?.ok, 'a price of 0 is valid').toBe(true);
+  const free = scope.validateItem({ name: 'Gift card', price: 0 });
+  expect(free?.ok, 'a price of 0 is valid').toBe(true);
+  expect(free.value?.price, 'value.price for a price of 0 (a real price, not a missing one)').toBe(0);
   expect(scope.validateItem({ name: 'x'.repeat(80), price: 1 })?.ok, 'a name of exactly 80 characters is valid').toBe(true);
 });
 
